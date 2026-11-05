@@ -77,7 +77,7 @@ export function TimelineCard({
   measured,
   count,
   figuresFor = null,
-  searchVersion = 0,
+  figuresVersion = '',
   firedFor = null,
   copyName,
   version,
@@ -107,7 +107,7 @@ export function TimelineCard({
    *  the flat ones. */
   figuresFor?: ((slot: string, plan: FirePlanV2) => DetailedAnswer) | null;
   /** Moves as a job's answer arrives, so the preview takes it. */
-  searchVersion?: number;
+  figuresVersion?: string;
   /** Runs a start that waits on a run's own balance through the runs, in the Plan's
    *  worker; null when it couldn't be run. */
   firedFor?: ((ask: { sim: SimPlan; trigger: number; offset: number }, signal: AbortSignal) => Promise<FiredResult | null>) | null;
@@ -262,7 +262,7 @@ export function TimelineCard({
     return () => clearTimeout(timer);
     // checkedKey stands for checked; measured is a new object each render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [checkedKey, plan, count, open, searchVersion]);
+  }, [checkedKey, plan, count, open, figuresVersion]);
 
   // Across history, once the steady path's answer for this draft is in.
   const [across, setAcross] = useState<{ key: string; fired: FiredResult | null } | null>(null);

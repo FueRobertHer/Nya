@@ -856,7 +856,7 @@ export function FigureForm(
                       type="number"
                       inputMode="decimal"
                       data-percent
-                      step="1"
+                      step="0.01"
                       value={splitText[b]}
                       onChange={(e) => setSplitText((m) => ({ ...m, [b]: e.target.value }))}
                       {...s.field(BUCKET_NAMES[b])}

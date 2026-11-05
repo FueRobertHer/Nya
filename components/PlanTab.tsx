@@ -746,14 +746,16 @@ export default function PlanTab({
   }, [detailedOn, planInputs, yearRows]);
   // What a detailed plan's years rest on. They wait for all of it to settle, a failed
   // part counting as settled with its stand-ins and their words, so the stress test
-  // below never runs on a guess and then again. The law is in dollars. Once settled it
-  // stays so for these accounts: a failed row asked for again when a sheet opens reads
-  // as it did until it answers, and doesn't take the answer back to a flat one.
+  // below never runs on a guess and then again. The law is in dollars. Balances come
+  // first: until they are in there are no accounts to wait on. Once settled it stays so
+  // for these accounts: a failed row asked for again when a sheet opens reads as it did
+  // until it answers, and doesn't take the answer back to a flat one.
   const taxInDollars = displayCurrency === 'USD';
   const yearRowsKey = yearRows.join();
   const settledFor = useRef<string | null>(null);
-  if (detailedOn && taxInDollars && allocation.settings.status !== 'loading' && yearRows.every((id) => shared.copy.rows[id] && !shared.copy.rows[id].pending)) settledFor.current = yearRowsKey;
+  if (detailedOn && taxInDollars && (balancesAsOf !== null || balancesFailed) && allocation.settings.status !== 'loading' && yearRows.every((id) => shared.copy.rows[id] && !shared.copy.rows[id].pending)) settledFor.current = yearRowsKey;
   const detailReady = detailedOn && taxInDollars && settledFor.current === yearRowsKey;
+  const detailHeld = detailedOn && taxInDollars && !detailReady;
   const detailBuckets = useMemo(
     () => (detailReady ? pageBuckets({ assets, holdings, facts: shared.taxFacts, settings: allocation.settings.value ?? null, rows: shared.copy.rows, partner: basePlan.partnerAge !== null }) : null),
     [detailReady, assets, holdings, shared.taxFacts, allocation.settings.value, shared.copy.rows, basePlan.partnerAge]
@@ -774,7 +776,7 @@ export default function PlanTab({
     const input = inputOf(p, tax);
     if (input) return detailedRun(slot, p, m, c, input, flat);
     // What it rests on hasn't settled: a plan the drawdown can move isn't at its answer yet.
-    const waits = detailedOn && taxInDollars && !detailReady && p.age !== null && !('refused' in flat) && drawdownMovesFi(p, flat.walk, flat.view.savings.value ?? 0, flat.view.stopAge);
+    const waits = detailHeld && p.age !== null && !('refused' in flat) && drawdownMovesFi(p, flat.walk, flat.view.savings.value ?? 0, flat.view.stopAge);
     return { figures: flat, working: waits, failed: false };
   };
   // The Plan's figures by the same function a copy's come from
@@ -820,7 +822,7 @@ export default function PlanTab({
   const shownFailed = entry ? (openView?.failed ?? false) : baseAnswer.failed;
   // The stress test waits for a detailed plan's years, so it never runs twice, and
   // doesn't run on a date that couldn't be worked out.
-  const holdSim = detailedOn && taxInDollars && (!detailReady || shownWorking || shownFailed);
+  const holdSim = detailHeld || (detailedOn && taxInDollars && (shownWorking || shownFailed));
   const problem = openFigures && 'refused' in openFigures ? REFUSED_TEXT : null;
   const baseRefused = !entry && baseFigures === null;
   /** The plan the forms edit: the copy open, or your plan. */
@@ -1632,7 +1634,7 @@ export default function PlanTab({
     return 'error' in r ? r.error : true;
   };
   const outcomeOf = (f: PlanFigures | FiguresRefused | null, a: Pick<DetailedAnswer, 'working' | 'failed'>): PlanOutcome =>
-    !f || 'refused' in f ? { kind: 'not-run', reason: REFUSED_TEXT } : a.failed ? { kind: 'not-run', reason: JOB_FAILED_TEXT } : { kind: 'figures', figures: f, working: a.working };
+    !f || 'refused' in f ? { kind: 'not-run', reason: REFUSED_TEXT } : a.failed ? { kind: 'not-run', reason: JOB_FAILED_TEXT } : { kind: 'figures', figures: f, working: a.working, held: detailHeld };
   // Every plan that reads, as the sheet lists it: yours first, then the
   // copies, each with its figures (the sheet words how each differs).
   const sheetPlans: SheetPlan[] =
@@ -1752,7 +1754,7 @@ export default function PlanTab({
       measured={measured}
       count={count}
       figuresFor={(slot, p) => figuresFor(slot, p, entry ? entry.tax : yourChoices)}
-      searchVersion={searchVersion}
+      figuresVersion={`${searchVersion}:${detailKey}`}
       firedFor={!planTax ? null : ({ sim: run, trigger, offset }, signal) => runner().run({ kind: 'fired', method: plan.method, plan: run, trigger, offset }, signal).then((r) => (r.ok && r.kind === 'fired' ? r.fired : null))}
       copyName={copyName}
       version={shownFor ?? storedKey}
@@ -1966,7 +1968,8 @@ export default function PlanTab({
               badge={stressBadge}
               onRetry={retry}
               onRetryDetail={search.retry}
-              startAtStop={planTax && editable && !other && !copyFixing && formPlan.start !== 'at-stop' && view.stopAge !== null ? () => savers.form({ ...formPlan, start: 'at-stop' }) : null}
+              startAtStop={planTax && (editable || state.saving || plansState.saving) && !other && !copyFixing && formPlan.start !== 'at-stop' && view.stopAge !== null ? () => savers.form({ ...formPlan, start: 'at-stop' }) : null}
+              startBusy={state.saving || plansState.saving}
             />
           )}
 
@@ -2895,7 +2898,7 @@ const MISSING_FIGURE: Record<Missing, string> = {
  *  "Monte Carlo runs" names the method, which is set there. */
 /** The start line's way to what the plan would have at the stop. Its failure is said
  *  here, where the person pressed it. */
-function StartAtStop({ stopAge, onStart }: { stopAge: number; onStart: () => Promise<boolean | string> }) {
+function StartAtStop({ stopAge, busy, onStart }: { stopAge: number; busy: boolean; onStart: () => Promise<boolean | string> }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const press = async () => {
@@ -2908,7 +2911,7 @@ function StartAtStop({ stopAge, onStart }: { stopAge: number; onStart: () => Pro
   return (
     <>
       <div>
-        <button type="button" className="btn ghost" disabled={saving} onClick={() => void press()}>
+        <button type="button" className="btn ghost" disabled={saving || busy} onClick={() => void press()}>
           Start from what you&apos;d have at {stopAge}
         </button>
       </div>
@@ -2940,6 +2943,7 @@ export function SimulationCard({
   onRetry,
   onRetryDetail,
   startAtStop = null,
+  startBusy = false,
 }: {
   /** The open copy's name, said at the top; null with your plan open. */
   copyName?: string | null;
@@ -2975,6 +2979,8 @@ export function SimulationCard({
   onRetryDetail?: () => void;
   /** Saves the plan starting from what it would have at the stop; null: it does, or can't be saved here. */
   startAtStop?: (() => Promise<boolean | string>) | null;
+  /** A save is under way: the link waits, and stays, so a save that fails can say so. */
+  startBusy?: boolean;
 }) {
   // Over the label: an open copy's tag, and the badge.
   const top =
@@ -3002,7 +3008,7 @@ export function SimulationCard({
   // starts drawing: with more, the caution it always had (it reads safer
   // than it is); with less, or from today's assets, a note.
   const startLine = startsWith && !startsWith.more ? startLineText(startsWith, money, { age: plan.age, stopAge: view.stopAge, atStop: view.atTargetAge }) : null;
-  const startLink = startAtStop && view.stopAge !== null ? <StartAtStop stopAge={view.stopAge} onStart={startAtStop} /> : null;
+  const startLink = startAtStop && view.stopAge !== null ? <StartAtStop stopAge={view.stopAge} busy={startBusy} onStart={startAtStop} /> : null;
   const startNote = startsWith?.more ? (
     <Notice level="caution">
       <Masked>{`It starts with ${startsWithText(startsWith, money, 'on Your path').replace(/\.$/, '')}: it starts with money it wouldn’t have then, so it reads safer than it is.`}</Masked>

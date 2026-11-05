@@ -64,15 +64,16 @@ export const jobKey = (method: Method, sim: SimPlan) => JSON.stringify([method, 
 export type PlanOutcome =
   | { kind: 'not-run'; reason: string }
   /** `working`: a detailed plan's date isn't in yet, so these are its flat ones, and
-   *  nothing is run or said on them. */
-  | { kind: 'figures'; figures: PlanFigures; working?: boolean };
+   *  nothing is run or said on them. `held`: its date stands, but what its stress test
+   *  runs at isn't in yet, so that waits. */
+  | { kind: 'figures'; figures: PlanFigures; working?: boolean; held?: boolean };
 
 /** The jobs compare mode asks for: one per plan that can be simulated, each
  *  with your plan's method and no options of its own, so every plan gets
  *  the engine's one seed, run count and block length, on the worker's one
  *  market. */
 export function compareJobs(outcomes: readonly PlanOutcome[], method: Method): { key: string; job: PlanJob & { kind: 'simulate' } }[] {
-  return outcomes.flatMap((o) => (o.kind === 'figures' && !o.working && 'sim' in o.figures.engine ? [{ key: jobKey(method, o.figures.engine.sim), job: { kind: 'simulate' as const, method, plan: o.figures.engine.sim } }] : []));
+  return outcomes.flatMap((o) => (o.kind === 'figures' && !o.working && !o.held && 'sim' in o.figures.engine ? [{ key: jobKey(method, o.figures.engine.sim), job: { kind: 'simulate' as const, method, plan: o.figures.engine.sim } }] : []));
 }
 
 /** Said for a copy whose lasting changes take spending in retirement below
@@ -159,7 +160,7 @@ export function PlanDetails({ plan, parts, outcome, money }: { plan: SheetPlan; 
         {outcome.reason}
       </li>
     );
-  } else {
+  } else if (!outcome.working) {
     const f = outcome.figures;
     // What of a life event is left out, and why.
     for (const n of f.itemNotes) {
@@ -377,6 +378,7 @@ export function PlansSheet({
     const f = plan.outcome.figures;
     if (plan.outcome.working) return { ...column, outcome: { kind: 'figures', figures: f, result: 'pending', working: true } };
     if (!('sim' in f.engine)) return { ...column, outcome: { kind: 'figures', figures: f, result: { missing: f.engine.missing } } };
+    if (plan.outcome.held) return { ...column, outcome: { kind: 'figures', figures: f, result: 'pending' } };
     return { ...column, outcome: { kind: 'figures', figures: f, result: answers.get(jobKey(method, f.engine.sim)) ?? 'pending' } };
   });
   const failed = compared.some((c) => c.outcome.kind === 'figures' && typeof c.outcome.result === 'object' && 'error' in c.outcome.result);

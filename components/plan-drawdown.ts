@@ -83,7 +83,7 @@ export function stageHelper(s: Pick<DrawdownStage, 'key' | 'to'>, rmdAge: number
     case 'before-60':
       return 'Before 59½ only taxable money, Roth contributions and a 457(b) from a job you’ve left can be reached without a penalty.';
     case 'before-65':
-      return 'Tax-deferred and Roth money can be drawn without a penalty now, and an HSA from 65. Health coverage is yours to pay until Medicare at 65.';
+      return 'From 59½ tax-deferred and Roth money can be drawn without a penalty, and an HSA from 65. Health coverage is yours to pay until Medicare at 65.';
     case 'before-rmd':
       return `Medicare from 65. Until required withdrawals start at ${rmdAge}, what you draw each year is up to you.`;
     case 'rmd':
@@ -95,7 +95,7 @@ export function stageHelper(s: Pick<DrawdownStage, 'key' | 'to'>, rmdAge: number
 function earlyKinds(years: readonly DrawdownYear[]): string {
   const kinds: string[] = [];
   if (years.some((y) => some(y.drawn.penalized))) kinds.push('tax-deferred');
-  if (years.some((y) => y.age < 60 && some(y.drawn.young + y.drawn.earnings))) kinds.push('Roth');
+  if (years.some((y) => some(y.drawn.young + y.drawn.earnings))) kinds.push('Roth');
   if (years.some((y) => some(y.drawn.hsaEarly))) kinds.push('HSA');
   return words(kinds);
 }

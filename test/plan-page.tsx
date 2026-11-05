@@ -160,7 +160,8 @@ export async function planPage() {
     const container = dom.document.createElement('div');
     dom.document.body.appendChild(container);
     const root = createRoot(container as unknown as Element);
-    const all: PlanTabProps = { txns: [], txnsLoading: false, txnNotes: [], institutions: [], balancesAsOf: null, currency: 'USD', holdings: [], ...props };
+    // A detailed plan's years wait for the balances, so with the flag they are in, unless a test says not.
+    const all: PlanTabProps = { txns: [], txnsLoading: false, txnNotes: [], institutions: [], balancesAsOf: props.planTax ? '2026-01-01T12:00:00.000Z' : null, currency: 'USD', holdings: [], ...props };
     await act(async () => root.render(<PlanTab {...all} />));
     await settle(100);
     const find = (pred: (e: FakeElement) => boolean) => container.findAll(pred)[0] ?? null;

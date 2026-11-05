@@ -83,6 +83,15 @@ describe('the stages', () => {
     expect(said).toMatch(/draws? tax-deferred money early, with \$[\d,]+ in penalties/);
   });
 
+  test('a partner under 59½ draws early after you have passed it: the sentence names what they drew', () => {
+    const d = run({ startAge: 62, years: 8, today: { age: 62, partnerAge: 50, calendarYear: 2026 }, slots: [slot('partner', 'roth', 700_000)], income: [] });
+    const stage = d.stages[0];
+    expect(stage.key).toBe('before-65');
+    expect(stageSentence(stage, d.years, money)).toMatch(/draws? Roth money early, with \$[\d,]+ in penalties/);
+    // And what the stage says at its head is true of them as well.
+    expect(stageHelper(stage, 75)).toContain('From 59½');
+  });
+
   test('a stage with nothing to say says nothing', () => {
     const d = run({ slots: [slot('you', 'roth', 3_000_000, { reachable: 3_000_000 })], income: [] });
     expect(stageSentence(d.stages[2], d.years, money)).toBeNull();

@@ -100,6 +100,57 @@ describe('while what a plan’s years rest on is out', () => {
     });
   }, 30_000);
 
+  test('with no balances in yet, a plan the drawdown moves waits for them', async () => {
+    await (await detailed(moved, props)).unmount();
+    const tab = await render({ planTax: true, planInWalk: true, institutions: [], balancesAsOf: null });
+    expect(tab.said()).toContain('Working it out');
+    expect(tab.text()).not.toContain('Year by year, at');
+    await tab.unmount();
+    // Balances that couldn't be had don't hold it for good.
+    const failed = await render({ planTax: true, planInWalk: true, institutions: [], balancesAsOf: null, balancesFailed: true });
+    expect(failed.said()).not.toContain('Working it out');
+    expect(failed.text()).toContain('Year by year, at');
+    await failed.unmount();
+  }, 30_000);
+
+  test('Compare runs nothing on a plan’s flat figures, even one the drawdown can’t move', async () => {
+    await (await detailed(PLAN, props)).unmount();
+    await seedCopy('Later', { targetAge: 58 });
+    await holding('/api/allocation-settings', async (letGo) => {
+      const tab = await render({ planTax: true, ...(props as object) });
+      await press(tab.plans());
+      await press(button(tab.dialog(), 'Compare'));
+      await page.settle(1000);
+      const lasted = /\d+(?:\.\d+)?% of [\d,]+ historical starts/;
+      expect(tab.dialog()!.textContent).toContain('Working out the plans');
+      expect(tab.dialog()!.textContent).not.toMatch(lasted);
+      letGo();
+      await page.settle(1000);
+      await page.settle(1000);
+      expect(tab.dialog()!.textContent).not.toContain('Working out the plans');
+      expect(tab.dialog()!.textContent).toMatch(lasted);
+      expect(tab.dialog()!.textContent).toContain('with health coverage');
+      await tab.unmount();
+    });
+  }, 60_000);
+
+  test('an item sheet’s preview takes the answer as it comes, with nothing typed', async () => {
+    await (await detailed(moved, props)).unmount();
+    await holding('/api/allocation-settings', async (letGo) => {
+      const tab = await render({ planTax: true, ...(props as object) });
+      const sheet = await page.addTemplate(tab, 'A cost');
+      await page.fill(sheet, 'The amount', '50000');
+      await page.fill(sheet, 'Starts at age', '46');
+      await page.rest();
+      expect(tab.dialog()!.textContent).toContain('Working it out');
+      letGo();
+      await page.settle(200);
+      await page.rest();
+      expect(tab.dialog()!.textContent).not.toContain('Working it out');
+      await tab.unmount();
+    });
+  }, 60_000);
+
   test('a failed row asked for again takes nothing back', async () => {
     const brk = { account_id: 'brk', name: 'Brokerage', type: 'investment', subtype: 'brokerage', balance: 100_000, currency: 'USD' };
     const both = { ...(props as object), institutions: [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [k, brk] }] } as never;
@@ -121,6 +172,23 @@ describe('while what a plan’s years rest on is out', () => {
       await page.settle(200);
       await tab.unmount();
     });
+  }, 30_000);
+});
+
+describe('the start link', () => {
+  test('on a copy, a save that fails says so where it was pressed', async () => {
+    await seedPlan();
+    await flagged();
+    await seedCopy('Later', { targetAge: 58 });
+    const tab = await render({ planTax: true });
+    await openCopy(tab, 'Later');
+    const link = () => tab.container.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim().startsWith('Start from what you'))[0] ?? null;
+    answers['PUT /api/plans'] = () => Response.json({ error: 'Not now, says the server.' }, { status: 500 });
+    await press(link());
+    await page.settle(300);
+    expect(tab.container.findAll((e) => e.getAttribute('role') === 'alert').some((e) => e.textContent.length > 0)).toBe(true);
+    expect(link()).not.toBeNull();
+    await tab.unmount();
   }, 30_000);
 });
 

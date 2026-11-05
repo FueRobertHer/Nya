@@ -302,8 +302,8 @@ export default function PlanPathChart(props: PathChartProps) {
             {FI_NAME}
           </text>
         )}
-        {geo.ticks.map((t) => (
-          <line key={t.x} x1={t.x} x2={t.x} y1={geo.baseY - TICK} y2={geo.baseY} stroke="var(--text-3)" strokeWidth={1} />
+        {geo.ticks.map((t, i) => (
+          <line key={i} x1={t.x} x2={t.x} y1={geo.baseY - TICK} y2={geo.baseY} stroke="var(--text-3)" strokeWidth={1} />
         ))}
         {geo.labels.map((t) => (
           <text key={t.label} className="chart-xlabel" x={t.x} y={H - 6} textAnchor={t.anchor}>

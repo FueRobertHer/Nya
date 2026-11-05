@@ -139,12 +139,21 @@ describe('a detailed plan still at work in compare mode', () => {
 
   test('no job is run on its flat figures', () => {
     expect(compareJobs([{ kind: 'figures', figures: f, working: true }], 'historical')).toEqual([]);
+    expect(compareJobs([{ kind: 'figures', figures: f, held: true }], 'historical')).toEqual([]);
     expect(compareJobs([{ kind: 'figures', figures: f }], 'historical')).toHaveLength(1);
   });
 
   test('every cell waits, the FI date too', () => {
     const { rows } = compareRows([{ id: 'p', name: 'p', isPlan: true, outcome: { kind: 'figures', figures: f, result: 'pending', working: true } }], money, TODAY);
     for (const r of rows) expect(r.cells[0].pending).toBe(true);
+  });
+
+  test('what it is says nothing from them', () => {
+    const copy = { id: 'c', name: 'c', isMain: false, updatedAt: 'u', plan: planOf(plan()), outcome: { kind: 'figures', figures: f } } as SheetPlan;
+    const short = { ...f, short: { kind: 'cost', year: 3, have: 1, need: 2 } } as PlanFigures;
+    const details = (working: boolean) => text(renderToStaticMarkup(<PlanDetails plan={copy} parts={[]} outcome={{ kind: 'figures', figures: short, result: 'pending', working }} money={money} />));
+    expect(details(false)).toContain('no FI date');
+    expect(details(true)).not.toContain('no FI date');
   });
 });
 
