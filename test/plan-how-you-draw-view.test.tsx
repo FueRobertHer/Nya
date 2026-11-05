@@ -189,6 +189,9 @@ describe('Compare conversions', () => {
     expect(tab.text()).toContain('Year by year');
     expect(subOf(tab.row('Roth conversions'))).toMatch(/^Fill the 12% bracket, until \d+$/);
     expect(tab.text()).toMatch(/Roth conversions: Fill the 12% bracket, until \d+ \(your plan: None\)/);
+    // And in the Plans sheet, with the sheet's own words for how it differs.
+    await press(tab.plans());
+    expect(tab.dialog()!.textContent).toMatch(/Roth conversions: Fill the 12% bracket, until \d+ \(your plan: None\)/);
     await tab.unmount();
   }, 30_000);
 
@@ -318,7 +321,22 @@ describe('a new plan', () => {
     await tab.unmount();
   }, 30_000);
 
-  test('a plan with a rate typed, or with its ages already, stays flat', async () => {
+  test('a plan with a rate typed stays flat, its offer still there', async () => {
+    await flagged();
+    await seedPlan({ ...PLAN, age: null, targetAge: null, taxRate: 0.15 });
+    const tab = await render({ planTax: true });
+    await press(tab.row('Household'));
+    await fill(tab.dialog()!, 'Your age', '40');
+    await fill(tab.dialog()!, 'Stop', '50');
+    await press(button(tab.dialog(), 'Save'));
+    await settle(300);
+    expect(calls().filter((c) => c.method === 'POST' && c.path === '/api/plan-facts')).toEqual([]);
+    await pick(tab.container, 'Drawdown');
+    expect(tab.row(WAY_IN)).not.toBeNull();
+    await tab.unmount();
+  }, 30_000);
+
+  test('a plan with its ages already stays flat', async () => {
     await flagged();
     await seedPlan({ ...PLAN, age: 40, targetAge: 50 });
     const tab = await render({ planTax: true });

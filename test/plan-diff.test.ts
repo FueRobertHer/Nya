@@ -11,6 +11,17 @@ import { genEvents, itemFromEvent, rand } from './plan-gen';
 // choices (components/plan-diff.ts).
 
 const money = (n: number) => `$${n.toLocaleString('en-US')}`;
+
+describe('a rate where tax is worked out', () => {
+  const base: FirePlanV2 = { ...DEFAULT_PLAN_V2, age: 40, targetAge: 55, spending: 40_000, savings: 20_000, assets: 300_000, taxRate: 0 };
+  test('isn’t a difference, as nothing reads it there', () => {
+    expect(copyDiffParts(base, { ...base, taxRate: 0.15 }, money, { taxWorked: true })).toEqual([]);
+  });
+  test('is one where it is what the plan runs at', () => {
+    expect(copyDiffParts(base, { ...base, taxRate: 0.15 }, money)).toHaveLength(1);
+    expect(copyDiffParts(base, { ...base, taxRate: 0.15 }, money, { taxWorked: false })).toHaveLength(1);
+  });
+});
 const plan = (over: Partial<FirePlanV2> = {}): FirePlanV2 => ({ ...DEFAULT_PLAN_V2, age: 40, targetAge: 55, spending: 40_000, savings: 20_000, assets: 300_000, ...over });
 
 const CHILD: LifeEvent = { id: 'e1', kind: 'child', label: 'A child', fromAge: 42, yearly: 15_000, years: 18 };

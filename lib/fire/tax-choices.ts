@@ -15,6 +15,7 @@
 // Pure, importing only the law's state codes: the next release holds it byte
 // for byte as its release before's (test/release-before.test.ts).
 
+import { LIMITS } from './plan';
 import type { Owner } from './tax-facts';
 import { STATE_CODES, type StateCode } from './tax/law/types';
 
@@ -172,12 +173,12 @@ function splitError(v: unknown): string | null {
 }
 
 /** The most a fixed conversion can be, a year. */
-export const MAX_YEARLY_CONVERSION = 1e9;
+export const MAX_YEARLY_CONVERSION = LIMITS.money;
 
 /** A strategy's ranges: the age a rule runs to, and what a fixed amount can be. */
 function strategyError(s: TaxChoices['strategy']): string | null {
   if (s.convertUntil !== null && !(Number.isInteger(s.convertUntil) && s.convertUntil >= 18 && s.convertUntil <= 100)) return 'Conversions run until a whole age from 18 to 100';
-  if (s.conversions.kind === 'fixed' && !amount(s.conversions.yearly, MAX_YEARLY_CONVERSION)) return 'A conversion is at most 1,000,000,000 a year';
+  if (s.conversions.kind === 'fixed' && !amount(s.conversions.yearly, MAX_YEARLY_CONVERSION)) return 'A conversion is at most 10,000,000 a year';
   return null;
 }
 

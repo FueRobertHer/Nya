@@ -17,9 +17,12 @@
 // release before's (test/release-before.test.ts).
 //
 // A write is one small change, from the Plan's sheets (lib/plan-writes.ts
-// saveTaxFacts). None writes `model`: only the opt-in does (T3). What is the
-// same as saying nothing leaves its list (an owner of `you`, no basis, no
-// amount), so the facts stay small and a row never means the default.
+// saveTaxFacts), or the household, which spans the facts and a plan and so
+// travels on the plan's own save (parseHousehold). `model` moves only by the
+// opt-in, which writes every plan's choices first (lib/plan-writes.ts optIn), or
+// back to flat, the choices kept. What is the same as saying nothing leaves its
+// list (an owner of `you`, no basis, no amount), so the facts stay small and a
+// row never means the default.
 
 /** Whose an account, a contribution or a birth year is. */
 export type Owner = 'you' | 'partner';
@@ -96,9 +99,13 @@ export const MAX_FACT_AMOUNT = 1_000_000_000_000;
 /** The ids Plaid, manual accounts and connectors give, as invested history's. */
 const ACCOUNT_ID = /^[A-Za-z0-9_:.=-]{1,128}$/;
 
-/** One Save in a sheet: an account's owner, typed basis and Count it, or what
- *  one person has put into a Roth. */
-export type TaxFactOp = { kind: 'account'; account_id: string; owner: Owner; basis: number | null; count: boolean } | { kind: 'roth'; owner: Owner; amount: number | null };
+/** One Save in a sheet: an account's owner, typed basis and Count it, what one
+ *  person has put into a Roth, the opt-in, or back to the flat rate. */
+export type TaxFactOp =
+  | { kind: 'account'; account_id: string; owner: Owner; basis: number | null; count: boolean }
+  | { kind: 'roth'; owner: Owner; amount: number | null }
+  | { kind: 'opt-in' }
+  | { kind: 'model'; model: 'flat' };
 
 const isAmount = (v: unknown) => v === null || (isNumber(v) && v >= 0 && v <= MAX_FACT_AMOUNT);
 
@@ -120,11 +127,21 @@ export function parseTaxFactOp(v: unknown): { op: TaxFactOp } | { error: string 
     if (!isAmount(v.amount)) return { error: `amount is an amount of at most ${MAX_FACT_AMOUNT}, or null` };
     return { op: { kind: 'roth', owner: v.owner, amount: v.amount as number | null } };
   }
-  return { error: 'kind is account or roth' };
+  if (v.kind === 'opt-in') {
+    if (!closed(v, ['kind'])) return { error: 'The opt-in is only its kind' };
+    return { op: { kind: 'opt-in' } };
+  }
+  if (v.kind === 'model') {
+    if (!closed(v, ['kind', 'model']) || v.model !== 'flat') return { error: 'model goes back to flat: the opt-in is the way to detailed' };
+    return { op: { kind: 'model', model: 'flat' } };
+  }
+  return { error: 'kind is account, roth, opt-in or model' };
 }
 
 /** The facts with one change made. */
 export function applyTaxFactOp(tax: TaxFacts, op: TaxFactOp): TaxFacts {
+  if (op.kind === 'opt-in') return { ...tax, model: 'detailed' };
+  if (op.kind === 'model') return { ...tax, model: op.model };
   if (op.kind === 'roth') {
     const rest = tax.rothContributions.filter((r) => r.owner !== op.owner);
     return { ...tax, rothContributions: op.amount === null ? rest : [...rest, { owner: op.owner, amount: op.amount }] };
@@ -152,3 +169,50 @@ export function withoutAccounts(tax: TaxFacts, gone: ReadonlySet<string>): TaxFa
 
 /** Whether the facts hold more accounts than a write may leave there. */
 export const tooManyFactAccounts = (tax: TaxFacts): boolean => Math.max(tax.owners.length, tax.basis.length, tax.countAnyway.length) > MAX_FACT_ACCOUNTS;
+
+// ---- The household ----
+
+/** What the Household and health sheets say of the household: every plan's. */
+export type TaxHousehold = Pick<TaxFacts, 'filing' | 'birthYears' | 'dependents' | 'paidToday'>;
+
+const HOUSEHOLD_KEYS = ['filing', 'birthYears', 'dependents', 'paidToday'];
+/** More than anyone's tax household. */
+export const MAX_DEPENDENTS = 20;
+const DEPENDENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+/** As long as a category or a tag can be. */
+const MAX_PAID_NAME = 200;
+
+const wholeIn = (v: unknown, low: number, high: number) => Number.isInteger(v) && (v as number) >= low && (v as number) <= high;
+
+/** What a page sent as the household, or why this doesn't take it. */
+export function parseHousehold(v: unknown): { household: TaxHousehold } | { error: string } {
+  if (!isObject(v) || !closed(v, HOUSEHOLD_KEYS)) return { error: 'The household is its filing, birth years, dependents and what already pays for coverage' };
+  if (v.filing !== null && v.filing !== 'single' && v.filing !== 'joint') return { error: 'filing is single, joint or null' };
+  if (!listOf(v.birthYears, ['owner', 'year'], (x) => isOwner(x.owner) && wholeIn(x.year, 1900, 2100))) return { error: 'A birth year is an owner and a year' };
+  const birthYears = v.birthYears as TaxFacts['birthYears'];
+  if (new Set(birthYears.map((b) => b.owner)).size !== birthYears.length) return { error: 'Each person has one birth year' };
+  if (!listOf(v.dependents, ['id', 'untilAge'], (x) => isText(x.id) && DEPENDENT_ID.test(x.id) && wholeIn(x.untilAge, 0, 120))) return { error: 'A dependent is an id and the age you are when they leave' };
+  const dependents = v.dependents as TaxFacts['dependents'];
+  if (dependents.length > MAX_DEPENDENTS) return { error: `At most ${MAX_DEPENDENTS} dependents` };
+  if (new Set(dependents.map((d) => d.id)).size !== dependents.length) return { error: 'Each dependent has an id of its own' };
+  const paid = v.paidToday;
+  if (paid !== null && !(isObject(paid) && closed(paid, ['kind', 'name']) && (paid.kind === 'category' || paid.kind === 'tag') && isText(paid.name) && paid.name.length >= 1 && paid.name.length <= MAX_PAID_NAME)) {
+    return { error: 'What pays for coverage is a category or a tag, by name, or null' };
+  }
+  return { household: { filing: v.filing, birthYears, dependents, paidToday: paid as TaxFacts['paidToday'] } };
+}
+
+/** The household as the facts hold it. */
+export const householdOf = (tax: TaxFacts): TaxHousehold => ({ filing: tax.filing, birthYears: tax.birthYears, dependents: tax.dependents, paidToday: tax.paidToday });
+
+/** Whether two households say the same. A list's order means nothing. */
+export function sameHousehold(a: TaxHousehold, b: TaxHousehold): boolean {
+  const canon = (h: TaxHousehold) =>
+    JSON.stringify([
+      h.filing,
+      [...h.birthYears].sort((x, y) => x.owner.localeCompare(y.owner)).map((x) => [x.owner, x.year]),
+      [...h.dependents].sort((x, y) => x.id.localeCompare(y.id)).map((x) => [x.id, x.untilAge]),
+      h.paidToday && [h.paidToday.kind, h.paidToday.name],
+    ]);
+  return canon(a) === canon(b);
+}
