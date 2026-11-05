@@ -315,6 +315,16 @@ What a screen shows while what fills it is on its way: the screen itself, with p
 
 Under the name, one line says what Nya is (`lib/tagline.ts`, 60 characters at most), on the password login too. Clerk's Continue is the page's one filled button: the demo accounts are tonal `.btn.secondary` buttons with the account's name and nothing more (anyone may reset either to any of the seed's scenarios, so a line on what it holds could be wrong), side by side in one `.btn-row`, each half its width, and they sit above the form, since the form changes height from step to step and nothing below it should hold a button. Which banks connect is folded under the form behind **Which banks work?** (`Why`), left-aligned.
 
+### Year by year's parts
+
+The tax plan's T3, on the Plan's Drawdown and its sheets. No new tokens.
+
+- `.row-badges`: a row of neutral badges under a list row's subtitle, for what happens in a year. A plan's outcome is never a `.warn`: the words decide, and the year isn't wrong.
+- `.fpl`, with `.fpl-limit` and `.fpl-scale`: a `.meter` of income against the poverty line, the ACA's limit marked with a 2px line in `--text-1` standing out of the track, its scale in `--fs-1` under it. Only for someone on the ACA.
+- `.txn-detail-wide` on a `.txn-detail`: labels too long for the column, each taking the room its figure leaves, the figure at the line's end. `.txn-detail-sum` sets a sum's line apart with a `--border-subtle` rule.
+- `.plan-answer-pending`, under the shared `.plan-working-line`: what an answer said keeps its place, dimmed to 0.6, while a detailed plan's search is out, since it is close and the forms still act on it. Also Home's FI row.
+- `.chart-legend-wrap`: a chart legend whose names wrap, for four buckets on a phone. `.plan-table-scroll`: Show as a table, when it is wider than a phone, scrolls on its own.
+
 ### The pages outside the tabs
 
 The public pages (Security, Privacy, Developers, Open a protected download, the weekly summary's Turn off) are documents, so they read as prose under headings, not in cards: each part an `<h2>` at `--fs-5`, 32px apart (`.info-body`), code on `--surface` with a hairline. A page of five parts or more opens with a contents list (**On this page**), a 44px link to each part, two columns from 600px wide; its parts and the list are drawn from one list in the page, so they can't drift. A plain-language note said first (Privacy's, the download's) is an information notice before the contents. A form on one of them is a control and keeps its card. Every page outside the tabs (these, Your data, Reports, the admin's pages) has the same header, `components/PageHeader.tsx`: the logo and name as a 44px link back into the app (Reports' back to Activity, named "Back to Nya"), and Reports' hide amounts at the other end.

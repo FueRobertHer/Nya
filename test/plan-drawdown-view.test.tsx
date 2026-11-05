@@ -1,12 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { TEST_CONTAINER } from './fake-redis';
+import { DEFAULT_PLAN } from '@/lib/fire/plan';
 import { planPage } from './plan-page';
 
 // Year by year on the page, used on the real routes: the way in from a flat plan, then
 // the card, a stage's sheet and a year's, and the way back.
 
 const page = await planPage();
-const { PLAN, seedPlan, seedCopy, render, press, button, closeOf, pick, openCopy, classOf, calls, fake } = page;
+const { PLAN, answers, seedPlan, seedCopy, render, press, button, closeOf, pick, openCopy, classOf, calls, fake } = page;
 type Tab = Awaited<ReturnType<typeof render>>;
 
 async function flagged() {
@@ -36,6 +37,22 @@ describe('the before-59½ stage', () => {
     const stage = tab.container.findAll((e) => e.tagName === 'BUTTON' && classOf(e).includes('list-row') && (e.textContent ?? '').includes('59½'))[0];
     await press(stage);
     expect(tab.dialog()!.textContent).toContain('What went into your Roth isn’t given, so none of it counts as reachable before 59½.');
+    await tab.unmount();
+  }, 30_000);
+});
+
+describe('Progress, on a plan a year’s tax moves', () => {
+  test('says how far the saved plan’s line sits above Your path', async () => {
+    const home = { id: 'home', label: 'Home', kind: 'one-off', from: { anchor: { at: 'age', age: 45 }, offset: 0 }, until: null, once: 200_000, yearly: null, replaces: null, every: null, times: null, inflationAdjusted: true, owner: null, beforeTax: false };
+    const plan = { ...PLAN, items: [home] } as typeof PLAN;
+    const saved = { version: 1, plan: { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, savings: 30_000, assets: 300_000 }, savings: 30_000, currency: 'USD', inflation: 0.03, day: '2024-01-01', savedAt: '2024-01-01T12:00:00.000Z', rev: 'r1' };
+    answers['GET /api/saved-plan'] = () => Response.json({ saved, problem: null });
+    const k = { account_id: 'k', name: '401(k)', type: 'investment', subtype: '401k', balance: 300_000, currency: 'USD' };
+    const institutions = [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [k] }];
+    const tab = await detailed(plan, { institutions, planInWalk: true });
+    await pick(tab.container, 'Your path');
+    const progress = tab.container.findAll((e) => e.getAttribute('aria-labelledby') === 'plan-progress-title')[0];
+    expect(progress.textContent).toMatch(/Your saved plan’s line takes no tax out before you stop, so from 45 it runs \$[\d,]+ above Your path, until you save it again\./);
     await tab.unmount();
   }, 30_000);
 });

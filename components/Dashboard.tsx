@@ -78,6 +78,7 @@ import { REMOVED_NAME } from '@/lib/shared-expenses/model';
 import Insights, { budgetAlerts, paymentAlerts, spendingNotes, type IdleCashAccount, type PaymentAccount } from './Insights';
 import NeedsAttention, { AdminAttention, NEEDS_ATTENTION_TITLE } from './NeedsAttention';
 import { attentionItems, type Go } from './attention';
+import type { FigureNote } from './plan-figure-notes';
 import { resetsMonth, useViewMonth } from './view-month-state';
 import ConnectionDetails from './ConnectionDetails';
 import { ALERT, CAUTION, ConnectionStatus, LevelWord, connectionSeverity, levelIcon, statusBadge, type ConnectionPlace } from './ConnectionStatus';
@@ -2214,6 +2215,9 @@ export default function Dashboard({
   );
   const budgetCarries = budgetMonth.view?.month === thisMonth ? budgetMonth.view.carries : null;
   const reviewOn = !!review.view?.on;
+  // What a detailed plan still needs said: the FI line works it out, once it has loaded.
+  const [planNotes, setPlanNotes] = useState<readonly FigureNote[]>([]);
+  const onPlanNotes = useCallback((notes: readonly FigureNote[]) => setPlanNotes((was) => (was.length === 0 && notes.length === 0 ? was : notes)), []);
   const attention = useMemo(() => {
     if (!homeShown) return null;
     const now = new Date();
@@ -2234,13 +2238,14 @@ export default function Dashboard({
       restore: restoreHold,
       unread: { health: healthUnavailable, connectors: !!connectors.error },
       linkOffer,
+      plan: planNotes,
       now,
     });
     const notes = budgetRows.alerts.length > 0 ? spendingNotes({ txns, fx: txnFx, withoutTransactions: txnWithout, incomplete: txnIncomplete, stopped: stoppedTxns }, now) : { leftOut: null, missing: [] };
     return { items, notes };
     // `amountsHidden` isn't read inside: it changes what formatMoney writes there.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [homeShown, txns, txnFx, budgets, categories.taxonomy, budgetCarries, cardStatus, sortedInstitutions, allHiddenInstitutions, institutions, cardlessConnectors, connectors.data, reviewOn, paymentAccounts, offer, base, currencyProblem, offerHidden, restoreHold, healthUnavailable, connectors.error, linkOffer, txnWithout, txnIncomplete, stoppedTxns, amountsHidden]);
+  }, [homeShown, txns, txnFx, budgets, categories.taxonomy, budgetCarries, cardStatus, sortedInstitutions, allHiddenInstitutions, institutions, cardlessConnectors, connectors.data, reviewOn, paymentAccounts, offer, base, currencyProblem, offerHidden, restoreHold, healthUnavailable, connectors.error, linkOffer, planNotes, txnWithout, txnIncomplete, stoppedTxns, amountsHidden]);
 
   // Where a Needs attention row goes, focused once it is on screen: a tab's
   // content can come a render later.
@@ -2263,11 +2268,20 @@ export default function Dashboard({
   // no render here: look again when one arrives.
   useEffect(() => (focusTarget ? onPartShown(() => setFocusTarget((t) => t && { ...t })) : undefined), [focusTarget]);
   const resetViewMonth = viewMonth.reset;
+  const openPlan = useCallback(() => {
+    window.scrollTo(0, 0);
+    setPlanSegment('path');
+    setPlanLanding(Date.now());
+    setTab('plan');
+  }, []);
   const goTo = useCallback(
     (go: Go) => {
       const focus = (id: string, t: Tab, s: SettingsView | null) => setFocusTarget({ id, tab: t, settings: s, at: Date.now() });
       if (resetsMonth[go.to]) resetViewMonth();
       switch (go.to) {
+        case 'plan':
+          openPlan();
+          return;
         case 'accounts':
           window.scrollTo(0, 0);
           setTab('accounts');
@@ -2308,7 +2322,7 @@ export default function Dashboard({
           return;
       }
     },
-    [tab, openConnections, openRestore, resetViewMonth]
+    [tab, openConnections, openRestore, openPlan, resetViewMonth]
   );
 
   // What qualifies the Home total, under it (components/TotalCaveats.tsx),
@@ -2529,12 +2543,8 @@ export default function Dashboard({
                         childOut={flags['plan-child-accounts']}
                         planTax={flags['plan-tax']}
                         holdings={planHoldings}
-                        onOpenPlan={() => {
-                          window.scrollTo(0, 0);
-                          setPlanSegment('path');
-                          setPlanLanding(Date.now());
-                          setTab('plan');
-                        }}
+                        onAttention={onPlanNotes}
+                        onOpenPlan={openPlan}
                       />
                     }
                   />

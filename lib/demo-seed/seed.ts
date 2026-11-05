@@ -50,6 +50,8 @@ import { setGoals } from '../goals';
 import { DEFAULT_PLAN, parsePlan } from '../fire/plan';
 import { planOf, type FirePlanV2 } from '../fire/plan-v2';
 import { factsOf, holdsAmounts } from '../fire/copies';
+import { DEFAULT_TAX_CHOICES } from '../fire/tax-choices';
+import { DEFAULT_TAX_FACTS, householdOf } from '../fire/tax-facts';
 import { saveMain, saveTaxFacts } from '../plan-writes';
 import type { Ctx } from '../containers';
 import { customUserConfig, txnCount, type DemoProfile, type SeedInstitution } from './profiles';
@@ -123,7 +125,9 @@ export async function seedDemoAccount(ctx: Ctx, userId: string, profile: DemoPro
 
   const plan = parsePlan({ ...DEFAULT_PLAN, ...profile.plan });
   if ('error' in plan) throw new Error(`The profile's plan is refused: ${plan.error}`);
-  await seedPlan(ctx, { ...planOf(plan.plan), partnerAge: profile.tax?.partnerAge ?? null });
+  const seeded: FirePlanV2 = { ...planOf(plan.plan), partnerAge: profile.tax?.partnerAge ?? null };
+  const first = await seedPlan(ctx, seeded);
+  if (profile.tax?.detail) await seedDetail(ctx, seeded, first.entry.updatedAt, profile.tax.detail);
   for (const a of profile.tax?.accounts ?? []) {
     const account_id = accountIds.get(a.mask);
     if (!account_id) throw new Error(`No account ending ${a.mask} for its tax facts`);
@@ -150,8 +154,21 @@ export async function seedDemoAccount(ctx: Ctx, userId: string, profile: DemoPro
 /** The profile's plan as your plan (lib/plan-writes.ts), in the emptied
  *  account: its entry, then the facts. The sandbox accounts are in USD, so
  *  that is the currency of any amount it types (Sam's income). */
-async function seedPlan(ctx: Ctx, plan: FirePlanV2): Promise<void> {
-  await saveMain(ctx, plan, holdsAmounts(plan) ? 'USD' : null, factsOf(DEFAULT_PLAN), null, { gated: false });
+function seedPlan(ctx: Ctx, plan: FirePlanV2) {
+  return saveMain(ctx, plan, holdsAmounts(plan) ? 'USD' : null, factsOf(DEFAULT_PLAN), null, { gated: false });
+}
+
+/** What working tax out from the accounts reads, said while the plan stays flat, so
+ *  Preview offers it, then shows everything, and a reset brings the offer back. A
+ *  second save: the household needs the facts the first one writes. */
+async function seedDetail(ctx: Ctx, plan: FirePlanV2, basedOn: string, detail: NonNullable<NonNullable<DemoProfile['tax']>['detail']>): Promise<void> {
+  const were = householdOf(DEFAULT_TAX_FACTS);
+  const items = plan.items.map((x) => (x.id === detail.socialSecurity ? { ...x, kind: 'social-security' as const, beforeTax: true } : x));
+  await saveMain(ctx, { ...plan, items }, 'USD', factsOf(plan), basedOn, {
+    tax: { ...DEFAULT_TAX_CHOICES, state: detail.state, health: { ...DEFAULT_TAX_CHOICES.health, beforeMedicare: detail.beforeMedicare } },
+    household: { to: { ...were, filing: detail.filing }, were },
+    gated: false,
+  });
 }
 
 /** Refuses, changing nothing, what emptyAccount would refuse once the banks

@@ -1347,7 +1347,7 @@ export default function PlanTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [detailedOn, shared.taxFacts.paidToday, view.spending.source, paidChoices, flows]);
   const detailChoices = (entry ? (entry.tax ?? yourChoices) : yourChoices) ?? DEFAULT_TAX_CHOICES;
-  const honesty = shown?.detail && !('failed' in shown.detail) ? honestyNotes({ today: detailBuckets, facts: shared.taxFacts, choices: detailChoices, items: shownPlan.items, partner: plan.partnerAge !== null, law: shown.detail.law, unansweredPaid, money }) : [];
+  const honesty = shown?.detail && !('failed' in shown.detail) ? honestyNotes({ today: detailBuckets, choices: detailChoices, items: shownPlan.items, law: shown.detail.law, unansweredPaid, money }) : [];
   const healthRow: (FigureText & { value: string | null }) | null = !detailShown
     ? null
     : {

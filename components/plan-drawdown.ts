@@ -345,11 +345,8 @@ export const namesCoverage = (name: string) => /\b(health|medical|dental)\b/i.te
 
 type NoteArgs = {
   today: Pick<BucketsToday, 'groups' | 'roth'> | null;
-  facts: Pick<TaxFacts, 'filing' | 'dependents'>;
   choices: TaxChoices;
   items: readonly Pick<PlanItem, 'kind' | 'beforeTax' | 'label'>[];
-  /** The partner's age, for who a Roth note is about. */
-  partner: boolean;
   law: { year: number; behind: boolean } | null;
   /** What measured spending holds under a name for health insurance, while nothing
    *  has said whether it is the coverage below. */
@@ -359,11 +356,12 @@ type NoteArgs = {
 
 const counted = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-/** Each gap in what the drawdown rests on (the tax plan's Honesty), in its level: for
- *  Drawdown's notice and the sheet each is about. A flat plan draws none of them. */
-export function honestyNotes(a: NoteArgs): FigureNote[] {
+const adder = (notes: FigureNote[]) => (level: FigureNote['level'], kind: string, text: string) => notes.push({ key: `detail:${kind}`, level, kind, text });
+
+/** What the person hasn't said of their accounts and income. */
+function accountNotes(a: Pick<NoteArgs, 'today' | 'items'>): FigureNote[] {
   const notes: FigureNote[] = [];
-  const add = (level: FigureNote['level'], kind: string, text: string) => notes.push({ key: `detail:${kind}`, level, kind, text });
+  const add = adder(notes);
   const groups = a.today?.groups ?? [];
   const unclassified = groups.find((g) => g.bucket === 'unclassified')?.accounts.length ?? 0;
   if (unclassified > 0) add('caution', 'no tax bucket', `${counted(unclassified, 'account has', 'accounts have')} no tax bucket, counted as tax-deferred. Set ${unclassified === 1 ? 'it' : 'them'} on Invested assets.`);
@@ -378,6 +376,19 @@ export function honestyNotes(a: NoteArgs): FigureNote[] {
   if (afterTax.length > 0) add('caution', 'income after tax', `${words(afterTax.map((x) => x.label))} ${afterTax.length === 1 ? 'is' : 'are'} given after tax, so ${afterTax.length === 1 ? 'it isn’t' : 'they aren’t'} in your ACA income. Give ${afterTax.length === 1 ? 'it' : 'them'} before tax on your Timeline.`);
   const partTime = a.items.filter((x) => x.beforeTax === false && x.kind === 'part-time');
   if (partTime.length > 0) add('caution', 'part-time after tax', `${words(partTime.map((x) => x.label))} ${partTime.length === 1 ? 'is' : 'are'} given after tax, which may hide a year over the ACA limit.`);
+  return notes;
+}
+
+/** The ones Needs attention lists too (the tax plan's Honesty): Home reads only what
+ *  these need, so no plan is worked out for them. */
+const ON_HOME = new Set(['no tax bucket', 'Roth put-in not given', 'partner’s Roth put-in not given', 'income after tax']);
+export const attentionNotes = (a: Pick<NoteArgs, 'today' | 'items'>): FigureNote[] => accountNotes(a).filter((n) => ON_HOME.has(n.kind));
+
+/** Each gap in what the drawdown rests on (the tax plan's Honesty), in its level: for
+ *  Drawdown's notice and the sheet each is about. A flat plan draws none of them. */
+export function honestyNotes(a: NoteArgs): FigureNote[] {
+  const notes = accountNotes(a);
+  const add = adder(notes);
   if (a.choices.state === null) add('caution', 'no household', 'No state given: counted with no state tax and no Medicaid expansion. Say on Household.');
   if (a.choices.health.beforeMedicare === null) add('caution', 'health not set', 'Health coverage isn’t set: no cost before 65, then Medicare Part B only. Measured spending leaves out coverage through work.');
   if (a.unansweredPaid) add('caution', 'coverage counted twice', `Your spending has ${a.money(a.unansweredPaid.amount)} a year in ${a.unansweredPaid.name}. If that’s the coverage below, say so on Health coverage, so it isn’t counted twice.`);

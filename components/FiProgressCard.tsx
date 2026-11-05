@@ -44,7 +44,7 @@
 // shown in the accounts' currency, said to be unconfirmed: the Plan tab
 // records it, or asks.
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import type { Txn } from './MonthBreakdown';
 import { leftOutOf } from '@/lib/fire/child-accounts';
 import { planAccountsOf, planId, usePlanInputs, useSharedPlanInputs, workplacePlansOf, type PlanInputs } from './plan-inputs';
@@ -54,7 +54,8 @@ import { projectFrom, type PlanCore } from '@/lib/fire/plan';
 import { basePlanOf, isStoredPlan, type StoredPlan } from '@/lib/fire/plan-v2';
 import { drawdownMovesFi, planFigures } from '@/lib/fire/plan-figures';
 import type { BasisHolding } from '@/lib/fire/buckets-today';
-import { useDetailOnHome } from './plan-detailed-home';
+import { detailAttention, useDetailOnHome, useSettingsRead } from './plan-detailed-home';
+import type { FigureNote } from './plan-figure-notes';
 import { planPath } from '@/lib/fire/path';
 import { shortText } from './plan-scenario-text';
 import { projectionShort } from '@/lib/fire/fi';
@@ -96,6 +97,9 @@ export type FiProgressProps = {
   /** Every position, for what a detailed plan's buckets hold: read only for a plan
    *  the drawdown can move. */
   holdings?: readonly BasisHolding[];
+  /** What a detailed plan still needs said, for Needs attention above: worked out here,
+   *  since Dashboard can't hold the plan's inputs without loading them with Home. */
+  onAttention?: (notes: readonly FigureNote[]) => void;
 };
 
 /** What /api/plan-inputs answered of the plan: the saved plan, or null for
@@ -115,8 +119,9 @@ function loadedFrom(answered: PlanInputsCopy['plan']): Loaded {
 
 const NO_HOLDINGS: readonly BasisHolding[] = [];
 const NO_IDS: readonly string[] = [];
+const NO_NOTES: readonly FigureNote[] = [];
 
-export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan, planInputs, planInWalk = false, childOut = false, planTax = false, holdings = NO_HOLDINGS }: FiProgressProps) {
+export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan, planInputs, planInWalk = false, childOut = false, planTax = false, holdings = NO_HOLDINGS, onAttention }: FiProgressProps) {
   const own = useMemo(() => planInputs ?? createPlanInputsStore(), [planInputs]);
   const shared = useSharedPlanInputs(own, institutions);
   const leaveOut = useMemo(() => leftOutOf(childOut, shared.taxFacts.countAnyway), [childOut, shared.taxFacts.countAnyway]);
@@ -150,7 +155,9 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
   const measured = fiFigures(plan, inputs, currency);
   // A detailed plan the drawdown can move works its answer out as the Plan does; any
   // other's is its flat figures, so Home loads none of it.
-  const moved = detailedOn && measured.currency === 'USD' && !('refused' in flat) && drawdownMovesFi(plan, flat.walk, flat.view.savings.value ?? 0, flat.view.stopAge);
+  const worked = detailedOn && measured.currency === 'USD' && plan.age !== null;
+  const moved = worked && !('refused' in flat) && drawdownMovesFi(plan, flat.walk, flat.view.savings.value ?? 0, flat.view.stopAge);
+  const settings = useSettingsRead(worked);
   const deep = useDetailOnHome(moved, {
     plan,
     measured: measuredInputs(inputs),
@@ -160,6 +167,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
     holdings,
     facts: shared.taxFacts,
     choices: shared.choices,
+    settings,
     store: own,
     rows: shared.copy.rows,
     ids: moved ? planAccountsOf(institutions).map(planId) : NO_IDS,
@@ -167,6 +175,18 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
     calendarYear: Number(inputs.today.slice(0, 4)),
   });
   const shown = deep?.figures ?? flat;
+  // Null while they aren't known, so coming back to Home keeps the rows it had.
+  const notes = useMemo(() => {
+    if (!shared.factsKnown) return null;
+    if (!worked) return NO_NOTES;
+    return settings && detailAttention({ assets: inputs.assets, holdings, facts: shared.taxFacts, settings: settings.value, plan });
+  }, [shared.factsKnown, worked, settings, inputs.assets, holdings, shared.taxFacts, plan]);
+  const notesKey = notes && JSON.stringify(notes);
+  useEffect(() => {
+    if (notes) onAttention?.(notes);
+    // notesKey stands for notes, a new list whenever an input is.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notesKey, onAttention]);
   const planned = useMemo(() => {
     if ('refused' in shown) return null;
     const path = planPath(shown);
