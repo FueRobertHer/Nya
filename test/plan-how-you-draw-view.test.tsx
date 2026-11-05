@@ -116,6 +116,11 @@ describe('How you draw', () => {
     await press(button(tab.dialog(), 'Save'));
     await settle(100);
     expect(tab.dialog()!.textContent).toContain('Until age must be from 18 to 100.');
+    // An age you've passed is in range but can't run.
+    await fill(tab.dialog()!, 'Until age', '30');
+    await press(button(tab.dialog(), 'Save'));
+    await settle(100);
+    expect(tab.dialog()!.textContent).toContain('Until age must be 40 or later: you’re 40 now.');
     await fill(tab.dialog()!, 'Until age', '60');
     await press(button(tab.dialog(), 'Save'));
     await settle(200);
@@ -215,6 +220,7 @@ describe('Your figures', () => {
     const sheet = tab.dialog()!;
     expect(sheet.getAttribute('aria-label')).toBe('Tax after you stop');
     expect(sheet.textContent).toContain('By stage');
+    expect(sheet.textContent).toMatch(/· before 59½[\d.]+%/);
     expect(sheet.textContent).toContain('In your FI number');
     expect(sheet.textContent).toContain('Health coverage, on average');
     expect(sheet.textContent).toContain('At a 4% withdrawal rate');
