@@ -552,10 +552,11 @@ describe('editing and deleting a transaction', () => {
     expect(await planFactsStore.get(ctx)).toEqual(factsAbout('acct_plaid'));
   });
 
-  test('facts this version doesn’t recognise stop the delete, with the account still there to delete again', async () => {
+  test('facts this version doesn’t recognise stop the delete, saying why, with the account still there to delete again', async () => {
     const newer = await encrypt(ctx, '{"version":3}');
     await fake.set(ctxKey('plan-facts'), newer);
-    expect((await quietly(() => call(manualAccounts.DELETE, 'DELETE', { account_id: WALLET.account_id }))).status).toBe(500);
+    const stopped = await quietly(() => call(manualAccounts.DELETE, 'DELETE', { account_id: WALLET.account_id }));
+    expect([stopped.status, stopped.body.unreadable]).toEqual([409, true]);
     expect(await getManualAccount(ctx, WALLET.account_id)).not.toBeNull();
     expect(await fake.get<string>(ctxKey('plan-facts'))).toBe(newer);
   });

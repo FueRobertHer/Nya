@@ -556,7 +556,7 @@ describe('the privacy page', () => {
 
   test('names the tax facts a plan keeps, and who never sees them', () => {
     expect(privacy()).toContain(
-      'What you tell your plan about tax Whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count: until you change them, or delete your account. What you said about an account goes once you Forget it or remove it, and stays when you only disconnect its bank, in case you connect it again. Encrypted, and in your download. None of these are shown to anyone you share with, sent to a program with an API token, or put in an email. The buckets you choose for your accounts are a separate setting, and what you share of your holdings is split by them.'
+      'What you tell your plan about tax Whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count: until you change them, or delete your account. What you said about an account goes once you Forget it or remove it. Disconnecting its bank alone keeps it. Encrypted, and in your download. None of these are shown to anyone you share with, sent to a program with an API token, or put in an email. The buckets you choose for your accounts are a separate setting, and what you share of your holdings is split by them.'
     );
     // The same words as Your data's list, and the list says nobody else sees them.
     const entry = containerEntry('plan-facts')!;

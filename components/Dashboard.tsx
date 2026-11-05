@@ -3133,7 +3133,7 @@ export default function Dashboard({
           <>
             <div className="stack">
               <p className="panel-note">
-                This account&apos;s balance history, and any transactions entered on it, are <strong>not recoverable</strong>. Re-adding it creates a new account with an empty
+                This account&apos;s balance history, any transactions entered on it and what you told your plan about it are <strong>not recoverable</strong>. Re-adding it creates a new account with an empty
                 history.
               </p>
               {manualError && (

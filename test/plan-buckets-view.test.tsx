@@ -562,7 +562,7 @@ describe('Roth contributions', () => {
   describe('held with no Roth account counted', () => {
     const NO_ROTH: AssetInstitution[] = [{ ...INSTITUTIONS[0], accounts: INSTITUTIONS[0].accounts.filter((a) => a.account_id !== 'r') }];
     const HELD = { ...DEFAULT_TAX_FACTS, rothContributions: [{ owner: 'you' as const, amount: 45_000 }] };
-    const NOTE = 'No Roth account is counted, so your plan doesn’t use this for now. Open it to change or clear it.';
+    const NOTE = 'Your plan only uses what’s here once a Roth account is counted.';
 
     test('its own section under the buckets says so, with no Roth bucket drawn', async () => {
       serve({ tax: HELD });

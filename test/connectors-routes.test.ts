@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { FakeSimplefin, fakeAccount, type FakeTxn } from './simplefin-fake';
 import { factsAbout } from './facts-about';
 
@@ -46,6 +46,7 @@ const manualTxns = await import('@/app/api/manual-transactions/route');
 const recategorize = await import('@/app/api/recategorize/route');
 const netWorth = await import('@/app/api/net-worth/route');
 const { planFactsStore } = await import('@/lib/plan-copies');
+const { encrypt } = await import('@/lib/crypto');
 
 const ctx = TEST_CTX;
 const DAY = 86_400_000;
@@ -211,7 +212,21 @@ describe('connecting through the routes', () => {
       await planFactsStore.set(ctx, factsAbout(checking, visa));
       const stop = await call(accountsRoute.PUT, 'PUT', { connection_id: id, stop: { account_ids: [visa], keep: true } });
       expect(stop.status).toBe(409);
+      // The route refuses first: the function behind it, on its own, too.
+      const { releaseAccounts, ConnectorRefused } = await import('@/lib/connectors/manage');
+      await expect(releaseAccounts(ctx, [visa], true)).rejects.toBeInstanceOf(ConnectorRefused);
       expect(await planFactsStore.get(ctx)).toEqual(factsAbout(checking, visa));
+    });
+
+    test('facts this version doesn’t recognise stop a removal, saying why, with the account still tracked', async () => {
+      const id = await connectAndTrack();
+      const { visa } = await idsOf();
+      const newer = await encrypt(ctx, '{"version":3}');
+      await fake.set(ctxKey('plan-facts'), newer);
+      const stop = await call(accountsRoute.PUT, 'PUT', { connection_id: id, stop: { account_ids: [visa], keep: false } });
+      expect([stop.status, stop.body.unreadable]).toEqual([409, true]);
+      expect(await connectorAccountsStore.get(ctx, visa)).not.toBeNull();
+      expect(await fake.get<string>(ctxKey('plan-facts'))).toBe(newer);
     });
 
     test('the whole connection disconnected, removing them: all its accounts’ go, and another’s stays', async () => {

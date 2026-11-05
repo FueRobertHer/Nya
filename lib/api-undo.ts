@@ -248,7 +248,7 @@ async function checkUntouched(ctx: Ctx, c: Change, cur: ManualAccount): Promise<
   const allocation = await allocationSettingsStore.get(ctx);
   if (allocation && [...allocation.buckets, ...allocation.accounts].some((s) => s.account_id === id)) refuse(NOT_REMOVED('A tax bucket or split on the Plan tab is set for the account'));
   const facts = await planFactsStore.get(ctx);
-  if (facts?.version === 2 && withoutAccounts(facts.tax, new Set([id])) !== facts.tax) refuse(NOT_REMOVED('What you told the Plan tab about the account for tax is still set'));
+  if (facts?.version === 2 && withoutAccounts(facts.tax, new Set([id])) !== facts.tax) refuse(NOT_REMOVED('What you told the Plan tab about the account is still set'));
   if (await ownerSharesAccount(ctx, id)) refuse(NOT_REMOVED('The account is shared with someone you’re connected with'));
 
   // Every row: made by this token, as its last change of it left it, row and

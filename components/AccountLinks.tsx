@@ -525,7 +525,7 @@ export function AccountLinksView({
                           const sure =
                             typeof window === 'undefined' ||
                             window.confirm(
-                              `Forget ${name} for good? Its balance history, name, saved categories and the transactions imported into it from files are deleted and can't be restored. Rows a later import into another account found already here stay with that import.`
+                              `Forget ${name} for good? Its balance history, name, saved categories, what you told your plan about it and the transactions imported into it from files are deleted and can't be restored. Rows a later import into another account found already here stay with that import.`
                             );
                           if (sure) onAct('POST', { action: 'forget', old: e.id });
                         }}

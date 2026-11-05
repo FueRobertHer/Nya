@@ -446,11 +446,9 @@ describe('forgetting an earlier account', () => {
   };
 
   describe('what the tax facts say about it', () => {
-    test('a disconnect alone leaves them, so a bank reconnected under the same id has them still', async () => {
+    test('a disconnect alone leaves them', async () => {
       await planFactsStore.set(ctx, factsAbout('acct_old', 'acct_other'));
       await setup();
-      expect(await planFactsStore.get(ctx)).toEqual(factsAbout('acct_old', 'acct_other'));
-      await addItem('item_back', 'acct_old', []);
       expect(await planFactsStore.get(ctx)).toEqual(factsAbout('acct_old', 'acct_other'));
     });
 

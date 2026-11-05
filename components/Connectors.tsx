@@ -430,7 +430,7 @@ export function ChooseView({
             <input type="radio" name="connector-keep" checked={!keep} onChange={() => onKeep(false)} />
             <span>
               <span className="download-format-name">Delete {stopping === 1 ? 'it' : 'them'}</span>
-              <span className="download-format-note">{stopping === 1 ? 'It goes, with its' : 'They go, with their'} transactions. Past net-worth totals keep what {stopping === 1 ? 'it' : 'they'} held.</span>
+              <span className="download-format-note">{stopping === 1 ? 'It goes, with its transactions and what you told your plan about it' : 'They go, with their transactions and what you told your plan about them'}. Past net-worth totals keep what {stopping === 1 ? 'it' : 'they'} held.</span>
             </span>
           </label>
         </fieldset>
@@ -1072,7 +1072,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
               <input type="radio" name="connector-disconnect" checked={!keep} onChange={() => setKeep(false)} />
               <span>
                 <span className="download-format-name">Delete them</span>
-                <span className="download-format-note">They go, with their transactions. Past net-worth totals keep what they held, as for any bank you disconnect.</span>
+                <span className="download-format-note">They go, with their transactions and what you told your plan about them. Past net-worth totals keep what they held, as for any bank you disconnect.</span>
               </span>
             </label>
           </fieldset>
