@@ -220,7 +220,9 @@ function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNu
     if (fiX2 - PAD_X >= nameW && (!after || keepsTo(lines, x, fiX2 - nameW, fiX2, fiNumber, under))) fiName = { x: fiX2, y: under ? fiY + 14 : fiY - 5, rule: false };
     else fiName = { x: PAD_X, y: fiY - RULE_LABEL_GAP - RULE_LABEL_HEIGHT >= 0 ? fiY - RULE_LABEL_GAP : fiY + RULE_LABEL_GAP + RULE_LABEL_HEIGHT, rule: true };
   }
-  return { x, y, baseY, line, area, marker, labels, ticks: tickXs, fiY, fiX2, fiName, stopX: stopAge > first ? x(stopAge) : null, recordedLine, plannedLine, todayX: recorded ? x(today) : null };
+  // A mark whose age had no room is named under the chart, so none goes unsaid.
+  const unsaid = after ? tickXs.some((t) => !labels.some((l) => l.label === t.short)) : false;
+  return { x, y, baseY, line, area, marker, labels, unsaid, ticks: tickXs, fiY, fiX2, fiName, stopX: stopAge > first ? x(stopAge) : null, recordedLine, plannedLine, todayX: recorded ? x(today) : null };
 }
 
 /** What the chart shows, in words, for a screen reader: built when drawn,
@@ -265,6 +267,7 @@ export default function PlanPathChart(props: PathChartProps) {
   const H = Math.round(W * ASPECT);
   const ticks = props.ticks ?? null;
   const geo = useMemo(() => geometry({ points, today, stopAge, fiNumber, fiAge, recorded, after, ticks }, W, H), [points, today, stopAge, fiNumber, fiAge, recorded, after, ticks, W, H]);
+  const marksNamed = after && ticks ? ticks.filter((t) => t.age > points[0].age && t.age < after.endAge && t.age !== stopAge).map((t) => t.label) : [];
   const stopped = points[points.length - 1].age < stopAge;
   const rows = after ? [...points, ...after.points.slice(1)] : points;
   const switchable = onRange !== undefined && points.length >= 2 && wholeShown(points, props.after, 'whole');
@@ -311,6 +314,7 @@ export default function PlanPathChart(props: PathChartProps) {
           </text>
         ))}
       </svg>
+      {geo.unsaid && marksNamed.length > 0 && <p className="helper">{`Marked: ${marksNamed.join(', ')}.`}</p>}
       {switchable && (
         <Segmented
           compact

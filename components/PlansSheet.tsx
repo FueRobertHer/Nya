@@ -93,6 +93,10 @@ export type SheetPlan = {
   /** The plan as it runs, the facts every plan shares in its fields. */
   plan: FirePlanV2;
   outcome: PlanOutcome;
+  /** What it says beside the plan that differs from your plan's, in words. */
+  moreParts?: readonly string[];
+  /** Its tax is worked out from your accounts, so a typed rate isn't a difference. */
+  taxWorked?: boolean;
 };
 
 type Answer = SimResult | 'pending' | { error: string };
@@ -337,7 +341,7 @@ export function PlansSheet({
   const main = plans.find((p) => p.isMain) ?? null;
   // How each copy differs from your plan, in words, written here with the
   // sheet's own money, so hidden amounts stay hidden.
-  const partsOf = (p: SheetPlan): string[] => (p.isMain || !main ? [] : copyDiffParts(main.plan, p.plan, money));
+  const partsOf = (p: SheetPlan): string[] => (p.isMain || !main ? [] : [...copyDiffParts(main.plan, p.plan, money, { taxWorked: p.taxWorked ?? false }), ...(p.moreParts ?? [])]);
   const mainWhen = main ? fiWhen(main.outcome.kind === 'figures' ? main.outcome.figures : null) : null;
   // A row that says a date, or a copy's against yours, waits for what it says.
   const mainWorking = main?.outcome.kind === 'figures' && main.outcome.working === true;

@@ -24,18 +24,28 @@
 //     said to start with money it wouldn't have (startsWith.more);
 //   - in the detailed tax model (`detailed`, made by lib/fire/plan-detail.ts, so
 //     this file loads none of it for a plan in the flat one), the tax on what a
-//     year before the stop has to sell goes in the walk, and `detail` holds the
-//     years after the stop. Until T4 the FI number stays flat.
+//     year before the stop has to sell goes in the walk, `detail` holds the years
+//     after the stop, and `shares` the tax and health in the FI number.
+//
+// THE FI NUMBER'S TAX AND HEALTH come from a drawdown of its own, from the FI number
+// at the stop, whatever the plan starts from: the shares of a plan that doesn't last
+// would overstate what it needs, and saving more would lower its target. Each round
+// works the number out from the last round's pair, and draws from it, until the pair
+// repeats. It iterates on the published pair (tax to a tenth of a percent, health to
+// the dollar), so the number on the page reproduces the pair on the page. It takes a
+// handful of rounds; one that goes round and round takes the higher of its last two.
+// Candidates in a search each settle their own.
 //
 // Arithmetic only: no engine run, no market history.
 
 import { projectBalance, projectionShort } from './fi';
 import { compileItems, conditionalFlows, type CompileAt, type CompiledItems, type Count, type ItemAges, type ItemNote } from './compile';
-import { hasWalk, lastChange, savingsIn, shortBy, walkBalanceAt, walkToFi, type CompiledEvents, type Shortfall, type WalkChanges } from './events';
+import { hasWalk, lastChange, savingsIn, walkBalanceAt, walkToFi, type CompiledEvents, type Shortfall, type WalkChanges } from './events';
 import { MONEY_KINDS } from './items';
-import { enginePlan, fiView, formulasTake, planYears, projectFrom, startAge, unmeasuredOf, type EnginePlan, type FiView, type Measured, type Missing, type PlanCore, type StartChoice } from './plan';
+import { enginePlan, fiView, formulasTake, planYears, projectFrom, startAge, unmeasuredOf, type EnginePlan, type FiView, type Measured, type Missing, type PlanCore, type StartChoice, type WorkedOut } from './plan';
 import { planOf, type FirePlanV2 } from './plan-v2';
-import type { DetailWork, PlanDetail } from './plan-detail';
+import type { Drawdown } from './drawdown';
+import type { DetailRun, DetailWork, PlanDetail } from './plan-detail';
 import type { SavedItems, SavedPlan } from './saved-plan';
 import { planPath } from './path';
 import { anchoredOn, resolveItems, type PerRun, type Resolution, type SteadyWorld } from './steady';
@@ -53,6 +63,25 @@ export type StartsWith = {
   short: Shortfall | null;
   /** It starts with more than the walk says it would have then. */
   more: boolean;
+};
+
+/** The tax and health in a detailed plan's FI number, and the run they came from. */
+export type FiShares = {
+  /** Tax's share of what the years cost, to a tenth of a percent. */
+  t: number;
+  /** The level yearly health cost, to the dollar. */
+  h: number;
+  /** The spending the number rests on, with lasting changes in effect at the stop,
+   *  and what measured spending holds of coverage, which comes off it. */
+  spending: number;
+  paid: number;
+  /** False where the rounds went round and round; `gap`, how far apart the last two numbers were. */
+  settled: boolean;
+  gap: number;
+  /** The drawdown from the FI number, at this pair. */
+  drawn: Drawdown;
+  /** It had to take today's shares. */
+  noMix: boolean;
 };
 
 export type PlanFigures = {
@@ -94,6 +123,9 @@ export type PlanFigures = {
   /** The years after the stop in the detailed tax model, or why they couldn't be
    *  worked out, when the flat model carries the plan. Null in the flat model. */
   detail: PlanDetail | { failed: string } | null;
+  /** The tax and health in the FI number. Null in the flat model, and where they
+   *  can't be worked out, when the flat model's number carries the plan. */
+  shares: FiShares | null;
 };
 
 /** Lasting changes take spending in retirement below zero: not worked out. */
@@ -104,8 +136,8 @@ export type FiguresOptions = {
   count: Count;
   /** For a plan in the detailed tax model. */
   detailed?: DetailWork | null;
-  /** The flat answer's resolution, when the drawdown can't move it
-   *  (drawdownMovesFi), so nothing is searched for twice. */
+  /** The search's answer, from the job (lib/fire/search-job.ts), so nothing is
+   *  searched for twice. */
   resolved?: Resolution;
 };
 
@@ -139,10 +171,14 @@ function upTo(w: WalkChanges, last: number): WalkChanges {
 /** The figures with the items at `ages` and the stop at `stop`; `opts`, for
  *  a search's candidate, leaves items out of the walk (only: what they change
  *  in retirement still sets the FI number it is tested against) and stops
- *  counting its changes after an age. */
-function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], stop: number | null, count: Count, opts?: { through: number | null; skip: ReadonlySet<number> }, perRun?: PerRun, detailed?: DetailWork | null): Built | FiguresRefused {
-  const display = fiView(plan, measured, stop);
-  const at = { age: plan.age, startAge: startAge(plan, stop), stop, years: planYears(plan, stop), taxRate: plan.taxRate };
+ *  counting its changes after an age. `shares`, the tax and health in the FI
+ *  number, also count what income before the stop keeps. */
+function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], stop: number | null, count: Count, opts?: { through: number | null; skip: ReadonlySet<number> }, perRun?: PerRun, detailed?: DetailWork | null, shares?: { t: number; h: number } | null): Built | FiguresRefused {
+  const flat = fiView(plan, measured, stop);
+  // From the plan's own view, since lasting changes below make spending look typed.
+  const worked: WorkedOut | undefined = shares && detailed ? { t: shares.t, h: shares.h, paid: flat.spending.source === 'measured' ? detailed.paidToday : 0 } : undefined;
+  const display = worked ? fiView(plan, measured, stop, worked) : flat;
+  const at = { age: plan.age, startAge: startAge(plan, stop), stop, years: planYears(plan, stop), taxRate: worked ? worked.t : plan.taxRate };
   const compiled = compileItems(plan.items, ages, at, count);
   const changes = opts && opts.skip.size > 0 ? compileItems(plan.items, ages.map((x, i) => (opts.skip.has(i) ? null : x)), at, count).walk : compiled.walk;
   let walk = opts && opts.through !== null && plan.age !== null ? upTo(changes, opts.through - plan.age) : changes;
@@ -155,7 +191,15 @@ function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], 
     if (spending < 0) return { refused: 'below-zero', spending: display.spending.value, lasting };
     retirement = { spending, lasting };
     runPlan = { ...plan, spending };
-    core = fiView(runPlan, measured, stop);
+    core = fiView(runPlan, measured, stop, worked);
+  }
+  // The FI number's lasting changes are those at the stop, as its own run has them;
+  // a start from today reads the simulation's at today.
+  const fiStart = plan.age === null ? null : Math.max(stop ?? plan.age, plan.age);
+  if (worked && display.spending.value !== null && fiStart !== null && fiStart !== at.startAge) {
+    const atFi = compileItems(plan.items, ages, { ...at, startAge: fiStart, stop: fiStart, years: planYears({ ...plan, start: 'fi-number' }, stop) }, count).lasting.reduce((s, x) => s + x.amount, 0);
+    const number = fiView(atFi === 0 ? plan : { ...plan, spending: Math.max(0, display.spending.value + atFi) }, measured, stop, worked);
+    core = { ...number, spending: core.spending };
   }
   // The balance at the stop is the walk's whenever it changes, with an FI
   // number or without one (the path, lib/fire/path.ts, is the same walk).
@@ -202,7 +246,7 @@ function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], 
   return { view, core, engine, compiled, fixed, at, walk, retirement, short, walked, walkedSavings };
 }
 
-function assemble(plan: FirePlanV2, b: Built, resolution: Resolution): PlanFigures {
+function assemble(plan: FirePlanV2, b: Built, resolution: Resolution, shares: FiShares | null): PlanFigures {
   const { compiled } = b;
   const counts = hasWalk(compiled.walk) || compiled.lasting.length > 0 || compiled.later.length > 0;
   const events: CompiledEvents | null = counts ? { walk: compiled.walk, lasting: compiled.lasting, later: compiled.later, sim: compiled.sim } : null;
@@ -223,28 +267,75 @@ function assemble(plan: FirePlanV2, b: Built, resolution: Resolution): PlanFigur
     walk: b.walk,
     startsWith: startsWith(plan, b.core, b.engine, b.walk),
     detail: null,
+    shares,
   };
 }
 
+/** The most rounds of the FI number's run. */
+const MAX_FI_ROUNDS = 8;
+
+/** The pair as the page says it. */
+const published = (d: Pick<Drawdown, 't' | 'h'>) => ({ t: Math.round(d.t * 1000) / 1000, h: Math.round(d.h) });
+
+/** The tax and health in the FI number at these ages and this stop (see the header). */
+function settleShares(plan: FirePlanV2, measured: Measured, ages: ItemAges[], stop: number | null, count: Count, detailed: DetailWork): FiShares | null {
+  type Round = { pair: { t: number; h: number }; number: number; ran: DetailRun };
+  const sharesOf = ({ pair, ran }: Round, settled: boolean, gap: number): FiShares => ({ ...pair, spending: ran.spending, paid: ran.paid, settled, gap, drawn: ran.drawn, noMix: ran.noMix });
+  const same = (a: Round['pair'], b: Round['pair']) => a.t === b.t && a.h === b.h;
+  let pair = { t: 0, h: 0 };
+  let before: Round | null = null;
+  let last: Round | null = null;
+  for (let n = 0; n < MAX_FI_ROUNDS; n++) {
+    const b = build(plan, measured, ages, stop, count, undefined, undefined, detailed, pair);
+    if ('refused' in b || b.core.workedOut === null) return null;
+    const ran = detailed.fiRun(assemble(plan, b, { ages, why: [], stop, fi: null, searched: 'none' }, null), b.core.workedOut);
+    if (ran === null || 'failed' in ran) return null;
+    const round: Round = { pair, number: b.core.workedOut, ran };
+    const next = published(ran.drawn);
+    if (same(next, pair)) return sharesOf(round, true, 0);
+    before = last;
+    last = round;
+    if (before !== null && same(next, before.pair)) break;
+    pair = next;
+  }
+  if (last === null) return null;
+  const higher = before !== null && before.number > last.number ? before : last;
+  return sharesOf(higher, false, before === null ? 0 : Math.abs(before.number - last.number));
+}
+
 export function planFigures(plan: FirePlanV2, measured: Measured, { count, detailed, resolved }: FiguresOptions): PlanFigures | FiguresRefused {
+  const kept = new Map<string, FiShares | null>();
+  /** Per candidate: a search asks of the same ages and stop more than once. */
+  const sharesFor = (ages: ItemAges[], stop: number | null): FiShares | null => {
+    if (!detailed) return null;
+    const key = JSON.stringify([ages, stop]);
+    let made = kept.get(key);
+    if (made === undefined) {
+      made = settleShares(plan, measured, ages, stop, count, detailed);
+      kept.set(key, made);
+    }
+    return made;
+  };
   const world: SteadyWorld = {
     path(ages, stop) {
-      const b = build(plan, measured, ages, stop, count, undefined, undefined, detailed);
+      const shares = sharesFor(ages, stop);
+      const b = build(plan, measured, ages, stop, count, undefined, undefined, detailed, shares);
       if ('refused' in b) return null;
-      const f = assemble(plan, b, { ages, why: [], stop, fi: null, searched: 'none' });
+      const f = assemble(plan, b, { ages, why: [], stop, fi: null, searched: 'none' }, shares);
       const p = planPath(detailed ? { ...f, detail: detailed.forPath(f) } : f);
       if (p === null) return null;
       return [...p.points.map((x) => x.balance), ...(p.after?.points.slice(1).map((x) => x.balance) ?? [])];
     },
     fiAge(ages, stop, opts) {
-      const b = build(plan, measured, ages, stop, count, opts, undefined, detailed);
+      const b = build(plan, measured, ages, stop, count, opts, undefined, detailed, sharesFor(ages, stop));
       return 'refused' in b ? null : b.view.fiAge;
     },
   };
   const resolution = resolved ?? resolveItems(plan, world);
-  const b = build(plan, measured, resolution.ages, resolution.stop, count, undefined, resolution.perRun, detailed);
+  const shares = sharesFor(resolution.ages, resolution.stop);
+  const b = build(plan, measured, resolution.ages, resolution.stop, count, undefined, resolution.perRun, detailed, shares);
   if ('refused' in b) return b;
-  const assembled = assemble(plan, b, resolution);
+  const assembled = assemble(plan, b, resolution, shares);
   const f = detailed ? { ...assembled, ...detailed.figures(assembled, b.fixed, b.at) } : assembled;
   if (resolution.searched === 'none' || plan.age === null) return f;
   // The search's answer is the date: the age found, or none by the end. With
@@ -257,23 +348,6 @@ export function planFigures(plan: FirePlanV2, measured: Measured, { count, detai
     view: { ...f.view, fiAge: found, yearsToFi: found === null ? Infinity : found - plan.age },
     short: found === null ? f.short : null,
   };
-}
-
-/**
- * Whether working out the drawdown can move a plan's answer in this release: a
- * balance milestone, which fires on a path whose years after the stop are the
- * drawdown's, or a year before the stop that can't pay for itself, whose tax goes
- * in the walk. Anywhere else a detailed plan's date, walk and items are its flat
- * ones (held on generated plans, test/plan-detail.test.ts), so nothing need be
- * searched for again or waited on. T4 brings `t` and `h` into the FI number and
- * drops this. `walk`, `savings` and `stop` are the flat answer's: a plan's own
- * `savings` is null when measured, and its stop is null under "stop when I reach FI".
- */
-export function drawdownMovesFi(plan: Pick<FirePlanV2, 'age' | 'items'>, walk: WalkChanges, savings: number, stop: number | null): boolean {
-  if (anchoredOn(plan, 'balance')) return true;
-  if (plan.age === null || stop === null) return false;
-  for (let k = 0; k < stop - plan.age; k++) if (shortBy(walk, savings, k) > 0) return true;
-  return false;
 }
 
 const savedKept = new Map<string, SavedItems | null>();

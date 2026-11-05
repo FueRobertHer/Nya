@@ -220,13 +220,14 @@ function afterStop(f: PlanFigures, from: PathPoint): PathAfter | null {
   const years = endAge - d;
   if (years < 1) return null;
   // Only the simulation's parts are read here, so the walk's switch is off.
-  const at = { age: plan.age, startAge: d, stop: d, years, taxRate: plan.taxRate };
+  const taxRate = f.shares?.t ?? plan.taxRate;
+  const at = { age: plan.age, startAge: d, stop: d, years, taxRate };
   const ages = f.resolution.ages;
   const all = compileItems(plan.items, ages, at, { planInWalk: false });
   const lasting = all.lasting.reduce((s, x) => s + x.amount, 0);
   const spending = spendingNow + lasting;
   if (spending < 0) return null;
-  const run: PlanCore = { ...plan, start: 'custom', startBalance: from.balance, targetAge: d, stopAtFi: false, horizon: years, spending };
+  const run: PlanCore = { ...plan, taxRate, start: 'custom', startBalance: from.balance, targetAge: d, stopAtFi: false, horizon: years, spending };
   const view: FiView = { ...f.view, stopAge: d, spending: { ...f.view.spending, value: spending } };
   const built = enginePlan(run, view);
   if (!('sim' in built)) return null;

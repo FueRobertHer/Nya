@@ -5,12 +5,16 @@
 // (components/plan-detailed.ts). It stands apart so that planFigures, which Home
 // loads for every plan, loads none of the tax year or the law for a flat one.
 //
-// TWO DRAWDOWNS:
+// THREE DRAWDOWNS:
 //   - `start`, from the plan's own start with the mix projected at the start age,
-//     scaled to its balance (Year by year, `t`, `h`, the stress test);
+//     scaled to its balance (Year by year, its tax and health, the stress test);
 //   - `whole`, from the balance projected at the stop (Whole path's years after
-//     the stop, and the milestones that fire on them).
-// The same run when the two start in the same place, as "at your stop age" does.
+//     the stop, and the milestones that fire on them);
+//   - `fiRun`, from the FI number itself, at the stop, whose tax and health go in
+//     that number (lib/fire/plan-figures.ts), so the number doesn't move with the
+//     plan's start.
+// The first two are the same run when they start in the same place, as "at your
+// stop age" does.
 //
 // A start with no mix still runs, as the flat model does: a walk that can't get
 // there, or nothing to project from, takes today's shares, or all taxable with no
@@ -29,6 +33,7 @@ import { planPath } from './path';
 import { planYears, projectFrom, ruleSpec } from './plan';
 import type { PlanFigures } from './plan-figures';
 import type { FirePlanV2 } from './plan-v2';
+import type { Strategy } from './tax/rules';
 import { chosenSplit } from './savings-split';
 import type { Owner } from './tax-facts';
 import type { Filing, StateCode, TaxLaw } from './tax/law/types';
@@ -53,9 +58,10 @@ export type DetailedInput = {
   /** 0 in a state with no income tax. */
   stateRate: number;
   /** What measured spending already holds of coverage, a year: the years add
-   *  coverage themselves. Off measured spending only, and only in the drawdown:
-   *  the flat FI number has no `h` to stand in for it until T4. */
+   *  coverage themselves. Off measured spending only. */
   paidToday: number;
+  /** The plan's order and Roth conversions. */
+  strategy: Strategy;
   law: TaxLaw;
   /** The year of the law in use, and whether it is older than this year. */
   lawYear: { year: number; behind: boolean };
@@ -76,7 +82,19 @@ export type PlanDetail = {
   notes: DetailNote[];
 };
 
+/** A drawdown, what it spent, and whether it had to take today's shares. */
+export type DetailRun = { drawn: Drawdown; noMix: boolean; spending: number; paid: number };
+
 export type DetailWork = {
+  /** What measured spending already holds of coverage. */
+  paidToday: number;
+  /** The drawdown from the FI number at the stop, whose tax and health are that
+   *  number's, or why it couldn't be worked out; null with nothing to draw. It needs
+   *  no engine, so a plan whose own start can't run still has a number. */
+  fiRun(f: PlanFigures, balance: number): DetailRun | { failed: string } | null;
+  /** The drawdown from the plan's own start, as `figures` runs it: what another rule
+   *  would come to from there (lib/fire/compare-conversions.ts). Null where it can't run. */
+  startRun(f: PlanFigures): Drawdown | null;
   /** The walk with the tax on what its years before the stop have to sell. */
   taxWalk(plan: FirePlanV2, walk: WalkChanges, from: { assets: number; savings: number; years: number }): WalkChanges;
   /** Enough for the path alone, for a search's candidate: `start` isn't to be
@@ -99,6 +117,7 @@ export function detailWork(input: DetailedInput): DetailWork {
     state: input.state,
     stateRate: input.stateRate,
     law: input.law,
+    order: input.strategy.order,
   });
 
   const split = (savings: number) => chosenSplit(input.buckets, savings, input.savingsSplit);
@@ -123,7 +142,7 @@ export function detailWork(input: DetailedInput): DetailWork {
   /** A drawdown from `balance` at `age` to `endAge`, the plan's items where the
    *  figures have them. Null where there is nothing to draw, as afterStop has it
    *  (lib/fire/path.ts). */
-  function run(f: PlanFigures, age: number, balance: number, endAge: number): { drawn: Drawdown | { failed: string }; noMix: boolean } | null {
+  function run(f: PlanFigures, age: number, balance: number, endAge: number): { drawn: Drawdown | { failed: string }; noMix: boolean; spending: number; paid: number } | null {
     const plan = f.plan;
     const spendingNow = f.view.spending.value;
     const years = endAge - age;
@@ -140,7 +159,7 @@ export function detailWork(input: DetailedInput): DetailWork {
       placed = slotsAt(f, age, balance);
     } catch (e) {
       // As runDrawdown says it of its own years, so the flat model carries the plan.
-      return { drawn: { failed: e instanceof Error ? e.message : 'The years couldn’t be worked out' }, noMix: false };
+      return { drawn: { failed: e instanceof Error ? e.message : 'The years couldn’t be worked out' }, noMix: false, spending, paid };
     }
     const { slots, noMix } = placed;
     const drawn = runDrawdown({
@@ -164,8 +183,9 @@ export function detailWork(input: DetailedInput): DetailWork {
       state: input.state,
       stateRate: input.stateRate,
       law: input.law,
+      strategy: input.strategy,
     });
-    return { drawn, noMix };
+    return { drawn, noMix, spending, paid };
   }
 
   /** The walk's balance at the stop: where `whole` starts. */
@@ -181,6 +201,26 @@ export function detailWork(input: DetailedInput): DetailWork {
   const failedIn = (d: Drawdown | { failed: string }): d is { failed: string } => 'failed' in d;
 
   return {
+    paidToday: input.paidToday,
+
+    fiRun(f, balance) {
+      const plan = f.plan;
+      if (plan.age === null) return null;
+      const s = f.view.stopAge ?? plan.age;
+      // To the end the FI number's own plan runs to: from today, an `assets` start
+      // would count its years from today, and the number would move with the start.
+      const ran = run(f, Math.max(s, plan.age), balance, s + planYears({ ...plan, start: 'fi-number' }, f.view.stopAge));
+      if (ran === null) return null;
+      return failedIn(ran.drawn) ? ran.drawn : { ...ran, drawn: ran.drawn };
+    },
+
+    startRun(f) {
+      const { engine, plan } = f;
+      if (plan.age === null || !('sim' in engine) || engine.startAge === null) return null;
+      const start = run(f, Math.max(engine.startAge, plan.age), engine.sim.startBalance, endOf(f, engine.startAge));
+      return start === null || failedIn(start.drawn) ? null : start.drawn;
+    },
+
     taxWalk(plan, walk, from) {
       if (from.years <= 0) return walk;
       try {

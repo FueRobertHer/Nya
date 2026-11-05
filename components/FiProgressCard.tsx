@@ -52,7 +52,7 @@ import { createPlanInputsStore, type PlanInputsCopy, type PlanInputsStore } from
 import { PAYROLL_NOTE, dayName, fiHeadline, pct, progressText, savingsRateText, wholeMoney } from './plan-text';
 import { projectFrom, type PlanCore } from '@/lib/fire/plan';
 import { basePlanOf, isStoredPlan, type StoredPlan } from '@/lib/fire/plan-v2';
-import { drawdownMovesFi, planFigures } from '@/lib/fire/plan-figures';
+import { planFigures } from '@/lib/fire/plan-figures';
 import type { BasisHolding } from '@/lib/fire/buckets-today';
 import { detailAttention, useDetailOnHome, useSettingsRead } from './plan-detailed-home';
 import type { FigureNote } from './plan-figure-notes';
@@ -94,8 +94,8 @@ export type FiProgressProps = {
   childOut?: boolean;
   /** The flag 'plan-tax', as the Plan tab has it. */
   planTax?: boolean;
-  /** Every position, for what a detailed plan's buckets hold: read only for a plan
-   *  the drawdown can move. */
+  /** Every position, for what a detailed plan's buckets hold: read only for a
+   *  detailed plan. */
   holdings?: readonly BasisHolding[];
   /** What a detailed plan still needs said, for Needs attention above: worked out here,
    *  since Dashboard can't hold the plan's inputs without loading them with Home. */
@@ -154,12 +154,11 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
   // the answer the walk's and where the path runs out the path's.
   const flat = useMemo(() => planFigures(plan, measuredInputs(inputs), { count }), [plan, inputs, count]);
   const measured = fiFigures(plan, inputs, currency);
-  // A detailed plan the drawdown can move works its answer out as the Plan does; any
-  // other's is its flat figures, so Home loads none of it.
+  // A detailed plan works its answer out as the Plan does; a flat plan's is its flat
+  // figures, so Home loads none of it.
   const worked = detailedOn && measured.currency === 'USD' && plan.age !== null;
-  const moved = worked && !('refused' in flat) && drawdownMovesFi(plan, flat.walk, flat.view.savings.value ?? 0, flat.view.stopAge);
   const settings = useSettingsRead(worked);
-  const deep = useDetailOnHome(moved, {
+  const deep = useDetailOnHome(worked, {
     plan,
     measured: measuredInputs(inputs),
     count,
@@ -171,7 +170,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
     settings,
     store: own,
     rows: shared.copy.rows,
-    ids: moved ? planAccountsOf(institutions).map(planId) : NO_IDS,
+    ids: worked ? planAccountsOf(institutions).map(planId) : NO_IDS,
     paid: inputs.flows?.paid ?? 0,
     calendarYear: Number(inputs.today.slice(0, 4)),
   });
@@ -217,6 +216,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
       walk={planned ? { short: planned.short && shortText(planned.short, plan.age, (n) => wholeMoney(n, figures.currency)), runsOutAt: planned.runsOutAt } : { short: null, runsOutAt: null, refused: true }}
       working={deep?.working ?? false}
       failed={deep?.failed ?? false}
+      taxAfterStop={'refused' in shown ? null : (shown.shares?.t ?? null)}
     />
   );
 }
@@ -249,8 +249,11 @@ export function FiProgressView({
   walk = null,
   working = false,
   failed = false,
+  taxAfterStop = null,
 }: {
   figures: FiFigures;
+  /** A detailed plan's tax in its FI number, in place of a flat rate. */
+  taxAfterStop?: number | null;
   /** Which currency the plan's typed figures are in isn't known yet: what
    *  to say (lib/fire/plan-currency.ts unconfirmedText). */
   unconfirmed?: string | null;
@@ -313,7 +316,7 @@ export function FiProgressView({
   const typed = [view.spending.source === 'typed' && 'spending', view.savings.source === 'typed' && 'savings', view.assets.source === 'typed' && 'invested assets'].filter(
     (x): x is string => !!x
   );
-  const rates = `a ${pct(plan.withdrawalRate)} withdrawal rate${plan.taxRate > 0 ? `, ${pct(plan.taxRate)} tax on withdrawals` : ''} and ${pct(plan.realReturn)} growth after inflation`;
+  const rates = `a ${pct(plan.withdrawalRate)} withdrawal rate${taxAfterStop !== null ? `, ${pct(taxAfterStop, 1)} tax after you stop` : plan.taxRate > 0 ? `, ${pct(plan.taxRate)} tax on withdrawals` : ''} and ${pct(plan.realReturn)} growth after inflation`;
   notes.push({
     key: 'estimates',
     severity: 'info',

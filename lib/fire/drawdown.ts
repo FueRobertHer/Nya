@@ -25,6 +25,9 @@
 // t stops at the first year that can't pay: after it the money is gone, and what
 // income still pays, at little tax, would thin it.
 //
+// CONVERSIONS AND THE ORDER are the plan's strategy (lib/fire/tax/rules.ts): the rule
+// says each year's ceiling and what it converts up to, and the year does the rest.
+//
 // A SHORT YEAR is recorded and the years run on from empty balances, so later
 // health coverage is still known. A rule that only takes a share of what is there
 // (percent, VPW, canRunOut in lib/fire/rules.ts) can't run out on its own: its year
@@ -40,10 +43,11 @@ import type { IncomeRow } from './compile';
 import { canRunOut, plannedWithdrawal, type RuleSpec, type YearState } from './rules';
 import type { LowerSpending, OneOffExpense } from './simulate';
 import type { Owner } from './tax-facts';
-import type { Coverage, HealthStatus } from './tax/health';
+import { onAcaThisYear, type Coverage, type HealthStatus } from './tax/health';
 import type { Filing, StateCode, TaxLaw } from './tax/law/types';
 import { peopleOf, type MixSlot } from './tax/mix';
-import { checkYearInput, newPersonYear, newYearResult, runYear, type Drawn, type YearInput, type YearResult } from './tax/year';
+import { NO_STRATEGY, defaultUntil, yearRule, type Strategy } from './tax/rules';
+import { checkYearInput, newPersonYear, newYearResult, runYear, runYearFilling, splitConversion, type Drawn, type YearInput, type YearResult } from './tax/year';
 
 /** The share of a taxable yield that is qualified dividends: a broad stock fund's,
  *  about. Said in About these numbers. */
@@ -93,6 +97,8 @@ export type DrawdownInput = {
   state: StateCode | null;
   stateRate: number;
   law: TaxLaw;
+  /** The order and conversions; the standard order and none when not said. */
+  strategy?: Strategy;
 };
 
 /** What each bucket holds. */
@@ -124,6 +130,8 @@ export type DrawdownYear = {
   income: { socialSecurity: number; pension: number; wages: number; afterTax: number; windfall: number; yield: number; qualified: number };
   drawn: Drawn;
   rmd: number;
+  /** Tax-deferred money moved to Roth this year. */
+  conversion: number;
   law: {
     agi: number;
     taxableSocialSecurity: number;
@@ -143,6 +151,8 @@ export type DrawdownYear = {
   care: {
     people: [PersonCare, PersonCare];
     dependents: { status: HealthStatus; premium: number; credit: number };
+    /** Who the poverty line counts: everyone on the return. */
+    family: number;
     benchmark: number;
     figure: number;
     povertyPercent: number;
@@ -165,6 +175,8 @@ export type DrawdownStage = {
   first: number;
   last: number;
   yearlyTax: number;
+  /** Over the stage, what was moved to Roth. */
+  converted: number;
   /** Over the stage, what each source paid. */
   sources: { taxable: number; deferred: number; roth: number; hsa: number; rmd: number; socialSecurity: number; pension: number; wages: number; afterTax: number };
 };
@@ -189,6 +201,8 @@ export type Drawdown = {
   /** Your age in the first year it couldn't pay; null when it lasts. */
   runsOutAt: number | null;
   stages: DrawdownStage[];
+  /** How many years someone is on the ACA, and how many of them hold a credit. */
+  aca: { on: number; withCredit: number };
   notes: DrawdownNote[];
 };
 
@@ -226,7 +240,7 @@ function topRateOf(ordinaryTaxable: number, filing: Filing, law: TaxLaw): number
   return brackets[brackets.length - 1].rate;
 }
 
-type Run = { rows: DrawdownYear[]; t: number; h: number; held: boolean; irmaaUnknown: boolean };
+type Run = { rows: DrawdownYear[]; t: number; h: number; held: boolean; irmaaUnknown: boolean; aca: Drawdown['aca'] };
 
 /** The years once, the rule at `rate`, keeping `t` and `h` out of living spending. */
 function runYears(inp: DrawdownInput, rule: RuleSpec, t: number, h: number): Run {
@@ -248,6 +262,9 @@ function runYears(inp: DrawdownInput, rule: RuleSpec, t: number, h: number): Run
   let held = false;
   let irmaaUnknown = false;
   const meets = (owner: Owner) => health.meetsRule.includes(owner);
+  const strategy = inp.strategy ?? NO_STRATEGY;
+  const until = strategy.convertUntil ?? defaultUntil(inp.rmdAges, today);
+  const aca = { on: 0, withCredit: 0 };
 
   for (let y = 0; y < years; y++) {
     const age = startAge + y;
@@ -329,23 +346,33 @@ function runYears(inp: DrawdownInput, rule: RuleSpec, t: number, h: number): Run
       healthGrowth: health.growth,
       incomeGrowth: health.incomeGrowth,
       ceiling: null,
+      order: strategy.order,
       growth: realReturn,
       inflation,
     };
+    const asked = yearRule(strategy, until, age, input, law);
+    input.ceiling = asked.ceiling;
+    input.fill = asked.fill;
+    if (asked.fixed > 0) splitConversion(input, law, asked.fixed);
     if (y === 0) checkYearInput(input);
     const startBuckets = bucketsOf(joint ? people : [people[0]]);
     const yieldCash = (joint ? people[0].taxable + people[1].taxable : people[0].taxable) * inp.taxableYield;
-    runYear(input, law, out);
+    const solve = asked.fill ? runYearFilling : runYear;
+    solve(input, law, out);
     // A share of what is there can't run out: the year spends less.
     for (let pass = 0; shortens && out.short && input.spending > 0 && pass < 4; pass++) {
       input.spending = Math.max(0, input.spending - out.shortfall);
-      runYear(input, law, out);
+      solve(input, law, out);
     }
 
     const fed = out.federal;
     const care = out.health;
     const end = bucketsOf([out.people[0].end, ...(joint ? [out.people[1].end] : [])]);
     irmaaUnknown ||= care.irmaaUnknown;
+    if (onAcaThisYear(input)) {
+      aca.on++;
+      if (care.people[0].credit > 0 || care.people[1].credit > 0 || care.dependents.credit > 0) aca.withCredit++;
+    }
     rows.push({
       age,
       partnerAge,
@@ -374,6 +401,7 @@ function runYears(inp: DrawdownInput, rule: RuleSpec, t: number, h: number): Run
       },
       drawn: joint ? sumDrawn(out.people[0].drawn, out.people[1].drawn) : { ...out.people[0].drawn },
       rmd: out.people[0].rmd + (joint ? out.people[1].rmd : 0),
+      conversion: out.people[0].conversion + (joint ? out.people[1].conversion : 0),
       law: {
         agi: fed.agi.v,
         taxableSocialSecurity: fed.taxableSocialSecurity.v,
@@ -392,6 +420,7 @@ function runYears(inp: DrawdownInput, rule: RuleSpec, t: number, h: number): Run
       care: {
         people: [careOf(care.people[0]), careOf(care.people[1])],
         dependents: { ...care.dependents },
+        family: (joint ? 2 : 1) + inp.dependents.reduce((n, d) => (d.untilAge > age ? n + 1 : n), 0),
         benchmark: care.benchmark,
         figure: care.figure,
         povertyPercent: care.povertyPercent,
@@ -422,7 +451,7 @@ function runYears(inp: DrawdownInput, rule: RuleSpec, t: number, h: number): Run
   }
 
   const shares = taxShares(rows, realReturn);
-  return { rows, t: shares.t, h: shares.h, held, irmaaUnknown };
+  return { rows, t: shares.t, h: shares.h, held, irmaaUnknown, aca };
 }
 
 /** Tax's share of what the years paid, and the level yearly health cost, by when
@@ -457,12 +486,13 @@ function stagesOf(rows: readonly DrawdownYear[], rmdAge: number): DrawdownStage[
     const key = stageOf(r.age);
     let s = stages[stages.length - 1];
     if (!s || s.key !== key) {
-      s = { key, from: r.age, to: r.age, first: i, last: i, yearlyTax: 0, sources: { taxable: 0, deferred: 0, roth: 0, hsa: 0, rmd: 0, socialSecurity: 0, pension: 0, wages: 0, afterTax: 0 } };
+      s = { key, from: r.age, to: r.age, first: i, last: i, yearlyTax: 0, converted: 0, sources: { taxable: 0, deferred: 0, roth: 0, hsa: 0, rmd: 0, socialSecurity: 0, pension: 0, wages: 0, afterTax: 0 } };
       stages.push(s);
     }
     s.to = r.age;
     s.last = i + 1;
     s.yearlyTax += r.tax;
+    s.converted += r.conversion;
     const d = r.drawn;
     s.sources.taxable += d.taxable;
     s.sources.deferred += d.deferred + d.deferred457 + d.penalized;
@@ -535,6 +565,7 @@ export function runDrawdown(inp: DrawdownInput): Drawdown | { failed: string } {
       taxAndHealth: rows.reduce((sum, r) => sum + Math.max(0, r.tax + r.health - Math.max(0, r.shortfall - r.living - r.oneOffs)), 0),
       runsOutAt: firstShort ? firstShort.age : null,
       stages: stagesOf(rows, inp.rmdAges.you),
+      aca: run.aca,
       notes,
     };
   } catch (e) {

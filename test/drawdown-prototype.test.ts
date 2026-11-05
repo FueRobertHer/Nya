@@ -18,6 +18,7 @@ import { historicalCycles } from '@/lib/fire/simulate';
 import { lawFor } from '@/lib/fire/tax/law';
 import { usMarket } from '@/lib/fire/us-market';
 import { ON } from './plan-gen';
+import { NO_STRATEGY } from '@/lib/fire/tax/rules';
 
 const account = (bucket: string, value: number, basis: number | null = null) => ({ owner: 'you', value, basis, account_id: bucket, bucket });
 const group = (bucket: string, value: number, basis: number | null = null) => ({ bucket, accounts: [account(bucket, value, basis)], total: value });
@@ -57,6 +58,7 @@ function run(growth: number, incomeGrowth: number) {
     state: 'NV',
     stateRate: 0,
     paidToday: 0,
+    strategy: NO_STRATEGY,
     law: lawFor(2026).law,
     lawYear: { year: 2026, behind: false },
   };

@@ -171,12 +171,21 @@ function splitError(v: unknown): string | null {
   return Math.abs(rows.reduce((sum, r) => sum + r.share, 0) - 1) <= 1e-6 ? null : 'The shares of savingsSplit add up to 100%';
 }
 
+/** The most a fixed conversion can be, a year. */
+export const MAX_YEARLY_CONVERSION = 1e9;
+
+/** A strategy's ranges: the age a rule runs to, and what a fixed amount can be. */
+function strategyError(s: TaxChoices['strategy']): string | null {
+  if (s.convertUntil !== null && !(Number.isInteger(s.convertUntil) && s.convertUntil >= 18 && s.convertUntil <= 100)) return 'Conversions run until a whole age from 18 to 100';
+  if (s.conversions.kind === 'fixed' && !amount(s.conversions.yearly, MAX_YEARLY_CONVERSION)) return 'A conversion is at most 1,000,000,000 a year';
+  return null;
+}
+
 /**
  * What a page sent, or why it isn't choices this takes: the writer's rules,
- * which the reader above doesn't hold. Conversions and the order come with T4,
- * so a change to either is refused until then. Only a change: a save beside
- * what a later release stored (`stored`, after a rollback from it) goes through,
- * so nobody is trapped.
+ * which the reader above doesn't hold. The ranges of a strategy hold of a change
+ * to it: a save beside what is stored (`stored`, after a rollback from a later
+ * release, say) goes through, so nobody is trapped.
  */
 export function parseTaxChoices(v: unknown, stored: TaxChoices | null): { choices: TaxChoices } | { error: string } {
   if (!isObject(v) || !closed(v, KEYS)) return { error: 'Send every choice, as JSON' };
@@ -191,9 +200,10 @@ export function parseTaxChoices(v: unknown, stored: TaxChoices | null): { choice
   if (split) return { error: split };
   if (v.taxableYield !== null && !amount(v.taxableYield, MAX_RATE)) return { error: 'The taxable yield is from 0 to 20%' };
   const choices = v as TaxChoices;
-  const was = JSON.stringify((stored ?? DEFAULT_TAX_CHOICES).strategy);
-  const now = JSON.stringify(choices.strategy);
-  if (now !== was && now !== JSON.stringify(DEFAULT_TAX_CHOICES.strategy)) return { error: 'This version of Nya draws in the standard order, with no conversions' };
+  if (JSON.stringify(choices.strategy) !== JSON.stringify((stored ?? DEFAULT_TAX_CHOICES).strategy)) {
+    const strategy = strategyError(choices.strategy);
+    if (strategy) return { error: strategy };
+  }
   return { choices };
 }
 

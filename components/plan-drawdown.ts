@@ -10,6 +10,7 @@ import type { BucketsToday } from '@/lib/fire/buckets-today';
 import type { DrawdownNote, DrawdownStage, DrawdownYear, PersonCare, StageKey } from '@/lib/fire/drawdown';
 import type { PlanItem } from '@/lib/fire/items';
 import type { DetailNote, PlanDetail } from '@/lib/fire/plan-detail';
+import type { FiShares } from '@/lib/fire/plan-figures';
 import type { TaxChoices } from '@/lib/fire/tax-choices';
 import type { Owner, TaxFacts } from '@/lib/fire/tax-facts';
 import type { Filing, StateCode } from '@/lib/fire/tax/law/types';
@@ -52,8 +53,21 @@ export const stageTitle = (s: Pick<DrawdownStage, 'key' | 'from' | 'to'>) => `${
 /** The year each kind of money first comes in a stage's years. */
 const firstWith = (rows: readonly DrawdownYear[], paid: (y: DrawdownYear) => number) => rows.find((y) => some(paid(y)))?.age ?? null;
 
+/** About this, to the nearest thousand: a stage's conversions move year to year. */
+const aboutThousand = (n: number) => (n >= 500 ? Math.round(n / 1000) * 1000 : n);
+
+/** What a stage's conversions do, in a line's part, or nothing. */
+function convertingPart(s: Pick<DrawdownStage, 'converted'>, rows: readonly DrawdownYear[], money: Money): string | null {
+  if (!some(s.converted)) return null;
+  const emptied = rows.find((y) => some(y.conversion) && !some(y.end.deferred));
+  if (emptied) return `tax-deferred converted by ${emptied.age}`;
+  const converting = rows.filter((y) => some(y.conversion));
+  const filled = rows.every((y) => !y.care.overLimit) && rows.some((y) => onAca(y) && y.care.povertyPercent >= 390);
+  return `converting about ${money(aboutThousand(s.converted / converting.length))} a year${filled ? ', under the ACA limit' : ''}`;
+}
+
 /** Where a stage's money comes from, in a line. */
-export function stageSources(s: DrawdownStage, years: readonly DrawdownYear[]): string {
+export function stageSources(s: DrawdownStage, years: readonly DrawdownYear[], money: Money): string {
   const rows = years.slice(s.first, s.last);
   const drawn: string[] = [];
   if (some(s.sources.taxable)) drawn.push('taxable');
@@ -72,6 +86,8 @@ export function stageSources(s: DrawdownStage, years: readonly DrawdownYear[]): 
   named((y) => y.income.pension, 'pension');
   named((y) => y.income.wages, 'part-time work');
   named((y) => y.income.afterTax, 'income after tax');
+  const converting = convertingPart(s, rows, money);
+  if (converting) parts.push(converting);
   if (parts.length === 0) return 'Nothing drawn';
   const [head, ...rest] = parts;
   return [head.charAt(0).toUpperCase() + head.slice(1), ...rest].join(' · ');
@@ -81,7 +97,7 @@ export function stageSources(s: DrawdownStage, years: readonly DrawdownYear[]): 
 export function stageHelper(s: Pick<DrawdownStage, 'key' | 'to'>, rmdAge: number): string {
   switch (s.key) {
     case 'before-60':
-      return 'Before 59½ only taxable money, Roth contributions and a 457(b) from a job you’ve left can be reached without a penalty.';
+      return 'Before 59½ only taxable money, Roth contributions, conversions five tax years old and a 457(b) from a job you’ve left can be reached without a penalty.';
     case 'before-65':
       return 'From 59½ tax-deferred and Roth money can be drawn without a penalty, and an HSA from 65. Health coverage is yours to pay until Medicare at 65.';
     case 'before-rmd':
@@ -89,6 +105,13 @@ export function stageHelper(s: Pick<DrawdownStage, 'key' | 'to'>, rmdAge: number
     case 'rmd':
       return 'The law now sets a smallest amount to take from tax-deferred money each year: a required minimum distribution (RMD). It counts as income whether or not you spend it.';
   }
+}
+
+/** The year the Roth money that needs no penalty runs out: the year something is drawn
+ *  early alongside it, or the year before one. */
+function rothContributionsOut(rows: readonly DrawdownYear[]): DrawdownYear | undefined {
+  const early = (y: DrawdownYear) => some(y.drawn.penalized + y.drawn.earnings);
+  return rows.find((y, i) => some(y.drawn.roth) && (early(y) || (i + 1 < rows.length && !some(rows[i + 1].drawn.roth) && early(rows[i + 1]))));
 }
 
 /** What the years of a penalty drew early. */
@@ -105,7 +128,10 @@ export function stageSentence(s: DrawdownStage, years: readonly DrawdownYear[], 
   const rows = years.slice(s.first, s.last);
   const parts: string[] = [];
   const ranOut = rows.find((y) => some(y.start.taxable) && !some(y.end.taxable));
-  if (ranOut) parts.push(`Taxable money runs out at ${ranOut.age}`);
+  const rothOut = rothContributionsOut(rows);
+  if (ranOut && rothOut) parts.push(`Taxable money runs out at ${ranOut.age} and Roth contributions at ${rothOut.age}`);
+  else if (ranOut) parts.push(`Taxable money runs out at ${ranOut.age}`);
+  else if (rothOut) parts.push(`Roth contributions run out at ${rothOut.age}`);
   const early = rows.filter((y) => some(y.law.penalty));
   const penalties = early.reduce((n, y) => n + y.law.penalty, 0);
   const sentences: string[] = [];
@@ -120,15 +146,25 @@ export function stageSentence(s: DrawdownStage, years: readonly DrawdownYear[], 
   return sentences.length > 0 ? sentences.join(' ') : null;
 }
 
+/** Why a stage's last years read as they do: the money that needs no penalty ran out,
+ *  so income, and with it coverage, moves. Null where it didn't. */
+export function stageFoot(s: DrawdownStage, years: readonly DrawdownYear[]): string | null {
+  const rows = years.slice(s.first, s.last);
+  const firstEarly = rows.findIndex((y) => some(y.law.penalty));
+  if (firstEarly < 0) return null;
+  const from = rows.find((y) => some(y.start.taxable) && !some(y.end.taxable)) ?? rows[firstEarly];
+  return `From ${from.age} what can be reached without a penalty is going, so these years’ income, and the coverage it pays for, change.`;
+}
+
 /** How much faster than prices health costs rise. */
-function points(growth: number): string {
+export function pointsText(growth: number): string {
   const n = Number((growth * 100).toFixed(2));
   return `${n} point${n === 1 ? '' : 's'}`;
 }
+const points = pointsText;
 
-/** A year's row in its stage: the year, where its money comes from, its income
- *  against the poverty line for someone on the ACA. */
-export function yearSub(y: DrawdownYear): string {
+/** What a year's row says but its income: where a run of years has to read the same. */
+function yearSources(y: DrawdownYear): string[] {
   const d = y.drawn;
   const from: string[] = [];
   if (some(d.taxable)) from.push('taxable');
@@ -140,8 +176,14 @@ export function yearSub(y: DrawdownYear): string {
   if (from.length > 0) parts.push(`From ${words(from)}`);
   if (some(y.rmd)) parts.push('Required withdrawals');
   if (parts.length === 0) parts.push(some(y.income.socialSecurity + y.income.pension + y.income.wages + y.income.afterTax) ? 'Income covers it' : 'Nothing drawn');
-  if (onAca(y)) parts.push(`${Math.round(y.care.povertyPercent)}% of the poverty line`);
-  return parts.join(' · ');
+  if (some(y.conversion)) parts.push('Converting');
+  return parts;
+}
+
+/** A year's row in its stage: the year, where its money comes from, its income
+ *  against the poverty line for someone on the ACA. */
+export function yearSub(y: DrawdownYear): string {
+  return [...yearSources(y), ...(onAca(y) ? [`${Math.round(y.care.povertyPercent)}% of the poverty line`] : [])].join(' · ');
 }
 
 /** What the year's figure is. */
@@ -161,6 +203,46 @@ export function yearBadges(y: DrawdownYear, money: Money): string[] {
   return out;
 }
 
+/** Adjacent years that read the same, a row of their own from three up: what they
+ *  say is shorter than ten near-identical rows, and each year is still a tap away. */
+export type YearRun = { first: number; last: number };
+
+export function yearRuns(rows: readonly DrawdownYear[], money: Money): YearRun[] {
+  const say = (y: DrawdownYear) => JSON.stringify([yearSources(y), onAca(y), yearBadges(y, money), yearValueLabel(y)]);
+  const runs: YearRun[] = [];
+  for (let i = 0; i < rows.length; ) {
+    let j = i + 1;
+    // A penalty's or a short year's badge holds its amount, so those never run on.
+    while (j < rows.length && say(rows[j]) === say(rows[i])) j++;
+    runs.push({ first: i, last: j });
+    i = j;
+  }
+  return runs.flatMap((r) => (r.last - r.first >= 3 ? [r] : Array.from({ length: r.last - r.first }, (_, k) => ({ first: r.first + k, last: r.first + k + 1 }))));
+}
+
+/** A run's row: its ages and calendar years, what its years share, and its income from
+ *  first to last, as a person on the ACA reads it. */
+export function runTitle(rows: readonly DrawdownYear[]): string {
+  const a = rows[0];
+  const b = rows[rows.length - 1];
+  return `${a.age} to ${b.age} · ${a.calendarYear} to ${b.calendarYear}`;
+}
+
+export function runSub(rows: readonly DrawdownYear[]): string {
+  const a = rows[0];
+  const percents = rows.map((y) => Math.round(y.care.povertyPercent));
+  const low = Math.min(...percents);
+  const high = Math.max(...percents);
+  return [...yearSources(a), ...(onAca(a) ? [low === high ? `${low}% of the poverty line` : `${low}% to ${high}% of the poverty line`] : [])].join(' · ');
+}
+
+export function runTax(rows: readonly DrawdownYear[], money: Money): string {
+  const taxes = rows.map((y) => money(y.tax));
+  const lowest = Math.min(...rows.map((y) => y.tax));
+  const highest = Math.max(...rows.map((y) => y.tax));
+  return taxes.every((t) => t === taxes[0]) ? taxes[0] : `${money(lowest)} to ${money(highest)}`;
+}
+
 export type YearLine = { label: string; value: string; sum?: boolean };
 export type YearMeter = { percent: number; limit: number | null; label: string; limitLabel: string | null };
 export type YearSection = { title: string; lines: YearLine[]; meter?: YearMeter; note?: string; why?: { label: string; text: string } };
@@ -176,6 +258,8 @@ export type YearContext = {
   /** What the law has this state charging income tax, or not. */
   stateTaxes: boolean | null;
   rmdAge: number;
+  /** Where gains stop being taxed at 0%, for this household's return. */
+  gainsZeroTo: number;
 };
 
 const CARE_WORDS: Partial<Record<PersonCare['status'], string>> = {
@@ -209,6 +293,14 @@ export function yearHelper(y: DrawdownYear, c: YearContext): string {
 
 const POVERTY_SCALE = 500;
 
+/** The benchmark's line: who it prices, by their ages. */
+function benchmarkLabel(y: DrawdownYear): string {
+  const onIt = (p: PersonCare) => ACA_KINDS.includes(p.status);
+  const ages = [...(onIt(y.care.people[0]) ? [y.age] : []), ...(y.partnerAge !== null && onIt(y.care.people[1]) ? [y.partnerAge] : [])];
+  const kids = ACA_KINDS.includes(y.care.dependents.status) ? ' and your dependents' : '';
+  return ages.length === 0 ? 'Benchmark plan, full price' : `Benchmark plan for ${ages.length === 1 ? `age ${ages[0]}` : `ages ${words(ages.map(String))}`}${kids}, full price`;
+}
+
 /** The year's five sections, in order. Each line only where the year has it. */
 export function yearSections(y: DrawdownYear, c: YearContext): YearSection[] {
   const { money } = c;
@@ -219,6 +311,7 @@ export function yearSections(y: DrawdownYear, c: YearContext): YearSection[] {
     ...line('Sold from taxable', d.taxable),
     ...(some(d.taxable) ? [{ label: 'of it gains', value: money(d.gain) }] : []),
     ...line('Dividends and interest', y.income.yield),
+    ...line('Converted to Roth', y.conversion),
     ...line('Drawn from tax-deferred', d.deferred),
     ...line('Drawn from a 457(b)', d.deferred457),
     ...line('Drawn from tax-deferred early', d.penalized),
@@ -256,6 +349,7 @@ export function yearSections(y: DrawdownYear, c: YearContext): YearSection[] {
       { label: 'Ordinary income', value: money(Math.max(0, y.law.agi - Math.max(0, gains))) },
       ...line('Gains and qualified dividends', Math.max(0, gains)),
       ...(some(y.law.taxableSocialSecurity) ? [{ label: 'of it Social Security', value: money(y.law.taxableSocialSecurity) }] : []),
+      ...(some(y.conversion) ? [{ label: 'of it converted to Roth', value: money(y.conversion) }] : []),
       onAca(y) ? { label: 'ACA income (MAGI)', value: money(y.law.magiAca), sum: true } : { label: 'Adjusted gross income', value: money(y.law.agi), sum: true },
     ],
   };
@@ -263,7 +357,8 @@ export function yearSections(y: DrawdownYear, c: YearContext): YearSection[] {
   if (onAca(y)) {
     const percent = y.care.povertyPercent;
     const limit = c.acaLaw === '2026' ? 400 : null;
-    income.meter = { percent: Math.min(100, (percent / POVERTY_SCALE) * 100), limit: limit === null ? null : (limit / POVERTY_SCALE) * 100, label: `${Math.round(percent)}% of the poverty line`, limitLabel: limit === null ? null : `Limit ${limit}%` };
+    const family = y.care.family;
+    income.meter = { percent: Math.min(100, (percent / POVERTY_SCALE) * 100), limit: limit === null ? null : (limit / POVERTY_SCALE) * 100, label: `${Math.round(percent)}% of the poverty line, for ${family}`, limitLabel: limit === null ? null : percent > 0 ? `Limit ${limit}%, ${money((y.law.magiAca / percent) * limit)}` : `Limit ${limit}%` };
   }
 
   const tax: YearSection = {
@@ -276,7 +371,7 @@ export function yearSections(y: DrawdownYear, c: YearContext): YearSection[] {
       some(y.law.penalty) ? { label: 'Early withdrawal penalty', value: money(y.law.penalty) } : { label: 'Early withdrawal penalty', value: 'None' },
     ],
   };
-  if (some(gains) && !some(y.law.gainsTax)) tax.why = { label: 'Why are the gains taxed at 0%?', text: 'Gains sit on top of ordinary income. Up to a limit set for each filing status, taxable income takes gains at 0%, and this year’s stay under it.' };
+  if (some(gains) && !some(y.law.gainsTax)) tax.why = { label: 'Why are the gains taxed at 0%?', text: `Gains sit on top of ordinary income. Taxable income up to ${money(c.gainsZeroTo)} takes gains at 0%, and this year’s ${money(y.law.ordinaryTaxable + Math.max(0, gains))} stays under it.` };
   else if (some(y.law.penalty)) tax.why = { label: 'Why a penalty?', text: 'Money drawn early pays a penalty on top of its tax, once the money that can be reached without one has run out: 10% from tax-deferred money or a Roth’s earnings before 59½, 20% from an HSA before 65. Nya knows your age in whole years, so the year you turn 59 counts as before 59½.' };
 
   const [you, them] = y.care.people;
@@ -286,7 +381,7 @@ export function yearSections(y: DrawdownYear, c: YearContext): YearSection[] {
   const health: YearSection = {
     title: 'Health coverage',
     lines: [
-      ...(onAca(y) ? line('Benchmark plan, full price', y.care.benchmark) : []),
+      ...(onAca(y) ? line(benchmarkLabel(y), y.care.benchmark) : []),
       ...line('Premium tax credit', credit),
       ...line('Medicare Part B', total((p) => p.partB)),
       ...line('IRMAA', total((p) => p.irmaa)),
@@ -297,7 +392,7 @@ export function yearSections(y: DrawdownYear, c: YearContext): YearSection[] {
   };
   const notes: string[] = [];
   if (onAca(y) && y.care.figure > 0) notes.push(`At ${pct(y.care.figure, 2)} of income, the share the law sets at this income.`);
-  if (y.care.overLimit && c.acaLaw === '2026') notes.push('Over 400% of the poverty line there is no credit, so coverage is counted at full price.');
+  if (y.care.overLimit && c.acaLaw === '2026') notes.push(`Over 400% of the poverty line, ${y.care.povertyPercent > 0 ? `${money((y.law.magiAca / y.care.povertyPercent) * 400)} for ${y.care.family}, ` : ''}there is no credit, so coverage is counted at full price.`);
   if (y.care.underLine) notes.push(you.status === 'medicaid' || them.status === 'medicaid' ? 'Under the Medicaid line, so Medicaid covers who meets its rule, with no premium.' : 'Under the Medicaid line with no credit, so coverage is counted at full price.');
   if (y.care.irmaaUnknown) notes.push('IRMAA reads income from two years back, before this plan’s years, so it isn’t counted here.');
   if (notes.length > 0) health.note = notes.join(' ');
@@ -318,6 +413,24 @@ const NOTE_WORDS: Record<DrawdownNote | DetailNote, string | null> = {
 /** Under Year by year: what the years themselves say about how they were worked out. */
 export const detailLines = (d: Pick<PlanDetail, 'notes' | 'start'>): string[] => [...d.notes, ...d.start.notes].flatMap((n) => NOTE_WORDS[n] ?? []);
 
+/** What the FI number's own tax and health come to a year, before the withdrawal rate. */
+export const fiYearly = (s: Pick<FiShares, 't' | 'h' | 'spending' | 'paid'>) => (Math.max(0, s.spending - s.paid) + s.h) / (1 - s.t);
+
+/** What the run behind the FI number says of how it was worked out. A small back and
+ *  forth isn't said: the number moves by less than it can be known to. */
+export function sharesNote(s: Pick<FiShares, 'settled' | 'gap' | 'noMix'>, money: Money): string[] {
+  const out: string[] = [];
+  if (!s.settled && s.gap > 1000) out.push(`Your FI number’s tax and health move with it and didn’t settle on one figure: its last two were ${money(s.gap)} apart, and this takes the higher.`);
+  if (s.noMix) out.push(NOTE_WORDS['no-mix'] as string);
+  return out;
+}
+
+/** The last line of Tax after you stop: what it all rests on. */
+export function taxHypothetical(a: { lawYear: number; state: StateCode | null; stateRate: number; stateTaxes: boolean | null; converts: boolean; realReturn: number; healthGrowth: number }): string {
+  const state = a.state === null ? 'no state tax counted' : a.stateTaxes === false || a.stateRate === 0 ? `${STATE_NAMES[a.state]} with no income tax` : `${STATE_NAMES[a.state]} at ${pct(a.stateRate, 1)}`;
+  return `Hypothetical: ${a.lawYear} federal tax law held in today’s dollars, ${state}, ${a.converts ? 'the conversion rule you picked' : 'no conversions'}, a steady ${pct(a.realReturn)} after inflation, and health costs rising ${pointsText(a.healthGrowth)} a year faster than prices. Not tax advice.`;
+}
+
 /** A joint plan's one line (the tax plan's Plan outcomes). */
 export const survivorLine = (endAge: number) => `Assumes you both live to ${endAge}. A survivor files single, at higher rates.`;
 
@@ -327,7 +440,7 @@ export const HEALTH_NOT_SET = 'Not set: measured spending leaves out coverage th
 export function healthSub(choices: TaxChoices): string {
   const before = choices.health.beforeMedicare;
   if (!before) return 'Not set yet';
-  return `${before.kind === 'aca' ? 'ACA' : 'Your own coverage'} before 65, then Medicare · in Drawdown`;
+  return `${before.kind === 'aca' ? 'ACA' : 'Your own coverage'} before 65, then Medicare · in your FI number`;
 }
 
 /** Each part of coverage in each stage, a year on average, as the years have it. */
@@ -357,6 +470,10 @@ export function stageHealthLines(stages: readonly DrawdownStage[], years: readon
 
 /** What the Assumptions row says of a detailed plan, beside its flat rate. */
 export const assumptionsLine = (choices: Pick<TaxChoices, 'inflation'>, growth: number) => `${pct(choices.inflation)} inflation · health costs ${growth < 0 ? '' : '+'}${points(growth)}`;
+
+/** The Assumptions row of a plan whose tax has its own row. */
+export const assumptionsWorked = (plan: { withdrawalRate: number; realReturn: number; partTimeIncome: number }, choices: Pick<TaxChoices, 'inflation'>, growth: number, money: Money) =>
+  `${pct(plan.withdrawalRate)} withdrawal · ${pct(plan.realReturn)} growth until FI · ${assumptionsLine(choices, growth)}${plan.partTimeIncome > 0 ? ` · ${money(plan.partTimeIncome)} part-time` : ''}`;
 
 /** Under measured spending, a name for what could already be paying for coverage. */
 export const namesCoverage = (name: string) => /\b(health|medical|dental)\b/i.test(name) && /\b(insurance|premiums?|coverage)\b/i.test(name);
@@ -427,7 +544,7 @@ export function householdNotes(a: { facts: Pick<TaxFacts, 'dependents'>; choices
 /** About these numbers, under a detailed plan: how tax is worked out, what stands in
  *  for what, and what isn't modeled. */
 export const ABOUT_DETAIL = {
-  how: 'Drawdown works out each year from your accounts at a steady return: federal income tax, your state’s one rate, penalties, required withdrawals and health coverage, under one year’s law held in today’s dollars. Will it last? then runs every start at one share of tax from those years, with each year’s health coverage as its own cost, so a tax that moves with the markets isn’t in it. Your FI number still uses your flat rate, and changes in a later version.',
+  how: 'Drawdown works out each year from your accounts at a steady return: federal income tax, your state’s one rate, penalties, required withdrawals and health coverage, under one year’s law held in today’s dollars. Your FI number takes its tax and health coverage from those years run from the FI number itself, so it doesn’t move with where a plan starts. Will it last? runs every start at one share of tax from the years of its own start, with each year’s health coverage as its own cost, so a tax that moves with the markets isn’t in it.',
   standIns: [
     'Of dividends and interest, 75% counts as qualified.',
     'Only premiums count as health costs: deductibles, coinsurance, dental, vision and hearing don’t. Premiums are about 45% of a 65-year-old’s lifetime health costs (Fidelity’s 2026 estimate).',
@@ -435,7 +552,7 @@ export const ABOUT_DETAIL = {
     'Medicare’s income surcharge (IRMAA) reads your income from two years before, and nothing for a year with no such year in the plan.',
     'Where a flexible rule’s spending falls to your average health cost in a run, it holds there: all of it goes to coverage, with nothing left to live on.',
     'An education account you count stands in as tax-deferred.',
-    'What’s left at the end takes taxable at full value, Roth as it is, and tax-deferred and an HSA after tax at the last year’s top rate, which understates cashing out a large balance at once.',
+    'What’s left at the end takes taxable at full value, Roth as it is, and tax-deferred and an HSA after tax at the last year’s top rate, which understates cashing out a large balance at once, and so favours a rule that leaves the most tax-deferred.',
     'A year you’d draw before you stop has no wages counted beside it.',
   ],
   notModeled: 'Not modeled: the child tax credit and head of household filing; nondeductible IRA basis and its pro-rata rule; specific-lot sales; the chained-CPI drift of brackets; tax drag on taxable accounts before you stop; Roth 401(k) withdrawals before 59½, counted as not reachable unless you say; the self-employed health insurance deduction; rating only the three oldest children under 21; the 0.9% Additional Medicare Tax; the Roth five-year rule for earnings at 60, taken as met; the Medicaid work rule’s exemptions and month-by-month test; Basic Health Programs; children’s Medicaid and CHIP lines above 138%; the joint life table for a spouse more than 10 years younger; and putting the first required withdrawal off to April.',

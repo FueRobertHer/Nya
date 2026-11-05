@@ -43,7 +43,7 @@ const run = (over: Partial<DrawdownInput> = {}): Drawdown => {
 };
 
 const money = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`;
-const CONTEXT: YearContext = { money, realReturn: 0.05, healthGrowth: 0.021, acaLaw: '2026', lawYear: 2026, state: 'NV', stateTaxes: false, rmdAge: 75 };
+const CONTEXT: YearContext = { money, realReturn: 0.05, healthGrowth: 0.021, acaLaw: '2026', lawYear: 2026, state: 'NV', stateTaxes: false, rmdAge: 75, gainsZeroTo: 98_900 };
 const yearAt = (d: Drawdown, age: number): DrawdownYear => d.years.find((y) => y.age === age)!;
 const titles = (y: DrawdownYear, c = CONTEXT) => yearSections(y, c).map((s) => s.title);
 const lines = (y: DrawdownYear, title: string, c = CONTEXT) => yearSections(y, c).find((s) => s.title === title)!;
@@ -61,13 +61,13 @@ describe('the stages', () => {
   test('where a stage’s money comes from, and when income starts within it', () => {
     const d = run();
     const late = d.stages.find((s) => s.key === 'before-rmd')!;
-    expect(stageSources(late, d.years)).toContain('Social Security from 67');
-    expect(stageSources(d.stages[0], d.years)).toStartWith('From ');
+    expect(stageSources(late, d.years, money)).toContain('Social Security from 67');
+    expect(stageSources(d.stages[0], d.years, money)).toStartWith('From ');
   });
 
   test('RMD years with nothing left in tax-deferred say there is no RMD', () => {
     const d = run({ slots: [slot('you', 'roth', 2_000_000, { reachable: 2_000_000 })] });
-    expect(stageSources(d.stages.find((s) => s.key === 'rmd')!, d.years)).toContain('Nothing left in tax-deferred, so no RMD');
+    expect(stageSources(d.stages.find((s) => s.key === 'rmd')!, d.years, money)).toContain('Nothing left in tax-deferred, so no RMD');
   });
 
   test('a stage says what it is, and RMD spelled out once', () => {

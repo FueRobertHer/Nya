@@ -25,7 +25,8 @@ import { MAX_STATE_RATE, type TaxChoices } from '@/lib/fire/tax-choices';
 import { householdOf, MAX_DEPENDENTS, sameHousehold, type Owner, type TaxFacts, type TaxHousehold } from '@/lib/fire/tax-facts';
 import { rmdAge } from '@/lib/fire/tax/rmd';
 import { STATE_CODES, type Filing, type StateCode, type Statute } from '@/lib/fire/tax/law/types';
-import { FILING_NAMES, householdNotes, STATE_NAMES } from './plan-drawdown';
+import { FILING_NAMES, fiYearly, householdNotes, sharesNote, STATE_NAMES } from './plan-drawdown';
+import type { FiShares } from '@/lib/fire/plan-figures';
 import { METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
 import { BLOCK_MONTHS, DEFAULT_RUNS, DEFAULT_SEED } from '@/lib/fire/simulate';
 import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
@@ -508,8 +509,21 @@ function ownFiNumber(text: string): number {
  *  out, what it leaves out, and your own number in place of it. Its lines
  *  are read-only: each figure is one row away on Your figures, and opening a
  *  sheet from a sheet would drop what was typed. */
-export function FiNumberForm(props: SaveProps & { view: FiView; retirementSpending: number | null; leftOut: PathAfter['leftOut'] | null; money: (n: number) => string }) {
-  const { plan, view, retirementSpending, leftOut, money } = props;
+export function FiNumberForm(
+  props: SaveProps & {
+    view: FiView;
+    retirementSpending: number | null;
+    leftOut: PathAfter['leftOut'] | null;
+    money: (n: number) => string;
+    /** The tax and health in a detailed plan's number. */
+    shares?: FiShares | null;
+    /** What a detailed plan's number rests on hasn't settled. */
+    held?: boolean;
+    /** Said under the number: what isn't set of what it rests on. */
+    cautions?: readonly string[];
+  }
+) {
+  const { plan, view, retirementSpending, leftOut, money, shares = null, held = false, cautions = [] } = props;
   const [own, setOwn] = useState(asText(plan.fiNumber));
   const s = useSave(props);
   const spending = retirementSpending ?? view.spending.value;
@@ -521,10 +535,20 @@ export function FiNumberForm(props: SaveProps & { view: FiView; retirementSpendi
   return (
     <>
       <p className="total-value">
-        <Masked>{view.fiNumber !== null ? money(view.fiNumber) : '--'}</Masked>
+        <Masked>{view.fiNumber !== null && (!held || plan.fiNumber !== null) ? money(view.fiNumber) : '--'}</Masked>
       </p>
+      {held && (
+        <p className="plan-working-line" role="status">
+          Working it out
+        </p>
+      )}
       <p className="helper">What you&apos;d need invested on the day you stop, so that what you draw each year covers your life after work.</p>
-      {spending !== null && worked !== null && (
+      {cautions.map((c) => (
+        <Notice key={c} level="caution">
+          {c}
+        </Notice>
+      ))}
+      {!held && spending !== null && worked !== null && (
         <section className="stack tight" aria-labelledby="fi-number-how">
           <h3 className="section-label" id="fi-number-how">
             How it&apos;s worked out
@@ -533,13 +557,29 @@ export function FiNumberForm(props: SaveProps & { view: FiView; retirementSpendi
             <div className="txn-detail-row">
               <dt>{retirementSpending !== null ? 'Spending in retirement' : 'Spending'}</dt>
               <dd>
-                <Masked>{`${money(spending)} a year`}</Masked>
+                <Masked>{`${money(shares ? shares.spending : spending)} a year`}</Masked>
               </dd>
             </div>
-            {plan.taxRate > 0 && (
+            {shares && shares.paid >= 0.5 && (
+              <div className="txn-detail-row">
+                <dt>Coverage through work, taken off</dt>
+                <dd>
+                  <Masked>{`${money(Math.min(shares.paid, shares.spending))} a year`}</Masked>
+                </dd>
+              </div>
+            )}
+            {shares && (
+              <div className="txn-detail-row">
+                <dt>+ Health coverage</dt>
+                <dd>
+                  <Masked>{`${money(shares.h)} a year`}</Masked>
+                </dd>
+              </div>
+            )}
+            {(shares ? shares.t : plan.taxRate) > 0 && (
               <div className="txn-detail-row">
                 <dt>÷ (1 − tax)</dt>
-                <dd>{pct(plan.taxRate)} tax</dd>
+                <dd>{shares ? pct(shares.t, 1) : pct(plan.taxRate)} tax</dd>
               </div>
             )}
             <div className="txn-detail-row">
@@ -554,6 +594,17 @@ export function FiNumberForm(props: SaveProps & { view: FiView; retirementSpendi
             </div>
           </dl>
           <p className="helper">Each is a row on Your figures, or under Assumptions.</p>
+          {shares && plan.fiNumber !== null && plan.fiNumber > 0 && (
+            <p className="helper">
+              <Masked>{`Your spending, health and tax, ${money(fiYearly(shares))} a year, are ${pct(fiYearly(shares) / plan.fiNumber, 1)} of ${money(plan.fiNumber)}; your withdrawal rate is ${pct(plan.withdrawalRate)}.`}</Masked>
+            </p>
+          )}
+          {shares &&
+            sharesNote(shares, money).map((n) => (
+              <p key={n} className="helper">
+                <Masked>{n}</Masked>
+              </p>
+            ))}
         </section>
       )}
       {names.length > 0 && (
@@ -938,7 +989,10 @@ function startConsequence(
   tax: number,
   /** A detailed plan's rate at this start, once worked out: what it withdraws isn't
    *  your spending alone. */
-  drawn: number | null = null
+  drawn: number | null = null,
+  /** Its tax comes from its years, which aren't worked out for this start until it is
+   *  saved, so no rate is said of it. */
+  taxWorked = false
 ): string {
   const money = (n: number) => wholeMoney(n, props.currency);
   const spend = props.spending !== null ? `your spending of ${money(props.spending)} a year` : 'your spending';
@@ -950,7 +1004,7 @@ function startConsequence(
     const stop = stopOf(plan);
     return `Stops working at your stop age${stop !== null ? ` (${stop})` : ''} with your FI number, withdrawing ${pct(rate)} of it: ${spend}.`;
   }
-  const actual = startRate(start, props, typed, tax);
+  const actual = taxWorked ? null : startRate(start, props, typed, tax);
   const when = start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : start === 'at-stop' ? 'at your stop age with what you’d have then' : `at your stop age with the balance you type`;
   return `Stops working ${when}, spending ${spend}${actual !== null ? `: a ${pct(actual, 1)} withdrawal rate${actual > rate * 1.001 ? `, above the ${pct(rate)} your FI number assumes` : ''}` : ''}. Answers whether what you spend now would have lasted.`;
 }
@@ -993,6 +1047,11 @@ export function AssumptionsForm(
     detail?: DetailForm | null;
     /** The rate a detailed plan withdraws at, as stored: null until worked out. */
     drawnRate?: number | null;
+    /** A detailed plan's FI number has its tax from its years, or is being worked out:
+     *  no field for one flat rate, and nothing said of a typed rate until it's saved. */
+    taxWorked?: boolean;
+    /** The FI number as saved, where `taxWorked`. */
+    workedNumber?: number | null;
     /** Back to one flat rate, for every plan; null in a copy. */
     onFlatRate?: (() => Promise<true | string>) | null;
     /** The flag is on: What I'd have at my stop age can be chosen. */
@@ -1037,10 +1096,14 @@ export function AssumptionsForm(
   // number, else what your spending is of the balance it starts with.
   const rateNow = typedRate(rate, LIMITS.withdrawalRate, plan.withdrawalRate);
   const taxNow = typedRate(tax, LIMITS.taxRate, plan.taxRate);
-  const fiNumber = props.fiSpending === null ? null : fiNumberOf(props.fiSpending, rateNow, taxNow);
-  // A detailed plan's as it stands: another start's isn't worked out until it is saved.
-  const drawnNow = detail && start === plan.start && startBalanceSame(balance, plan) ? (props.drawnRate ?? null) : null;
-  const ruleRate = drawnNow ?? startRate(start, props, Number(balance), taxNow) ?? rateNow;
+  const taxWorked = props.taxWorked ?? false;
+  // The worked-out number's tax and health move with the rate, so it holds at the rate saved.
+  const rateSame = Math.abs(rateNow - plan.withdrawalRate) < 1e-9;
+  const fiNumber = taxWorked ? (rateSame ? (props.workedNumber ?? null) : null) : props.fiSpending === null ? null : fiNumberOf(props.fiSpending, rateNow, taxNow);
+  // A detailed plan's as it stands: another start's isn't worked out until it is saved,
+  // nor another withdrawal rate's from the FI number.
+  const drawnNow = detail && start === plan.start && startBalanceSame(balance, plan) && (!taxWorked || start !== 'fi-number' || rateSame) ? (props.drawnRate ?? null) : null;
+  const ruleRate = drawnNow ?? (taxWorked ? null : startRate(start, props, Number(balance), taxNow)) ?? rateNow;
 
   // Opened at a part: the sheet's body is scrolled to it. Set on the body
   // alone (never scrollIntoView, which would scroll the page behind too, as
@@ -1074,7 +1137,8 @@ export function AssumptionsForm(
       ...plan,
       withdrawalRate: readNumber(rate, 'The withdrawal rate', ...LIMITS.withdrawalRate, { scale: 0.01 }) as number,
       realReturn: readNumber(ret, 'Growth after inflation', ...LIMITS.realReturn, { scale: 0.01 }) as number,
-      taxRate: readNumber(tax, 'The tax rate', ...LIMITS.taxRate, { scale: 0.01 }) as number,
+      // Kept as it is while the field is away: for going flat, and for a rollback.
+      taxRate: taxWorked ? plan.taxRate : (readNumber(tax, 'The tax rate', ...LIMITS.taxRate, { scale: 0.01 }) as number),
       partTimeIncome: readNumber(partTime, 'Part-time income', 0, LIMITS.money, { optional: true }) ?? 0,
       method,
       rule,
@@ -1128,6 +1192,8 @@ export function AssumptionsForm(
         </label>
         {s.under('Growth after inflation')}
         <p className="helper">Only for the years until FI: years to FI, Coast FI and the balance at your stop age. The simulation uses market history instead.</p>
+        {!taxWorked && (
+          <>
         <label className="field">
           Tax on withdrawals (% of each withdrawal)
           <input
@@ -1145,7 +1211,7 @@ export function AssumptionsForm(
         {props.taxOnHold && <Notice level="caution">{taxOnHoldText(plan.taxRate)}</Notice>}
         {detail ? (
           <>
-            <p className="helper">Your FI number still uses this rate. Drawdown works tax out from your accounts.</p>
+            <p className="helper">Your FI number uses this rate here, as its tax can’t be worked out from your accounts. Drawdown works tax out wherever it can.</p>
             {props.onFlatRate ? (
               <div>
                 <button
@@ -1175,6 +1241,8 @@ export function AssumptionsForm(
           </>
         ) : (
           <p className="helper">A flat share of every withdrawal: the FI number, and what the simulation withdraws, are larger to pay it.</p>
+        )}
+          </>
         )}
         <label className="field">
           Part-time income for Barista FI (a year, after tax)
@@ -1293,7 +1361,7 @@ export function AssumptionsForm(
           </select>
         </label>
         <p className="helper">
-          <Masked>{startConsequence(start, plan, props, Number(balance), rateNow, taxNow, drawnNow)}</Masked>
+          <Masked>{startConsequence(start, plan, props, Number(balance), rateNow, taxNow, drawnNow, taxWorked)}</Masked>
         </p>
         {start === 'custom' && (
           <label className="field">
