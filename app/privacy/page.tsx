@@ -316,7 +316,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: A
   ],
   [
     'What you tell your plan about tax',
-    'Whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count: until you change them, or delete your account. Encrypted, and in your download. Never shown to anyone you share with, never sent to a program with an API token, and never in an email.',
+    'Whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count: until you change them, or delete your account. You can’t change what you said about an account once it is gone, even if you Forget it, or what you put into a Roth while you have no Roth account, so those stay until you delete your account. Encrypted, and in your download. None of these are shown to anyone you share with, sent to a program with an API token, or put in an email. The buckets you choose for your accounts are a separate setting, and what you share of your holdings is split by them.',
   ],
   [
     'Feature switches and their changes',
