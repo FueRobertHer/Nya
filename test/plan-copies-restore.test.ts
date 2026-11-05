@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { seedOld, restoreRecord } from './restore-fixture';
 import type { PlanEntry, PlanFacts } from '@/lib/fire/copies';
+import type { TaxFacts } from '@/lib/fire/tax-facts';
 
 // Plans as copies in a download and a restore (lib/user-restore): the facts
 // are a setting, the plans data but for your plan alone; a file that brings
@@ -51,8 +52,22 @@ beforeEach(async () => {
 
 const PLAN = { ...DEFAULT_PLAN, age: 40, spending: 40_000 };
 const entry = (over: Partial<PlanEntry> = {}): PlanEntry => ({ name: 'First plan', plan: PLAN, tax: null, currency: 'USD', createdAt: AT, updatedAt: AT, ...over });
-const facts = (over: Partial<PlanFacts> = {}): PlanFacts => ({ version: 1, main: MAIN_ID, ...factsOf(PLAN), ...over });
-const DAMAGED = 'damaged-bytes-not-ciphertext-at-all';
+const facts = (over: Partial<PlanFacts> = {}): PlanFacts => ({ version: 1, main: MAIN_ID, ...factsOf(PLAN), ...over }) as PlanFacts;
+const TAX: TaxFacts = {
+  version: 1,
+  model: 'detailed',
+  filing: 'joint',
+  birthYears: [{ owner: 'you', year: 1959 }],
+  dependents: [{ id: 'kid-1', untilAge: 18 }],
+  rothContributions: [{ owner: 'partner', amount: 45_000 }],
+  owners: [{ account_id: 'acc_1', owner: 'partner' }],
+  basis: [{ account_id: 'acc_2', amount: 105_000 }],
+  countAnyway: ['acc_529'],
+  paidToday: { kind: 'category', name: 'Health insurance' },
+};
+/** Facts as a newer release writes them. */
+const factsV2 = (): PlanFacts => ({ version: 2, main: MAIN_ID, ...factsOf(PLAN), tax: TAX });
+const DAMAGED ='damaged-bytes-not-ciphertext-at-all';
 const plansOf = async (c = ctx) => Object.fromEntries((await firePlansStore.getAll(c)).entries());
 
 /** OTHER's download, with parts as a version of Nya from before copies wrote
@@ -114,8 +129,16 @@ describe('a file’s check', () => {
     expect(refused({ part: 'store:plan-facts', records: [{ value: facts() }] })).toBe('passed');
     expect(refused({ part: 'store:fire-plans', records: [{ id: 'x', value: { ...entry(), tax: { filing: 'single' } } }] })).not.toBe('passed');
     expect(refused({ part: 'store:plan-facts', records: [{ value: { ...facts(), version: 2 } }] })).not.toBe('passed');
+    expect(refused({ part: 'store:plan-facts', records: [{ value: { ...factsV2(), version: 3 } }] })).not.toBe('passed');
   });
 
+  test('takes facts of version 2 whole, every field looked at, so none it doesn’t know gets in', () => {
+    // TAX fills every list and field: passing means the check's probe of each
+    // (lib/user-restore/check.ts unknownField) found the store's check refuses it.
+    expect(refused({ part: 'store:plan-facts', records: [{ value: factsV2() }] })).toBe('passed');
+    expect(refused({ part: 'store:plan-facts', records: [{ value: { ...factsV2(), extra: 1 } }] })).not.toBe('passed');
+    expect(refused({ part: 'store:plan-facts', records: [{ value: { ...factsV2(), tax: { ...TAX, extra: 1 } } }] })).not.toBe('passed');
+  });
 });
 
 test('a restore writes at most twice the plans Nya keeps', async () => {
@@ -144,6 +167,34 @@ describe('a download and a restore', () => {
     const was = JSON.parse(text);
     const again = JSON.parse(await downloadText(new Date()));
     for (const part of ['fire-plans', 'plan-facts']) expect([part, again[part]]).toEqual([part, was[part]]);
+  });
+
+  test('facts of version 2 come back whole, beside the plans', async () => {
+    await firePlansStore.set(OTHER, MAIN_ID, entry());
+    await planFactsStore.set(OTHER, factsV2());
+    const text = await downloadText(new Date(), OTHER);
+    expect(JSON.parse(text)['plan-facts']).toEqual(factsV2());
+    expect((await restoreAll(text)).status).toBe('finished');
+    expect(await planFactsStore.get(ctx)).toEqual(factsV2());
+    expect(JSON.parse(await downloadText(new Date()))['plan-facts']).toEqual(factsV2());
+  });
+
+  test('facts of version 2 alone come back too, with no plan: your plan stays new', async () => {
+    await planFactsStore.set(OTHER, factsV2());
+    const text = await downloadText(new Date(), OTHER);
+    expect((await restoreAll(text)).status).toBe('finished');
+    expect(await planFactsStore.get(ctx)).toEqual(factsV2());
+    expect(await firePlansStore.count(ctx)).toBe(0);
+  });
+
+  test('a file with plans but no facts takes away the account’s facts of version 2, as any facts, so the two stay a pair', async () => {
+    await firePlansStore.set(OTHER, MAIN_ID, entry());
+    const text = await downloadText(new Date(), OTHER);
+    await firePlansStore.set(ctx, MAIN_ID, entry({ name: 'Here' }));
+    await planFactsStore.set(ctx, factsV2());
+    expect((await restoreAll(text)).status).toBe('finished');
+    expect(await plansOf()).toEqual({ [MAIN_ID]: entry() });
+    expect(await planFactsStore.get(ctx)).toBeNull();
   });
 
   test('a file whose plan isn’t main, into an account holding main: no stray copy left, and the next restore still taken', async () => {

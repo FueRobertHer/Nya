@@ -63,7 +63,7 @@ export const AT_MOST = `You have ${MAX_FIRE_PLANS} plans, the most Nya keeps: de
  *  facts store takes, without its version and main id. */
 export function factsWere(v: unknown): Facts | null {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return null;
-  if (!isPlanFacts({ version: 1, main: MAIN_ID, ...v })) return null;
+  if (!isPlanFacts({ ...v, version: 1, main: MAIN_ID })) return null;
   return pick(v as Facts);
 }
 
@@ -159,11 +159,21 @@ async function writeEntries(
 /** After your plan's first entry: the facts. A `plan-facts` there is a
  *  leftover (nothing reads it while no entry is there), replaced while it is
  *  still the one read: one changed since is a save made from the new entry
- *  meanwhile, and stands. Damaged bytes are removed first. A failure here is
- *  logged, never the write's: the entries hold the facts in their own
- *  fields. */
+ *  meanwhile, and stands. The tax facts in it are kept: they can be written
+ *  with no entry there, over the defaults, so only the facts every plan holds
+ *  in its fields are replaced, and tax facts written since this write read it
+ *  aren't a save's. Damaged bytes are removed first. A failure here is logged,
+ *  never the write's: the entries hold the facts in their own fields. */
 async function afterFirst(ctx: Ctx, facts: PlanFacts, leftover: State['leftover']): Promise<void> {
-  const replace = (cur: PlanFacts | null) => (leftover !== 'unreadable' && JSON.stringify(cur) === JSON.stringify(leftover) ? facts : cur);
+  const still = (cur: PlanFacts | null) => {
+    if (leftover === 'unreadable') return false;
+    if (JSON.stringify(cur) === JSON.stringify(leftover)) return true;
+    return cur?.version === 2 && cur.main === (leftover?.main ?? MAIN_ID) && sameFacts(cur, leftover ?? factsOf(DEFAULT_PLAN_V2));
+  };
+  const replace = (cur: PlanFacts | null): PlanFacts | null => {
+    if (!still(cur)) return cur;
+    return cur?.version === 2 ? { ...facts, version: 2, tax: cur.tax } : facts;
+  };
   try {
     try {
       await planFactsStore.update(ctx, replace);

@@ -51,7 +51,7 @@ const TYPED: FirePlan = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_
 const TYPED2 = planOf(TYPED);
 const BLANK2 = planOf(DEFAULT_PLAN);
 const entry = (over: Partial<PlanEntry> = {}): PlanEntry => ({ name: 'First plan', plan: TYPED, tax: null, currency: 'USD', createdAt: AT, updatedAt: AT, ...over });
-const facts = (over: Partial<PlanFacts> = {}): PlanFacts => ({ version: 1, main: MAIN_ID, ...factsOf(TYPED), ...over });
+const facts = (over: Partial<PlanFacts> = {}): PlanFacts => ({ version: 1, main: MAIN_ID, ...factsOf(TYPED), ...over }) as PlanFacts;
 const pension = { ...itemFromIncome(income({ id: 'pen', label: 'Pension' })), kind: 'pension' as const };
 
 const json = async (res: Response) => ({ status: res.status, body: await res.json() });
