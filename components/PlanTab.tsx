@@ -145,7 +145,7 @@ import { copiesOf, createPlansClient, INITIAL_PLANS, plansCount, type PlanRow, t
 import { planSavers, type Save, type SaveMore } from './plan-savers';
 import { DEFAULT_INFLATION } from '@/lib/fire/saved-plan';
 import { copyDiffParts, figureChoices, itemChoices, sameChange, type AlsoTarget } from './plan-diff';
-import { currencyText, laterText, retirementText, shortText, startLineText, startsWithText } from './plan-scenario-text';
+import { currencyText, laterText, numberSpending, retirementText, shortText, startLineText, startsWithText } from './plan-scenario-text';
 import { DrawdownCard, drawdownMarks, DrawdownMore, StageLevel, YearLevel } from './PlanDrawdown';
 import type { DrawdownMark } from './DrawdownChart';
 import PlanHealthForm, { type PaidChoice } from './PlanHealthForm';
@@ -1641,7 +1641,8 @@ export default function PlanTab({
   // item, whatever it is timed by.
   const lifeNotes: string[] = [];
   if (shown && (entry || shownPlan.items.length > 0)) {
-    if (shown.retirement && shown.view.spending.value !== null) lifeNotes.push(`FI number from ${retirementText(shown.retirement.spending, shown.retirement.lasting, shown.view.spending.value, money)}.`);
+    const inNumber = numberSpending(shown);
+    if (inNumber && shown.view.spending.value !== null) lifeNotes.push(`FI number from ${retirementText(inNumber.spending, inNumber.lasting, shown.view.spending.value, money)}.`);
     const later = laterText(shown.events?.later ?? [], money);
     if (later) lifeNotes.push(later);
     if (shownPlan.items.length > 0) lifeNotes.push(`Coast and Barista FI leave ${entry ? 'this copy’s' : 'your plan’s'} items out, but for lasting changes in spending.`);
@@ -1948,7 +1949,7 @@ export default function PlanTab({
             <FiCard
               copyName={copyName}
               lifeNotes={lifeNotes}
-              retirementSpending={shown?.retirement?.spending ?? null}
+              retirementSpending={shown ? (numberSpending(shown)?.spending ?? null) : null}
               walked={shown?.walked ?? false}
               walkedSavings={shown?.walkedSavings ?? null}
               walkFrom={shown?.walkFrom}
@@ -2211,7 +2212,7 @@ export default function PlanTab({
             key={opened}
             {...formProps}
             view={view}
-            retirementSpending={shown?.retirement?.spending ?? null}
+            retirementSpending={shown ? (numberSpending(shown)?.spending ?? null) : null}
             leftOut={path?.after?.leftOut ?? null}
             money={money}
             shares={shownShares}

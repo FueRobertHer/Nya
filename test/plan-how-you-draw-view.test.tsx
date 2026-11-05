@@ -426,12 +426,24 @@ describe('Your figures', () => {
 
   test('from today, a lasting change before the stop is in the FI number’s lines, and not left out', async () => {
     const change = { id: 'c', label: 'A bigger place', kind: 'spending', from: { anchor: { at: 'age', age: 45 }, offset: 0 }, until: null, once: null, yearly: 12_000, replaces: null, every: null, times: null, inflationAdjusted: true, owner: null, beforeTax: false };
+    const begun = { ...change, id: 'b', label: 'A car', from: { anchor: { at: 'age', age: (PLAN.age as number) - 2 }, offset: 0 }, yearly: 10_000 };
+    const tab = await detailed({ ...PLAN, start: 'assets', items: [begun, change] } as typeof PLAN);
+    await pick(tab.container, 'Your path');
+    // The answer's line and the sheet's say the same, not what has begun by today.
+    expect(tab.container.textContent).toContain('FI number from $62,000 a year in retirement: $40,000 now, and $22,000 a year of lasting changes');
+    await press(tab.row('FI number'));
+    const sheet = tab.dialog()!;
+    expect(sheet.textContent).toContain('Spending in retirement$62,000 a year');
+    expect(sheet.textContent).not.toContain('this plan’s items after you stop');
+    await tab.unmount();
+  }, 30_000);
+
+  test('from today, a lasting change not begun yet still makes it spending in retirement', async () => {
+    const change = { id: 'c', label: 'A bigger place', kind: 'spending', from: { anchor: { at: 'age', age: (PLAN.age as number) + 5 }, offset: 0 }, until: null, once: null, yearly: 12_000, replaces: null, every: null, times: null, inflationAdjusted: true, owner: null, beforeTax: false };
     const tab = await detailed({ ...PLAN, start: 'assets', items: [change] } as typeof PLAN);
     await pick(tab.container, 'Your path');
     await press(tab.row('FI number'));
-    const sheet = tab.dialog()!;
-    expect(sheet.textContent).toContain('Spending in retirement$52,000 a year');
-    expect(sheet.textContent).not.toContain('this plan’s items after you stop');
+    expect(tab.dialog()!.textContent).toContain('Spending in retirement$52,000 a year');
     await tab.unmount();
   }, 30_000);
 

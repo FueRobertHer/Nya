@@ -155,6 +155,18 @@ describe('a detailed plan still at work in compare mode', () => {
     expect(details(false)).toContain('no FI date');
     expect(details(true)).not.toContain('no FI date');
   });
+
+  test('worked out, what it says of the FI number’s spending is what the number read at the stop', () => {
+    const copy = { id: 'c', name: 'c', isMain: false, updatedAt: 'u', plan: planOf(plan()), outcome: { kind: 'figures', figures: f } } as SheetPlan;
+    const today = f.view.spending.value as number;
+    const details = (figures: PlanFigures) => text(renderToStaticMarkup(<PlanDetails plan={copy} parts={[]} outcome={{ kind: 'figures', figures, result: 'pending' }} money={money} />));
+    const retirement = { spending: today + 10_000, lasting: 10_000 };
+    expect(details({ ...f, retirement, shares: null })).toContain(`FI number from ${money(today + 10_000)} a year in retirement`);
+    const shares = { spending: today + 22_000 } as PlanFigures['shares'];
+    expect(details({ ...f, retirement, shares })).toContain(`FI number from ${money(today + 22_000)} a year in retirement: ${money(today)} now, and ${money(22_000)} a year`);
+    // Nothing lasting by the stop, though something has begun by today.
+    expect(details({ ...f, retirement, shares: { spending: today } as PlanFigures['shares'] })).not.toContain('FI number from');
+  });
 });
 
 describe('what the cells say (review: retiring before the FI date)', () => {

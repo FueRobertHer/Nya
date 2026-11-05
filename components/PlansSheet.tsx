@@ -35,7 +35,7 @@ import { choicesDiffParts, type ChoicesBeside } from './plan-conversions';
 import { copyDiffParts, diffText, rowText } from './plan-diff';
 import { fiWhen } from './plan-fi-when';
 import { plansText } from './PlanBar';
-import { EVENT_PART_TEXT, laterText, retirementText, shortText } from './plan-scenario-text';
+import { EVENT_PART_TEXT, laterText, numberSpending, retirementText, shortText } from './plan-scenario-text';
 import { PlanRowsSkeleton } from './LoadingSkeletons';
 import { Notice } from './TotalCaveats';
 import { MAX_FIRE_PLANS } from '@/lib/fire/copies';
@@ -177,10 +177,11 @@ export function PlanDetails({ plan, parts, outcome, money }: { plan: SheetPlan; 
         </li>
       );
     }
-    if (f.retirement && f.view.spending.value !== null) {
+    const inNumber = numberSpending(f);
+    if (inNumber && f.view.spending.value !== null) {
       lines.push(
         <li key="ret">
-          <Masked>{`FI number from ${retirementText(f.retirement.spending, f.retirement.lasting, f.view.spending.value, money)}.`}</Masked>
+          <Masked>{`FI number from ${retirementText(inNumber.spending, inNumber.lasting, f.view.spending.value, money)}.`}</Masked>
         </li>
       );
     }

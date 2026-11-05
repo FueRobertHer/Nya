@@ -555,7 +555,7 @@ export function FiNumberForm(
           </h3>
           <dl className="txn-detail">
             <div className="txn-detail-row">
-              <dt>{retirementSpending !== null || (shares !== null && shares.spending !== view.spending.value) ? 'Spending in retirement' : 'Spending'}</dt>
+              <dt>{retirementSpending !== null ? 'Spending in retirement' : 'Spending'}</dt>
               <dd>
                 <Masked>{`${money(shares ? shares.spending : spending)} a year`}</Masked>
               </dd>
