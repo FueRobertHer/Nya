@@ -6,7 +6,7 @@ import type { IncomeRow } from '@/lib/fire/compile';
 import { DEFAULT_TAX_CHOICES } from '@/lib/fire/tax-choices';
 import { DEFAULT_TAX_FACTS } from '@/lib/fire/tax-facts';
 import { markRows } from '@/components/DrawdownChart';
-import { detailLines, healthSub, honestyNotes, householdLine, householdNotes, lawLabel, onAca, stageHelper, stageSentence, stageSources, stageTitle, survivorLine, taxLine, yearBadges, yearHelper, yearSections, yearSub, yearTitle, yearValueLabel, type YearContext } from '@/components/plan-drawdown';
+import { assumptionsWorked, detailLines, healthSub, honestyNotes, householdLine, householdNotes, lawLabel, onAca, stageHelper, stageSentence, stageSources, stageTitle, survivorLine, taxLine, yearBadges, yearHelper, yearSections, yearSub, yearTitle, yearValueLabel, type YearContext } from '@/components/plan-drawdown';
 
 // What Year by year says, on real years: the stages, a stage's rows and a year's sheet.
 
@@ -43,7 +43,7 @@ const run = (over: Partial<DrawdownInput> = {}): Drawdown => {
 };
 
 const money = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`;
-const CONTEXT: YearContext = { money, realReturn: 0.05, healthGrowth: 0.021, acaLaw: '2026', lawYear: 2026, state: 'NV', stateTaxes: false, rmdAge: 75 };
+const CONTEXT: YearContext = { money, realReturn: 0.05, healthGrowth: 0.021, acaLaw: '2026', lawYear: 2026, state: 'NV', stateTaxes: false, rmdAge: 75, gainsZeroTo: 98_900 };
 const yearAt = (d: Drawdown, age: number): DrawdownYear => d.years.find((y) => y.age === age)!;
 const titles = (y: DrawdownYear, c = CONTEXT) => yearSections(y, c).map((s) => s.title);
 const lines = (y: DrawdownYear, title: string, c = CONTEXT) => yearSections(y, c).find((s) => s.title === title)!;
@@ -61,13 +61,13 @@ describe('the stages', () => {
   test('where a stage’s money comes from, and when income starts within it', () => {
     const d = run();
     const late = d.stages.find((s) => s.key === 'before-rmd')!;
-    expect(stageSources(late, d.years)).toContain('Social Security from 67');
-    expect(stageSources(d.stages[0], d.years)).toStartWith('From ');
+    expect(stageSources(late, d.years, money)).toContain('Social Security from 67');
+    expect(stageSources(d.stages[0], d.years, money)).toStartWith('From ');
   });
 
   test('RMD years with nothing left in tax-deferred say there is no RMD', () => {
     const d = run({ slots: [slot('you', 'roth', 2_000_000, { reachable: 2_000_000 })] });
-    expect(stageSources(d.stages.find((s) => s.key === 'rmd')!, d.years)).toContain('Nothing left in tax-deferred, so no RMD');
+    expect(stageSources(d.stages.find((s) => s.key === 'rmd')!, d.years, money)).toContain('Nothing left in tax-deferred, so no RMD');
   });
 
   test('a stage says what it is, and RMD spelled out once', () => {
@@ -157,9 +157,59 @@ describe('a year’s sheet', () => {
 
   test('the meter and its limit only on the ACA, and no limit under enhanced credits', () => {
     const d = run();
-    expect(lines(yearAt(d, 51), 'Income the law counts').meter?.limitLabel).toBe('Limit 400%');
+    expect(lines(yearAt(d, 51), 'Income the law counts').meter?.limitLabel).toMatch(/^Limit 400%, \$[\d,]+$/);
     expect(lines(yearAt(d, 51), 'Income the law counts', { ...CONTEXT, acaLaw: 'enhanced' }).meter?.limit).toBeNull();
     expect(lines(yearAt(d, 70), 'Income the law counts').meter).toBeUndefined();
+  });
+
+  test('the meter counts the family it measures, and the limit is in dollars', () => {
+    const y = yearAt(run(), 51);
+    const meter = lines(y, 'Income the law counts').meter!;
+    expect(meter.label).toMatch(/^\d+% of the poverty line, for 2$/);
+    expect(meter.limitLabel).toMatch(/^Limit 400%, \$[\d,]+$/);
+    const withChild = yearAt(run({ dependents: [{ untilAge: 60 }] }), 51);
+    expect(lines(withChild, 'Income the law counts').meter!.label).toMatch(/, for 3$/);
+  });
+
+  test('the benchmark says whose it is', () => {
+    const labels = (y: DrawdownYear) => yearSections(y, CONTEXT).flatMap((s) => s.lines.map((l) => l.label));
+    const d = run();
+    const both = d.years.find((y) => y.care.benchmark > 0 && y.age < 65)!;
+    expect(labels(both)).toContain(`Benchmark plan for ages ${both.age} and ${both.partnerAge}, full price`);
+    // You at Medicare, your partner still on it.
+    expect(labels(yearAt(d, 65))).toContain('Benchmark plan for age 64, full price');
+  });
+
+  test('gains at 0% say up to where, in dollars', () => {
+    const why = lines(yearAt(run(), 51), 'How the tax is worked out').why!;
+    expect(why.text).toContain('$98,900');
+  });
+
+  test('gains at 0%: the year’s taxable income is after the whole deduction, which gains can use', () => {
+    const y = yearAt(run(), 51);
+    // Ordinary income under the deduction: $1,000 of it is left for the gains.
+    const gainsYear: DrawdownYear = { ...y, income: { ...y.income, qualified: 0 }, drawn: { ...y.drawn, taxable: 60_000, gain: 60_000 }, law: { ...y.law, agi: 75_000, deduction: 16_000, ordinaryTaxable: 0, gainsTax: 0, penalty: 0 } };
+    expect(lines(gainsYear, 'How the tax is worked out', { ...CONTEXT, gainsZeroTo: 49_450 }).why!.text).toContain('Taxable income up to $49,450 takes gains at 0%, and this year’s $59,000 stays under it.');
+  });
+
+  test('money from a Roth conversion under five years old is named as that, and in why there is a penalty', () => {
+    const y = yearAt(run(), 51);
+    const early: DrawdownYear = { ...y, drawn: { ...y.drawn, young: 20_000, gain: 0, taxable: 0 }, income: { ...y.income, qualified: 0 }, law: { ...y.law, penalty: 2_000, gainsTax: 0 } };
+    expect(lines(early, 'Where the money comes from').lines.map((l) => l.label)).toContain('Roth conversions under five years old');
+    expect(lines(early, 'How the tax is worked out').why!.text).toContain('a Roth conversion under five years old');
+  });
+
+  test('what is of ordinary income sits under it, not under gains', () => {
+    const y = yearAt(run(), 51);
+    const labels = lines({ ...y, conversion: 20_000, drawn: { ...y.drawn, gain: 5_000 }, law: { ...y.law, taxableSocialSecurity: 1_000 } }, 'Income the law counts').lines.map((l) => l.label);
+    expect(labels.slice(0, 4)).toEqual(['Ordinary income', 'of it Social Security', 'of it converted to Roth', 'Gains and qualified dividends']);
+  });
+
+  test('a conversion is in the year’s income and in what it says it did', () => {
+    const y = yearAt(run({ strategy: { order: 'standard', conversions: { kind: 'bracket', top: 0.12 }, convertUntil: null } }), 51);
+    expect(y.conversion).toBeGreaterThan(0);
+    const all = yearSections(y, CONTEXT).flatMap((s) => s.lines.map((l) => l.label));
+    expect(all.some((l) => l.includes('converted to Roth') || l === 'Converted to Roth')).toBe(true);
   });
 
   test('its lines add up to what the year says it paid', () => {
@@ -234,14 +284,23 @@ describe('what a detailed plan says it can’t know', () => {
     expect(notes[1].text).toContain('The child tax credit and head of household aren’t counted.');
   });
 
+  test('the Assumptions row: its rate and growth, what prices and health do, no tax of its own', () => {
+    const plan = { withdrawalRate: 0.04, realReturn: 0.05, partTimeIncome: 0 };
+    expect(assumptionsWorked(plan, { inflation: 0.03 }, 0.021, money)).toBe('4% withdrawal · 5% growth until FI · 3% inflation · health costs +2.1 points');
+    expect(assumptionsWorked({ ...plan, partTimeIncome: 12_000 }, { inflation: 0.03 }, 0.021, money)).toContain('$12,000 part-time');
+    expect(assumptionsWorked(plan, { inflation: 0.03 }, 0.021, money)).not.toContain('tax');
+  });
+
   test('the small lines', () => {
     expect(lawLabel(2026)).toBe('Hypothetical, 2026 tax law. Not tax advice.');
     expect(taxLine(0.034)).toBe('Tax at 3.4%, from the years below.');
     expect(survivorLine(95)).toBe('Assumes you both live to 95. A survivor files single, at higher rates.');
     expect(householdLine({ filing: 'joint' }, { state: 'NV' })).toBe('joint · Nevada');
     expect(householdLine({ filing: null }, { state: null })).toBe('single · no state yet');
-    expect(healthSub(DEFAULT_TAX_CHOICES)).toContain('Not set');
-    expect(healthSub({ ...DEFAULT_TAX_CHOICES, health: { ...DEFAULT_TAX_CHOICES.health, beforeMedicare: { kind: 'aca', adult: 1, quotedAge: 50, child: null } } })).toBe('ACA before 65, then Medicare · in Drawdown');
+    expect(healthSub(DEFAULT_TAX_CHOICES, true)).toContain('Not set');
+    const onTheAca = { ...DEFAULT_TAX_CHOICES, health: { ...DEFAULT_TAX_CHOICES.health, beforeMedicare: { kind: 'aca' as const, adult: 1, quotedAge: 50, child: null } } };
+    expect(healthSub(onTheAca, true)).toBe('ACA before 65, then Medicare · in your FI number');
+    expect(healthSub(onTheAca, false)).toBe('ACA before 65, then Medicare');
   });
 
   test('a plan folded to single, and one that held spending at zero, say so', () => {

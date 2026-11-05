@@ -15,8 +15,10 @@ import { SCENARIO_NAME_MAX } from '@/lib/fire/plan-list';
 //                                         copies in the order they were made,
 //                                         and the ids of any that can't be
 //                                         read or that a newer version saved
-//   POST   { from, name, plan, currency } a new copy: `plan` whole, made from
-//                                         `from` (New copy, Duplicate, Try it)
+//   POST   { from, name, plan, currency, tax? } a new copy: `plan` whole, made from
+//                                         `from` (New copy, Duplicate, Try it);
+//                                         `tax` its own tax choices, when they
+//                                         differ (behind `plan-tax`)
 //   PUT    { saves, facts_were }          saves plans whole, all or none:
 //                                         [{ id, plan, currency, based_on, tax? }],
 //                                         `tax` its tax choices, when they changed
@@ -75,7 +77,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const b = await bodyOf(req);
   if (!b) return bad('Send the new plan, as JSON');
-  const extra = extraKey(b, ['from', 'name', 'plan', 'currency']);
+  const extra = extraKey(b, ['from', 'name', 'plan', 'currency', 'tax']);
   if (extra) return bad(`${extra.slice(0, 40)} isn’t taken here`);
   if (!isId(b.from)) return bad('from is the id of the plan it is made from');
   const name = nameOf(b.name);
@@ -85,7 +87,7 @@ export async function POST(req: Request) {
   const parsed = parsePlanV2(b.plan);
   if ('error' in parsed) return bad(`Invalid plan: ${parsed.error}`);
   try {
-    return NextResponse.json({ plan: await createCopy(await dataCtx(), { from: b.from, name, plan: parsed.plan, currency }) });
+    return NextResponse.json({ plan: await createCopy(await dataCtx(), { from: b.from, name, plan: parsed.plan, currency, ...(Object.hasOwn(b, 'tax') ? { tax: b.tax } : {}) }) });
   } catch (err) {
     return failure(err, 'Failed to make the plan');
   }

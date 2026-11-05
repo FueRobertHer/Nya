@@ -55,6 +55,10 @@ export function planOf(stored: StoredPlan): FirePlanV2 {
   };
 }
 
+/** The start a new plan takes behind `plan-tax`, never the default every older
+ *  reader's plan rests on (`DEFAULT_PLAN.start`). */
+export const NEW_PLAN_START = 'at-stop' as const;
+
 /** What a plan that was never saved is, as version 2. */
 export const DEFAULT_PLAN_V2: FirePlanV2 = planOf(DEFAULT_PLAN);
 

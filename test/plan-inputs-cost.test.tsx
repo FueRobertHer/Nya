@@ -293,7 +293,7 @@ describe('what the plan’s inputs cost', () => {
   });
 
   // Last, since it moves the stored plan on.
-  test('a detailed plan costs Home one read of its settings until the drawdown can move its answer', async () => {
+  test('a detailed plan costs Home one read of its settings, and every one with an age has its FI number from its years', async () => {
     const { flagsStore } = await import('@/lib/flag-store');
     const facts = await import('@/app/api/plan-facts/route');
     await flagsStore.update('plan-tax', async () => ({ on: 'nobody', containers: [TEST_CONTAINER], updatedAt: new Date().toISOString() }) as never, TEST_CONTAINER);
@@ -302,11 +302,11 @@ describe('what the plan’s inputs cost', () => {
 
     let home!: { root: Root; text: () => string };
     expect(await measure(async () => (home = await mountHome(createPlanInputsStore(), true)))).toEqual({ ...ONE, others: { 'GET /api/allocation-settings': 1 } });
-    const flatLine = home.text();
-    expect(flatLine).toStartWith('FI');
+    expect(home.text()).toStartWith('FI');
+    expect(home.text()).not.toContain('Working it out');
     await unmount(home.root);
 
-    // A milestone on a balance: the drawdown's tax can move it, so Home works it out.
+    // A milestone on a balance goes through the same run, at the same cost.
     const read = await (await firePlan.GET()).json();
     const milestone = { id: 'm', label: 'Part time', kind: 'part-time', from: { anchor: { at: 'balance', amount: 900_000 }, offset: 0 }, until: { anchor: { at: 'age', age: 70 }, offset: 0 }, once: null, yearly: 20_000, replaces: null, every: null, times: null, inflationAdjusted: true, owner: 'you', beforeTax: true };
     const changed = await firePlan.PUT(new Request('http://nya.test/api/fire-plan', { method: 'PUT', body: JSON.stringify({ plan: { ...read.plan, items: [milestone] }, currency: 'USD', facts_were: factsOf(read.plan), based_on: read.updated_at }) }));

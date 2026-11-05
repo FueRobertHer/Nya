@@ -220,13 +220,14 @@ function afterStop(f: PlanFigures, from: PathPoint): PathAfter | null {
   const years = endAge - d;
   if (years < 1) return null;
   // Only the simulation's parts are read here, so the walk's switch is off.
-  const at = { age: plan.age, startAge: d, stop: d, years, taxRate: plan.taxRate };
+  const taxRate = f.shares?.t ?? plan.taxRate;
+  const at = { age: plan.age, startAge: d, stop: d, years, taxRate };
   const ages = f.resolution.ages;
   const all = compileItems(plan.items, ages, at, { planInWalk: false });
   const lasting = all.lasting.reduce((s, x) => s + x.amount, 0);
   const spending = spendingNow + lasting;
   if (spending < 0) return null;
-  const run: PlanCore = { ...plan, start: 'custom', startBalance: from.balance, targetAge: d, stopAtFi: false, horizon: years, spending };
+  const run: PlanCore = { ...plan, taxRate, start: 'custom', startBalance: from.balance, targetAge: d, stopAtFi: false, horizon: years, spending };
   const view: FiView = { ...f.view, stopAge: d, spending: { ...f.view.spending, value: spending } };
   const built = enginePlan(run, view);
   if (!('sim' in built)) return null;
@@ -241,6 +242,8 @@ function afterStop(f: PlanFigures, from: PathPoint): PathAfter | null {
   // the other items' parts in these years.
   const life = compileItems(plan.items, ages.map((x, i) => (MONEY_KINDS.includes(plan.items[i].kind) ? null : x)), at, { planInWalk: false }).sim;
   const counted = life.oneOffs.some((o) => o.year < years) || life.income.some((s) => s.fromYear < years) || life.lowerSpending.some((l) => l.fromYear < years);
+  // The FI number reads its lasting changes at the stop where tax is worked out.
+  const inNumber = f.shares ? f.shares.spending === spending : lasting === (f.retirement?.lasting ?? 0);
   const whole = f.detail !== null && 'whole' in f.detail ? f.detail.whole : null;
   let steady: ReturnType<typeof steadyRun>;
   try {
@@ -267,7 +270,7 @@ function afterStop(f: PlanFigures, from: PathPoint): PathAfter | null {
     points: steady.balances.map((balance, k) => ({ age: d + k, balance })),
     endAge,
     runsOutAt: steady.failedYear === null ? null : d + steady.failedYear,
-    leftOut: { items, events: counted || lasting !== (f.retirement?.lasting ?? 0) },
+    leftOut: { items, events: counted || !inNumber },
     withEvents: counted || lasting !== 0,
   };
 }

@@ -16,6 +16,7 @@ import { planOf, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { checkPlan, historicalCycles, MAX_YEARS, type SimPlan } from '@/lib/fire/simulate';
 import { lawFor } from '@/lib/fire/tax/law';
 import { ON } from './plan-gen';
+import { NO_STRATEGY } from '@/lib/fire/tax/rules';
 
 const account = (bucket: string, value: number, basis: number | null = null) => ({ owner: 'you', value, basis, account_id: bucket, bucket });
 const group = (bucket: string, ...accounts: ReturnType<typeof account>[]) => ({ bucket, accounts, total: accounts.reduce((s, a) => s + a.value, 0) });
@@ -40,6 +41,7 @@ const input: DetailedInput = {
   state: null,
   stateRate: 0,
   paidToday: 0,
+  strategy: NO_STRATEGY,
   law: lawFor(2026).law,
   lawYear: { year: 2026, behind: false },
 };

@@ -1,12 +1,15 @@
 'use client';
 
 // The way into working tax out from your accounts (the tax plan's D5): one row in Year
-// by year's place, then a sheet that says what changes and what it reads, and nothing
-// changes until Work it out. T4 brings the before and after figures, when the FI number
-// moves with it; T3 can only say so. Shared by every plan, so a copy says where it is
-// done. Saved by components/PlanTab.tsx, which reads your plans again after.
+// by year's place, then a sheet that says what changes, before and after, and what it
+// reads, and nothing changes until Work it out. Shared by every plan, so a copy says
+// where it is done. Saved by components/PlanTab.tsx, which reads your plans again after.
 
 import { useState } from 'react';
+import type { PlanFigures } from '@/lib/fire/plan-figures';
+import { Masked } from './HideAmounts';
+import { fiWhen } from './plan-fi-when';
+import { pct } from './plan-text';
 import { Notice } from './TotalCaveats';
 
 const CHEVRON = (
@@ -62,9 +65,65 @@ export function OptInRow({
   );
 }
 
-export function OptInSheet({ moves, lawYear, paused = null, onConfirm, onDone }: { /** The drawdown can already move this plan's FI date. */ moves: boolean; lawYear: number; paused?: string | null; onConfirm: () => Promise<true | string>; onDone: () => void }) {
+/** When it reaches FI, as a line of the sheet says it. */
+function whenWords(f: PlanFigures): string {
+  const w = fiWhen(f);
+  switch (w.kind) {
+    case 'age':
+      return `around ${w.age}`;
+    case 'now':
+      return 'now';
+    case 'never':
+      return 'not at this rate';
+    case 'said':
+      return w.text.charAt(0).toLowerCase() + w.text.slice(1);
+    default:
+      return 'not known';
+  }
+}
+
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/** What moved the number further, as far as tax or health coverage can be told apart. */
+function mostlyWords(before: PlanFigures, after: PlanFigures): string | null {
+  const s = after.shares;
+  if (!s || before.plan.fiNumber !== null) return null;
+  const living = Math.max(0, s.spending - s.paid);
+  const byTax = Math.abs(living / (1 - s.t) - living / (1 - before.plan.taxRate));
+  const byHealth = s.h / (1 - s.t);
+  if (byTax < 0.5 && byHealth < 0.5) return null;
+  if (byHealth >= byTax) return after.view.spending.source === 'measured' ? 'Mostly health coverage: measured spending leaves out coverage through work, and after you stop it is a cost of its own.' : 'Mostly health coverage: after you stop it is a cost of its own.';
+  return 'Mostly tax: what you draw from tax-deferred accounts, the gains you sell and Social Security all count as income.';
+}
+
+export function OptInSheet({
+  before,
+  after,
+  working,
+  coverageSet,
+  money,
+  lawYear,
+  paused = null,
+  onConfirm,
+  onDone,
+}: {
+  /** Your plan as it stands. */
+  before: PlanFigures | null;
+  /** As it would be, once worked out. */
+  after: PlanFigures | null;
+  working: boolean;
+  /** How you'd be covered before 65 is set. */
+  coverageSet: boolean;
+  money: (n: number) => string;
+  lawYear: number;
+  paused?: string | null;
+  onConfirm: () => Promise<true | string>;
+  onDone: () => void;
+}) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const shares = after?.shares ?? null;
+  const mostly = before && after ? mostlyWords(before, after) : null;
   const confirm = async () => {
     setSaving(true);
     setError(null);
@@ -77,8 +136,39 @@ export function OptInSheet({ moves, lawYear, paused = null, onConfirm, onDone }:
     <div className="stack loose">
       <div className="stack tight">
         <h3 className="section-label">What changes</h3>
-        <p className="helper">Drawdown works tax and health coverage out year by year, and Will it last? runs on them. Your FI number changes when this reaches it, in a later version.</p>
-        {moves && <p className="helper">Your plan has a year that spends more than it saves, or a milestone on a balance. Tax reaches those now, so your FI date can move.</p>}
+        {working && (
+          <p className="plan-working-line" role="status">
+            Working it out
+          </p>
+        )}
+        {before && shares && after && !working && (
+          <dl className="txn-detail txn-detail-wide">
+            <div className="txn-detail-row">
+              <dt>Your FI date</dt>
+              <dd>{`${capital(whenWords(before))}, then ${whenWords(after)}`}</dd>
+            </div>
+            <div className="txn-detail-row">
+              <dt>Your FI number</dt>
+              <dd className="money">
+                <Masked>{before.plan.fiNumber !== null ? `${money(before.plan.fiNumber)}, set by you` : `${before.view.fiNumber === null ? '--' : money(before.view.fiNumber)}, then ${after.view.fiNumber === null ? '--' : money(after.view.fiNumber)}`}</Masked>
+              </dd>
+            </div>
+            <div className="txn-detail-row">
+              <dt>Tax after you stop</dt>
+              <dd>{`${pct(before.plan.taxRate)}, as set, then ${pct(shares.t, 1)}`}</dd>
+            </div>
+            <div className="txn-detail-row">
+              <dt>Health coverage</dt>
+              <dd className="money">
+                <Masked>{`None, then ${money(shares.h)} a year${coverageSet ? '' : ' from Medicare'}`}</Masked>
+              </dd>
+            </div>
+          </dl>
+        )}
+        {!working && !shares && <p className="helper">What it comes to can’t be worked out yet. You can still turn it on, and Drawdown will say what it needs.</p>}
+        {before && after && !working && mostly && <p className="helper">{mostly}</p>}
+        {shares && !working && !coverageSet && <p className="helper">Coverage before 65 is yours to set next, on Health coverage.</p>}
+        <p className="helper">Drawdown works tax and health coverage out year by year, and your FI number, Home and every copy use them.</p>
       </div>
       <div className="stack tight">
         <h3 className="section-label">What it reads</h3>

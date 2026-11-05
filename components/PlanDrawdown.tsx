@@ -12,7 +12,7 @@ import { Masked } from './HideAmounts';
 import { Notice } from './TotalCaveats';
 import { Why } from './Why';
 import DrawdownChart, { type DrawdownMark } from './DrawdownChart';
-import { detailLines, lawLabel, stageHelper, stageSentence, stageSources, stageTitle, survivorLine, yearBadges, yearHelper, yearSections, yearSub, yearValueLabel, type YearContext, type YearSection } from './plan-drawdown';
+import { detailLines, lawLabel, runSub, runTax, runTitle, stageFoot, stageHelper, stageSentence, stageSources, stageTitle, survivorLine, yearBadges, yearHelper, yearRuns, yearSections, yearSub, yearValueLabel, type YearContext, type YearSection } from './plan-drawdown';
 import { pct } from './plan-text';
 
 type Money = (n: number) => string;
@@ -92,7 +92,9 @@ export function DrawdownCard({
             >
               <span className="list-row-text">
                 <span className="list-row-title">{stageTitle(s)}</span>
-                <span className="list-row-sub">{stageSources(s, start.years)}</span>
+                <span className="list-row-sub">
+                  <Masked>{stageSources(s, start.years, money)}</Masked>
+                </span>
               </span>
               <span className="list-row-value money plan-input-value">
                 <span>
@@ -126,7 +128,7 @@ export function DrawdownCard({
   );
 }
 
-/** Where what the years rest on is set. How you draw and Compare come above this in T4. */
+/** Where what the years rest on is set, under How you draw and Compare conversions. */
 export function DrawdownMore({ onGoPath }: { onGoPath: () => void }) {
   return (
     <div className="stack tight">
@@ -140,9 +142,44 @@ export function DrawdownMore({ onGoPath }: { onGoPath: () => void }) {
   );
 }
 
-/** A stage's sheet: what it is, its years as rows, each opening its own sheet. */
-export function StageLevel({ stage, years, money, rmdAge, cautions = [], onYear }: { stage: DrawdownStage; years: readonly DrawdownYear[]; money: Money; rmdAge: number; cautions?: readonly string[]; onYear: (index: number) => void }) {
+/** One year's row in a stage's sheet. */
+function YearRow({ y, money, onOpen }: { y: DrawdownYear; money: Money; onOpen: () => void }) {
+  const badges = yearBadges(y, money);
+  return (
+    <li>
+      <button type="button" className="list-row" onClick={onOpen}>
+        <span className="list-row-text">
+          <span className="list-row-title">{`${y.age} · ${y.calendarYear}`}</span>
+          <span className="list-row-sub">{yearSub(y)}</span>
+          {badges.length > 0 && (
+            <span className="row-badges">
+              {badges.map((b) => (
+                <span key={b} className="badge">
+                  <Masked>{b}</Masked>
+                </span>
+              ))}
+            </span>
+          )}
+        </span>
+        <span className="list-row-value money plan-input-value">
+          <span>
+            <Masked>{money(y.tax)}</Masked>
+          </span>
+          <span className="plan-input-line">{yearValueLabel(y)}</span>
+        </span>
+        {CHEVRON}
+      </button>
+    </li>
+  );
+}
+
+/** A stage's sheet: what it is, its years as rows, each opening its own sheet. Years
+ *  that read the same are one row, which opens to them in place, and stays open while
+ *  a year's sheet is over it, so the page holds which are open. */
+export function StageLevel({ stage, years, money, rmdAge, cautions = [], openRuns, onRuns, onYear }: { stage: DrawdownStage; years: readonly DrawdownYear[]; money: Money; rmdAge: number; cautions?: readonly string[]; openRuns: readonly number[]; onRuns: (runs: readonly number[]) => void; onYear: (index: number) => void }) {
   const sentence = stageSentence(stage, years, money);
+  const foot = stageFoot(stage, years);
+  const rows = years.slice(stage.first, stage.last);
   return (
     <div className="stack loose">
       <p className="helper">{stageHelper(stage, rmdAge)}</p>
@@ -157,14 +194,18 @@ export function StageLevel({ stage, years, money, rmdAge, cautions = [], onYear 
         </Notice>
       ))}
       <ul className="list-rows">
-        {years.slice(stage.first, stage.last).map((y, i) => {
-          const badges = yearBadges(y, money);
-          return (
-            <li key={y.age}>
-              <button type="button" className="list-row" onClick={() => onYear(stage.first + i)}>
+        {yearRuns(rows).flatMap((r) => {
+          const span = rows.slice(r.first, r.last);
+          const one = (y: DrawdownYear, i: number) => <YearRow key={y.age} y={y} money={money} onOpen={() => onYear(stage.first + i)} />;
+          if (span.length === 1) return [one(span[0], r.first)];
+          const opened = openRuns.includes(r.first);
+          const badges = yearBadges(span[0], money);
+          return [
+            <li key={`run-${r.first}`}>
+              <button type="button" className="list-row" aria-expanded={opened} onClick={() => onRuns(opened ? openRuns.filter((x) => x !== r.first) : [...openRuns, r.first])}>
                 <span className="list-row-text">
-                  <span className="list-row-title">{`${y.age} · ${y.calendarYear}`}</span>
-                  <span className="list-row-sub">{yearSub(y)}</span>
+                  <span className="list-row-title">{runTitle(span)}</span>
+                  <span className="list-row-sub">{runSub(span)}</span>
                   {badges.length > 0 && (
                     <span className="row-badges">
                       {badges.map((b) => (
@@ -177,16 +218,20 @@ export function StageLevel({ stage, years, money, rmdAge, cautions = [], onYear 
                 </span>
                 <span className="list-row-value money plan-input-value">
                   <span>
-                    <Masked>{money(y.tax)}</Masked>
+                    <Masked>{runTax(span, money)}</Masked>
                   </span>
-                  <span className="plan-input-line">{yearValueLabel(y)}</span>
+                  <span className="plan-input-line">{yearValueLabel(span[0])} a year</span>
                 </span>
-                {CHEVRON}
+                <svg className={`section-chevron${opened ? ' open' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
               </button>
-            </li>
-          );
+            </li>,
+            ...(opened ? span.map((y, i) => one(y, r.first + i)) : []),
+          ];
         })}
       </ul>
+      {foot && <p className="helper">{foot}</p>}
       {stage.key === 'before-60' && (
         <Why label="Why does 59 count as before 59½?">
           <p>Nya knows your age in whole years, not your birthday, so the year you turn 59 is counted as before 59½. The year you turn 60 is after it.</p>

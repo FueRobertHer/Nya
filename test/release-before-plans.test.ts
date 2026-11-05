@@ -4,7 +4,7 @@ import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { PlanEntry, PlanFacts } from './fixtures/release-before/fire/copies';
 import type { PlanItem } from '@/lib/fire/items';
 
-// The release before (the last merge before this one, c6579849, T2 and its Forget fix, whose readers
+// The release before (the last merge before this one, 756b97c5, T3 and a 529's bank payments, whose readers
 // of the plans as copies are in test/fixtures/release-before/fire/copies.ts byte
 // for byte, pinned by test/release-before.test.ts) reading what this release
 // writes, so a rollback to it loses no plan. Every write this release makes
@@ -33,6 +33,7 @@ afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const oCopies = await import('./fixtures/release-before/fire/copies');
+const oChoices = await import('./fixtures/release-before/fire/tax-choices');
 const oSaved = await import('./fixtures/release-before/fire/saved-plan');
 const oPlanV2 = await import('./fixtures/release-before/fire/plan-v2');
 const { openStored } = await import('@/lib/repo');
@@ -326,6 +327,11 @@ describe('what the detailed model writes, as the release before reads it', () =>
     health({ beforeMedicare: { kind: 'aca', adult: 11_000, quotedAge: 50, child: 3_000 }, acaLaw: 'enhanced' }),
     health({ beforeMedicare: { kind: 'other', yearly: 6_000 }, medicareExtra: 2_400 }),
     health({ meetsMedicaidRule: ['you', 'partner'], countMedicaid: true, growth: 0.015 }),
+    // Every order and rule, and an age to run until.
+    { ...CHOICES, strategy: { order: 'roth-before-deferred', conversions: { kind: 'none' }, convertUntil: null } },
+    ...[0.1, 0.12, 0.22, 0.24].map((top) => ({ ...CHOICES, strategy: { order: 'standard', conversions: { kind: 'bracket', top }, convertUntil: null } })),
+    ...[0.12, 0.22].map((top) => ({ ...CHOICES, strategy: { order: 'roth-before-deferred', conversions: { kind: 'aca-then-bracket', top }, convertUntil: 64 } })),
+    { ...CHOICES, strategy: { order: 'standard', conversions: { kind: 'fixed', yearly: 40_000 }, convertUntil: 70 } },
   ];
   beforeEach(() => flagsStore.update('plan-tax', (async () => ({ on: 'nobody', containers: [ctx.container], updatedAt: new Date().toISOString() })) as never, ctx.container));
 
@@ -354,6 +360,27 @@ describe('what the detailed model writes, as the release before reads it', () =>
       const entries = await readsAll(MAIN_ID, JSON.stringify(tax));
       expect(entries.get(MAIN_ID)!.tax as unknown).toEqual(tax);
     }
+  });
+
+  test('a copy made with a rule of its own: an entry to it, with that rule, and your plan’s stays', async () => {
+    const stamp = (ok(await save(TYPED, null, DEFAULTS)) as { updated_at: string }).updated_at;
+    ok(await save(TYPED, stamp, factsOf(TYPED), 'USD', { tax: CHOICES }));
+    const rule = { ...CHOICES, strategy: { order: 'standard', conversions: { kind: 'fixed', yearly: 40_000 }, convertUntil: null } };
+    const made = ok(await plans('POST', { from: MAIN_ID, name: '$40,000 a year', plan: TYPED, currency: 'USD', tax: rule })) as { plan: { id: string } };
+    const entries = await readsAll(MAIN_ID, 'a copy with a rule');
+    expect(entries.get(made.plan.id)!.tax as unknown).toEqual(rule);
+    expect(entries.get(made.plan.id)!.currency).toBe('USD');
+    expect(entries.get(MAIN_ID)!.tax as unknown).toEqual(CHOICES);
+  });
+
+  test('a save beside a rule it can’t run goes through its own writer: it isn’t a change', async () => {
+    const stamp = (ok(await save(TYPED, null, DEFAULTS)) as { updated_at: string }).updated_at;
+    const rule = { ...CHOICES, strategy: { order: 'standard', conversions: { kind: 'bracket', top: 0.12 }, convertUntil: 60 } };
+    ok(await save(TYPED, stamp, factsOf(TYPED), 'USD', { tax: rule }));
+    const stored = (await readsAll(MAIN_ID, 'with a rule')).get(MAIN_ID)!.tax!;
+    expect('choices' in oChoices.parseTaxChoices({ ...rule, stateRate: 0.05 }, stored)).toBe(true);
+    // A change of rule, it refuses, and the tab loads again.
+    expect('error' in oChoices.parseTaxChoices({ ...rule, strategy: { ...rule.strategy, convertUntil: 61 } }, stored)).toBe(true);
   });
 
   test('a household on a save and on a first save, its dependents and what pays for coverage', async () => {

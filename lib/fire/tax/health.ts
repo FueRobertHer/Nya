@@ -166,6 +166,60 @@ export function povertyLine(guidelines: PovertyGuidelines, state: StateCode | nu
   return table.first + table.added * Math.max(0, size - 1);
 }
 
+/** What the ACA rule's limit and floor read of a year. */
+export type AcaYear = {
+  filing: Filing;
+  people: readonly { age: number; meetsRule: boolean }[];
+  dependents: number;
+  state: StateCode | null;
+  calendarYear: number;
+  priceLevel: number;
+  coverage: Coverage;
+  countMedicaid: boolean;
+};
+
+/** Whether anyone is on the ACA this year, as health has it: coverage by the ACA,
+ *  and an adult under 65 or a child it covers. */
+export function onAcaThisYear(y: AcaYear): boolean {
+  const c = y.coverage;
+  if (c === null || c.kind !== 'aca') return false;
+  const filers = y.filing === 'joint' ? 2 : 1;
+  return y.people.slice(0, filers).some((p) => p.age < 65) || (c.child !== null && y.dependents > 0);
+}
+
+/** The ACA limit as a MAGI: the credit's upper line for the household. The
+ *  enhanced law has no cliff there, but a rule named after it still stops there. */
+export function acaLimit(y: AcaYear, law: TaxLaw): number {
+  const filers = y.filing === 'joint' ? 2 : 1;
+  return (law.aca.cliff ?? 4) * povertyLine(law.creditPoverty, y.state, filers + y.dependents);
+}
+
+/**
+ * The MAGI under which someone on the ACA pays full price this year, or null where
+ * nothing does: outside a state with a line, under the credit's floor; in one, under
+ * the line for someone Medicaid won't take (who doesn't count on it, or doesn't meet
+ * a state's own rule); and from the federal work rule, for someone who doesn't
+ * otherwise meet it, under the income that meets it. Where Medicaid is free, none: a
+ * floor would only push income into a paid plan.
+ */
+export function fullPriceUnder(y: AcaYear, law: TaxLaw): number | null {
+  const c = y.coverage;
+  if (c === null || c.kind !== 'aca') return null;
+  const st = law.statute;
+  const filers = y.filing === 'joint' ? 2 : 1;
+  const adults = y.people.slice(0, filers).filter((p) => p.age < 65);
+  if (adults.length === 0) return null;
+  const size = filers + y.dependents;
+  const creditFloor = st.credit.floor * povertyLine(law.creditPoverty, y.state, size);
+  const line = y.state === null ? null : law.medicaidStates[y.state];
+  if (line === null || (line.through !== null && y.calendarYear > line.through)) return creditFloor;
+  const lineAt = line.line * povertyLine(law.medicaidPoverty, y.state, size);
+  const unmet = adults.some((p) => !p.meetsRule);
+  if (y.countMedicaid || (line.ownRule && unmet)) return Math.max(lineAt, creditFloor);
+  if (line.ownRule || y.calendarYear < st.workRule.from || !unmet) return null;
+  return (12 * st.workRule.minimumWage * st.workRule.hours) / y.priceLevel;
+}
+
 /** CMS's default curve at `age` (0 to 14 one band, 64 and older one band). */
 function curveAt(curve: readonly number[], age: number): number {
   return curve[Math.min(Math.max(0, Math.floor(age)), curve.length - 1)];

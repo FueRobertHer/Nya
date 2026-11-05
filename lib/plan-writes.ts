@@ -364,8 +364,10 @@ export async function saveMain(ctx: Ctx, plan: StoredPlan, currency: string | nu
  * the new one taken back when copies made together went past it. Its
  * currency is its source's while the source holds amounts (a page in another
  * currency is refused), else the one sent when it brings the first amounts.
+ * `tax`, when sent (Try it in a copy, from Compare conversions), is the copy's own
+ * choices from the start, behind the flag, so a copy never exists with the wrong rule.
  */
-export async function createCopy(ctx: Ctx, input: { from: string; name: string; plan: StoredPlan; currency: string | null }): Promise<PlanRow> {
+export async function createCopy(ctx: Ctx, input: { from: string; name: string; plan: StoredPlan; currency: string | null; tax?: unknown }): Promise<PlanRow> {
   const now = new Date();
   const at = now.toISOString();
   const s = await readState(ctx, at);
@@ -380,8 +382,15 @@ export async function createCopy(ctx: Ctx, input: { from: string; name: string; 
   if (!source) throw new Refused(CHANGED);
   // Never on "at your stop age" alone, or Duplicate traps someone with the flag off.
   if (movesToAtStop(input.plan, source)) await requireTaxFlag(ctx);
+  let tax = source.tax;
+  if (input.tax !== undefined) {
+    await requireTaxFlag(ctx);
+    const parsed = parseTaxChoices(input.tax, source.tax);
+    if ('error' in parsed) throw new Refused(parsed.error, 400, false);
+    tax = parsed.choices;
+  }
   let currency: string | null = null;
-  if (entryHoldsAmounts(input.plan, source.tax)) {
+  if (entryHoldsAmounts(input.plan, tax)) {
     if (entryHoldsAmounts(source.plan, source.tax) && source.currency !== null) {
       if (input.currency !== null && input.currency !== source.currency) throw new Refused(STALE_CURRENCY);
       currency = source.currency;
@@ -400,7 +409,7 @@ export async function createCopy(ctx: Ctx, input: { from: string; name: string; 
       if (current.get(id) !== null) throw new Refused(CHANGED);
       if (nameTaken(namesIn(current), input.name)) throw new Refused(NAME_TAKEN, 409, false);
       const stamps = stampsIn(current);
-      const next = new Map<string, PlanEntry | null>([[id, { name: input.name, plan: withFacts(input.plan, facts), tax: source.tax, currency, createdAt: at, updatedAt: stampFor('', now, stamps) }]]);
+      const next = new Map<string, PlanEntry | null>([[id, { name: input.name, plan: withFacts(input.plan, facts), tax, currency, createdAt: at, updatedAt: stampFor('', now, stamps) }]]);
       if (s.empty) {
         const main = current.get(MAIN_ID)!;
         // Another write made your plan's entry meanwhile: its facts may differ.

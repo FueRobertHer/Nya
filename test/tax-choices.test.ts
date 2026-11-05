@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { DEFAULT_TAX_CHOICES, isTaxChoices, parseTaxChoices, taxHoldsAmounts, type TaxChoices } from '@/lib/fire/tax-choices';
+import { DEFAULT_TAX_CHOICES, isTaxChoices, MAX_YEARLY_CONVERSION, parseTaxChoices, taxHoldsAmounts, type TaxChoices } from '@/lib/fire/tax-choices';
 import { isPlanEntry } from '@/lib/fire/copies';
 import { DEFAULT_PLAN_V2 } from '@/lib/fire/plan-v2';
 import { STATE_CODES } from '@/lib/fire/tax/law/types';
@@ -159,14 +159,26 @@ describe('what a page may write', () => {
     for (const v of [null, 'tax', [], { ...DEFAULT_TAX_CHOICES, extra: 1 }, { ...DEFAULT_TAX_CHOICES, version: 2 }, { ...DEFAULT_TAX_CHOICES, state: 'PR' }]) expect(taken(v)).toBe(false);
   });
 
-  test('a change of strategy waits for T4; one already stored is no change, and going back is one', () => {
-    const later = { ...DEFAULT_TAX_CHOICES, strategy: { order: 'roth-before-deferred', conversions: { kind: 'bracket', top: 0.12 }, convertUntil: 65 } } as TaxChoices;
-    expect(taken(later)).toBe(false);
-    expect(taken(later, DEFAULT_TAX_CHOICES)).toBe(false);
-    expect(taken(later, later)).toBe(true);
-    expect(taken(DEFAULT_TAX_CHOICES, later)).toBe(true);
-    const other = { ...later, strategy: { ...later.strategy, convertUntil: 70 } };
-    expect(taken(other, later)).toBe(false);
+  test('a strategy is yours to change, within its ranges', () => {
+    const rule = { order: 'roth-before-deferred', conversions: { kind: 'bracket', top: 0.12 }, convertUntil: 65 } as TaxChoices['strategy'];
+    const choices = (strategy: TaxChoices['strategy']) => ({ ...DEFAULT_TAX_CHOICES, strategy });
+    expect(taken(choices(rule))).toBe(true);
+    expect(taken(choices(rule), DEFAULT_TAX_CHOICES)).toBe(true);
+    expect(taken(DEFAULT_TAX_CHOICES, choices(rule))).toBe(true);
+    for (const convertUntil of [18, 100, null]) expect(taken(choices({ ...rule, convertUntil }))).toBe(true);
+    for (const convertUntil of [17, 101, 60.5]) expect(taken(choices({ ...rule, convertUntil }))).toBe(false);
+    const fixed = (yearly: number) => choices({ ...rule, conversions: { kind: 'fixed', yearly } });
+    for (const yearly of [0, 40_000, MAX_YEARLY_CONVERSION]) expect(taken(fixed(yearly))).toBe(true);
+    for (const yearly of [-1, MAX_YEARLY_CONVERSION + 1]) expect(taken(fixed(yearly))).toBe(false);
+  });
+
+  test('the ranges hold of a change: what is stored already can be saved beside', () => {
+    const outside = { ...DEFAULT_TAX_CHOICES, strategy: { order: 'standard', conversions: { kind: 'none' }, convertUntil: 17 } } as TaxChoices;
+    expect(taken(outside)).toBe(false);
+    expect(taken(outside, DEFAULT_TAX_CHOICES)).toBe(false);
+    expect(taken(outside, outside)).toBe(true);
+    expect(taken({ ...outside, stateRate: 0.05 }, outside)).toBe(true);
+    expect(taken({ ...outside, strategy: { ...outside.strategy, convertUntil: 16 } }, outside)).toBe(false);
   });
 });
 

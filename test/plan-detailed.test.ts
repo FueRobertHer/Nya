@@ -7,7 +7,7 @@ import type { BucketsToday } from '@/lib/fire/buckets-today';
 import { trailingFlows } from '@/lib/fire/inputs';
 import type { PlanItem } from '@/lib/fire/items';
 import { DEFAULT_PLAN, type Measured } from '@/lib/fire/plan';
-import { drawdownMovesFi, planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
+import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
 import { planOf, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { runSearchJob, type SearchJob, type SearchResult } from '@/lib/fire/search-job';
 import { DEFAULT_TAX_CHOICES, type TaxChoices } from '@/lib/fire/tax-choices';
@@ -112,26 +112,23 @@ function fakeSearch() {
 describe('one flow for every caller', () => {
   const SEARCHING = plan({ stopAtFi: true, items: [item({ id: 'm', from: at({ at: 'balance', amount: 2_000_000 }) })] });
 
-  test('it can’t move the answer: the flat one’s, with the years added, and no job', () => {
+  test('nothing searched for: worked out here, with no job, its FI number its own', () => {
     const p = plan({ items: [item({})] });
     const flat = figuresIn(flatOf(p));
-    expect(drawdownMovesFi(p, flat.walk, 40_000, flat.view.stopAge)).toBe(false);
     const search = fakeSearch();
     const r = createDetailedFigures(search)('plan', p, M, ON, IN, flat);
     const f = figuresIn(r.figures);
     expect(r).toMatchObject({ working: false, failed: false });
-    expect(f.view).toEqual(flat.view);
-    expect(f.walk).toEqual(flat.walk);
-    expect(f.resolution).toEqual(flat.resolution);
+    expect(f.shares).not.toBeNull();
+    expect(f.view.fiNumber).not.toBe(flat.view.fiNumber);
     expect(f.detail).not.toBeNull();
     expect(search.asked).toEqual([]);
     expect(search.dropped).toEqual(['plan']);
   });
 
-  test('it can, with nothing searched for: worked out here, its tax in the walk', () => {
+  test('nothing searched for, and a year that has to sell: its tax in the walk', () => {
     const p = plan({ targetAge: 60, items: [item({ id: 'h', kind: 'one-off', from: at({ at: 'age', age: 50 }), once: 600_000, yearly: null })] });
     const flat = figuresIn(flatOf(p));
-    expect(drawdownMovesFi(p, flat.walk, 40_000, flat.view.stopAge)).toBe(true);
     const search = fakeSearch();
     const f = figuresIn(createDetailedFigures(search)('plan', p, M, ON, IN, flat).figures);
     expect(search.asked).toEqual([]);
@@ -139,7 +136,7 @@ describe('one flow for every caller', () => {
     expect(f.walk).not.toEqual(flat.walk);
   });
 
-  test('it can, with a search: the job; meanwhile the flat answer, with its years, dimmed', () => {
+  test('a search: the job; meanwhile the flat answer’s stop, with its years, dimmed', () => {
     const flat = figuresIn(flatOf(SEARCHING));
     const search = fakeSearch();
     const run = createDetailedFigures(search);

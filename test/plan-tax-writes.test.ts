@@ -221,16 +221,50 @@ describe('a plan’s choices', () => {
     await setFlag(true);
     expect((await save(TYPED, stamp, { tax: { ...CHOICES, stateRate: 0.9 } })).status).toBe(400);
     expect((await save(TYPED, stamp, { tax: null })).status).toBe(400);
-    expect((await save(TYPED, stamp, { tax: { ...CHOICES, strategy: { order: 'roth-before-deferred', conversions: { kind: 'none' }, convertUntil: null } } })).status).toBe(400);
+    expect((await save(TYPED, stamp, { tax: { ...CHOICES, strategy: { order: 'standard', conversions: { kind: 'bracket', top: 0.12 }, convertUntil: 101 } } })).status).toBe(400);
     expect((await save(TYPED, 'not the stamp', { tax: CHOICES })).status).toBe(409);
     expect((await firePlansStore.get(ctx, MAIN_ID))!.tax).toBeNull();
+  });
+
+  test('a rule saves with the plan, and is read back', async () => {
+    const stamp = await saved();
+    await setFlag(true);
+    const rule = { ...CHOICES, strategy: { order: 'roth-before-deferred', conversions: { kind: 'bracket', top: 0.12 }, convertUntil: 65 } } as TaxChoices;
+    expect((await save(TYPED, stamp, { tax: rule })).status).toBe(200);
+    expect((await firePlansStore.get(ctx, MAIN_ID))!.tax).toEqual(rule);
+  });
+
+  test('a new copy can start with a rule of its own, and your plan stays as it was', async () => {
+    const stamp = await saved();
+    await setFlag(true);
+    expect((await save(TYPED, stamp, { tax: CHOICES })).status).toBe(200);
+    const rule = { ...CHOICES, strategy: { order: 'standard', conversions: { kind: 'bracket', top: 0.12 }, convertUntil: null } } as TaxChoices;
+    const r = await plans('POST', { from: MAIN_ID, name: 'Fill 12%', plan: TYPED, currency: 'USD', tax: rule });
+    expect([r.status, r.body.error]).toEqual([200, undefined]);
+    const rows = (await json(await plansRoute.GET())).body.plans as { id: string; tax: unknown }[];
+    expect(rows.find((x) => x.id === r.body.plan.id)!.tax).toEqual(rule);
+    expect((await firePlansStore.get(ctx, MAIN_ID))!.tax).toEqual(CHOICES);
+  });
+
+  test('a new copy’s rule: refused with the flag off, or out of range, with nothing made', async () => {
+    const stamp = await saved();
+    await setFlag(true);
+    expect((await save(TYPED, stamp, { tax: CHOICES })).status).toBe(200);
+    const count = async () => ((await json(await plansRoute.GET())).body.plans as unknown[]).length;
+    const before = await count();
+    const outside = { ...CHOICES, strategy: { order: 'standard', conversions: { kind: 'none' }, convertUntil: 200 } };
+    expect((await plans('POST', { from: MAIN_ID, name: 'Out of range', plan: TYPED, currency: 'USD', tax: outside })).status).toBe(400);
+    await setFlag(false);
+    const allowed = { ...CHOICES, strategy: { order: 'standard', conversions: { kind: 'bracket', top: 0.12 }, convertUntil: null } };
+    expect((await plans('POST', { from: MAIN_ID, name: 'Flag off', plan: TYPED, currency: 'USD', tax: allowed })).status).toBe(403);
+    expect(await count()).toBe(before);
   });
 
   test('a strategy stored by a later release isn’t a change, so a Health save goes through', async () => {
     const stamp = await saved();
     await setFlag(true);
     const entry = (await firePlansStore.get(ctx, MAIN_ID))!;
-    const later = { ...CHOICES, strategy: { order: 'standard', conversions: { kind: 'bracket', top: 0.12 }, convertUntil: null } } as TaxChoices;
+    const later = { ...CHOICES, strategy: { order: 'standard', conversions: { kind: 'bracket', top: 0.12 }, convertUntil: 17 } } as TaxChoices;
     await firePlansStore.set(ctx, MAIN_ID, { ...entry, tax: later });
     const r = await save(TYPED, stamp, { tax: { ...later, stateRate: 0.05 } });
     expect(r.status).toBe(200);

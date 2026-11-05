@@ -24,7 +24,8 @@
 //        i. an HSA of an owner under 65, taxed and with the 20%.
 //      With a ceiling, a source whose next dollar raises the ceiling's
 //      measure stops there, the sources that don't follow, and only then the
-//      rest, over it, with `crossed` set.
+//      rest, over it, with `crossed` set. Roth before tax-deferred takes e
+//      after b, and then c and d.
 //   5 and 6. Tax and health (lib/fire/tax/federal.ts, lib/fire/tax/health.ts).
 //   7. The least withdrawal that pays the year: see the solver below.
 //   8. The year's end: growth (taxable at growth less its yield), and basis,
@@ -57,6 +58,13 @@
 // capped at MAX_PIECES pieces, cells included. When every source is spent and
 // f still doesn't pay, the year is short by -f.
 //
+// FILLING. A conversion brings no cash but raises ordinary income, so it isn't a
+// source in the walk: runYearFilling searches on it from outside, a whole solve a
+// try, for the least conversion that brings the year's measure to `fill`. The
+// least, since past it the measure sits at a ceiling while what spending draws
+// from tax-deferred money moves to Roth: the same tax and balances, but it reads
+// as more converted and Roth paying for it.
+//
 // Allocation-free: runYear writes into a YearResult made once by
 // newYearResult(), as runPaths refills one YearState (lib/fire/simulate.ts).
 // Inputs are checked once per plan by checkYearInput; runYear throws only if
@@ -76,6 +84,18 @@ export const PAY_EPS = 1e-6;
 export const MAX_PIECES = 4096;
 /** How many tax years before this one the conversion window holds. */
 export const WINDOW = 4;
+/** Dollars under its target a filled year may stop. */
+const FILL_EPS = 1;
+/** The most solves a filled year may take. */
+export const MAX_FILL = 24;
+/** Dollars under its line that count as on it: a try there may be past the answer. */
+const FILL_ON_LINE = 0.25;
+/** The measure's rise for a dollar converted, for the first try: a little over the dollar, for its tax. */
+const FILL_SLOPE = 1.15;
+/** Tries that guess along the line before halving what is left. */
+const FILL_GUESSES = 6;
+/** A gap this narrow, in dollars, is a jump in the measure: there is no nearer try. */
+const FILL_WIDTH = 0.5;
 
 /** One filer this year. Balances are at the year's start (last year's close). */
 export type PersonYear = {
@@ -110,6 +130,9 @@ export type PersonYear = {
  *  header's step 4): on ordinary taxable income (a bracket's top), or on the
  *  ACA's MAGI. */
 export type Ceiling = { on: 'ordinary' | 'magi'; at: number };
+
+/** The standard order, or Roth before tax-deferred. */
+export type DrawOrder = 'standard' | 'roth-before-deferred';
 
 export type YearInput = {
   calendarYear: number;
@@ -149,6 +172,10 @@ export type YearInput = {
   healthGrowth: number;
   incomeGrowth: number;
   ceiling: Ceiling | null;
+  /** The order of the withdrawals; the standard one when not said. */
+  order?: DrawOrder;
+  /** What runYearFilling converts up to; runYear doesn't read it. */
+  fill?: Ceiling | null;
   /** The year's return after inflation. */
   growth: number;
   inflation: number;
@@ -250,6 +277,9 @@ export function newPersonYear(age = 50): PersonYear {
 const HSA_PREMIUMS = 0, TAXABLE = 1, DEFERRED = 2, PLAN_457 = 3, HSA_TAXED = 4, ROTH = 5, YOUNG = 6;
 const PENALIZED = 7, EARNINGS = 8, HSA_EARLY = 9;
 const CATEGORY = [0, 1, 2, 2, 3, 4, 5, 6, 7, 8];
+// Each order's categories, as `prepare` adds them.
+const STANDARD_ORDER = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+const ROTH_FIRST_ORDER = [0, 1, 4, 2, 3, 5, 6, 7, 8];
 
 // The year's sources, made once: at most 2 owners x 10 kinds.
 const MAX_SOURCES = 20;
@@ -384,6 +414,85 @@ export function runYear(inp: YearInput, law: TaxLaw, out: YearResult): YearResul
   prepare(inp, law, out);
   walk(inp, law, out);
   return finish(inp, law, out);
+}
+
+/** What the year can convert after each filer's RMD. */
+function convertible(inp: YearInput, law: TaxLaw, i: number): number {
+  const p = inp.people[i];
+  return Math.max(0, p.deferred + p.deferred457 - rmd(p.deferred + p.deferred457, p.age, p.rmdAge, law.uniform));
+}
+
+/** Sets the year's conversions to `total`, as far as there is money, the older
+ *  owner's first ("you" first at the same age). */
+export function splitConversion(inp: YearInput, law: TaxLaw, total: number): void {
+  const joint = inp.filing === 'joint';
+  const first = joint && inp.people[1].age > inp.people[0].age ? 1 : 0;
+  const take = Math.min(Math.max(0, total), convertible(inp, law, first));
+  inp.people[first].conversion = take;
+  inp.people[1 - first].conversion = joint ? Math.min(Math.max(0, total) - take, convertible(inp, law, 1 - first)) : 0;
+}
+
+/**
+ * Works out one year with the least conversion that brings its measure to
+ * `inp.fill` (see the header), or as much as there is to convert. A year already
+ * there, or short with nothing converted, converts nothing. Health's jumps can
+ * step the measure over the last dollars: a ceiling then stops under it, and a
+ * floor, with no ceiling to cross, clears it unless that leaves the year short.
+ *
+ * Under a ceiling the measure sits on its line past the answer, so a try on the
+ * line only bounds the answer from above: a try a little under it is the answer.
+ */
+export function runYearFilling(inp: YearInput, law: TaxLaw, out: YearResult): YearResult {
+  splitConversion(inp, law, 0);
+  runYear(inp, law, out);
+  const target = inp.fill ?? null;
+  if (target === null || out.short) return out;
+  const at = target.at;
+  const capped = inp.ceiling != null;
+  let avail = convertible(inp, law, 0);
+  if (inp.filing === 'joint') avail += convertible(inp, law, 1);
+  let lo = 0;
+  let underLo = at - measure(target, out.federal).v;
+  if (underLo <= FILL_EPS || avail <= LINE_EPS) return out;
+  let before = -1; // the try under the line before `lo`, for the slope
+  let underBefore = 0;
+  let hi = -1;
+  let hiCrosses = false;
+  let hiShort = false;
+  let c = Math.min(avail, underLo / FILL_SLOPE);
+  let solved = 0;
+  for (let n = 0; n < MAX_FILL; n++) {
+    splitConversion(inp, law, c);
+    runYear(inp, law, out);
+    solved = c;
+    const under = at - measure(target, out.federal).v;
+    const crosses = out.short || under < -LINE_EPS;
+    if (!crosses && under <= FILL_EPS && (under > FILL_ON_LINE || !capped)) return out;
+    if (crosses || under <= FILL_ON_LINE) {
+      hi = c;
+      hiCrosses = crosses;
+      hiShort = out.short;
+    } else {
+      before = lo;
+      underBefore = underLo;
+      lo = c;
+      underLo = under;
+      if (c >= avail - LINE_EPS) return out;
+    }
+    if (hi >= 0 && hi - lo < FILL_WIDTH) break;
+    // Along the line through the last two tries under it; a dollar converted
+    // raises the measure by a dollar or more once it has passed the deduction.
+    const slope = before >= 0 ? Math.max(1, (underBefore - underLo) / (lo - before)) : FILL_SLOPE;
+    const next = lo + (underLo - FILL_EPS / 2) / slope;
+    if (hi < 0) c = Math.min(avail, next);
+    else c = n < FILL_GUESSES && next > lo && next < hi ? next : (lo + hi) / 2;
+  }
+  const answer = hi >= 0 && !(capped ? hiCrosses : hiShort) ? hi : lo;
+  if (solved !== answer) {
+    splitConversion(inp, law, answer);
+    runYear(inp, law, out);
+  }
+  return out;
 }
 
 /** For checking the solver: the year's surplus had it withdrawn `x` along the
@@ -529,7 +638,9 @@ function prepare(inp: YearInput, law: TaxLaw, out: YearResult): void {
   }
 
   // Step 4: the sources, category by category, the older owner first.
-  for (let c = 0; c <= 8; c++) {
+  const order = inp.order === 'roth-before-deferred' ? ROTH_FIRST_ORDER : STANDARD_ORDER;
+  for (let o = 0; o < order.length; o++) {
+    const c = order[o];
     for (let n = 0; n < filers; n++) {
       const i = n === 0 ? first : 1 - first;
       const p = inp.people[i];
@@ -848,6 +959,7 @@ export function checkYearInput(inp: YearInput): void {
   finite(inp.growth, 'growth', -1);
   finite(inp.inflation, 'inflation', -0.5);
   if (inp.ceiling !== null) finite(inp.ceiling.at, 'ceiling.at');
+  if (inp.fill != null) finite(inp.fill.at, 'fill.at');
   const filers = inp.filing === 'joint' ? 2 : 1;
   for (let i = 0; i < filers; i++) {
     const p = inp.people[i];

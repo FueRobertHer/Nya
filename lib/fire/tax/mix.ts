@@ -33,7 +33,7 @@ import type { BucketsToday } from '../buckets-today';
 import type { SplitShare } from '../savings-split';
 import type { Owner } from '../tax-facts';
 import type { Filing, StateCode, TaxLaw } from './law/types';
-import { checkYearInput, newPersonYear, newYearResult, runYear, type PersonYear, type YearInput, type YearResult } from './year';
+import { checkYearInput, newPersonYear, newYearResult, runYear, type DrawOrder, type PersonYear, type YearInput, type YearResult } from './year';
 
 export type MixSlot = {
   owner: Owner;
@@ -133,6 +133,8 @@ export type TaxedWalk = {
   state: StateCode | null;
   stateRate: number;
   law: TaxLaw;
+  /** The plan's order; a year before the stop converts nothing. */
+  order?: DrawOrder;
 };
 
 /** The mix `years` from now, or null where the walk can't get there (a cost it
@@ -226,6 +228,7 @@ function walkMix(today: readonly MixSlot[], args: MixArgs, taxed: TaxedWalk | nu
       healthGrowth: 0,
       incomeGrowth: 0,
       ceiling: null,
+      order: at.order,
       growth: 0,
       inflation: 0,
       skipHealth: true,

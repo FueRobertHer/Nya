@@ -72,7 +72,7 @@ export type MainAnswer = { id: string; plan: StoredPlan | null; currency: string
 export type PlansClient = {
   load(): Promise<void>;
   /** A new copy of `from`: New copy, Duplicate, Try it. */
-  create(input: { from: string; name: string; plan: FirePlanV2; currency: string | null }): Promise<Done<PlanRow>>;
+  create(input: { from: string; name: string; plan: FirePlanV2; currency: string | null; tax?: TaxChoices }): Promise<Done<PlanRow>>;
   /** Saves plans whole, all or none: a copy's save, or Also change it in.
    *  Answers your plan as stored after it, too. */
   save(saves: PlanSave[], factsWere: Facts): Promise<Done<{ rows: PlanRow[]; main: MainAnswer | null }>>;

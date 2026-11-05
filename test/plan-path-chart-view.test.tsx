@@ -244,6 +244,21 @@ describe('Whole path', () => {
   const svg = (html: string) => html.slice(html.indexOf('<svg'), html.indexOf('</svg>') + 6);
   const ruleName = (html: string) => /<text class="chart-rule-label" x="([\d.]+)" y="([\d.]+)">FI number<\/text>/.exec(html);
 
+  test('marks with no room for their ages are all named under the chart; with room, none are', () => {
+    const { chart } = whole(base);
+    const marks = [
+      { age: 59.5, label: '59½', short: '59½' },
+      { age: 65, label: '65', short: '65' },
+      { age: 67, label: 'Social Security 67', short: '67' },
+      { age: 75, label: 'RMD age 75', short: '75' },
+    ];
+    const narrow = draw({ ...chart, ticks: marks }, 320);
+    expect(narrow).toContain('Marked: 59½, 65, Social Security 67, RMD age 75.');
+    // No marks, or one with room: nothing to name.
+    expect(draw({ ...chart, ticks: null }, 320)).not.toContain('Marked:');
+    expect(draw({ ...chart, ticks: [{ age: 75, label: 'RMD age 75', short: '75' }] }, 320)).not.toContain('Marked:');
+  });
+
   test('to the plan’s end: the wash and the FI number’s line over the saving years only, the stop’s rule, and its ages', () => {
     const { html, path } = whole(base);
     expect(path.after!.endAge).toBe(95);
