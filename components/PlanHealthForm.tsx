@@ -7,12 +7,14 @@
 // pays), so both land together. Premiums only, as it says.
 
 import { useId, useMemo, useState } from 'react';
+import { stopOf } from '@/lib/fire/plan';
 import type { TaxChoices } from '@/lib/fire/tax-choices';
 import { MAX_HEALTH_AMOUNT } from '@/lib/fire/tax-choices';
 import { householdOf, sameHousehold, type Owner, type TaxFacts, type TaxHousehold } from '@/lib/fire/tax-facts';
+import { plainNumber } from '@/lib/format';
 import { normalizedAmountText } from '@/lib/manual-txn-input';
 import CheckRows from './CheckRows';
-import { Masked } from './HideAmounts';
+import { Masked, NO_EXAMPLE } from './HideAmounts';
 import RadioRows from './RadioRows';
 import { Buttons, FieldProblem, readNumber, SAME_IN_EVERY_PLAN, useDetailSave, type DetailForm, type SaveProps } from './PlanForms';
 import { Notice } from './TotalCaveats';
@@ -32,7 +34,7 @@ function readMoney(text: string, what: string, optional = false): number | null 
     throw new FieldProblem(`${what} is needed.`, [what]);
   }
   const n = Number(normalizedAmountText(t) ?? NaN);
-  if (!Number.isFinite(n) || n < 0 || n > MAX_HEALTH_AMOUNT) throw new FieldProblem(`${what} must be a number from 0 to ${MAX_HEALTH_AMOUNT.toLocaleString('en-US')}.`, [what]);
+  if (!Number.isFinite(n) || n < 0 || n > MAX_HEALTH_AMOUNT) throw new FieldProblem(`${what} must be a number from 0 to ${plainNumber(MAX_HEALTH_AMOUNT)}.`, [what]);
   return n;
 }
 
@@ -59,7 +61,7 @@ export default function PlanHealthForm(
   const before = stored.beforeMedicare;
   const [coverage, setCoverage] = useState<'aca' | 'other' | 'none'>(before?.kind ?? 'none');
   const [adult, setAdult] = useState(before?.kind === 'aca' ? asMoneyText(before.adult) : '');
-  const [quotedAge, setQuotedAge] = useState(before?.kind === 'aca' ? String(before.quotedAge) : String(Math.min(64, plan.targetAge ?? plan.age ?? 50)));
+  const [quotedAge, setQuotedAge] = useState(before?.kind === 'aca' ? String(before.quotedAge) : String(Math.min(64, stopOf(plan) ?? plan.age ?? 50)));
   const [child, setChild] = useState(before?.kind === 'aca' ? asMoneyText(before.child) : '');
   const [yearly, setYearly] = useState(before?.kind === 'other' ? asMoneyText(before.yearly) : '');
   const [acaLaw, setAcaLaw] = useState(stored.acaLaw);
@@ -131,7 +133,7 @@ export default function PlanHealthForm(
               <>
                 <label className="field">
                   What it costs, a year
-                  <input inputMode="decimal" value={yearly} onChange={(e) => setYearly(e.target.value)} disabled={s.saving} {...s.field('What it costs')} />
+                  <input inputMode="decimal" value={yearly} onChange={(e) => setYearly(e.target.value)} placeholder={NO_EXAMPLE} disabled={s.saving} {...s.field('What it costs')} />
                 </label>
                 {s.under('What it costs')}
               </>
@@ -145,7 +147,7 @@ export default function PlanHealthForm(
           <div className="sheet-form">
             <label className="field">
               Benchmark plan for one adult, a year, full price
-              <input inputMode="decimal" value={adult} onChange={(e) => setAdult(e.target.value)} disabled={s.saving} {...s.field('The benchmark plan')} />
+              <input inputMode="decimal" value={adult} onChange={(e) => setAdult(e.target.value)} placeholder={NO_EXAMPLE} disabled={s.saving} {...s.field('The benchmark plan')} />
             </label>
             {s.under('The benchmark plan')}
             <p className="helper">The second-lowest silver plan for one adult, from healthcare.gov. Nya rates it up with age each year, as insurers do, for each person your household holds, and works out the credit from it.</p>
@@ -242,11 +244,15 @@ export default function PlanHealthForm(
           <h3 className="section-label">Each part by stage, a year</h3>
           {props.stages.map((st) => (
             <div key={st.title}>
-              <p className="helper">{st.title}</p>
+              <p className="helper">
+                <Masked>{st.title}</Masked>
+              </p>
               <dl className="txn-detail txn-detail-wide">
                 {st.lines.map((l) => (
                   <div key={l.label} className={l.sum ? 'txn-detail-row txn-detail-sum' : 'txn-detail-row'}>
-                    <dt>{l.label}</dt>
+                    <dt>
+                      <Masked>{l.label}</Masked>
+                    </dt>
                     <dd className="money">
                       <Masked>{l.value}</Masked>
                     </dd>

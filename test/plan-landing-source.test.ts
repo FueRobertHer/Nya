@@ -20,7 +20,8 @@ const from = (start: string, end: string) => {
 
 describe('Home’s FI line and the Plan tab', () => {
   test('the FI line opens the Plan at its top, on Your path, with a landing for its heading', () => {
-    const open = from('onOpenPlan={() => {', '}}');
+    expect(from('<FiProgressLoader', '/>')).toContain('onOpenPlan={openPlan}');
+    const open = from('const openPlan = useCallback(() => {', '}, []);');
     expect(open).toContain('window.scrollTo(0, 0);');
     expect(open).toContain("setPlanSegment('path');");
     expect(open).toContain('setPlanLanding(Date.now());');

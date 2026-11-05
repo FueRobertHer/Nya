@@ -4,11 +4,14 @@
 // works with no script, from the keyboard and with a screen reader as it is.
 
 import type { ReactNode } from 'react';
+import { Masked } from './HideAmounts';
 
 export function Why({ label = 'Why?', children }: { label?: string; children: ReactNode }) {
   return (
     <details className="why">
-      <summary>{label}</summary>
+      <summary>
+        <Masked>{label}</Masked>
+      </summary>
       <div className="why-body">{children}</div>
     </details>
   );

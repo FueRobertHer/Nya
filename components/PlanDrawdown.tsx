@@ -7,6 +7,7 @@
 
 import type { DrawdownStage, DrawdownYear } from '@/lib/fire/drawdown';
 import type { PlanDetail } from '@/lib/fire/plan-detail';
+import { spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { Notice } from './TotalCaveats';
 import { Why } from './Why';
@@ -152,7 +153,7 @@ export function StageLevel({ stage, years, money, rmdAge, cautions = [], onYear 
       )}
       {cautions.map((c) => (
         <Notice key={c} level="caution">
-          {c}
+          <Masked>{c}</Masked>
         </Notice>
       ))}
       <ul className="list-rows">
@@ -200,7 +201,7 @@ function Section({ section }: { section: YearSection }) {
   return (
     <section className="stack tight" aria-labelledby={id}>
       <h3 className="section-label" id={id}>
-        {section.title}
+        <Masked>{section.title}</Masked>
       </h3>
       <dl className="txn-detail txn-detail-wide">
         {section.lines.map((l) => (
@@ -216,20 +217,32 @@ function Section({ section }: { section: YearSection }) {
       </dl>
       {section.meter && (
         <div>
-          <div className="meter-track fpl" role="img" aria-label={`${section.meter.label}${section.meter.limitLabel ? `, ${section.meter.limitLabel}` : ''}`}>
+          <div className="meter-track fpl" role="img" aria-label={spoken(section.meter.limitLabel ? `${section.meter.label}, ${section.meter.limitLabel}` : section.meter.label)}>
             <div className="meter-fill" style={{ width: `${section.meter.percent}%` }} />
             {section.meter.limit !== null && <b className="fpl-limit" style={{ left: `${section.meter.limit}%` }} />}
           </div>
           <div className="fpl-scale">
-            <span>{section.meter.label}</span>
-            {section.meter.limitLabel && <span>{section.meter.limitLabel}</span>}
+            <span>
+              <Masked>{section.meter.label}</Masked>
+            </span>
+            {section.meter.limitLabel && (
+              <span>
+                <Masked>{section.meter.limitLabel}</Masked>
+              </span>
+            )}
           </div>
         </div>
       )}
-      {section.note && <p className="helper">{section.note}</p>}
+      {section.note && (
+        <p className="helper">
+          <Masked>{section.note}</Masked>
+        </p>
+      )}
       {section.why && (
         <Why label={section.why.label}>
-          <p>{section.why.text}</p>
+          <p>
+            <Masked>{section.why.text}</Masked>
+          </p>
         </Why>
       )}
     </section>
@@ -241,7 +254,9 @@ function Section({ section }: { section: YearSection }) {
 export function YearLevel({ year, context }: { year: DrawdownYear; context: YearContext }) {
   return (
     <div className="stack loose">
-      <p className="helper">{yearHelper(year, context)}</p>
+      <p className="helper">
+        <Masked>{yearHelper(year, context)}</Masked>
+      </p>
       {yearSections(year, context).map((s) => (
         <Section key={s.title} section={s} />
       ))}
