@@ -329,8 +329,8 @@ The tax plan's T3, on the Plan's Drawdown and its sheets. No new tokens.
 
 The tax plan's T4, on the Plan's Drawdown and its sheets. No new tokens.
 
-- `.th-sort`: a button filling a table's heading cell at 44px, its chevron showing only once sorted, with `aria-sort` on the `th`. A row's first cell uses it too, in `--accent`, to open that row's sheet. Nothing is sorted until a heading is tapped: highest first, then lowest.
-- `.plan-rules-table` on a `.plan-compare-table`: its first column as wide as its words, wider than a phone so it scrolls in `.plan-table-scroll`, its figures clear of the 44px name beside them. Nothing in it is marked best: `Your plan` is the only badge.
+- `.th-sort`: a button filling a table's heading cell at 44px, with `aria-sort` on the `th`. Its 16px `.section-chevron` points both ways until sorted, then the way it is sorted, so a heading says it sorts before anything is tapped. A row's first cell uses it too, in `--accent`, to open that row's sheet. Nothing is sorted until a heading is tapped: highest first, then lowest.
+- `.plan-rules-table` on a `.plan-compare-table`: as narrow as its words let it be, so four columns fit at 390 and it scrolls in `.plan-table-scroll` only below that, its figures right-aligned under right-aligned headings, clear of the 44px name beside them. Nothing in it is marked best: `Your plan`, or `This copy`, is the only badge.
 - Years that read the same: a `.list-row` with `aria-expanded` and an open `.section-chevron`, drawing its years under it in the same list. From three up.
 
 ### The pages outside the tabs

@@ -77,6 +77,7 @@ import {
   METHOD_NAMES,
   monthName,
   pct,
+  saidRate,
   progressText,
   successDefinition,
   successText,
@@ -2079,6 +2080,7 @@ export default function PlanTab({
           {worked && drawn && yearContext && !shownFailed && (
             <>
               <DrawdownCard
+                copyName={copyName}
                 detail={drawn}
                 realReturn={plan.realReturn}
                 money={money}
@@ -2091,6 +2093,7 @@ export default function PlanTab({
                 titleRef={(el) => inputRowRef('years', el)}
               />
               <HowYouDrawCard
+                copyName={copyName}
                 strategy={detailChoices.strategy}
                 defaultUntil={shownUntil ?? yearContext.rmdAge - 1}
                 money={money}
@@ -2107,7 +2110,7 @@ export default function PlanTab({
                   realReturn={plan.realReturn}
                   lawYear={drawn.law.year}
                   healthGrowth={yearContext.healthGrowth}
-                  copyOpen={entry !== null}
+                  copyName={copyName}
                   held={reloading}
                   working={shownWorking}
                   onRule={(r) => open({ kind: 'rule', key: r.key }, `rule-${r.key}`)}
@@ -3263,7 +3266,7 @@ export function SimulationCard({
   } else if (detail) {
     setup = (
       <>
-        Stop working {when} with <Masked>{money(sim.startBalance)}</Masked> ({startLabel}), withdrawing <strong>{pct(rate, 1)}</strong> of it a year, your spending and health coverage with their tax, for {sim.years} years{startAge !== null ? ` (to age ${startAge + sim.years})` : ''}
+        Stop working {when} with <Masked>{money(sim.startBalance)}</Masked> ({startLabel}), withdrawing <strong>{pct(saidRate(rate, plan.withdrawalRate))}</strong> of it a year, your spending and health coverage with their tax, for {sim.years} years{startAge !== null ? ` (to age ${startAge + sim.years})` : ''}
         {rate > plan.withdrawalRate * 1.001 ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}.
       </>
     );
@@ -3272,7 +3275,7 @@ export function SimulationCard({
       <>
         Stop working {when} with <Masked>{money(sim.startBalance)}</Masked> ({startLabel}), spending what you spend now,{' '}
         <Masked>{money(spendingNow ?? 0)}</Masked> a year after tax, for {sim.years} years{startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. That is a{' '}
-        <strong>{pct(rate, 1)}</strong> withdrawal rate{rate > plan.withdrawalRate * 1.001 ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}.
+        <strong>{pct(saidRate(rate, plan.withdrawalRate))}</strong> withdrawal rate{rate > plan.withdrawalRate * 1.001 ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}.
       </>
     );
   } else {

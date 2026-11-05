@@ -1322,7 +1322,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
   ),
   'Plan: Compare conversions, what each rule leaves and costs': () => {
     const { rows, money } = WORKED();
-    return <CompareCard rows={rows} money={money} realReturn={0.05} lawYear={2026} healthGrowth={0.021} copyOpen={false} onRule={() => {}} />;
+    return <CompareCard rows={rows} money={money} realReturn={0.05} lawYear={2026} healthGrowth={0.021} onRule={() => {}} />;
   },
   'Plan: a rule’s sheet, its figures and stages': () => {
     const { rows, money } = WORKED();

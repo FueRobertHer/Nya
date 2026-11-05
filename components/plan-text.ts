@@ -29,6 +29,13 @@ export function pct(f: number, maxDigits = 2): string {
   return `${Number((f * 100).toFixed(maxDigits))}%`;
 }
 
+/** The rate to say of one worked out from a balance: a tenth of a percent, so every
+ *  sentence says one rate. At the rate set (as near as "above what your FI number
+ *  assumes" allows), that one, as set. */
+export function saidRate(worked: number, set: number): number {
+  return Math.abs(worked - set) <= set * 0.001 ? set : Number((worked * 100).toFixed(1)) / 100;
+}
+
 /**
  * A success rate as a percent that never rounds into a claim: "100%" only when
  * every start lasted, "0%" only when none did. 0.996 is ">99%" at whole
