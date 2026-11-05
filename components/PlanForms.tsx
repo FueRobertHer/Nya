@@ -343,7 +343,7 @@ function useHouseholdFields(d: DetailForm | null, age: string, partner: string, 
               />
             </label>
             {s.under(`Dependent ${i + 1}`)}
-            <button type="button" className="link-btn" onClick={() => setDependents((list) => list.filter((y) => y.id !== x.id))} disabled={locked} aria-label={`Remove dependent ${i + 1}`}>
+            <button type="button" className="btn ghost" onClick={() => setDependents((list) => list.filter((y) => y.id !== x.id))} disabled={locked} aria-label={`Remove dependent ${i + 1}`}>
               Remove
             </button>
           </div>

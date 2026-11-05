@@ -1384,7 +1384,6 @@ export default function PlanTab({
           rmdAge: shownInput.rmdAges.you,
         }
       : null;
-  // What the forms of a detailed plan read and save with. The shared parts lock in a copy.
   // Taxes don't move a saved plan's assets before the stop, so a year your plan draws
   // leaves its line above Your path.
   const firstTax = baseFigures?.walk.taxes?.[0] ?? null;
@@ -1395,6 +1394,7 @@ export default function PlanTab({
       : null;
   // What isn't known about a Roth, on the sheets it is about.
   const rothCautions = honesty.filter((n) => n.kind.includes('Roth put-in')).map((n) => n.text);
+  // What the forms of a detailed plan read and save with. The shared parts lock in a copy.
   const detailForm: DetailForm | null = detailShown
     ? { choices: detailChoices, facts: shared.taxFacts, factsLocked: !savers.taxFacts, stateTaxes: lawNow.stateIncomeTax, statute: lawNow.statute, calendarYear, save: moreFor(sheetFor) }
     : null;
