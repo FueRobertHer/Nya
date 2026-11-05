@@ -15,6 +15,7 @@ import { SHORT_TTL_SECONDS, WEBHOOK_TTL_SECONDS } from '@/lib/cache';
 import { LOGIN_MAX_FAILURES, LOGIN_WINDOW_SECONDS } from '@/lib/rate-limit';
 import { DEMO_WINDOW_SECONDS } from '@/lib/demo';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
+import { containerEntry } from '@/lib/inventory';
 import { ACCESS_LOG_DAYS, SHARED_READS_WINDOW_SECONDS } from '@/lib/share-rules';
 import { RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
 import { LINK_DAYS } from '@/lib/weekly-summary/unsubscribe';
@@ -551,6 +552,17 @@ describe('the privacy page', () => {
     const sec = security();
     expect(sec).toContain('The database also keeps the European Central Bank’s exchange rates in plain text: public, the same for everyone, kept once for every account, and left out of Nya’s nightly backups.');
     expect(sec).toContain('Your home currency and your own exchange rates are encrypted.');
+  });
+
+  test('names the tax facts a plan keeps, and who never sees them', () => {
+    expect(privacy()).toContain(
+      'What you tell your plan about tax Whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count: until you change them, or delete your account. Encrypted, and in your download. Never shown to anyone you share with, never sent to a program with an API token, and never in an email.'
+    );
+    // The same words as Your data's list, and the list says nobody else sees them.
+    const entry = containerEntry('plan-facts')!;
+    expect(entry.about).toContain('whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count');
+    expect(entry.seen).toBeUndefined();
+    expect(entry.plain).toBeUndefined();
   });
 
   test('states the other retention figures the code uses', () => {

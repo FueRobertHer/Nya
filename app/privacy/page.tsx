@@ -315,6 +315,10 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: A
     'Until you change them, or delete your account. Encrypted, and in your download. Nothing converted is kept by Nya’s server: each figure is worked out again when it is shown (your device keeps the last ones it showed, with the rest of what the app last showed). The European Central Bank’s rates are public, kept once for everyone in plain text, and left out of Nya’s nightly backups.',
   ],
   [
+    'What you tell your plan about tax',
+    'Whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count: until you change them, or delete your account. Encrypted, and in your download. Never shown to anyone you share with, never sent to a program with an API token, and never in an email.',
+  ],
+  [
     'Feature switches and their changes',
     'Settings of this copy of Nya, not of your account: who each feature is turned on for, which can name your account by its random id, and who may sign in, which can name your sign-in by its id or its email. Kept until whoever runs this copy changes them, beside a record of the last 500 changes (when, which switch, what it was and became, and who changed it), which keeps what it names, a deleted account’s id among them, until the change drops out of it. Plain text, in backups, and never in your download.',
   ],
