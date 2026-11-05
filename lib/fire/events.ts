@@ -157,6 +157,11 @@ export function lastChange(w: WalkChanges): number {
 const inYear = (xs: readonly { year: number; amount: number }[], year: number) => xs.reduce((sum, x) => (x.year === year ? sum + x.amount : sum), 0);
 
 export const costIn = (w: WalkChanges, year: number) => inYear(w.costs, year) + (w.taxes ? inYear(w.taxes, year) : 0);
+
+/** What a year can't pay for itself: its costs, less its money in and saving. A
+ *  home bigger than the year's saving, or a saving below zero. 0 or below when
+ *  it can. Only of a walk with no taxes yet: this says what is sold. */
+export const shortBy = (w: WalkChanges, base: number, year: number) => inYear(w.costs, year) - inYear(w.moneyIn, year) - savingsIn(w, base, year);
 export const moneyInAt = (w: WalkChanges, year: number) => w.moneyIn.reduce((sum, m) => (m.year === year ? sum + m.amount : sum), 0);
 
 /** Where the walk can't go on: a cost from investments larger than what it

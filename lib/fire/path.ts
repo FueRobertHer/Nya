@@ -19,13 +19,16 @@
 // spending, with its items in the years they cover, at the ages the figures
 // resolved them to (steadyRun, below). It starts where the walk ends, at the
 // stop age's balance (today's once the stop has come). Not the simulation:
-// no fee, no cash and no mix, one return a year on the whole balance.
+// no fee, no cash and no mix, one return a year on the whole balance. In the
+// detailed tax model those years are the drawdown's (lib/fire/plan-detail.ts),
+// from the same balance to the same end.
 //
 // Arithmetic only, and nothing that touches storage: the Plan tab runs this
 // in the browser.
 
 import { projectBalance, projectionShort } from './fi';
 import { compileItems } from './compile';
+import type { Drawdown } from './drawdown';
 import { costIn, hasWalk, walkPath, type Shortfall } from './events';
 import { INCOME_KINDS, MONEY_KINDS } from './items';
 import { enginePlan, planYears, projectFrom, startAge, type FiView, type PlanCore } from './plan';
@@ -155,7 +158,7 @@ export function planPath(f: PlanFigures, years?: number): PlanPath | null {
   const age = f.plan.age as number;
   const n = years ?? from.years;
   const g = f.plan.realReturn;
-  const walk = f.events !== null && hasWalk(f.events.walk) ? f.events.walk : null;
+  const walk = hasWalk(f.walk) ? f.walk : null;
   let balances: number[];
   let short: Shortfall | null = null;
   if (walk !== null) {
@@ -184,6 +187,15 @@ export function planPath(f: PlanFigures, years?: number): PlanPath | null {
     fromWalk: walk !== null,
     after: years === undefined && short === null ? afterStop(f, points[points.length - 1]) : null,
   };
+}
+
+/** A drawdown's balances, as a steady run says them: at the start of each year,
+ *  through the start of the year it couldn't pay, or to the end of its last. */
+function drawnBalances(d: Drawdown): { balances: number[]; failedYear: number | null } {
+  const total = (b: Drawdown['years'][number]['start']) => b.taxable + b.deferred + b.roth + b.hsa;
+  const first = d.years.findIndex((y) => y.short);
+  if (first >= 0) return { balances: d.years.slice(0, first + 1).map((y) => total(y.start)), failedYear: first };
+  return { balances: [...d.years.map((y) => total(y.start)), total(d.years[d.years.length - 1].end)], failedYear: null };
 }
 
 /** The years after the stop, from `from` (the walk's last point: the stop
@@ -225,9 +237,10 @@ function afterStop(f: PlanFigures, from: PathPoint): PathAfter | null {
   // the other items' parts in these years.
   const life = compileItems(plan.items, ages.map((x, i) => (MONEY_KINDS.includes(plan.items[i].kind) ? null : x)), at, { planInWalk: false }).sim;
   const counted = life.oneOffs.some((o) => o.year < years) || life.income.some((s) => s.fromYear < years) || life.lowerSpending.some((l) => l.fromYear < years);
+  const whole = f.detail !== null && 'whole' in f.detail ? f.detail.whole : null;
   let steady: ReturnType<typeof steadyRun>;
   try {
-    steady = steadyRun(sim, plan.realReturn);
+    steady = whole ? drawnBalances(whole) : steadyRun(sim, plan.realReturn);
   } catch (e) {
     // The figures are worked out in the Plan's render: a plan the engine
     // refuses leaves the years after the stop out, never the tab.

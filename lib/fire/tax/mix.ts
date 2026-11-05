@@ -28,7 +28,7 @@
 // Pure.
 
 import type { TaxBucket } from '@/lib/allocation/buckets';
-import { costIn, moneyInAt, savingsIn, type WalkChanges } from '../events';
+import { costIn, moneyInAt, savingsIn, shortBy, type WalkChanges } from '../events';
 import type { BucketsToday } from '../buckets-today';
 import type { SplitShare } from '../savings-split';
 import type { Owner } from '../tax-facts';
@@ -248,11 +248,11 @@ function walkMix(today: readonly MixSlot[], args: MixArgs, taxed: TaxedWalk | nu
 
   for (let k = 0; k < years; k++) {
     if (taxed !== null) {
-      const incoming = moneyInAt(walk, k);
-      const costs = costIn(walk, k);
-      const saving = savingsIn(walk, savings, k);
-      const short = costs - incoming - saving;
+      const short = shortBy(walk, savings, k);
       if (short > 0) {
+        const incoming = moneyInAt(walk, k);
+        const costs = costIn(walk, k);
+        const saving = savingsIn(walk, savings, k);
         const tax = sell(taxed, short, k);
         if (tax > 0) taxes.push({ year: k, amount: tax });
         balance += incoming;
