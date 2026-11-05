@@ -222,7 +222,7 @@ export function ConversionsForm(
           { value: 'none', name: 'None', note: 'Move nothing.' },
           { value: 'bracket', name: 'Fill a bracket', note: 'Up to the top of a tax bracket each year.', detail: fieldsWith(bracketSelect('Up to the top of', BRACKETS, top, setTop)) },
           ...(props.onAca || rule.kind === 'aca-then-bracket'
-            ? [{ value: 'aca-then-bracket', name: 'Up to the ACA limit, then a bracket', note: `Under the limit while ${props.partner ? 'either of you is' : 'you’re'} on the ACA, then a bracket.`, detail: fieldsWith(bracketSelect('After 65, up to the top of', ACA_BRACKETS, acaTop, setAcaTop)) }]
+            ? [{ value: 'aca-then-bracket', name: 'Up to the ACA limit, then a bracket', note: `Under the limit while ${props.partner ? 'either of you is' : 'you’re'} on the ACA, then a bracket.${detail.choices.health.acaLaw === 'enhanced' ? ' With the enhanced credits there’s no cliff at that limit, but this rule still stops there.' : ''}`, detail: fieldsWith(bracketSelect('After 65, up to the top of', ACA_BRACKETS, acaTop, setAcaTop)) }]
             : []),
           {
             value: 'fixed',

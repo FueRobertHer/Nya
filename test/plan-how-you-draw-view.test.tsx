@@ -229,6 +229,20 @@ describe('Compare conversions', () => {
     // For one person, it says so.
     await press(tab.row('Roth conversions'));
     expect(tab.dialog()!.textContent).toContain('Under the limit while you’re on the ACA, then a bracket.');
+    expect(tab.dialog()!.textContent).not.toContain('no cliff');
+    await tab.unmount();
+  }, 30_000);
+
+  test('with the enhanced credits back, the ACA rule says it still stops at the limit', async () => {
+    const tab = await onAca();
+    await pick(tab.container, 'Your path');
+    await press(tab.row('Health coverage'));
+    await pick(tab.dialog()!, 'If the enhanced credits return');
+    await press(button(tab.dialog(), 'Save'));
+    await settle(200);
+    await pick(tab.container, 'Drawdown');
+    await press(tab.row('Roth conversions'));
+    expect(tab.dialog()!.textContent).toContain('With the enhanced credits there’s no cliff at that limit, but this rule still stops there.');
     await tab.unmount();
   }, 30_000);
 
