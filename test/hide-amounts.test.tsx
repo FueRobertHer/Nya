@@ -1993,6 +1993,8 @@ describe('a backstop over every view the suites draw, amounts hidden', () => {
     // test/hidden-renders.ts makes each render twice in a run of the view
     // suites, and writes down what the hidden one shows: a figure the scan of
     // the source can't tell from text (a number drawn as it is) shows there.
+    // Its limit is for a hung run, not a budget: on CI's runners it has taken 93
+    // to 119 seconds, and more as the view suites grow.
     const dir = mkdtempSync(join(tmpdir(), 'nya-hidden-renders-'));
     try {
       const out = join(dir, 'shown.txt');
@@ -2019,5 +2021,5 @@ describe('a backstop over every view the suites draw, amounts hidden', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  }, 120_000);
+  }, 240_000);
 });
