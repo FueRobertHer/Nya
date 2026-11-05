@@ -45,10 +45,10 @@ function run(growth: number, incomeGrowth: number) {
     dependents: [],
     rmdAges: { you: 75, partner: 75 },
     buckets: BUCKETS,
-    split: () => [
-      { bucket: 'taxable', owner: 'you', share: 18 / 50 },
-      { bucket: 'tax-deferred', owner: 'you', share: 24 / 50 },
-      { bucket: 'roth', owner: 'you', share: 8 / 50 },
+    savingsSplit: [
+      { bucket: 'taxable', share: 18 / 50 },
+      { bucket: 'tax-deferred', share: 24 / 50 },
+      { bucket: 'roth', share: 8 / 50 },
     ],
     share457: { you: 0, partner: 0 },
     inflation: 0.03,

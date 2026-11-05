@@ -73,6 +73,20 @@ export function savingsSplit(today: Pick<BucketsToday, 'groups'>, savings: numbe
   return { shares: [{ bucket: 'taxable', owner: 'you', share: 1 }], from: 'none' };
 }
 
+/** A year's savings with each bucket's share as you chose them (null: measured). A
+ *  bucket's share goes between its people as the measured split has them, else to
+ *  you. Chosen shares of nothing are left out. */
+export function chosenSplit(today: Pick<BucketsToday, 'groups'>, savings: number | null, chosen: readonly { bucket: TaxBucket; share: number }[] | null): SplitShare[] {
+  const measured = savingsSplit(today, savings).shares;
+  if (chosen === null) return measured;
+  return chosen.flatMap(({ bucket, share }) => {
+    if (!(share > 0)) return [];
+    const inBucket = measured.filter((s) => s.bucket === bucket);
+    const whole = inBucket.reduce((sum, s) => sum + s.share, 0);
+    return whole > 0 ? inBucket.map((s) => ({ bucket, owner: s.owner, share: (share * s.share) / whole })) : [{ bucket, owner: 'you' as const, share }];
+  });
+}
+
 /** The split by bucket alone, largest first, for the sheet's lines. */
 export function byBucket(split: SavingsSplit): { bucket: TaxBucket; share: number }[] {
   const out = new Map<TaxBucket, number>();

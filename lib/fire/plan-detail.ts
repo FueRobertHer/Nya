@@ -19,6 +19,7 @@
 // Arithmetic only, and nothing that touches storage: the Plan tab runs this in the
 // browser.
 
+import type { TaxBucket } from '@/lib/allocation/buckets';
 import type { BucketsToday } from './buckets-today';
 import { bridgedEngine } from './bridge';
 import { compileItems, conditionalFlows, type CompileAt, type CompiledItems } from './compile';
@@ -28,12 +29,13 @@ import { planPath } from './path';
 import { planYears, projectFrom, ruleSpec } from './plan';
 import type { PlanFigures } from './plan-figures';
 import type { FirePlanV2 } from './plan-v2';
-import type { SplitShare } from './savings-split';
+import { chosenSplit } from './savings-split';
 import type { Owner } from './tax-facts';
 import type { Filing, StateCode, TaxLaw } from './tax/law/types';
 import { mixToday, taxedMix, type MixSlot, type TaxedWalk } from './tax/mix';
 
-/** What the page knows that the plan doesn't say. */
+/** What the page knows that the plan doesn't say. Plain data, as a search's job
+ *  carries it to a worker (lib/fire/search-job.ts). */
 export type DetailedInput = {
   calendarYear: number;
   /** Null: not said, and counted as single. */
@@ -41,8 +43,8 @@ export type DetailedInput = {
   dependents: readonly { untilAge: number }[];
   rmdAges: Record<Owner, number>;
   buckets: Pick<BucketsToday, 'groups' | 'roth' | 'total'>;
-  /** Where a year's savings go. */
-  split: (savings: number) => readonly SplitShare[];
+  /** Each bucket's share of a year's savings as chosen; null: measured. */
+  savingsSplit: readonly { bucket: TaxBucket; share: number }[] | null;
   share457: Record<Owner, number>;
   inflation: number;
   taxableYield: number;
@@ -99,6 +101,8 @@ export function detailWork(input: DetailedInput): DetailWork {
     law: input.law,
   });
 
+  const split = (savings: number) => chosenSplit(input.buckets, savings, input.savingsSplit);
+
   /** Today's shares, at `balance`. */
   const shares = (balance: number) => mixToday(input.buckets, balance);
 
@@ -110,7 +114,7 @@ export function detailWork(input: DetailedInput): DetailWork {
     if (from === null) return { slots: shares(balance), noMix: true };
     const k = age - (plan.age as number);
     const base = mixToday(input.buckets, from.assets);
-    const mix = k > 0 ? taxedMix(base, { savings: from.savings, split: input.split(from.savings), realReturn: plan.realReturn, inflation: input.inflation, walk: withoutTaxes(f.walk), years: k }, taxedWalk(plan)).mix : { slots: base, total: base.reduce((s, x) => s + x.value, 0) };
+    const mix = k > 0 ? taxedMix(base, { savings: from.savings, split: split(from.savings), realReturn: plan.realReturn, inflation: input.inflation, walk: withoutTaxes(f.walk), years: k }, taxedWalk(plan)).mix : { slots: base, total: base.reduce((s, x) => s + x.value, 0) };
     if (mix === null || !(mix.total > 0)) return { slots: shares(balance), noMix: true };
     const scale = balance / mix.total;
     return { slots: mix.slots.map((s) => ({ ...s, value: s.value * scale, basis: s.basis * scale, reachable: s.reachable * scale })), noMix: false };
@@ -173,7 +177,7 @@ export function detailWork(input: DetailedInput): DetailWork {
     taxWalk(plan, walk, from) {
       if (from.years <= 0) return walk;
       try {
-        const { taxes } = taxedMix(mixToday(input.buckets, from.assets), { savings: from.savings, split: input.split(from.savings), realReturn: plan.realReturn, inflation: input.inflation, walk, years: from.years }, taxedWalk(plan));
+        const { taxes } = taxedMix(mixToday(input.buckets, from.assets), { savings: from.savings, split: split(from.savings), realReturn: plan.realReturn, inflation: input.inflation, walk, years: from.years }, taxedWalk(plan));
         return taxes.length > 0 ? { ...walk, taxes } : walk;
       } catch {
         // The drawdown fails on the same input, and says so.

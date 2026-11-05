@@ -64,7 +64,7 @@ describe('the jobs', () => {
 describe('the runner', () => {
   test('sends jobs to the worker one at a time, and matches each answer to its job', async () => {
     const worker = new FakeWorker();
-    const runner = createPlanRunner({ startWorker: () => worker, runHere: async () => ({ ok: false, error: 'not here' }) });
+    const runner = createPlanRunner<PlanJob, PlanJobResult>({ startWorker: () => worker, runHere: async () => ({ ok: false, error: 'not here' }) });
     const both = Promise.all([runner.run(job), runner.run({ ...job, plan: { ...plan, years: 20 } })]);
     expect(worker.posted).toHaveLength(1); // the second waits on the page
     const [a, b] = await both;

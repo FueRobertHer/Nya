@@ -27,7 +27,7 @@ const input: DetailedInput = {
   dependents: [],
   rmdAges: { you: 75, partner: 75 },
   buckets: BUCKETS,
-  split: () => [{ bucket: 'taxable', owner: 'you', share: 1 }],
+  savingsSplit: [{ bucket: 'taxable', share: 1 }],
   share457: { you: 0, partner: 0 },
   inflation: 0.03,
   taxableYield: 0,
