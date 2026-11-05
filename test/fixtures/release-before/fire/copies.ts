@@ -8,8 +8,11 @@
 // READS TAKE WHAT ANY RELEASE WROTE. isPlanEntry and isPlanFacts check the
 // shape and types, never a range, as isFirePlan does: an entry a later
 // rule refuses still reads. A `tax` that isn't null (the per plan tax choices,
-// from T2's reader) and facts of version 2 (E2's, with the tax facts) are a
-// newer release's: not recognised, so never written over from here.
+// from T2's reader) is a newer release's: not recognised, so never written
+// over from here. Facts of version 2 hold the tax facts (lib/fire/tax-facts.ts)
+// and are read whole a release before anything writes them; every write here
+// keeps them (lib/plan-writes.ts), since no release writes a lower version than
+// it read.
 //
 // Pure, with no data and no storage: the routes and the browser both use it,
 // and the next release holds it byte for byte as its release before's
@@ -19,6 +22,7 @@ import { DEFAULT_PLAN, isFirePlan, type FirePlan, type PlanFunding } from './pla
 import { isStoredPlan, planOf, upgradeStoredPlan, type StoredPlan } from './plan-v2';
 import { MAX_PLAN_SCENARIOS } from './plan-list';
 import { hasTypedAmounts } from './plan-currency';
+import { isTaxFacts, type TaxFacts } from './tax-facts';
 
 /** One plan, as `fire-plans` stores it. */
 export type PlanEntry = {
@@ -46,8 +50,9 @@ export type Facts = {
   method: FirePlan['method'];
 };
 
-/** The facts, and which entry is yours, as `plan-facts` stores them. */
-export type PlanFacts = Facts & { version: 1; main: string };
+/** The facts, and which entry is yours, as `plan-facts` stores them; from
+ *  version 2 with the tax facts. */
+export type PlanFacts = Facts & { main: string } & ({ version: 1 } | { version: 2; tax: TaxFacts });
 
 /** Your first plan's id, before another is made yours. */
 export const MAIN_ID = 'main';
@@ -56,6 +61,7 @@ export const MAX_FIRE_PLANS = 1 + MAX_PLAN_SCENARIOS;
 
 const ENTRY_KEYS = ['name', 'plan', 'tax', 'currency', 'createdAt', 'updatedAt'];
 const FACT_KEYS = ['version', 'main', 'age', 'partnerAge', 'includeCash', 'planFunding', 'method'];
+const TAX_FACT_KEYS = [...FACT_KEYS, 'tax'];
 /** The seam's ids (lib/repo.ts). */
 const ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 
@@ -85,8 +91,9 @@ export function upgradePlanEntry(stored: unknown): unknown {
 /** Whether a value is the facts as stored: the shape, and the types as the
  *  plan's own reader takes them. */
 export function isPlanFacts(v: unknown): v is PlanFacts {
-  if (!isObject(v) || !closed(v, FACT_KEYS)) return false;
-  if (v.version !== 1 || typeof v.main !== 'string' || !ID.test(v.main) || v.main === '__proto__') return false;
+  if (!isObject(v)) return false;
+  if (v.version === 2 ? !closed(v, TAX_FACT_KEYS) || !isTaxFacts(v.tax) : v.version !== 1 || !closed(v, FACT_KEYS)) return false;
+  if (typeof v.main !== 'string' || !ID.test(v.main) || v.main === '__proto__') return false;
   if (v.partnerAge !== null && (typeof v.partnerAge !== 'number' || !Number.isFinite(v.partnerAge))) return false;
   return isFirePlan({ ...DEFAULT_PLAN, age: v.age, includeCash: v.includeCash, planFunding: v.planFunding, method: v.method });
 }

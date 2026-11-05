@@ -18,6 +18,7 @@ import { defineMapStore, defineValueStore, UnreadableEntriesError } from './repo
 import { eager } from './eager';
 import type { Ctx } from './containers';
 import { MAIN_ID, factsOf, holdsAmounts, isPlanEntry, isPlanFacts, mainOf, upgradePlanEntry, withFacts, type PlanEntry, type PlanFacts } from './fire/copies';
+import type { TaxFacts } from './fire/tax-facts';
 
 export const firePlansStore = defineMapStore<PlanEntry>('fire-plans', {
   what: 'plans',
@@ -52,10 +53,10 @@ export function entryOf(report: Report, id: string): PlanEntry {
 /** Your plan's entry, or null while `fire-plans` holds none (the plan is
  *  then the defaults). Strict: an entry or facts that can't be read throw
  *  (StoredDataUnreadableError). The three reads are begun together (one
- *  round trip); the whole map is read only in the rare case the plan the
- *  facts name isn't there (Make this your plan and Delete on two devices). */
-export async function readMain(ctx: Ctx): Promise<MainPlan | null> {
-  const factsRead = eager(planFactsStore.get(ctx));
+ *  round trip), the facts' by the caller when it wants them too; the whole map
+ *  is read only in the rare case the plan the facts name isn't there (Make
+ *  this your plan and Delete on two devices). */
+export async function readMain(ctx: Ctx, factsRead: Promise<PlanFacts | null> = eager(planFactsStore.get(ctx))): Promise<MainPlan | null> {
   const mainRead = eager(firePlansStore.get(ctx, MAIN_ID));
   if ((await firePlansStore.count(ctx)) === 0) return null;
   const facts = await factsRead;
@@ -69,28 +70,39 @@ export async function readMain(ctx: Ctx): Promise<MainPlan | null> {
   return { id: pick.id, entry: entryOf(report, pick.id), facts, missing: pick.missing };
 }
 
+/** The tax facts in what `plan-facts` holds; null before any were written,
+ *  which is the flat model and nothing given. */
+const taxFactsIn = (facts: PlanFacts | null): TaxFacts | null => (facts?.version === 2 ? facts.tax : null);
+
 /** What GET answers from your plan's entry: the plan with the facts in its
  *  fields, its currency where it holds an amount (else null, so the Plan
  *  follows the accounts, as a plan with nothing typed always has), its id
- *  and its stamp, so a page can name the version a save was made on. */
+ *  and its stamp, so a page can name the version a save was made on, and the
+ *  tax facts every plan shares. */
 export function mainAnswer(m: MainPlan) {
   return {
     id: m.id,
     plan: withFacts(m.entry.plan, m.facts ?? factsOf(m.entry.plan)),
     currency: holdsAmounts(m.entry.plan) ? m.entry.currency : null,
     updated_at: m.entry.updatedAt,
+    tax_facts: taxFactsIn(m.facts),
   };
 }
 
 /** What GET answers while your plan has no entry: the defaults, never saved,
- *  with no stamp (a save then sends `based_on: null`). */
-export const NO_PLAN_ANSWER = { id: MAIN_ID, plan: null, currency: null, updated_at: null } as const;
+ *  with no stamp (a save then sends `based_on: null`), and any tax facts:
+ *  those can be given before a plan is, and the plan stays new for all that. */
+export const noPlanAnswer = (facts: PlanFacts | null) => ({ id: MAIN_ID, plan: null, currency: null, updated_at: null, tax_facts: taxFactsIn(facts) });
 
 /** The plan and its currency, as GET /api/fire-plan and /api/plan-inputs
- *  answer them: your plan's entry, or the defaults while there is none. */
+ *  answer them: your plan's entry, or the defaults while there is none. With
+ *  none, what `plan-facts` holds is read alone, and a failure there answers no
+ *  tax facts: a leftover that can't be read never stops Home, and the next
+ *  write replaces it. */
 export async function readPlanAnswer(ctx: Ctx) {
-  const main = await readMain(ctx);
-  return main ? mainAnswer(main) : NO_PLAN_ANSWER;
+  const factsRead = eager(planFactsStore.get(ctx));
+  const main = await readMain(ctx, factsRead);
+  return main ? mainAnswer(main) : noPlanAnswer(await factsRead.catch(() => null));
 }
 
 /** One plan as the Plans sheet reads it: the facts every plan shares in its

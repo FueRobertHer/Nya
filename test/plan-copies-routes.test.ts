@@ -42,7 +42,7 @@ const OTHER_DEVICE = 'Changed on another device: load it again';
 const PARTIAL = 'Your age was saved; the rest wasn’t: try again';
 const STALE_CURRENCY = 'The currency your plan’s figures are in was changed since this page loaded it, so nothing was saved: load it again.';
 const FIRST_CURRENCY = 'Say which currency your plan’s figures are in, then save again: nothing was saved.';
-const NO_PLAN = { id: MAIN_ID, plan: null, currency: null, updated_at: null };
+const NO_PLAN = { id: MAIN_ID, plan: null, currency: null, updated_at: null, tax_facts: null };
 
 const income = (over: Partial<PlanIncome> = {}): PlanIncome => ({ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true, ...over });
 /** Your plan as an entry may hold it: version 1, as the release before saved it. */
@@ -122,7 +122,7 @@ describe('the plan read, once there are entries', () => {
   test('is your plan’s entry, with the facts in its fields, its id, its currency and its stamp', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry({ updatedAt: 'stamp-1' }));
     await planFactsStore.set(ctx, facts({ age: 50, includeCash: true }));
-    const want = { id: MAIN_ID, plan: { ...TYPED, age: 50, includeCash: true }, currency: 'USD', updated_at: 'stamp-1' };
+    const want = { id: MAIN_ID, plan: { ...TYPED, age: 50, includeCash: true }, currency: 'USD', updated_at: 'stamp-1', tax_facts: null };
     expect(await get()).toEqual({ status: 200, body: want });
     expect((await inputs()).body).toEqual({ ...want, plans: [] });
     expect((await list()).body.plans).toEqual([{ id: MAIN_ID, name: 'First plan', plan: want.plan, currency: 'USD', created_at: AT, updated_at: 'stamp-1' }]);
@@ -131,7 +131,7 @@ describe('the plan read, once there are entries', () => {
   test('without the facts, your entry’s own fields are them, every copy’s too', async () => {
     await firePlansStore.set(ctx, MAIN_ID, entry());
     await firePlansStore.set(ctx, 'x', entry({ name: 'Older age', plan: { ...TYPED, age: 30, targetAge: 52 }, createdAt: '2026-11-02T10:00:00.000Z' }));
-    expect((await get()).body).toEqual({ id: MAIN_ID, plan: TYPED, currency: 'USD', updated_at: AT });
+    expect((await get()).body).toEqual({ id: MAIN_ID, plan: TYPED, currency: 'USD', updated_at: AT, tax_facts: null });
     expect((await list()).body.plans[1].plan).toEqual({ ...TYPED, targetAge: 52 });
   });
 
@@ -222,7 +222,7 @@ describe('the plan the facts name, with main there too', () => {
   });
 
   test('is read, and the list names it yours, main among the copies', async () => {
-    expect((await get()).body).toEqual({ id: 'x', plan: X.plan, currency: 'USD', updated_at: 'x-1' });
+    expect((await get()).body).toEqual({ id: 'x', plan: X.plan, currency: 'USD', updated_at: 'x-1', tax_facts: null });
     expect(await listed()).toEqual({ main: 'x', missing: false, ids: ['x', MAIN_ID], names: ['Stop at 52', 'First plan'] });
   });
 
@@ -259,7 +259,7 @@ describe('saving your plan (PUT)', () => {
     const stored = (await firePlansStore.get(ctx, MAIN_ID))!;
     expect(stored).toEqual({ ...entry(), plan: next, updatedAt: stored.updatedAt });
     expect(stored.updatedAt > AT).toBe(true);
-    expect(r.body).toEqual({ id: MAIN_ID, plan: next, currency: 'USD', updated_at: stored.updatedAt });
+    expect(r.body).toEqual({ id: MAIN_ID, plan: next, currency: 'USD', updated_at: stored.updatedAt, tax_facts: null });
   });
 
   test('the stamp sent: matching taken, another refused', async () => {

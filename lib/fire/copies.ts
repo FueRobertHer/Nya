@@ -7,12 +7,12 @@
 //
 // READS TAKE WHAT ANY RELEASE WROTE. isPlanEntry and isPlanFacts check the
 // shape and types, never a range, as isFirePlan does: an entry a later
-// rule refuses still reads. A `tax` that isn't null (the per plan tax choices,
-// from T2's reader) is a newer release's: not recognised, so never written
-// over from here. Facts of version 2 hold the tax facts (lib/fire/tax-facts.ts)
-// and are read whole a release before anything writes them; every write here
-// keeps them (lib/plan-writes.ts), since no release writes a lower version than
-// it read.
+// rule refuses still reads. An entry's `tax` holds its plan's tax choices
+// (lib/fire/tax-choices.ts), read whole a release before anything writes them,
+// and carried by every write and every new copy. Facts of version 2 hold the
+// tax facts (lib/fire/tax-facts.ts), written from T2 (lib/plan-writes.ts
+// saveTaxFacts); every write here keeps them, since no release writes a lower
+// version than it read.
 //
 // Pure, with no data and no storage: the routes and the browser both use it,
 // and the next release holds it byte for byte as its release before's
@@ -22,6 +22,7 @@ import { DEFAULT_PLAN, isFirePlan, type FirePlan, type PlanFunding } from './pla
 import { isStoredPlan, planOf, upgradeStoredPlan, type StoredPlan } from './plan-v2';
 import { MAX_PLAN_SCENARIOS } from './plan-list';
 import { hasTypedAmounts } from './plan-currency';
+import { isTaxChoices, type TaxChoices } from './tax-choices';
 import { isTaxFacts, type TaxFacts } from './tax-facts';
 
 /** One plan, as `fire-plans` stores it. */
@@ -30,8 +31,8 @@ export type PlanEntry = {
   /** Either version; the facts in its fields are read from `plan-facts`
    *  when that is there (withFacts). */
   plan: StoredPlan;
-  /** The plan's tax choices, from T2's reader; null until then. */
-  tax: null;
+  /** The plan's tax choices; null until the plan has any (written from T3). */
+  tax: TaxChoices | null;
   /** The currency its typed amounts are in, written with them; null for a
    *  plan that holds none. */
   currency: string | null;
@@ -74,7 +75,7 @@ export function isPlanEntry(v: unknown): v is PlanEntry {
   return (
     typeof v.name === 'string' &&
     isStoredPlan(v.plan) &&
-    v.tax === null &&
+    (v.tax === null || isTaxChoices(v.tax)) &&
     (v.currency === null || typeof v.currency === 'string') &&
     typeof v.createdAt === 'string' &&
     typeof v.updatedAt === 'string'

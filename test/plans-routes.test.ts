@@ -43,7 +43,7 @@ afterEach(() => setSystemTime());
 
 const ctx = TEST_CTX;
 const PARTIAL = 'Your age was saved; the rest wasn’t: try again';
-const NO_PLAN = { id: MAIN_ID, plan: null, currency: null, updated_at: null };
+const NO_PLAN = { id: MAIN_ID, plan: null, currency: null, updated_at: null, tax_facts: null };
 
 const income = itemFromIncome({ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true });
 const child = itemFromEvent({ id: 'kid', kind: 'child', label: 'A child', fromAge: 42, yearly: 10_000, years: 18 });
@@ -90,7 +90,7 @@ const quiet = async <T>(f: () => Promise<T>): Promise<T> => {
 /** Bytes that are no ciphertext: a damaged value. */
 const DAMAGED = 'damaged-bytes-not-ciphertext-at-all';
 const damageEntry = (id: string) => fake.hset(ctxKey('fire-plans'), { [id]: DAMAGED });
-/** An entry a newer release wrote (its tax choices, from T2). */
+/** An entry a newer release wrote (a tax shape this release doesn't know). */
 const newerEntry = async (id: string, e: PlanEntry) => fake.hset(ctxKey('fire-plans'), { [id]: await encrypt(ctx, JSON.stringify({ ...e, tax: { filing: 'single' } })) });
 /** Each entry's stored bytes, and the facts', to hold a refusal to "nothing written". */
 const raw = async () => ({ plans: await fake.hgetall<Record<string, string>>(ctxKey('fire-plans')), facts: await fake.get(ctxKey('plan-facts')) });
@@ -155,7 +155,7 @@ describe('your plan’s first entry', () => {
     expect(r.status).toBe(200);
     const entry = await stored(MAIN_ID);
     expect(entry).toEqual({ name: 'First plan', plan: { ...TYPED, age: 41 }, tax: null, currency: 'USD', createdAt: entry.createdAt, updatedAt: entry.updatedAt });
-    expect(r.body).toEqual({ id: MAIN_ID, plan: { ...TYPED, age: 41 }, currency: 'USD', updated_at: entry.updatedAt });
+    expect(r.body).toEqual({ id: MAIN_ID, plan: { ...TYPED, age: 41 }, currency: 'USD', updated_at: entry.updatedAt, tax_facts: null });
     expect(await planFactsStore.get(ctx)).toEqual({ version: 1, main: MAIN_ID, ...factsOf({ ...TYPED, age: 41 }) });
     expect(order).toEqual(['entries', 'facts']);
     expect(await get()).toEqual({ status: 200, body: r.body });
@@ -171,7 +171,7 @@ describe('your plan’s first entry', () => {
     expect(main.updatedAt).not.toBe(made.updated_at);
     expect(await planFactsStore.get(ctx)).toEqual({ version: 1, main: MAIN_ID, ...DEFAULTS });
     // Your plan is saved now: it has a stamp.
-    expect((await get()).body).toEqual({ id: MAIN_ID, plan: DEFAULT_PLAN_V2, currency: null, updated_at: main.updatedAt });
+    expect((await get()).body).toEqual({ id: MAIN_ID, plan: DEFAULT_PLAN_V2, currency: null, updated_at: main.updatedAt, tax_facts: null });
   });
 
   test('Try it makes it too: the copy holds the event, in the currency sent, your plan the defaults with none', async () => {
@@ -344,8 +344,8 @@ describe('facts of version 2, written by a newer release', () => {
     const ALONE: PlanFacts = { version: 2, main: MAIN_ID, ...DEFAULTS, tax: TAX };
     beforeEach(() => planFactsStore.set(ctx, ALONE));
 
-    test('your plan stays new: the defaults, and nothing made by reading', async () => {
-      expect(await get()).toEqual({ status: 200, body: NO_PLAN });
+    test('your plan stays new: the defaults, with the facts, and nothing made by reading', async () => {
+      expect(await get()).toEqual({ status: 200, body: { ...NO_PLAN, tax_facts: ALONE.version === 2 ? ALONE.tax : null } });
       expect(await firePlansStore.count(ctx)).toBe(0);
       expect(await planFactsStore.get(ctx)).toEqual(ALONE);
     });
@@ -441,7 +441,7 @@ describe('stamps', () => {
     const stamps = [(await stored(MAIN_ID)).updatedAt, (await stored(x.id)).updatedAt];
     expect(new Set([...stamps, main, x.updated_at]).size).toBe(4);
     expect(r.body.plans.map((p: { updated_at: string }) => p.updated_at)).toEqual(stamps);
-    expect(r.body.main).toEqual({ id: MAIN_ID, plan: { ...TYPED, spending: 41_000 }, currency: 'USD', updated_at: stamps[0] });
+    expect(r.body.main).toEqual({ id: MAIN_ID, plan: { ...TYPED, spending: 41_000 }, currency: 'USD', updated_at: stamps[0], tax_facts: null });
   });
 
   test('that copy made your plan is restamped: a save from before, at any stamp either held, is refused and writes nothing', async () => {
@@ -459,7 +459,7 @@ describe('stamps', () => {
     const made = await plans('PATCH', { main: x.id, based_on: xAt });
     expect(made.status).toBe(200);
     const now = (await stored(x.id)).updatedAt;
-    expect(made.body).toEqual({ id: x.id, plan: { ...TYPED, targetAge: 52, spending: 41_000 }, currency: 'USD', updated_at: now });
+    expect(made.body).toEqual({ id: x.id, plan: { ...TYPED, targetAge: 52, spending: 41_000 }, currency: 'USD', updated_at: now, tax_facts: null });
     expect([main, x.updated_at, mainAt, xAt]).not.toContain(now);
     expect((await planFactsStore.get(ctx))!.main).toBe(x.id);
     const was = await raw();

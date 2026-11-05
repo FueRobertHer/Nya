@@ -1,10 +1,10 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
-import type { PlanEntry, PlanFacts } from '@/lib/fire/copies';
+import type { PlanEntry, PlanFacts } from './fixtures/release-before/fire/copies';
 import type { PlanItem } from '@/lib/fire/items';
 
-// The release before (the last merge before this one, 76196e38, whose readers
+// The release before (the last merge before this one, 8a3bcd2b, TF's, whose readers
 // of the plans as copies are in test/fixtures/release-before/fire/copies.ts byte
 // for byte, pinned by test/release-before.test.ts) reading what this release
 // writes, so a rollback to it loses no plan. Every write this release makes
@@ -17,7 +17,9 @@ import type { PlanItem } from '@/lib/fire/items';
 // GET answers from them is the plan this release answers. A saved plan of
 // version 2 is a saved plan to it (isSavedPlan). This release writes items of
 // every kind on every anchor, the stop at FI, your partner's age and your own
-// FI number, all of which it reads.
+// FI number, all of which it reads, and the tax facts (`plan-facts` version 2),
+// with or without a plan, which TF read a release before this one writes them
+// and which its saves keep.
 // And its restore (test/fixtures/release-before/user-restore/parts.ts) takes a
 // download this release makes, plans and all: it refuses a file with a part it
 // doesn't know, or without one of its header parts, and reads each store part
@@ -45,6 +47,7 @@ const oParts = await import('./fixtures/release-before/user-restore/parts');
 const { SEAM } = await import('@/lib/user-restore/parts');
 const { buildUserExport, collectUserData } = await import('@/lib/user-export');
 const planRoute = await import('@/app/api/fire-plan/route');
+const factsRoute = await import('@/app/api/plan-facts/route');
 const plansRoute = await import('@/app/api/plans/route');
 const savedRoute = await import('@/app/api/saved-plan/route');
 
@@ -109,7 +112,9 @@ async function readsAll(main: string, what: string) {
   }
   const mine = entries.get(main)!;
   const before = { id: main, plan: oCopies.withFacts(mine.plan, f), currency: oCopies.holdsAmounts(mine.plan) ? mine.currency : null, updated_at: mine.updatedAt };
-  expect([what, await (await planRoute.GET()).json()]).toEqual([what, before]);
+  // Its GET answers no tax facts, which it holds without showing.
+  const { tax_facts: _facts, ...answered } = await (await planRoute.GET()).json();
+  expect([what, answered]).toEqual([what, before]);
   return entries;
 }
 
@@ -248,6 +253,50 @@ describe('the release before reads every plan this release writes', () => {
       expect((await call(savedRoute.PUT, 'saved-plan', 'PUT', body)).status).toBe(200);
       expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(true);
     }
+  });
+});
+
+describe('the tax facts this release writes, as the release before reads them', () => {
+  const OP = { kind: 'account', account_id: 'acc_529', owner: 'partner', basis: 12_000, count: true };
+  const ROTH = { kind: 'roth', owner: 'you', amount: 45_000 };
+  const give = (op: unknown) => call(factsRoute.POST, 'plan-facts', 'POST', op);
+
+  /** `plan-facts` as its store reads it, opened. */
+  async function storedFacts(): Promise<PlanFacts> {
+    const { facts } = await readAsBefore();
+    expect(oCopies.isPlanFacts(facts)).toBe(true);
+    return facts as PlanFacts;
+  }
+
+  test('beside your plan: version 2 reads, and your plan with it', async () => {
+    ok(await save({ ...TYPED, partnerAge: 38 }, null, DEFAULTS));
+    ok(await give(OP));
+    await readsAll(MAIN_ID, 'an account’s change');
+    ok(await give(ROTH));
+    await readsAll(MAIN_ID, 'a Roth’s change');
+    const facts = await storedFacts();
+    expect(facts.version).toBe(2);
+    expect(facts).toMatchObject({ age: 40, partnerAge: 38, main: MAIN_ID });
+  });
+
+  test('alone, with no plan saved: it reads them, and has no plan to show', async () => {
+    ok(await give(OP));
+    const { entries, refused } = await readAsBefore();
+    expect([entries.size, refused]).toEqual([0, []]);
+    expect((await storedFacts()).version).toBe(2);
+    expect(oCopies.mainOf(await storedFacts(), { entries, unreadable: [], unrecognised: [] })).toBeNull();
+  });
+
+  test('a save it makes over them keeps them: the fields it replaces are the five every plan holds', async () => {
+    ok(await save(TYPED, null, DEFAULTS));
+    ok(await give(OP));
+    const facts = await storedFacts();
+    const { entries } = await readAsBefore();
+    // lib/plan-writes.ts at TF: { ...base, ...to }, `to` the plan's facts.
+    const saved = { ...facts, ...oCopies.factsOf(oCopies.withFacts(entries.get(MAIN_ID)!.plan, { ...oCopies.factsOf(TYPED), age: 44 })) };
+    expect(oCopies.isPlanFacts(saved)).toBe(true);
+    expect(saved).toMatchObject({ version: 2, age: 44, main: MAIN_ID });
+    expect(saved.version === 2 && saved.tax).toEqual(facts.version === 2 && facts.tax);
   });
 });
 

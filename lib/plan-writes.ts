@@ -30,9 +30,10 @@
 import type { Ctx } from './containers';
 import { eager } from './eager';
 import { stampAfter } from './edit-stamp';
-import { FIRST_PLAN, entryOf, firePlansStore, mainAnswer, planFactsStore, rowOf, type MainPlan, type PlanRow } from './plan-copies';
+import { FIRST_PLAN, entryOf, firePlansStore, mainAnswer, noPlanAnswer, planFactsStore, readMain, rowOf, type MainPlan, type PlanRow } from './plan-copies';
 import { MAIN_ID, MAX_FIRE_PLANS, factsOf, holdsAmounts, isPlanFacts, mainOf, sameFacts, withFacts, type Facts, type PlanEntry, type PlanFacts } from './fire/copies';
 import { DEFAULT_PLAN_V2, type StoredPlan } from './fire/plan-v2';
+import { DEFAULT_TAX_FACTS, MAX_FACT_ACCOUNTS, applyTaxFactOp, tooManyFactAccounts, type TaxFactOp } from './fire/tax-facts';
 import { sameAmounts, typedAmounts, type TypedAmounts } from './fire/plan-currency';
 import { nameTaken } from './fire/plan-list';
 import { MANY_AT_ONCE, UnreadableValueError } from './repo';
@@ -152,7 +153,8 @@ async function writeEntries(
     if (making && current.get(MAIN_ID) === null) current.set(MAIN_ID, unsaved(at));
     return fn(current);
   });
-  if (making) await afterFirst(ctx, { version: 1, main: MAIN_ID, ...facts(written) }, s.leftover);
+  // What is there now, so the answer keeps tax facts given before this plan.
+  if (making) s.facts = await afterFirst(ctx, { version: 1, main: MAIN_ID, ...facts(written) }, s.leftover);
   return written;
 }
 
@@ -163,8 +165,9 @@ async function writeEntries(
  *  with no entry there, over the defaults, so only the facts every plan holds
  *  in its fields are replaced, and tax facts written since this write read it
  *  aren't a save's. Damaged bytes are removed first. A failure here is logged,
- *  never the write's: the entries hold the facts in their own fields. */
-async function afterFirst(ctx: Ctx, facts: PlanFacts, leftover: State['leftover']): Promise<void> {
+ *  never the write's: the entries hold the facts in their own fields. Answers
+ *  what `plan-facts` holds after it (null when that isn't known). */
+async function afterFirst(ctx: Ctx, facts: PlanFacts, leftover: State['leftover']): Promise<PlanFacts | null> {
   const still = (cur: PlanFacts | null) => {
     if (leftover === 'unreadable') return false;
     if (JSON.stringify(cur) === JSON.stringify(leftover)) return true;
@@ -176,14 +179,15 @@ async function afterFirst(ctx: Ctx, facts: PlanFacts, leftover: State['leftover'
   };
   try {
     try {
-      await planFactsStore.update(ctx, replace);
+      return await planFactsStore.update(ctx, replace);
     } catch (err) {
       if (!(err instanceof UnreadableValueError) || err.unrecognised || leftover !== 'unreadable') throw err;
       await planFactsStore.remove(ctx);
-      await planFactsStore.update(ctx, (cur) => cur ?? facts);
+      return await planFactsStore.update(ctx, (cur) => cur ?? facts);
     }
   } catch (err) {
     console.error('Plan facts not written after the first plan:', err);
+    return null;
   }
 }
 
@@ -264,6 +268,8 @@ export async function saveEntries(ctx: Ctx, saves: Save[], factsWere: Facts): Pr
       },
       () => facts1
     );
+    // Your plan's first save wrote the facts just now, keeping any tax facts.
+    if (s.empty) facts = s.facts;
     const mainEntry = written.get(s.main) ?? (await firePlansStore.get(ctx, s.main)) ?? s.mainEntry;
     const main: MainPlan = { id: s.main, entry: mainEntry, facts, missing: false };
     return { main, rows: saves.map((x) => rowOf(x.id, written.get(x.id)!, facts, mainEntry)) };
@@ -324,7 +330,7 @@ export async function createCopy(ctx: Ctx, input: { from: string; name: string; 
       if (current.get(id) !== null) throw new Refused(CHANGED);
       if (nameTaken(namesIn(current), input.name)) throw new Refused(NAME_TAKEN, 409, false);
       const stamps = stampsIn(current);
-      const next = new Map<string, PlanEntry | null>([[id, { name: input.name, plan: withFacts(input.plan, facts), tax: null, currency, createdAt: at, updatedAt: stampFor('', now, stamps) }]]);
+      const next = new Map<string, PlanEntry | null>([[id, { name: input.name, plan: withFacts(input.plan, facts), tax: source.tax, currency, createdAt: at, updatedAt: stampFor('', now, stamps) }]]);
       if (s.empty) {
         const main = current.get(MAIN_ID)!;
         // Another write made your plan's entry meanwhile: its facts may differ.
@@ -437,6 +443,35 @@ export async function makeMain(ctx: Ctx, id: string, basedOn: string): Promise<M
     console.error('A plan not made yours:', err);
     throw new Refused(`“${s.entries.get(id)!.name}” wasn’t made your plan: try again`);
   }
+}
+
+/**
+ * One change to the tax facts (POST /api/plan-facts), by the compare-and-set
+ * every facts write uses, so it can't undo a save's age or another device's
+ * change to another account. Facts of version 1, or none, become version 2,
+ * from your plan's own fields when none are there. With no plan saved, only
+ * `plan-facts` is written: no entry, so the plan stays new. Answers as
+ * GET /api/fire-plan does.
+ */
+export async function saveTaxFacts(ctx: Ctx, op: TaxFactOp) {
+  const main = await readMain(ctx);
+  const change = (cur: PlanFacts | null): PlanFacts => {
+    const was: PlanFacts = cur ?? { version: 1, main: main?.id ?? MAIN_ID, ...factsOf(main?.entry.plan ?? DEFAULT_PLAN_V2) };
+    const tax = applyTaxFactOp(was.version === 2 ? was.tax : DEFAULT_TAX_FACTS, op);
+    if (tooManyFactAccounts(tax)) throw new Refused(`Nya keeps these for at most ${MAX_FACT_ACCOUNTS} accounts.`, 409, false);
+    return { ...was, version: 2, tax };
+  };
+  let facts: PlanFacts | null;
+  try {
+    facts = await planFactsStore.update(ctx, change);
+  } catch (err) {
+    // With no plan saved nothing reads what is there, so damaged bytes go, as
+    // your plan's first entry takes them.
+    if (main || !(err instanceof UnreadableValueError) || err.unrecognised) throw err;
+    await planFactsStore.remove(ctx);
+    facts = await planFactsStore.update(ctx, change);
+  }
+  return main ? mainAnswer({ ...main, facts }) : noPlanAnswer(facts);
 }
 
 /** Records your plan's currency (POST /api/fire-plan): { currency, amounts },
