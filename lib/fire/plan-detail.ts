@@ -20,7 +20,8 @@
 // browser.
 
 import type { BucketsToday } from './buckets-today';
-import { compileItems, type CompileAt, type CompiledItems } from './compile';
+import { bridgedEngine } from './bridge';
+import { compileItems, conditionalFlows, type CompileAt, type CompiledItems } from './compile';
 import { runDrawdown, type Drawdown, type DrawdownHealth } from './drawdown';
 import type { WalkChanges } from './events';
 import { planPath } from './path';
@@ -190,7 +191,7 @@ export function detailWork(input: DetailedInput): DetailWork {
       return { start: whole.drawn, startAge: stop.age, whole: whole.drawn, walkTax: 0, law: input.lawYear, notes: [] };
     },
 
-    figures(f) {
+    figures(f, fixed, at) {
       const { engine, plan } = f;
       if (plan.age === null || !('sim' in engine) || engine.startAge === null) return { detail: null, engine };
       const first = Math.max(engine.startAge, plan.age);
@@ -211,7 +212,9 @@ export function detailWork(input: DetailedInput): DetailWork {
         law: input.lawYear,
         notes: start.noMix ? ['no-mix'] : [],
       };
-      return { detail, engine };
+      const perRun = f.resolution.perRun;
+      const conditional = perRun ? conditionalFlows(plan.items, perRun, f.resolution.ages, { ...at, taxRate: start.drawn.t }, true) : undefined;
+      return { detail, engine: bridgedEngine(plan, engine, start.drawn, fixed, conditional) };
     },
   };
 }

@@ -305,7 +305,7 @@ export function compileItems(items: readonly PlanItem[], ages: readonly ItemAges
  * path is in the spending the plan draws, so a run where it comes takes it back
  * out from there. Pay is in the walk alone, as above.
  */
-export function conditionalFlows(items: readonly PlanItem[], perRun: PerRun, ages: readonly ItemAges[], at: CompileAt): ConditionalFlows {
+export function conditionalFlows(items: readonly PlanItem[], perRun: PerRun, ages: readonly ItemAges[], at: CompileAt, bridged = false): ConditionalFlows {
   const S = at.startAge ?? 0;
   const edge = (e: RunEdge | number): ConditionalEdge => (typeof e === 'number' ? { year: e - S } : e);
   const out: ConditionalItem[] = [];
@@ -314,10 +314,11 @@ export function conditionalFlows(items: readonly PlanItem[], perRun: PerRun, age
     if (!edges || x.kind === 'pay') continue;
     const add = (over: Partial<ConditionalItem>) => out.push({ start: edge(edges.start), end: edges.end === null ? null : edge(edges.end), once: [], moneyIn: 0, income: null, yearly: 0, ...over });
     const once = (x.once ?? 0) > 0 ? repeats(x, 0).map((after) => ({ amount: x.once as number, after })) : [];
-    const afterTax = (v: number) => (x.beforeTax ? v * (1 - at.taxRate) : v);
+    // In the stress test's bridge all money in goes in at `1 - t` (lib/fire/bridge.ts).
+    const afterTax = (v: number) => (bridged || x.beforeTax ? v * (1 - at.taxRate) : v);
     const yearly = x.yearly ?? 0;
     if (x.kind === 'one-off' || x.kind === 'car') add({ end: null, once });
-    else if (x.kind === 'windfall') add({ end: null, moneyIn: x.once ?? 0 });
+    else if (x.kind === 'windfall') add({ end: null, moneyIn: bridged ? afterTax(x.once ?? 0) : (x.once ?? 0) });
     else if (x.kind === 'loan-end') add({ end: null, yearly: -yearly });
     else if (INCOME_KINDS.includes(x.kind)) add({ income: { amount: afterTax(yearly), inflationAdjusted: x.inflationAdjusted } });
     else {

@@ -138,7 +138,7 @@ export function steadyRun(sim: SimPlan, realReturn: number): { balances: number[
       if (gross > bal * (1 + EPS) + EPS) return { balances, failedYear: y };
       bal = Math.max(0, bal - gross);
     } else if (need < 0) {
-      bal -= need;
+      bal -= sim.bridged ? need / (1 - tax) : need;
     }
     state.lastNominalReturn = bal > 0 ? (1 + realReturn) * (1 + inflation) - 1 : 0;
     state.lastInflation = inflation;

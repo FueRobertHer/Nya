@@ -132,6 +132,10 @@ export type SimPlan = {
   /** Lower costs (life events in a scenario, lib/fire/events.ts); absent for
    *  the Plan's own plans, which then run exactly as they always have. */
   lowerSpending?: LowerSpending[];
+  /** A year with money to spare invests it divided by `1 - taxRate`, since its
+   *  income went in at `1 - taxRate` too (lib/fire/bridge.ts); absent otherwise,
+   *  and the rest of a year's money is invested as it is. */
+  bridged?: boolean;
   /** Items that wait on a run's own balance; absent for every plan but one
    *  starting from what you'd have at your stop age, and then they cost nothing. */
   conditional?: ConditionalFlows;
@@ -330,6 +334,7 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
   const count = source.count;
   const g = growthTables(plan, market);
   const tax = plan.taxRate;
+  const bridged = plan.bridged === true;
   const afterFee = 1 - plan.fee;
   const w = plan.allocation;
   const drift = plan.rebalance === 'none';
@@ -442,19 +447,20 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
         }
         bal = left;
       } else if (need < 0) {
+        const spare = bridged ? -need / (1 - tax) : -need;
         if (drift) {
           if (bal > 0) {
-            const k = (bal - need) / bal;
+            const k = (bal + spare) / bal;
             hs *= k;
             hb *= k;
             hc *= k;
           } else {
-            hs = -need * w.stocks;
-            hb = -need * w.bonds;
-            hc = -need * w.cash;
+            hs = spare * w.stocks;
+            hb = spare * w.bonds;
+            hc = spare * w.cash;
           }
         }
-        bal -= need;
+        bal += spare;
       }
       if (out.spending) out.spending[p * years + y] = spend;
       if (spend < lowest) lowest = spend;
