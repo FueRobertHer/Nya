@@ -188,6 +188,8 @@ export type PlanInputs = FiInputs & {
   flows: TrailingFlows | null;
   assets: InvestedAssets;
   workplace: WorkplaceSavings | null;
+  /** What one category or tag came to over the last year. */
+  paidFor: (paid: NonNullable<TaxFacts['paidToday']>) => number;
 };
 
 /** Everything the Plan measures, from what the dashboard loaded, for a plan's
@@ -274,5 +276,6 @@ export function usePlanInputs({
   const weigh = !fx && !balanceFx && ((flows?.leftOut.length ?? 0) > 0 || assets.leftOut.length > 0);
   const { load } = useCurrencySettings(weigh);
   const rates = weigh && load.kind === 'ready' ? load.view.ecb.rates : null;
-  return { today, flows, unread, coverage, assets, contributions, workplace, cashOn, cashUnmarked, rates };
+  const paidFor = (asked: NonNullable<TaxFacts['paidToday']>) => (txns ? (trailingFlows(txns, today, { cashAccounts, fx, into, ...(currency ? { currency } : {}), paid: asked })?.paid ?? 0) : 0);
+  return { today, flows, unread, coverage, assets, contributions, workplace, cashOn, cashUnmarked, rates, paidFor };
 }

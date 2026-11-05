@@ -23,13 +23,15 @@ function recorders() {
   };
 }
 
+const noMore = async () => true as const;
+
 describe('with a copy open', () => {
   // Since rollout 6d the method and the mix are fields of the Assumptions
   // sheet, a form like the others: "Use my allocation" opens it.
   test('the forms save to it, with the plans checked; the repair and the allocation settings have no saver', async () => {
     const r = recorders();
     const shown = plan({ targetAge: 50 });
-    const s = planSavers({ copy: r.saveCopy, savePlan: r.savePlan, repaired: plan({ withdrawalRate: 0.04 }) });
+    const s = planSavers({ copy: r.saveCopy, savePlan: r.savePlan, repaired: plan({ withdrawalRate: 0.04 }), more: noMore });
     expect(await s.form({ ...shown, withdrawalRate: 0.035 })).toBe(true);
     expect(await s.form({ ...shown, stocksPct: 60 }, ['main'])).toBe(true);
     expect(s.repair).toBeNull();
@@ -43,7 +45,7 @@ describe('with a copy open', () => {
   });
 
   test('a refusal’s reason reaches the form', async () => {
-    const s = planSavers({ copy: async () => 'Your age is the same in every plan', savePlan: async () => true, repaired: null });
+    const s = planSavers({ copy: async () => 'Your age is the same in every plan', savePlan: async () => true, repaired: null, more: noMore });
     expect(await s.form(plan())).toBe('Your age is the same in every plan');
   });
 });
@@ -52,7 +54,7 @@ describe('with your plan open', () => {
   test('everything saves your plan; the repair saves the repaired plan, never the one on screen', async () => {
     const r = recorders();
     const repaired = plan({ withdrawalRate: 0.04, age: 41 });
-    const s = planSavers({ copy: null, savePlan: r.savePlan, repaired });
+    const s = planSavers({ copy: null, savePlan: r.savePlan, repaired, more: noMore });
     await s.form(plan({ age: 42 }));
     await s.form(plan({ stocksPct: 50, method: 'monte-carlo' }), ['copy-1']);
     s.repair?.();
@@ -68,8 +70,8 @@ describe('with your plan open', () => {
   });
 
   test('with no repair waiting there is none to save', () => {
-    expect(planSavers({ copy: null, savePlan: async () => true, repaired: null }).repair).toBeNull();
-    expect(planSavers({ copy: null, savePlan: async () => true, repaired: null }).taxFacts).toBe(true);
+    expect(planSavers({ copy: null, savePlan: async () => true, repaired: null, more: noMore }).repair).toBeNull();
+    expect(planSavers({ copy: null, savePlan: async () => true, repaired: null, more: noMore }).taxFacts).toBe(true);
   });
 });
 
@@ -80,13 +82,13 @@ describe('the Plan tab saves through nothing else', () => {
   test('your plan’s store and the plans’ save are handed to the savers, and saved through nowhere else', () => {
     expect(code.match(/store\.save\b/g)).toEqual(['store.save']);
     expect(code.match(/plansClient\.save\b/g)).toEqual(['plansClient.save']);
-    expect(code).toMatch(/planSavers\(\{ copy: entry \? saveShown : null, savePlan: saveShown, repaired: repairing \? repair\.plan : null \}\)/);
+    expect(code).toMatch(/planSavers\(\{ copy: entry \? saveShown : null, savePlan: saveShown, repaired: repairing \? repair\.plan : null, more: saveMore \}\)/);
     // savePlanIn: the store's save of your plan alone, version 2, but never a
     // first typed amount without the currency its figures are in
     // (lib/fire/plan-currency.ts). The facts it sent are the page's once
     // saved (test/plan-inputs-view.test.tsx).
     expect(code).toMatch(
-      /const savePlanIn = async \(next: FirePlanV2\): Promise<boolean \| string> => \{\n    const wait = firstAmountWait\(next\);\n    if \(wait\) return wait;\n    const saved = await store\.save\(next\);\n    if \(saved\) factsWere\.current = factsOf\(next\);\n    return saved;\n  \};/,
+      /const savePlanIn = async \(next: FirePlanV2, tax\?: TaxChoices\): Promise<boolean \| string> => \{\n    const wait = firstAmountWait\(next, tax\);\n    if \(wait\) return wait;\n    const saved = await store\.save\(next\);\n    if \(saved\) factsWere\.current = factsOf\(next\);\n    return saved;\n  \};/,
     );
     // saveShown: your plan alone through the store; a copy, or Also change
     // it in, through the plans' save, all together.

@@ -2897,6 +2897,7 @@ export default function Dashboard({
                   childMovedSeen={childMovedSeen}
                   onChildMovedSeen={() => setChildMovedSeen(true)}
                   planTax={flags['plan-tax']}
+                  tags={tagList.tags}
                 />
               )}
             </>

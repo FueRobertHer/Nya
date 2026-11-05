@@ -308,9 +308,40 @@ export const HEALTH_NOT_SET = 'Not set: measured spending leaves out coverage th
 /** The Health coverage row's sub. */
 export function healthSub(choices: TaxChoices): string {
   const before = choices.health.beforeMedicare;
-  if (!before) return HEALTH_NOT_SET;
+  if (!before) return 'Not set yet';
   return `${before.kind === 'aca' ? 'ACA' : 'Your own coverage'} before 65, then Medicare · in Drawdown`;
 }
+
+/** Each part of coverage in each stage, a year on average, as the years have it. */
+export function stageHealthLines(stages: readonly DrawdownStage[], years: readonly DrawdownYear[], money: Money): { title: string; lines: YearLine[] }[] {
+  return stages.flatMap((s) => {
+    const rows = years.slice(s.first, s.last);
+    if (rows.length === 0) return [];
+    const mean = (pick: (y: DrawdownYear) => number) => rows.reduce((n, y) => n + pick(y), 0) / rows.length;
+    const both = (y: DrawdownYear, pick: (p: PersonCare) => number) => pick(y.care.people[0]) + (y.partnerAge === null ? 0 : pick(y.care.people[1]));
+    const line = (label: string, n: number): YearLine[] => (some(n) ? [{ label, value: money(n) }] : []);
+    return [
+      {
+        title: stageTitle(s),
+        lines: [
+          ...line('Premiums, full price', mean((y) => both(y, (p) => p.premium) + y.care.dependents.premium)),
+          ...line('Premium tax credit', mean((y) => both(y, (p) => p.credit) + y.care.dependents.credit)),
+          ...line('Medicare Part B', mean((y) => both(y, (p) => p.partB))),
+          ...line('IRMAA', mean((y) => both(y, (p) => p.irmaa))),
+          ...line('Part D or a supplement', mean((y) => both(y, (p) => p.extra))),
+          ...line('The coverage you typed', mean((y) => both(y, (p) => p.typed))),
+          { label: 'You pay', value: money(mean((y) => y.health)), sum: true },
+        ],
+      },
+    ];
+  });
+}
+
+/** What the Assumptions row says of a detailed plan, beside its flat rate. */
+export const assumptionsLine = (choices: Pick<TaxChoices, 'inflation'>, growth: number) => `${pct(choices.inflation)} inflation · health costs +${Number((growth * 100).toFixed(2))} points`;
+
+/** Under measured spending, a name for what could already be paying for coverage. */
+export const namesCoverage = (name: string) => /\b(health|medical|dental)\b/i.test(name) && /\b(insurance|premiums?|coverage)\b/i.test(name);
 
 type NoteArgs = {
   today: Pick<BucketsToday, 'groups' | 'roth'> | null;
@@ -355,7 +386,7 @@ export function honestyNotes(a: NoteArgs): FigureNote[] {
 }
 
 /** Household's own, since these name what can't be set there. */
-export function householdNotes(a: Pick<NoteArgs, 'facts' | 'choices'>): FigureNote[] {
+export function householdNotes(a: { facts: Pick<TaxFacts, 'dependents'>; choices: Pick<TaxChoices, 'state'> }): FigureNote[] {
   const notes: FigureNote[] = [];
   if (a.choices.state === 'WA') notes.push({ key: 'detail:washington', level: 'info', kind: 'Washington', text: 'Washington taxes capital gains only, which isn’t counted here.' });
   if (a.facts.dependents.length > 0) notes.push({ key: 'detail:dependents', level: 'caution', kind: 'dependents', text: 'Dependents count in your household’s size. The child tax credit and head of household aren’t counted.' });
