@@ -1,7 +1,8 @@
 import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
-import type { PlanEntry } from '@/lib/fire/copies';
+import type { Facts, PlanEntry, PlanFacts } from '@/lib/fire/copies';
+import type { TaxFacts } from '@/lib/fire/tax-facts';
 
 // Plans as copies, written (lib/plan-writes.ts), through the routes on
 // FakeRedis: GET, PUT and POST /api/fire-plan for your plan, and
@@ -27,7 +28,9 @@ const { DEFAULT_PLAN_V2 } = await import('@/lib/fire/plan-v2');
 const { itemFromIncome } = await import('@/lib/fire/items');
 const { itemFromEvent } = await import('./plan-gen');
 const { MAIN_ID, MAX_FIRE_PLANS, factsOf } = await import('@/lib/fire/copies');
-const { AT_MOST, CHANGED, FIRST_CURRENCY, KEEP_MAIN, NAME_TAKEN, NOTHING_TYPED, OTHER_DEVICE, STALE_CURRENCY } = await import('@/lib/plan-writes');
+const { DEFAULT_TAX_FACTS } = await import('@/lib/fire/tax-facts');
+const { typedAmounts } = await import('@/lib/fire/plan-currency');
+const { AT_MOST, CHANGED, FIRST_CURRENCY, KEEP_MAIN, NAME_TAKEN, NOTHING_TYPED, OTHER_DEVICE, STALE_CURRENCY, factsWere } = await import('@/lib/plan-writes');
 const planRoute = await import('@/app/api/fire-plan/route');
 const plansRoute = await import('@/app/api/plans/route');
 
@@ -255,6 +258,152 @@ describe('the facts after a first entry', () => {
     expect((await save(TYPED, null, { facts_were: DEFAULTS })).status).toBe(200);
     expect((await planFactsStore.get(ctx))!.age).toBe(41);
     expect((await get()).body.plan.age).toBe(41);
+  });
+});
+
+// `plan-facts` version 2, as a newer release writes it. This release writes
+// only version 1, and never a lower version than it read: after a rollback, an
+// age saved here keeps the tax facts.
+describe('facts of version 2, written by a newer release', () => {
+  const TAX: TaxFacts = { ...DEFAULT_TAX_FACTS, countAnyway: ['acc_529'], owners: [{ account_id: 'acc_1', owner: 'partner' }], rothContributions: [{ owner: 'you', amount: 45_000 }] };
+  const v2Facts = (facts: Facts, main: string = MAIN_ID): PlanFacts => ({ version: 2, main, ...facts, tax: TAX });
+
+  describe('with your plan there', () => {
+    let at: string;
+    beforeEach(async () => {
+      at = await yours();
+      await planFactsStore.set(ctx, v2Facts(factsOf(TYPED)));
+    });
+    const kept = async (facts: Facts, main: string = MAIN_ID) => expect(await planFactsStore.get(ctx)).toEqual(v2Facts(facts, main));
+
+    test('read: the plans answer as ever, with the facts in their fields', async () => {
+      const read = await get();
+      expect([read.status, read.body.plan]).toEqual([200, TYPED]);
+      expect((await list()).status).toBe(200);
+    });
+
+    test('a saved age keeps them', async () => {
+      const older = { ...TYPED, age: 41 };
+      expect((await save(older, at, { facts_were: factsOf(TYPED) })).status).toBe(200);
+      await kept(factsOf(older));
+      expect((await stored(MAIN_ID)).plan.age).toBe(41);
+    });
+
+    test('a save that changes no fact leaves them as they are', async () => {
+      const was = await fake.get<string>(ctxKey('plan-facts'));
+      expect((await save({ ...TYPED, spending: 41_000 }, at)).status).toBe(200);
+      expect(await fake.get<string>(ctxKey('plan-facts'))).toBe(was);
+    });
+
+    test('an Also save, over two plans with a new age, keeps them', async () => {
+      const made = await copy('Stop at 52', { ...TYPED, targetAge: 52 }, 'USD');
+      const older = { ...TYPED, age: 41 };
+      const r = await plans('PUT', {
+        saves: [
+          { id: MAIN_ID, plan: older, currency: 'USD', based_on: at },
+          { id: made.id, plan: { ...older, targetAge: 52 }, currency: 'USD', based_on: made.updated_at },
+        ],
+        facts_were: factsOf(TYPED),
+      });
+      expect(r.status).toBe(200);
+      await kept(factsOf(older));
+    });
+
+    test('New copy, rename, its currency, delete and your plan’s currency keep them', async () => {
+      const made = await copy('Stop at 52', { ...TYPED, targetAge: 52 }, 'USD');
+      await kept(factsOf(TYPED));
+      const renamed = await plans('PATCH', { id: made.id, name: 'Stop at 53', based_on: made.updated_at });
+      expect(renamed.status).toBe(200);
+      await kept(factsOf(TYPED));
+      const relabelled = await plans('PATCH', { id: made.id, currency: 'EUR', based_on: renamed.body.plan.updated_at });
+      expect(relabelled.status).toBe(200);
+      await kept(factsOf(TYPED));
+      expect((await plans('DELETE', { id: made.id, based_on: relabelled.body.plan.updated_at })).status).toBe(200);
+      await kept(factsOf(TYPED));
+      expect((await post({ currency: 'CAD', amounts: typedAmounts(TYPED), answered: true })).status).toBe(200);
+      await kept(factsOf(TYPED));
+    });
+
+    test('make this your plan keeps them, naming the new one', async () => {
+      const made = await copy('Stop at 52', { ...TYPED, targetAge: 52 }, 'USD');
+      const r = await plans('PATCH', { main: made.id, based_on: made.updated_at });
+      expect(r.status).toBe(200);
+      await kept(factsOf(TYPED), made.id);
+    });
+
+    test('a body can’t pose as them: facts sent as a page’s are the five a plan holds, and nothing more', async () => {
+      const sent = { ...factsOf(TYPED), version: 2, main: 'other', tax: TAX };
+      expect((await save({ ...TYPED, age: 41 }, at, { facts_were: sent })).status).toBe(400);
+      expect(factsWere(sent)).toBeNull();
+      expect(factsWere({ ...factsOf(TYPED), tax: TAX })).toBeNull();
+      expect(factsWere(factsOf(TYPED))).toEqual(factsOf(TYPED));
+    });
+  });
+
+  describe('alone, with no plan there', () => {
+    const ALONE: PlanFacts = { version: 2, main: MAIN_ID, ...DEFAULTS, tax: TAX };
+    beforeEach(() => planFactsStore.set(ctx, ALONE));
+
+    test('your plan stays new: the defaults, and nothing made by reading', async () => {
+      expect(await get()).toEqual({ status: 200, body: NO_PLAN });
+      expect(await firePlansStore.count(ctx)).toBe(0);
+      expect(await planFactsStore.get(ctx)).toEqual(ALONE);
+    });
+
+    test('your plan’s first save is taken, and keeps them under its own facts', async () => {
+      expect((await save(TYPED, null, { facts_were: DEFAULTS })).status).toBe(200);
+      expect(await planFactsStore.get(ctx)).toEqual(v2Facts(factsOf(TYPED)));
+      expect((await get()).body.plan).toEqual(TYPED);
+    });
+
+    test('so is a New copy', async () => {
+      const made = await copy('Stop at 52', { ...DEFAULT_PLAN_V2, targetAge: 52 });
+      expect(made.plan.targetAge).toBe(52);
+      expect(await planFactsStore.get(ctx)).toEqual(ALONE);
+    });
+
+    test('a leftover naming a plan that’s gone is put right, the tax facts kept', async () => {
+      await planFactsStore.set(ctx, { ...ALONE, main: 'gone', age: 70 });
+      await yours();
+      expect(await planFactsStore.get(ctx)).toEqual(v2Facts(factsOf(TYPED)));
+    });
+  });
+
+  describe('written between a first save’s read and its facts', () => {
+    const withTax = (facts: Facts): PlanFacts => ({ version: 2, main: MAIN_ID, ...facts, tax: TAX });
+
+    test('over nothing: this save’s facts stand, never the defaults the tax facts came with', async () => {
+      before(planFactsStore, 'update', () => planFactsStore.set(ctx, withTax(DEFAULTS)));
+      expect((await save(TYPED, null, { facts_were: DEFAULTS })).status).toBe(200);
+      expect(await planFactsStore.get(ctx)).toEqual(withTax(factsOf(TYPED)));
+      expect((await get()).body.plan).toEqual(TYPED);
+    });
+
+    test('over a leftover: the same', async () => {
+      await planFactsStore.set(ctx, { version: 1, main: MAIN_ID, ...DEFAULTS });
+      before(planFactsStore, 'update', () => planFactsStore.set(ctx, withTax(DEFAULTS)));
+      expect((await save(TYPED, null, { facts_were: DEFAULTS })).status).toBe(200);
+      expect(await planFactsStore.get(ctx)).toEqual(withTax(factsOf(TYPED)));
+    });
+
+    test('a save another device made from the new entry meanwhile still stands, tax facts and all', async () => {
+      await planFactsStore.set(ctx, withTax(DEFAULTS));
+      before(planFactsStore, 'update', async () => {
+        const loaded = (await get()).body;
+        expect((await save({ ...loaded.plan, age: 41 }, loaded.updated_at, { facts_were: factsOf(loaded.plan) })).status).toBe(200);
+      });
+      expect((await save(TYPED, null, { facts_were: DEFAULTS })).status).toBe(200);
+      expect(await planFactsStore.get(ctx)).toEqual(withTax(factsOf({ ...TYPED, age: 41 })));
+    });
+  });
+
+  test('facts of a version newer still are refused: nothing written over them', async () => {
+    await yours();
+    await fake.set(ctxKey('plan-facts'), await encrypt(ctx, JSON.stringify({ version: 3, main: MAIN_ID, ...factsOf(TYPED), tax: TAX })));
+    const was = await raw();
+    expect((await quiet(get)).status).toBe(409);
+    expect((await quiet(() => save({ ...TYPED, age: 41 }, null))).status).toBe(409);
+    expect(await raw()).toEqual(was);
   });
 });
 
