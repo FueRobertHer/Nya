@@ -158,10 +158,11 @@ export function useSharedPlanInputs(store: PlanInputsStore, institutions: AssetI
   }, [store, key, copy.asked]);
   const contributions = useMemo(() => contributionsFrom(copy, plans), [copy, plans]);
   // The last plan answered, so a failed reload moves nothing. `tax_facts: null`
-  // there is a known state, none written; before any answer there is no knowing.
+  // there is a known state, none written; before any answer, or with facts this
+  // page can't read (a newer release's), there is no knowing.
   const body = copy.lastPlan;
   const taxFacts = useMemo(() => taxFactsFrom(body), [body]);
-  return { copy, contributions, taxFacts, factsKnown: body !== null };
+  return { copy, contributions, taxFacts, factsKnown: !!body && (body.tax_facts === null || isTaxFacts(body.tax_facts)) };
 }
 
 export type PlanInputs = FiInputs & {

@@ -219,9 +219,20 @@ describe('a child’s accounts (D7)', () => {
     await known('unshown529', '2026-10-01', '529', 'investment', '529');
     await known('unshown401k', '2026-10-01', '401(k)', 'investment', '401k');
     await measured('2026-10-01', { brk: 10_000, unshown529: 4_000, unshown401k: 2_000 });
-    // Listed with no subtype, as a page lists what it can't show.
-    const accounts = [acct('brk'), listedAs('unshown529'), listedAs('unshown401k')];
+    // Listed with nothing said, as a page lists what it can't show.
+    const accounts = [acct('brk'), acct('unshown529'), acct('unshown401k')];
     expect((await ask({ accounts })).body.anchor).toMatchObject({ total: 12_000, counted: 2 });
+  });
+
+  test('on: what the page says of one it shows beats the directory, as the browser counts it', async () => {
+    await turnOn();
+    await saved('2026-10-01');
+    // An old id the directory knows as a 529, linked by hand to a brokerage account.
+    await known('old', '2026-10-01', '529', 'investment', '529');
+    await fake.hset(ctxKey('account-links'), { old: await encrypt(ctx, JSON.stringify({ to: 'live', linked_at: '2026-10-02T00:00:00.000Z', evidence: {} })) });
+    await measured('2026-10-01', { brk: 10_000, live: 5_000 });
+    expect(leftOutOf(true, [])?.({ account_id: 'live', subtype: 'brokerage' })).toBe(false);
+    expect((await ask({ accounts: [acct('brk'), listedAs('live')] })).body.anchor).toMatchObject({ total: 15_000, counted: 2 });
   });
 
   test('on: counted under an id since replaced, it reads as out here as in the browser, until counted again', async () => {
@@ -253,7 +264,7 @@ describe('a child’s accounts (D7)', () => {
     expect((await ask({ accounts: [acct('brk')] })).status).toBe(200);
   });
 
-  test('the page’s list says the subtype of an account for a child, and no other: a manual one’s is free text', async () => {
+  test('the page’s list says the subtype of an account for a child, null for any other it shows (a manual one’s is free text), and nothing of one it can’t', async () => {
     const list = progressAccountsOf([
       {
         name: 'Broker',
@@ -270,7 +281,7 @@ describe('a child’s accounts (D7)', () => {
         unshown: [{ account_id: 'u', name: 'U', type: 'investment', currency: 'USD' }],
       },
     ]);
-    expect(list).toEqual([listedAs('a', 'investment', 'USD', '529'), acct('b'), acct('m'), acct('u')]);
+    expect(list).toEqual([listedAs('a', 'investment', 'USD', '529'), listedAs('b'), listedAs('m'), acct('u')]);
     await saved('2026-10-01');
     expect((await ask({ accounts: list })).status).toBe(200);
   });
@@ -444,6 +455,6 @@ describe('the pure series and the page’s list', () => {
         ],
       },
     ]);
-    expect(list).toEqual([acct('a'), acct('c', 'depository', null), acct('u', 'investment', 'EUR')]);
+    expect(list).toEqual([listedAs('a'), listedAs('c', 'depository', null), acct('u', 'investment', 'EUR')]);
   });
 });

@@ -23,6 +23,7 @@ import { Notice } from './TotalCaveats';
 import { Why } from './Why';
 import { isChildAccount } from '@/lib/fire/child-accounts';
 import { MAX_FACT_AMOUNT, type Owner, type TaxFactOp, type TaxFacts } from '@/lib/fire/tax-facts';
+import { normalizedAmountText } from '@/lib/manual-txn-input';
 import type { BucketAccount, BucketsToday } from '@/lib/fire/buckets-today';
 import type { ChildAccount } from '@/lib/fire/inputs';
 import { byBucket, type SavingsSplit } from '@/lib/fire/savings-split';
@@ -191,8 +192,8 @@ function LevelButtons({ onCancel, onSave, saving, off }: { onCancel: () => void;
 function readAmount(text: string, what: string): { amount: number | null } | { problem: string } {
   const t = text.trim();
   if (t === '') return { amount: null };
-  const n = Number(t);
-  if (!Number.isFinite(n) || n < 0 || n > MAX_FACT_AMOUNT) return { problem: `${what} must be a number, zero or more.` };
+  const n = Number(normalizedAmountText(t) ?? NaN);
+  if (!Number.isFinite(n) || n > MAX_FACT_AMOUNT) return { problem: `${what} must be a number, zero or more.` };
   return { amount: n };
 }
 
@@ -308,7 +309,7 @@ function AccountLevel({
       {account && (
         <ul className="list-rows">
           <li>
-            <button type="button" className="list-row" onClick={() => sheet.onLevel({ kind: 'bucket', account_id: id, title: 'Change its bucket', back: title })}>
+            <button type="button" className="list-row" disabled={saving} onClick={() => sheet.onLevel({ kind: 'bucket', account_id: id, title: 'Change its bucket', back: title })}>
               <span className="list-row-text">
                 <span className="list-row-title">Change its bucket</span>
                 <span className="list-row-sub">{account.chosen ? `${BUCKET_NAMES[account.bucket]}, as you set it` : `${BUCKET_NAMES[account.bucket]}, from its type`}</span>

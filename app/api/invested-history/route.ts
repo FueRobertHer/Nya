@@ -30,9 +30,9 @@ import { investedSeries, isComplete, type InvestedSeriesAccount, type InvestedDa
 //        unreadable_days }
 //
 // `accounts` is every account the dashboard knows, hidden ones aside, with
-// its type and currency, and an account for a child's education its subtype
-// (lib/fire/invested-series.ts progressAccountsOf): those it shows and those an
-// institution is known to have but can't show.
+// its type and currency, and for those it shows, the subtype if it is a child's
+// education or null if not (lib/fire/invested-series.ts progressAccountsOf): those
+// it shows and those an institution is known to have but can't show.
 // A POST because that list is the question and can be longer than a URL.
 // What counts comes from the SAVED PLAN, read here, never from the page:
 // investment accounts, and checking and savings when it was saved with
@@ -100,7 +100,8 @@ function daysIn(from: string, to: string): string[] {
   return out;
 }
 
-type Listed = { account_id: string; type: string; currency: string | null; subtype: string | null };
+/** `subtype`: what the page says of an account it shows; absent, it can't say. */
+type Listed = { account_id: string; type: string; currency: string | null; subtype?: string | null };
 
 /** The question, strictly: exactly `accounts`, each well formed, or why not. */
 function parseQuestion(body: unknown): Listed[] | string {
@@ -121,11 +122,11 @@ function parseQuestion(body: unknown): Listed[] | string {
     if (typeof a.account_id !== 'string' || !ACCOUNT_ID.test(a.account_id)) return 'An account_id is not one';
     if (typeof a.type !== 'string' || !TYPE.test(a.type)) return 'An account’s type is a word, such as investment';
     if (a.currency !== null && !(typeof a.currency === 'string' && CURRENCY.test(a.currency))) return "An account's currency is a currency code, or null";
-    const subtype = a.subtype ?? null;
-    if (subtype !== null && !(typeof subtype === 'string' && SUBTYPE.test(subtype))) return 'An account’s subtype is a word, such as 529, or null';
+    const subtype = a.subtype;
+    if (subtype !== undefined && subtype !== null && !(typeof subtype === 'string' && SUBTYPE.test(subtype))) return 'An account’s subtype is a word, such as 529, or null';
     if (seen.has(a.account_id)) return 'Each account once';
     seen.add(a.account_id);
-    out.push({ account_id: a.account_id, type: a.type, currency: a.currency as string | null, subtype: subtype as string | null });
+    out.push({ account_id: a.account_id, type: a.type, currency: a.currency as string | null, ...(subtype === undefined ? {} : { subtype: subtype as string | null }) });
   }
   return out;
 }
@@ -170,7 +171,7 @@ export async function POST(req: Request) {
         if (placed && k.subtype && !knownSubtype.has(placed.account)) knownSubtype.set(placed.account, k.subtype);
       }
     }
-    const leftOut = (account: string, subtype: string | null) => childOut && isChildAccount(subtype ?? knownSubtype.get(account)) && !countedAnyway.has(account);
+    const leftOut = (account: string, subtype?: string | null) => childOut && isChildAccount(subtype === undefined ? knownSubtype.get(account) : subtype) && !countedAnyway.has(account);
 
     // The accounts that count, under the ids they are known by now, hidden
     // ones left out.
@@ -192,7 +193,7 @@ export async function POST(req: Request) {
       const end = endOf(entry.lifecycle);
       if (end === null || !counts(entry.type ?? null)) continue;
       const placed = place(root);
-      if (!placed || listed.has(placed.account) || added.some((a) => a.account === placed.account) || leftOut(placed.account, null)) continue;
+      if (!placed || listed.has(placed.account) || added.some((a) => a.account === placed.account) || leftOut(placed.account)) continue;
       added.push({ account: placed.account, end, currency: entry.currency ?? (isManualId(placed.account) ? MANUAL_CURRENCY : null), ids: [...new Set([root, placed.account])] });
     }
     const unpriced = added.filter((a) => a.currency === null).flatMap((a) => a.ids);

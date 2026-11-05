@@ -330,19 +330,24 @@ describe('the account level', () => {
     await tab.unmount();
   });
 
-  test('what a browser might read as nothing is said too, and the figure held stays', async () => {
+  test('a plain field: what it can’t read is said and the figure held stays, and a figure typed with commas is read', async () => {
     const server = serve({ tax: { ...DEFAULT_TAX_FACTS, basis: [{ account_id: 'brk', amount: 120_000 }] } });
     const tab = await mount();
     await openAssets(tab);
     await openRow(tab, 'Brokerage');
-    // A plain field, so "105,000" reaches the check as typed: a number field would
-    // report it as empty in some browsers, and empty clears the figure.
+    // A number field would report these as empty in some browsers, and empty
+    // clears the figure.
     expect(field(tab.dialog()!, 'Cost basis')!.getAttribute('type')).toBeNull();
+    for (const text of ['12x', '0x10', '1,2,3']) {
+      await act(async () => type(field(tab.dialog()!, 'Cost basis')!, text));
+      await press(button(tab.dialog()!, 'Save'));
+      expect([text, server.facts().length]).toEqual([text, 0]);
+      expect(tab.shown()).toContain('Cost basis must be a number, zero or more.');
+      expect(tab.title()).toBe('Brokerage');
+    }
     await act(async () => type(field(tab.dialog()!, 'Cost basis')!, '105,000'));
     await press(button(tab.dialog()!, 'Save'));
-    expect(server.facts()).toEqual([]);
-    expect(tab.shown()).toContain('Cost basis must be a number, zero or more.');
-    expect(tab.title()).toBe('Brokerage');
+    expect(server.facts()[0].body.basis).toBe(105_000);
     await tab.unmount();
   });
 
@@ -379,6 +384,8 @@ describe('the account level', () => {
     await closeDrawer(tab);
     expect(tab.dialog()).not.toBeNull();
     expect(tab.title()).toBe('Brokerage');
+    // Nor is its bucket a way out meanwhile.
+    expect(rowIn(tab.dialog()!, 'Change its bucket')!.disabled).toBe(true);
     await release();
     expect(server.facts().length).toBe(1);
     expect(tab.title()).toBe('Invested assets');
@@ -587,6 +594,18 @@ describe('before the facts are known', () => {
     await settle(60);
     await openAssets(tab);
     await openRow(tab, 'Your Roth contributions');
+    expect(button(tab.dialog()!, 'Save')!.disabled).toBe(true);
+    expect(server.facts()).toEqual([]);
+    await tab.unmount();
+  });
+
+  test('facts this page can’t read, a newer release’s, aren’t known either', async () => {
+    const server = serve({ tax: { ...STORED, futureKey: 1 } as unknown as TaxFacts });
+    const tab = await mount();
+    await settle(60);
+    await openAssets(tab);
+    await openRow(tab, 'Brokerage');
+    expect(tab.shown()).toContain('hasn’t loaded');
     expect(button(tab.dialog()!, 'Save')!.disabled).toBe(true);
     expect(server.facts()).toEqual([]);
     await tab.unmount();
