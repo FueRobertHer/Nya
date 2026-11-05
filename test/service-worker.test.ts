@@ -96,7 +96,7 @@ function worker(from?: { stores: Stores; clock: { now: number } }) {
     registration: { navigationPreload: { enable: async () => {} } },
   };
   // The tidy's wait for the page's own files ends once the test's page has
-  // asked for them.
+  // asked for them and they are kept.
   const waiting: (() => void)[] = [];
   const gate = { open: true };
   const timer = (fn: () => void, ms: number) => (ms < 1000 || gate.open ? setTimeout(fn, Math.min(ms, 1)) : waiting.push(fn));
@@ -106,7 +106,8 @@ function worker(from?: { stores: Stores; clock: { now: number } }) {
    *  worker left it to the browser), once the worker has finished. */
   async function request(path: string, init: { mode?: string; method?: string; preload?: Response; refuseWait?: boolean; then?: () => Promise<unknown> } = {}) {
     const answered: { with?: Promise<Response | undefined> } = {};
-    if (init.mode === 'navigate') gate.open = false;
+    const page = init.mode === 'navigate';
+    if (page) gate.open = false;
     const after: Promise<unknown>[] = [];
     listeners.fetch({
       request: { url: path.startsWith('http') ? path : `${ORIGIN}${path}`, mode: init.mode ?? 'cors', method: init.method ?? 'GET' },
@@ -122,8 +123,13 @@ function worker(from?: { stores: Stores; clock: { now: number } }) {
     const res = await answered.with;
     // What the page asks for once it has its answer.
     await init.then?.();
-    gate.open = true;
-    for (const fn of waiting.splice(0)) fn();
+    // Only the page load that closed the gate opens it. A file it asks for
+    // has its answer before it is kept, so a file opening the gate would let
+    // the tidy look for that file too soon on a busy machine, and stop.
+    if (page) {
+      gate.open = true;
+      for (const fn of waiting.splice(0)) fn();
+    }
     // Work started while answering, then anything that work started.
     for (let i = 0; i < after.length; i++) await after[i];
     return res ? await res.text() : undefined;
@@ -432,6 +438,20 @@ describe('the daily tidy', () => {
     w.windows.others = 0;
     await w.load('/', [js('a2')]);
     expect((await notes(w))!.unused).toHaveProperty([at(js('a1'))]);
+  });
+
+  test('a page’s own file asked for late is kept before the tidy looks for it', async () => {
+    const w = twoDeploys();
+    await w.request('/', {
+      mode: 'navigate',
+      then: async () => {
+        // The pause a busy machine can make between the answer and this,
+        // longer than the page's own write, so the tidy could look first.
+        Bun.sleepSync(6);
+        await w.request(js('a1'));
+      },
+    });
+    expect(await notes(w)).toBeDefined();
   });
 
   test('runs once a day, only after a page loaded online', async () => {
