@@ -1233,7 +1233,7 @@ export default function PlanTab({
   // accounts counted again, on the Plan's answer alone, since a saved plan's
   // Progress line leaves them out at both its ends.
   const childMovedNew = childOut && !childMovedSeen && entry === null && stillNew(childNewUntil, todayUtc) && (assets.childAccounts?.length ?? 0) > 0;
-  const childOffFigures = childMovedNew && baseFigures ? figuresFor('child-moved', basePlan, yourChoices, measuredInputs({ ...inputs, child: null, assets: investedAssets(institutions, basePlan.includeCash, balanceFx, Date.now(), ownCurrency) })).figures : null;
+  const childOffFigures = childMovedNew && baseFigures ? figuresFor('child-moved', basePlan, yourChoices, measuredInputs({ ...inputs, child: null, workplace: inputs.workplaceCounted, assets: investedAssets(institutions, basePlan.includeCash, balanceFx, Date.now(), ownCurrency) })).figures : null;
   const childMoved = childOffFigures && baseFigures && !('refused' in childOffFigures) ? childMovedText(childOffFigures, baseFigures) : null;
   const overlay = useMemo(
     () =>

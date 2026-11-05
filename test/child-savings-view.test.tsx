@@ -121,7 +121,7 @@ describe('the Plan', () => {
     const gift = { ...ROW, contributions_12m: 10_000, contributions_12m_rows: [{ date: daysAgo(200), amount: 10_000 }] };
     const tab = await plan({ childOut: true }, { row: gift });
     expect(tab.text).toContain('$24,599');
-    expect(tab.all()).toContain('$10,000 went into Ascensus College that no transfer from your bank paid for, so nothing is taken off for it.');
+    expect(tab.all()).toContain('$10,000 went into Ascensus College with no transfer Nya could match in your accounts, so nothing is taken off for it.');
     await tab.unmount();
   });
 
@@ -162,6 +162,32 @@ describe('the Plan', () => {
     await tab.unmount();
   });
 
+  test('the moved line’s before matches a workplace plan’s rows as it would with the 529 counted', async () => {
+    // $1,500 a month into each of a 401(k) and a 529 with a $1 balance, and one
+    // $1,500 transfer a month: Annual savings is the same either way, so nothing moved.
+    const big = YEAR.map((t) => (t.category === 'transfer out' ? { ...t, amount: 1_500, subcategory: 'investment and retirement funds' } : t));
+    const rows = { contributions_12m: 18_000, contributions_12m_rows: PAID.map((date) => ({ date, amount: 1_500 })) };
+    const K401 = { account_id: 'k', name: '401(k)', type: 'investment', subtype: '401k', balance: 100_000, currency: 'USD' };
+    const both = [{ ...institutions[0], accounts: [BROKER, { ...COLLEGE, balance: 1 }, K401] }] as unknown as PlanTabProps['institutions'];
+    serve();
+    const answered = globalThis.fetch;
+    (globalThis as { fetch: unknown }).fetch = async (url: string, init?: RequestInit) => {
+      const res = await answered(url, init);
+      if (!String(url).startsWith('/api/plan-inputs')) return res;
+      const body = (await res.json()) as { plans: { id: string }[] };
+      return new Response(JSON.stringify({ ...body, plans: body.plans.map((p) => ({ ...ROW, ...rows, id: p.id })) }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    const container = dom.document.createElement('div');
+    dom.document.body.appendChild(container);
+    const root = createRoot(container as unknown as Element);
+    const all: PlanTabProps = { txns: big, txnsLoading: false, txnNotes: [], institutions: both, balancesAsOf: null, currency: 'USD', holdings: [], planInWalk: false, newUntil: null, onMovedSeen: () => {}, childOut: true, childNewUntil: '9999-12-31' };
+    await act(async () => root.render(<PlanTab {...all} />));
+    await settle();
+    expect(container.textContent).toContain('Annual savings');
+    expect(container.textContent).not.toContain('Your FI date moved');
+    await act(async () => root.unmount());
+  });
+
   test('a row that can’t be had says the figure may be high', async () => {
     const tab = await plan({ childOut: true }, { row: { id: 'i:c', failed: true } });
     expect(tab.text).toContain('$24,599');
@@ -199,6 +225,8 @@ describe('Home', () => {
     open();
     await settle();
     expect(container.textContent).toContain('36% savings rate');
+    // And its words say what the rate is now.
+    expect(container.textContent).toContain('less what your bank paid into accounts for a child’s education');
     expect(asked.some((q) => q.includes('sync=1') && q.includes('plan=i%3Ac'))).toBe(true);
     await act(async () => root.unmount());
   });
@@ -212,6 +240,7 @@ describe('Home', () => {
     await act(async () => root.render(<FiProgressCard {...home(store, false)} />));
     await settle();
     expect(container.textContent).toContain('41% savings rate');
+    expect(container.textContent).not.toContain('a child’s education');
     await act(async () => root.unmount());
   });
 });

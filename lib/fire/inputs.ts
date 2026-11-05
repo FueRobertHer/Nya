@@ -832,10 +832,11 @@ const sameAmount = (a: number, b: number) => Math.abs(a - b) <= Math.max(1, 0.01
  *  only transfers out that can have paid for a contribution. A move to
  *  savings, or to another person, never did. */
 const RETIREMENT_TRANSFER = 'investment and retirement funds';
+/** Plaid's detail for money moved to savings: it stays yours, and pays into nothing. */
+const SAVINGS_TRANSFER = 'savings';
 
-/** A transfer out of your accounts: `retirement` when it went to investment and
- *  retirement funds, by Plaid's detail. */
-export type TransferOut = Payment & { retirement: boolean };
+/** A transfer out of your accounts: Plaid's detail for it, and its currency. */
+export type TransferOut = Payment & { detail: string; currency: string | null };
 
 /** Every transfer out of your accounts over the trailing year: counted as
  *  transfers (planFlow), so income minus spending still holds them. */
@@ -847,13 +848,13 @@ export function transfersOut(txns: Txn[], today: string): TransferOut[] {
       const d = dayNumber(t.date);
       return d >= start && d <= end && t.amount > 0 && planFlow(t) === 'transfer';
     })
-    .map((t) => ({ date: t.date, amount: t.amount, retirement: (t.subcategory ?? '').toLowerCase() === RETIREMENT_TRANSFER }));
+    .map((t) => ({ date: t.date, amount: t.amount, detail: (t.subcategory ?? '').toLowerCase(), currency: currencyOf(t) }));
 }
 
 /** Of those, the ones to investment and retirement funds: where a payment into a
  *  workplace plan from a bank account shows on the bank's side. */
 export function toRetirementFunds(transfers: readonly TransferOut[]): Payment[] {
-  return transfers.filter((t) => t.retirement).map((t) => ({ date: t.date, amount: t.amount }));
+  return transfers.filter((t) => t.detail === RETIREMENT_TRANSFER).map((t) => ({ date: t.date, amount: t.amount }));
 }
 
 /** Takes transfers for contributions (see MATCH_DAYS), each transfer once. */
@@ -949,15 +950,16 @@ export type ChildPlanSavings = {
   name: string;
   /** Paid in by a transfer out of your accounts: taken off savings. */
   taken: number;
-  /** Paid in with no such transfer (a gift, payroll, a bank Nya doesn't read, or a
-   *  row that counts as spending): never in income minus spending, so nothing is
-   *  taken off for it. */
+  /** Paid in over the days the transactions cover with no such transfer (a gift,
+   *  payroll, a bank Nya doesn't read, or a row that counts as spending): not known
+   *  to be in income minus spending, so nothing is taken off for it. */
   rest: number;
 };
 
 export type ChildSavings = {
-  /** What is taken off savings, a year's: scaled as income and spending are, since
-   *  it was paid out of the same days. */
+  /** What a bank paid in, a year's: scaled as income and spending are, since it was
+   *  paid out of the same days. lib/fire/progress.ts childTaken says how much of it
+   *  comes off. */
   total: number;
   plans: ChildPlanSavings[];
   partial: { name: string; from: string }[];
@@ -973,13 +975,16 @@ export type ChildSavings = {
  * minus spending, and a payment into a 529 from a bank is a transfer, in neither:
  * it stays in the figure and would be planned on as yours, though the account has
  * left invested assets. Only what a transfer out of your accounts paid for is taken
- * off, of any detail (Plaid may call one an account transfer, and a person may have
- * marked one a transfer), since money that never left a bank was never in the figure.
+ * off, of any detail but a move to savings (Plaid may call one an account transfer,
+ * and a person may have marked one a transfer), since money that never left a bank
+ * was never in the figure, nor was a transfer in another currency, which nothing
+ * converts here. Rows from before the transactions begin say nothing either way.
  * Ahead of the workplace plans (`left`): these rows are what that transfer paid, and
  * a workplace plan's only may be.
  */
-export function childSavings(plans: readonly PlanContributions[], transfers: readonly TransferOut[], flows: Pick<TrailingFlows, 'scaled' | 'days'> | null): ChildSavings {
-  const { take, left } = transferTaker(transfers);
+export function childSavings(plans: readonly PlanContributions[], transfers: readonly TransferOut[], flows: Pick<TrailingFlows, 'scaled' | 'days' | 'from' | 'currency'> | null): ChildSavings {
+  const canPay = (t: TransferOut) => t.detail !== SAVINGS_TRANSFER && (t.currency === null || !flows?.currency || t.currency === flows.currency);
+  const { take, left } = transferTaker(transfers.filter(canPay));
   const scale = flows?.scaled ? TRAILING_DAYS / flows.days : 1;
   const out: ChildSavings = { total: 0, plans: [], partial: [], shortHistory: [], problems: [], unmeasured: [], left: [] };
   for (const p of plans) {
@@ -988,13 +993,13 @@ export function childSavings(plans: readonly PlanContributions[], transfers: rea
       out.unmeasured.push(label);
       continue;
     }
-    const { matched, kept } = matchRows(p.rows.filter((r) => r.amount > 0), take);
+    const { matched, kept } = matchRows(p.rows.filter((r) => r.amount > 0 && (!flows || r.date >= flows.from)), take);
     out.total += matched * scale;
     out.plans.push({ name: label, taken: matched * scale, rest: kept.reduce((t, r) => t + r.amount, 0) });
     if (p.note) out.problems.push({ name: label, note: p.note });
     if (p.partial && p.from) out.partial.push({ name: label, from: p.from });
     else if (p.activityFrom) out.shortHistory.push({ name: label, from: p.activityFrom });
   }
-  out.left = left();
+  out.left = [...left(), ...transfers.filter((t) => !canPay(t))];
   return out;
 }

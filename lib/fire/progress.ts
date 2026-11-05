@@ -216,6 +216,14 @@ export function unmeasuredNeed(missing: Missing, view: Pick<FiView, 'spending' |
  *  income too, whenever there is a gap at all. */
 export const spendingOff = (gap: CurrencyGap | null): boolean => gap !== null && (gap.sides === undefined || gap.sides.includes('spending'));
 
+/** What accounts left out for a child take off savings: what a bank paid into them,
+ *  and never more than income minus spending holds. The rest of a payment larger
+ *  than that (a lump paid from what was already saved) was never in the figure, and
+ *  isn't a yearly shortfall to plan on. */
+export function childTaken({ flows, child }: Pick<FiInputs, 'flows' | 'child'>): number {
+  return Math.min(child?.total ?? 0, Math.max(0, flows?.savings ?? 0));
+}
+
 /** The measured inputs a plan's figures start from (each can be typed over
  *  in the plan): spending and savings from a year of transactions, savings
  *  with workplace plan contributions added and what a bank paid into an account
@@ -232,7 +240,7 @@ export function measuredInputs({ flows, workplace, child, assets, rates }: FiInp
   const unmeasured = [...(spendingGapped ? (['spending'] as const) : []), ...(yearGap ? (['savings'] as const) : []), ...(assetsOff ? (['assets'] as const) : [])];
   return {
     spending: flows && !spendingGapped ? flows.spending : null,
-    savings: flows && !yearGap ? flows.savings + (workplace?.total ?? 0) - (child?.total ?? 0) : null,
+    savings: flows && !yearGap ? flows.savings + (workplace?.total ?? 0) - childTaken({ flows, child }) : null,
     assets: assetsOff ? null : assets.total,
     ...(unmeasured.length > 0 ? { unmeasured } : {}),
   };
@@ -246,7 +254,7 @@ export function savingsRate({ flows, workplace, child, rates }: Pick<FiInputs, '
   const contributions = workplace?.total ?? 0;
   const income = flows.income + contributions;
   if (!(income > 0)) return null;
-  return (flows.savings + contributions - (child?.total ?? 0)) / income;
+  return (flows.savings + contributions - childTaken({ flows, child })) / income;
 }
 
 /** The currency plan amounts are shown in: the Plan's own once recorded

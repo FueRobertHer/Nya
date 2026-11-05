@@ -289,16 +289,19 @@ describe('annual savings', () => {
     // A child's accounts (D7): what came off is in the why and the rate, and what
     // didn't, or may not have, is said.
     const out = figureNotes(at({ child: childOut, childPending: true, workplaceCount: 1 })).savings;
-    expect(out.why).toBe('An estimate: income minus spending over the same 12 months, less $3,000 your bank paid into Ascensus College, which is for a child’s education. That is a savings rate of 39% of income.');
+    expect(out.why).toBe('An estimate: income minus spending over the same 12 months, less $3,000 your bank paid into Ascensus College, for a child’s education. That is a savings rate of 39% of income.');
     expect(out.line).toBe('39% savings rate');
     expect(notesOf(out)).toEqual([
       ['caution', 'a child’s accounts still being checked', 'Checking what went into accounts for a child’s education…'],
-      ['info', 'a child’s account paid from elsewhere', '$500 went into Ascensus College that no transfer from your bank paid for, so nothing is taken off for it.'],
+      ['info', 'a child’s account paid from elsewhere', '$500 went into Ascensus College with no transfer Nya could match in your accounts, so nothing is taken off for it.'],
       ['caution', 'a plan counted from later', "Ascensus College is counted from Mar 1, when Nya's record of it starts."],
       ['caution', 'a plan’s history starting later', 'Nya has activity for Ascensus Twin from Feb 1.'],
       ['caution', 'a child’s account not measured', "What went into Ascensus Failed couldn't be measured, so this figure may be high."],
       ['caution', 'a child’s account not read', "Ascensus College's activity couldn't all be read, so this figure may be high."],
     ]);
+    // More than income minus spending holds, the part that comes off; scaled up, said so.
+    expect(figureNotes(at({ child: { ...childOut, total: 50_000 } })).savings.why).toBe('An estimate: income minus spending over the same 12 months, less $30,000 of the $50,000 your bank paid into Ascensus College, for a child’s education. That is a savings rate of 0% of income.');
+    expect(figureNotes(at({ flows: { ...flows, scaled: true, days: 152, from: '2026-05-08' }, child: childOut })).savings.why).toContain('less $3,000 scaled up from what your bank paid into Ascensus College');
     // Nothing paid in by the bank, nothing in the why.
     const none: ChildSavings = { total: 0, plans: [{ name: 'Ascensus College', taken: 0, rest: 0 }], partial: [], shortHistory: [], problems: [], unmeasured: [], left: [] };
     expect(figureNotes(at({ child: none })).savings.why).toBe(figureNotes(at()).savings.why);

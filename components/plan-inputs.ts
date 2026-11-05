@@ -216,6 +216,9 @@ export type PlanInputs = FiInputs & {
   cashUnmarked: boolean;
   /** Workplace plan contributions as measured, null while they load. */
   contributions: PlanContributions[] | null;
+  /** What they add to savings with a child's accounts counted again (D7): the
+   *  figure beside `workplace` for what leaving them out moved. */
+  workplaceCounted: WorkplaceSavings | null;
   flows: TrailingFlows | null;
   assets: InvestedAssets;
   workplace: WorkplaceSavings | null;
@@ -312,6 +315,12 @@ export function usePlanInputs({
     () => (contributions ? workplaceSavings(contributions, { transfersOut: toRetirementFunds(child?.left ?? bankOut), funding: planFunding }) : null),
     [contributions, child, bankOut, planFunding]
   );
+  // The same with a child's accounts counted again, whose transfers it may then
+  // match, for what leaving them out moved.
+  const workplaceCounted = useMemo(
+    () => (child && contributions ? workplaceSavings(contributions, { transfersOut: toRetirementFunds(bankOut), funding: planFunding }) : workplace),
+    [child, contributions, bankOut, planFunding, workplace]
+  );
   // Without a home currency, what is left out for its currency is weighed by
   // amount at the ECB's newest rates where they price it (lib/fire/progress.ts
   // CurrencyGap): read only when something is left out, and only to weigh.
@@ -319,5 +328,5 @@ export function usePlanInputs({
   const { load } = useCurrencySettings(weigh);
   const rates = weigh && load.kind === 'ready' ? load.view.ecb.rates : null;
   const paidFor = (asked: NonNullable<TaxFacts['paidToday']>) => (txns ? (trailingFlows(txns, today, { cashAccounts, fx, into, ...(currency ? { currency } : {}), paid: asked })?.paid ?? 0) : 0);
-  return { today, flows, unread, coverage, assets, contributions, workplace, child, cashOn, cashUnmarked, rates, paidFor };
+  return { today, flows, unread, coverage, assets, contributions, workplace, workplaceCounted, child, cashOn, cashUnmarked, rates, paidFor };
 }

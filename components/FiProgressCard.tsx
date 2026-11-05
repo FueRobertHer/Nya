@@ -60,7 +60,7 @@ import { planPath } from '@/lib/fire/path';
 import { shortText } from './plan-scenario-text';
 import { projectionShort } from '@/lib/fire/fi';
 import { NO_ANSWER, planCurrencyState, readCurrencyAnswer, shownFrom, unconfirmedText, type CurrencyAnswer } from '@/lib/fire/plan-currency';
-import { assetsGap, assetsLeftOut, fiFigures, gapText, measuredInputs, notMeasuredWhat, spendingGap, spendingLeftOut, transactionsMissing, type FiFigures } from '@/lib/fire/progress';
+import { assetsGap, assetsLeftOut, childTaken, fiFigures, gapText, measuredInputs, notMeasuredWhat, spendingGap, spendingLeftOut, transactionsMissing, type FiFigures } from '@/lib/fire/progress';
 import type { AssetInstitution } from '@/lib/fire/inputs';
 import type { NoTransactionsView } from '@/lib/no-transactions';
 import type { FxTable } from '@/lib/fx/rates';
@@ -259,7 +259,7 @@ export function FiProgressView({
   saved: boolean;
   /** The saved plan had values this release can't use (the Plan tab shows them). */
   repaired: boolean;
-  inputs: Pick<PlanInputs, 'unread' | 'coverage' | 'assets' | 'workplace' | 'flows' | 'rates'>;
+  inputs: Pick<PlanInputs, 'unread' | 'coverage' | 'assets' | 'workplace' | 'child' | 'flows' | 'rates'>;
   onOpenPlan: () => void;
   /** From the Plan's figures (lib/fire/plan-figures.ts): why the walk has no
    *  FI date (a cost it can't pay), in the Plan's words; the age the path
@@ -323,6 +323,7 @@ export function FiProgressView({
         Estimates, {saved ? `from your plan: ${rates}` : `from the Plan's default assumptions: ${rates}. Set your own on the Plan tab`}.
         {typed.length ? ` Using the ${typed.join(' and ')} you typed there.` : ''} The savings rate is income minus spending as a share of income
         {workplaceAdded ? ', with what went into workplace plans counted on both sides' : ''}
+        {childTaken(inputs) > 0 ? ', less what your bank paid into accounts for a child’s education' : ''}
         {view.savings.source === 'typed' && savingsRate !== null ? ', from your transactions, not the savings you typed' : ''}.
       </>
     ),

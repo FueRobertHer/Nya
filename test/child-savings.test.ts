@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { childSavings, MATCH_DAYS, toRetirementFunds, transfersOut, workplaceSavings, type PlanContributions, type TrailingFlows, type TransferOut, type InvestedAssets } from '@/lib/fire/inputs';
-import { fiFigures, measuredInputs, savingsRate } from '@/lib/fire/progress';
+import { childTaken, fiFigures, measuredInputs, savingsRate } from '@/lib/fire/progress';
 import { DEFAULT_PLAN } from '@/lib/fire/plan';
 import type { Txn } from '@/components/MonthBreakdown';
 
@@ -22,8 +22,9 @@ const plan = (over: Partial<PlanContributions> = {}): PlanContributions => ({
   note: null,
   ...over,
 });
-const out = (date: string, amount: number, retirement = true): TransferOut => ({ date, amount, retirement });
-const WHOLE_YEAR = { scaled: false, days: 365 };
+const RETIREMENT = 'investment and retirement funds';
+const out = (date: string, amount: number, detail = RETIREMENT, currency: string | null = 'USD'): TransferOut => ({ date, amount, detail, currency });
+const WHOLE_YEAR = { scaled: false, days: 365, from: '2025-10-07', currency: 'USD' };
 
 const flows = (over: Partial<TrailingFlows> = {}): TrailingFlows =>
   ({ spending: 40_000, income: 70_000, savings: 30_000, from: '2025-10-07', to: '2026-10-06', days: 365, scaled: false, count: 400, excludedCount: 0, currency: 'USD', leftOut: [], ...over }) as TrailingFlows;
@@ -82,7 +83,7 @@ describe('what comes off', () => {
       ],
       '2026-10-06'
     );
-    expect(moved).toEqual([out('2026-03-01', 250, false), out('2026-04-01', 250, true)]);
+    expect(moved).toEqual([out('2026-03-01', 250, 'account transfer', null), out('2026-04-01', 250, RETIREMENT, null)]);
     const c = childSavings(
       [
         plan({
@@ -100,9 +101,45 @@ describe('what comes off', () => {
   });
 
   test('scaled up as income and spending are, since it was paid out of the same days', () => {
-    const c = childSavings([plan({ rows: [{ date: '2026-08-01', amount: 500 }] })], [out('2026-08-01', 500)], { scaled: true, days: 73 });
+    const c = childSavings([plan({ rows: [{ date: '2026-08-01', amount: 500 }] })], [out('2026-08-01', 500)], { scaled: true, days: 73, from: '2026-07-25', currency: 'USD' });
     expect(c.total).toBe(2_500);
     expect(c.plans[0].taken).toBe(2_500);
+  });
+
+  test('rows from before the transactions begin say nothing: neither taken off, nor said to have no transfer', () => {
+    const c = childSavings(
+      [
+        plan({
+          rows: [
+            { date: '2026-01-16', amount: 250 },
+            { date: '2026-08-16', amount: 250 },
+            { date: '2026-09-16', amount: 250 },
+          ],
+        }),
+      ],
+      [out('2026-08-16', 250)],
+      { scaled: true, days: 73, from: '2026-07-25', currency: 'USD' }
+    );
+    expect(c.total).toBe(1_250);
+    expect(c.plans[0].rest).toBe(250);
+  });
+
+  test('a move to savings stays yours and never pays, and passes on with the rest', () => {
+    const c = childSavings([plan({ rows: [{ date: '2026-03-16', amount: 250 }] })], [out('2026-03-16', 250, 'savings')], WHOLE_YEAR);
+    expect(c.total).toBe(0);
+    expect(c.plans[0].rest).toBe(250);
+    expect(c.left).toEqual([out('2026-03-16', 250, 'savings')]);
+  });
+
+  test('a transfer in another currency was never in the figure, nothing converts it, and it passes on', () => {
+    const cad = out('2026-03-16', 500, 'account transfer', 'CAD');
+    const row = [plan({ rows: [{ date: '2026-03-16', amount: 500 }] })];
+    const c = childSavings(row, [cad], WHOLE_YEAR);
+    expect(c.total).toBe(0);
+    expect(c.left).toEqual([cad]);
+    // Rows that say no currency, or a figure with none, are the figure's (lib/spending.ts inCurrency).
+    expect(childSavings(row, [out('2026-03-16', 500, 'account transfer', null)], WHOLE_YEAR).total).toBe(500);
+    expect(childSavings(row, [cad], { ...WHOLE_YEAR, currency: null as unknown as string }).total).toBe(500);
   });
 
   test('what couldn’t be measured or read is named, and takes nothing off', () => {
@@ -143,8 +180,8 @@ describe('a transfer pays once, across every plan', () => {
   });
 
   test('a workplace plan still only matches transfers to investment and retirement funds', () => {
-    const child = childSavings([], [out('2026-03-15', 250, false)], WHOLE_YEAR);
-    expect(child.left).toEqual([out('2026-03-15', 250, false)]);
+    const child = childSavings([], [out('2026-03-15', 250, 'account transfer')], WHOLE_YEAR);
+    expect(child.left).toEqual([out('2026-03-15', 250, 'account transfer')]);
     expect(workplaceSavings([k401], { transfersOut: toRetirementFunds(child.left), funding: [] }).total).toBe(250);
   });
 });
@@ -161,6 +198,19 @@ describe('the figures', () => {
   test('the savings rate without it, of the same income', () => {
     expect(savingsRate({ flows: flows(), workplace: null, child })).toBeCloseTo(27_000 / 70_000, 10);
     expect(savingsRate({ flows: flows(), workplace, child })).toBeCloseTo(32_000 / 75_000, 10);
+  });
+
+  test('never more than income minus spending holds: a lump paid from what was saved before isn’t a yearly shortfall', () => {
+    const lump = childSavings([plan({ rows: [{ date: '2026-03-16', amount: 50_000 }] })], [out('2026-03-16', 50_000)], WHOLE_YEAR);
+    expect(lump.total).toBe(50_000);
+    expect(childTaken({ flows: flows({ savings: 20_000 }), child: lump })).toBe(20_000);
+    expect(measuredInputs({ flows: flows({ savings: 20_000 }), workplace: null, child: lump, assets }).savings).toBe(0);
+    expect(savingsRate({ flows: flows({ savings: 20_000 }), workplace: null, child: lump })).toBe(0);
+    // What went into workplace plans was never paid from it, and stays.
+    expect(measuredInputs({ flows: flows({ savings: 20_000 }), workplace, child: lump, assets }).savings).toBe(5_000);
+    // Spending more than comes in: nothing of it is the 529's, and the figure stays as it was.
+    expect(measuredInputs({ flows: flows({ savings: -4_000 }), workplace: null, child, assets }).savings).toBe(-4_000);
+    expect(childTaken({ flows: null, child })).toBe(0);
   });
 
   test('nothing left out runs today’s arithmetic', () => {

@@ -32,6 +32,7 @@ import {
   spendingOff,
   transactionCoverage,
   transactionsMissing,
+  childTaken,
   type ShareRates,
 } from '@/lib/fire/progress';
 import { uncategorizedNote } from '@/lib/spending';
@@ -274,7 +275,10 @@ function savingsWhy(flows: TrailingFlows, workplace: WorkplaceSavings | null, ch
   const addedTo = (workplace?.plans ?? []).filter((x) => x.added > 0).map((x) => x.name);
   const plus = addedTo.length ? `, plus ${money(workplace!.total)} paid into ${names(addedTo)}` : '';
   const takenFrom = (child?.plans ?? []).filter((x) => x.taken > 0).map((x) => x.name);
-  const less = takenFrom.length ? `, less ${money(child!.total)} your bank paid into ${names(takenFrom)}, which is for a child’s education` : '';
+  const taken = childTaken({ flows, child });
+  const paid = flows.scaled ? 'scaled up from what your bank paid' : 'your bank paid';
+  const of = taken < (child?.total ?? 0) ? ` of the ${money(child!.total)}` : '';
+  const less = takenFrom.length && taken > 0 ? `, less ${money(taken)}${of} ${paid} into ${names(takenFrom)}, for a child’s education` : '';
   const rate =
     savingsRate !== null ? ` That is a savings rate of ${savingsRateText(savingsRate)} of income${addedTo.length ? ', what went into those plans counted as income too' : ''}.` : '';
   return `An estimate: income minus spending over the same ${flows.scaled ? 'span' : '12 months'}${plus}${less}.${rate}`;
@@ -477,7 +481,7 @@ function savingsText(a: FigureArgs, coverage: Coverage, flowsGap: Gap): FigureTe
   // What accounts left out for a child take off, and where that isn't all of it.
   add('caution', NOTE_KINDS.childChecking, childPending ? 'Checking what went into accounts for a child’s education…' : null);
   for (const x of child?.plans ?? []) {
-    add('info', NOTE_KINDS.childRest, x.rest > 0 ? `${money(x.rest)} went into ${x.name} that no transfer from your bank paid for, so nothing is taken off for it.` : null);
+    add('info', NOTE_KINDS.childRest, x.rest > 0 ? `${money(x.rest)} went into ${x.name} with no transfer Nya could match in your accounts, so nothing is taken off for it.` : null);
   }
   for (const p of child?.partial ?? []) add('caution', NOTE_KINDS.partial, `${p.name} is counted from ${dayName(p.from)}, when Nya's record of it starts.`);
   for (const p of child?.shortHistory ?? []) add('caution', NOTE_KINDS.shortHistory, `Nya has activity for ${p.name} from ${dayName(p.from)}.`);
