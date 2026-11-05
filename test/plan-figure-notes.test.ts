@@ -7,7 +7,7 @@ import { PAYROLL_NOTE, wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
 import { fiFigures, gapText, measuredInputs, spendingGap, assetsGap } from '@/lib/fire/progress';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
-import type { InvestedAssets, TrailingFlows, WorkplaceSavings } from '@/lib/fire/inputs';
+import type { ChildSavings, InvestedAssets, TrailingFlows, WorkplaceSavings } from '@/lib/fire/inputs';
 import type { LifeEvent } from '@/lib/fire/events';
 import { figuresOf } from './plan-gen';
 
@@ -58,6 +58,15 @@ const assets = (over: Partial<InvestedAssets> = {}): InvestedAssets => ({
   ...over,
 });
 const noPlans: WorkplaceSavings = { total: 0, plans: [], fromBank: [], partial: [], shortHistory: [], problems: [], unmeasured: [] };
+const childOut: ChildSavings = {
+  total: 3_000,
+  plans: [{ name: 'Ascensus College', taken: 3_000, rest: 500 }],
+  partial: [{ name: 'Ascensus College', from: '2026-03-01' }],
+  shortHistory: [{ name: 'Ascensus Twin', from: '2026-02-01' }],
+  problems: [{ name: 'Ascensus College', note: 'x' }],
+  unmeasured: ['Ascensus Failed'],
+  left: [],
+};
 const investmentsOnly: NoTransactionsView = {
   without: [
     { institution_name: 'Empower', reason: 'investment_accounts' },
@@ -86,7 +95,7 @@ function at(over: Over = {}): FigureArgs {
   const f = rest.flows === undefined ? flows : rest.flows;
   const a = rest.assets ?? assets();
   const w = rest.workplace === undefined ? noPlans : rest.workplace;
-  const figures = fiFigures(plan, { flows: f, workplace: w, assets: a, rates: rest.shareRates ?? null }, 'USD');
+  const figures = fiFigures(plan, { flows: f, workplace: w, child: rest.child, assets: a, rates: rest.shareRates ?? null }, 'USD');
   return {
     plan,
     view: figures.view,
@@ -277,6 +286,26 @@ describe('annual savings', () => {
     expect(figureNotes(at({ flows: { ...flows, income: 0, savings: -40_000 } })).savings.line).toBeNull();
     // Still being checked.
     expect(notesOf(figureNotes(at({ workplace: null, workplaceCount: null })).savings)).toEqual([['caution', 'workplace plans still being checked', 'Checking contributions to workplace plans…']]);
+    // A child's accounts (D7): what came off is in the why and the rate, and what
+    // didn't, or may not have, is said.
+    const out = figureNotes(at({ child: childOut, childPending: true, workplaceCount: 1 })).savings;
+    expect(out.why).toBe('An estimate: income minus spending over the same 12 months, less $3,000 your bank paid into Ascensus College, for a child’s education. That is a savings rate of 39% of income.');
+    expect(out.line).toBe('39% savings rate');
+    expect(notesOf(out)).toEqual([
+      ['caution', 'a child’s accounts still being checked', 'Checking what went into accounts for a child’s education…'],
+      ['info', 'a child’s account paid from elsewhere', '$500 went into Ascensus College with no transfer Nya could match in your accounts, so nothing is taken off for it.'],
+      ['caution', 'a plan counted from later', "Ascensus College is counted from Mar 1, when Nya's record of it starts."],
+      ['caution', 'a plan’s history starting later', 'Nya has activity for Ascensus Twin from Feb 1.'],
+      ['caution', 'a child’s account not measured', "What went into Ascensus Failed couldn't be measured, so this figure may be high."],
+      ['caution', 'a child’s account not read', "Ascensus College's activity couldn't all be read, so this figure may be high."],
+    ]);
+    // More than income minus spending holds, the part that comes off; scaled up, said so.
+    expect(figureNotes(at({ child: { ...childOut, total: 50_000 } })).savings.why).toBe('An estimate: income minus spending over the same 12 months, less $30,000 of the $50,000 your bank paid into Ascensus College, for a child’s education. That is a savings rate of 0% of income.');
+    expect(figureNotes(at({ flows: { ...flows, scaled: true, days: 152, from: '2026-05-08' }, child: childOut })).savings.why).toContain('less $3,000 scaled up from what your bank paid into Ascensus College');
+    // Nothing paid in by the bank, nothing in the why.
+    const none: ChildSavings = { total: 0, plans: [{ name: 'Ascensus College', taken: 0, rest: 0 }], partial: [], shortHistory: [], problems: [], unmeasured: [], left: [] };
+    expect(figureNotes(at({ child: none })).savings.why).toBe(figureNotes(at()).savings.why);
+    expect(figureNotes(at({ child: none })).savings.notes).toEqual(figureNotes(at()).savings.notes);
   });
 
   test('measured with workplace plans: what was added, matched and not set, each a caution in order, with the place word "in Annual savings"', () => {
@@ -428,6 +457,7 @@ describe('the notes’ kinds and keys', () => {
           workplaceCount: 1,
         }),
         at({ unread: [{ institution: null, reason: 'x' }], workplace: null, workplaceCount: null }),
+        at({ child: childOut, childPending: true }),
         at({ withoutTransactions: investmentsOnly, transactionCount: 12 }),
         at({ flows: null, txnsFailed: true }),
         at({ flows: null, withoutTransactions: investmentsOnly, transactionCount: 0 }),

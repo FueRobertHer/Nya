@@ -832,25 +832,70 @@ const sameAmount = (a: number, b: number) => Math.abs(a - b) <= Math.max(1, 0.01
  *  only transfers out that can have paid for a contribution. A move to
  *  savings, or to another person, never did. */
 const RETIREMENT_TRANSFER = 'investment and retirement funds';
+/** Plaid's detail for money moved to savings: it stays yours, and pays into nothing. */
+const SAVINGS_TRANSFER = 'savings';
 
-/** Transfers out of your accounts to investment and retirement funds over
- *  the trailing year: where a payment into a plan from a bank account shows
- *  on the bank's side. Counted as transfers (planFlow), so already saved. */
-export function transfersOut(txns: Txn[], today: string): Payment[] {
+/** A transfer out of your accounts: Plaid's detail for it, and its currency. */
+export type TransferOut = Payment & { detail: string; currency: string | null };
+
+/** Every transfer out of your accounts over the trailing year: counted as
+ *  transfers (planFlow), so income minus spending still holds them. */
+export function transfersOut(txns: Txn[], today: string): TransferOut[] {
   const end = dayNumber(today);
   const start = end - (TRAILING_DAYS - 1);
   return txns
     .filter((t) => {
       const d = dayNumber(t.date);
-      return (
-        d >= start &&
-        d <= end &&
-        t.amount > 0 &&
-        (t.subcategory ?? '').toLowerCase() === RETIREMENT_TRANSFER &&
-        planFlow(t) === 'transfer'
-      );
+      return d >= start && d <= end && t.amount > 0 && planFlow(t) === 'transfer';
     })
-    .map((t) => ({ date: t.date, amount: t.amount }));
+    .map((t) => ({ date: t.date, amount: t.amount, detail: (t.subcategory ?? '').toLowerCase(), currency: currencyOf(t) }));
+}
+
+/** Of those, the ones to investment and retirement funds: where a payment into a
+ *  workplace plan from a bank account shows on the bank's side. */
+export function toRetirementFunds(transfers: readonly TransferOut[]): Payment[] {
+  return transfers.filter((t) => t.detail === RETIREMENT_TRANSFER).map((t) => ({ date: t.date, amount: t.amount }));
+}
+
+/** Takes transfers for contributions (see MATCH_DAYS), each transfer once. */
+function transferTaker<T extends Payment>(given: readonly T[]) {
+  const used = new Set<number>();
+  const transfers = given.map((t, i) => ({ amount: t.amount, i, day: dayNumber(t.date) }));
+  return {
+    /** The nearest unused transfer of this amount within MATCH_DAYS, taken. */
+    take(amount: number, day: number): boolean {
+      let best: (typeof transfers)[number] | null = null;
+      for (const t of transfers) {
+        if (used.has(t.i) || !sameAmount(amount, t.amount) || !(Math.abs(t.day - day) <= MATCH_DAYS)) continue;
+        if (!best || Math.abs(t.day - day) < Math.abs(best.day - day)) best = t;
+      }
+      if (best) used.add(best.i);
+      return !!best;
+    },
+    /** What no contribution took. */
+    left: () => given.filter((_, i) => !used.has(i)),
+  };
+}
+
+/** A plan's rows a transfer paid for: one by one, then what is left of each day
+ *  together, since a transfer may be recorded as several contributions on one
+ *  day (a deferral and an employer share). What matched, and the rows it didn't. */
+function matchRows(rows: readonly Payment[], take: (amount: number, day: number) => boolean): { matched: number; kept: Payment[] } {
+  let matched = 0;
+  const left: Payment[] = [];
+  for (const row of rows) {
+    if (take(row.amount, dayNumber(row.date))) matched += row.amount;
+    else left.push(row);
+  }
+  const byDay = new Map<string, Payment[]>();
+  for (const row of left) byDay.set(row.date, [...(byDay.get(row.date) ?? []), row]);
+  const kept: Payment[] = [];
+  for (const [date, group] of byDay) {
+    const sum = group.reduce((t, r) => t + r.amount, 0);
+    if (group.length > 1 && take(sum, dayNumber(date))) matched += sum;
+    else kept.push(...group);
+  }
+  return { matched, kept };
 }
 
 /**
@@ -866,18 +911,7 @@ export function transfersOut(txns: Txn[], today: string): Payment[] {
  */
 export function workplaceSavings(plans: PlanContributions[], bank: { transfersOut: Payment[]; funding: PlanFunding[] }): WorkplaceSavings {
   const out: WorkplaceSavings = { total: 0, plans: [], fromBank: [], partial: [], shortHistory: [], problems: [], unmeasured: [] };
-  const used = new Set<number>();
-  const transfers = bank.transfersOut.map((t, i) => ({ ...t, i, day: dayNumber(t.date) }));
-  /** The nearest unused transfer of this amount within MATCH_DAYS, taken. */
-  const take = (amount: number, day: number): boolean => {
-    let best: (typeof transfers)[number] | null = null;
-    for (const t of transfers) {
-      if (used.has(t.i) || !sameAmount(amount, t.amount) || !(Math.abs(t.day - day) <= MATCH_DAYS)) continue;
-      if (!best || Math.abs(t.day - day) < Math.abs(best.day - day)) best = t;
-    }
-    if (best) used.add(best.i);
-    return !!best;
-  };
+  const { take } = transferTaker(bank.transfersOut);
   for (const p of plans) {
     const label = `${p.institution} ${p.name}`;
     const paidFrom = bank.funding.find((f) => f.account_id === p.account_id)?.paidFrom ?? null;
@@ -890,24 +924,7 @@ export function workplaceSavings(plans: PlanContributions[], bank: { transfersOu
       continue;
     }
     const rows = p.rows.filter((r) => r.amount > 0);
-    const kept: Payment[] = [];
-    let matched = 0;
-    if (paidFrom === 'payroll') kept.push(...rows);
-    else {
-      // One by one, then what is left of each day together.
-      const left: Payment[] = [];
-      for (const row of rows) {
-        if (take(row.amount, dayNumber(row.date))) matched += row.amount;
-        else left.push(row);
-      }
-      const byDay = new Map<string, Payment[]>();
-      for (const row of left) byDay.set(row.date, [...(byDay.get(row.date) ?? []), row]);
-      for (const [date, group] of byDay) {
-        const sum = group.reduce((t, r) => t + r.amount, 0);
-        if (group.length > 1 && take(sum, dayNumber(date))) matched += sum;
-        else kept.push(...group);
-      }
-    }
+    const { matched, kept } = paidFrom === 'payroll' ? { matched: 0, kept: rows } : matchRows(rows, take);
     let added = kept.reduce((t, r) => t + r.amount, 0);
     let largest = kept.reduce<Payment | null>((m, r) => (m === null || r.amount > m.amount ? r : m), null);
     let count = kept.length;
@@ -923,5 +940,66 @@ export function workplaceSavings(plans: PlanContributions[], bank: { transfersOu
     if (p.partial && p.from) out.partial.push({ name: label, from: p.from });
     else if (p.activityFrom) out.shortHistory.push({ name: label, from: p.activityFrom });
   }
+  return out;
+}
+
+/** One account for a child's education, left out of the plan (D7,
+ *  lib/fire/child-accounts.ts): what it takes off savings. */
+export type ChildPlanSavings = {
+  /** "Institution name". */
+  name: string;
+  /** Paid in by a transfer out of your accounts: taken off savings. */
+  taken: number;
+  /** Paid in over the days the transactions cover with no such transfer (a gift,
+   *  payroll, a bank Nya doesn't read, or a row that counts as spending): not known
+   *  to be in income minus spending, so nothing is taken off for it. */
+  rest: number;
+};
+
+export type ChildSavings = {
+  /** What a bank paid in, a year's: scaled as income and spending are, since it was
+   *  paid out of the same days. lib/fire/progress.ts childTaken says how much of it
+   *  comes off. */
+  total: number;
+  plans: ChildPlanSavings[];
+  partial: { name: string; from: string }[];
+  shortHistory: { name: string; from: string }[];
+  problems: { name: string; note: string }[];
+  unmeasured: string[];
+  /** The transfers none of these paid for, for the workplace plans. */
+  left: TransferOut[];
+};
+
+/**
+ * What accounts for a child's education take off savings. Annual savings is income
+ * minus spending, and a payment into a 529 from a bank is a transfer, in neither:
+ * it stays in the figure and would be planned on as yours, though the account has
+ * left invested assets. Only what a transfer out of your accounts paid for is taken
+ * off, of any detail but a move to savings (Plaid may call one an account transfer,
+ * and a person may have marked one a transfer), since money that never left a bank
+ * was never in the figure, nor was a transfer in another currency, which nothing
+ * converts here. Rows from before the transactions begin say nothing either way.
+ * Ahead of the workplace plans (`left`): these rows are what that transfer paid, and
+ * a workplace plan's only may be.
+ */
+export function childSavings(plans: readonly PlanContributions[], transfers: readonly TransferOut[], flows: Pick<TrailingFlows, 'scaled' | 'days' | 'from' | 'currency'> | null): ChildSavings {
+  const canPay = (t: TransferOut) => t.detail !== SAVINGS_TRANSFER && (t.currency === null || !flows?.currency || t.currency === flows.currency);
+  const { take, left } = transferTaker(transfers.filter(canPay));
+  const scale = flows?.scaled ? TRAILING_DAYS / flows.days : 1;
+  const out: ChildSavings = { total: 0, plans: [], partial: [], shortHistory: [], problems: [], unmeasured: [], left: [] };
+  for (const p of plans) {
+    const label = `${p.institution} ${p.name}`;
+    if (p.amount === null || !Number.isFinite(p.amount)) {
+      out.unmeasured.push(label);
+      continue;
+    }
+    const { matched, kept } = matchRows(p.rows.filter((r) => r.amount > 0 && (!flows || r.date >= flows.from)), take);
+    out.total += matched * scale;
+    out.plans.push({ name: label, taken: matched * scale, rest: kept.reduce((t, r) => t + r.amount, 0) });
+    if (p.note) out.problems.push({ name: label, note: p.note });
+    if (p.partial && p.from) out.partial.push({ name: label, from: p.from });
+    else if (p.activityFrom) out.shortHistory.push({ name: label, from: p.activityFrom });
+  }
+  out.left = [...left(), ...transfers.filter((t) => !canPay(t))];
   return out;
 }

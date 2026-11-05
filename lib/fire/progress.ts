@@ -18,7 +18,7 @@
 // Arithmetic only: no engine, no market history.
 
 import { fiView, unmeasuredOf, type FiView, type Measured, type Missing, type PlanCore } from './plan';
-import type { FlowSide, InvestedAssets, SideVolume, TrailingFlows, UnreadTransactions, WorkplaceSavings } from './inputs';
+import type { ChildSavings, FlowSide, InvestedAssets, SideVolume, TrailingFlows, UnreadTransactions, WorkplaceSavings } from './inputs';
 import { missingWhat, noSpending, withoutNote, type NoSpending, type NoTransactionsView } from '@/lib/no-transactions';
 import { leftOutText, type LeftOut } from '@/lib/spending';
 import { assumedText, leftOutWhy } from '@/lib/fx/totals';
@@ -29,6 +29,9 @@ export type FiInputs = {
   flows: TrailingFlows | null;
   /** Workplace plan contributions, null while they load. */
   workplace: WorkplaceSavings | null;
+  /** What accounts left out of the plan for a child's education take off savings
+   *  (D7); absent or null takes nothing off. */
+  child?: ChildSavings | null;
   assets: InvestedAssets;
   /** The ECB's newest rates, without a home currency, only for weighing what
    *  is left out (ShareRates); absent or null weighs by count. */
@@ -213,14 +216,23 @@ export function unmeasuredNeed(missing: Missing, view: Pick<FiView, 'spending' |
  *  income too, whenever there is a gap at all. */
 export const spendingOff = (gap: CurrencyGap | null): boolean => gap !== null && (gap.sides === undefined || gap.sides.includes('spending'));
 
+/** What accounts left out for a child take off savings: what a bank paid into them,
+ *  and never more than income minus spending holds. The rest of a payment larger
+ *  than that (a lump paid from what was already saved) was never in the figure, and
+ *  isn't a yearly shortfall to plan on. */
+export function childTaken({ flows, child }: Pick<FiInputs, 'flows' | 'child'>): number {
+  return Math.min(child?.total ?? 0, Math.max(0, flows?.savings ?? 0));
+}
+
 /** The measured inputs a plan's figures start from (each can be typed over
  *  in the plan): spending and savings from a year of transactions, savings
- *  with workplace plan contributions added, and invested assets. None from
+ *  with workplace plan contributions added and what a bank paid into an account
+ *  left out for a child's education taken off, and invested assets. None from
  *  a part of what it measures (spendingGap, assetsGap): the FI number,
  *  progress and years to FI then wait for a home currency or a typed figure.
  *  With only the income left out, spending is still measured, and the FI
  *  number with it; savings and what rests on them aren't. */
-export function measuredInputs({ flows, workplace, assets, rates }: FiInputs): Measured {
+export function measuredInputs({ flows, workplace, child, assets, rates }: FiInputs): Measured {
   const gap = spendingGap(flows, rates);
   const yearGap = gap !== null;
   const spendingGapped = spendingOff(gap);
@@ -228,7 +240,7 @@ export function measuredInputs({ flows, workplace, assets, rates }: FiInputs): M
   const unmeasured = [...(spendingGapped ? (['spending'] as const) : []), ...(yearGap ? (['savings'] as const) : []), ...(assetsOff ? (['assets'] as const) : [])];
   return {
     spending: flows && !spendingGapped ? flows.spending : null,
-    savings: flows && !yearGap ? flows.savings + (workplace?.total ?? 0) : null,
+    savings: flows && !yearGap ? flows.savings + (workplace?.total ?? 0) - childTaken({ flows, child }) : null,
     assets: assetsOff ? null : assets.total,
     ...(unmeasured.length > 0 ? { unmeasured } : {}),
   };
@@ -237,12 +249,12 @@ export function measuredInputs({ flows, workplace, assets, rates }: FiInputs): M
 /** The trailing year's savings rate (see the top of this file), or null
  *  with no year of transactions or no income to take a share of, or when
  *  the year would rest on a part of it (spendingGap). */
-export function savingsRate({ flows, workplace, rates }: Pick<FiInputs, 'flows' | 'workplace' | 'rates'>): number | null {
+export function savingsRate({ flows, workplace, child, rates }: Pick<FiInputs, 'flows' | 'workplace' | 'child' | 'rates'>): number | null {
   if (!flows || spendingGap(flows, rates)) return null;
   const contributions = workplace?.total ?? 0;
   const income = flows.income + contributions;
   if (!(income > 0)) return null;
-  return (flows.savings + contributions) / income;
+  return (flows.savings + contributions - childTaken({ flows, child })) / income;
 }
 
 /** The currency plan amounts are shown in: the Plan's own once recorded

@@ -22,7 +22,7 @@ import { KIND_WORDS } from './budget-notes';
 import { PAYROLL_NOTE, dayName, pct, savingsRateText } from './plan-text';
 import { formatInstantDay, onDay } from '@/lib/format';
 import { missingFigureItems, type NoTransactionsView } from '@/lib/no-transactions';
-import type { AssetCaveat, InvestedAssets, TrailingFlows, UnreadTransactions, WorkplaceSavings } from '@/lib/fire/inputs';
+import type { AssetCaveat, ChildSavings, InvestedAssets, TrailingFlows, UnreadTransactions, WorkplaceSavings } from '@/lib/fire/inputs';
 import {
   assetsGap,
   assetsLeftOut,
@@ -32,6 +32,7 @@ import {
   spendingOff,
   transactionCoverage,
   transactionsMissing,
+  childTaken,
   type ShareRates,
 } from '@/lib/fire/progress';
 import { uncategorizedNote } from '@/lib/spending';
@@ -74,6 +75,10 @@ export type FigureArgs = {
   workplace: WorkplaceSavings | null;
   /** How many workplace plans there are to measure, null while unknown. */
   workplaceCount: number | null;
+  /** What accounts left out for a child's education take off savings (D7). */
+  child?: ChildSavings | null;
+  /** What went into those accounts is still being read. */
+  childPending?: boolean;
   /** The names of the cash accounts the cash spending was entered on. */
   cashOn: string[];
   /** Spending was entered by hand on a manual account not marked as cash. */
@@ -185,6 +190,10 @@ export const NOTE_KINDS = {
   shortHistory: 'a plan’s history starting later',
   unmeasured: 'contributions not measured',
   problems: 'plan activity not read',
+  childChecking: 'a child’s accounts still being checked',
+  childRest: 'a child’s account paid from elsewhere',
+  childUnmeasured: 'a child’s account not measured',
+  childProblems: 'a child’s account not read',
   unreachable: 'an institution not reached',
   stale: 'balances from earlier',
   missing: 'accounts not shown',
@@ -260,14 +269,19 @@ function spendingWhy(flows: TrailingFlows, money: (n: number) => string, cashOn:
 }
 
 /** How measured savings were worked out: income minus spending over the
- *  window, what was added for workplace plans, and the savings rate that
- *  makes. */
-function savingsWhy(flows: TrailingFlows, workplace: WorkplaceSavings | null, money: (n: number) => string, savingsRate: number | null): string {
+ *  window, what was added for workplace plans, what your bank paid into an
+ *  account left out for a child, and the savings rate that makes. */
+function savingsWhy(flows: TrailingFlows, workplace: WorkplaceSavings | null, child: ChildSavings | null | undefined, money: (n: number) => string, savingsRate: number | null): string {
   const addedTo = (workplace?.plans ?? []).filter((x) => x.added > 0).map((x) => x.name);
   const plus = addedTo.length ? `, plus ${money(workplace!.total)} paid into ${names(addedTo)}` : '';
+  const takenFrom = (child?.plans ?? []).filter((x) => x.taken > 0).map((x) => x.name);
+  const taken = childTaken({ flows, child });
+  const paid = flows.scaled ? 'scaled up from what your bank paid' : 'your bank paid';
+  const of = taken < (child?.total ?? 0) ? ` of the ${money(child!.total)}` : '';
+  const less = takenFrom.length && taken > 0 ? `, less ${money(taken)}${of} ${paid} into ${names(takenFrom)}, for a child’s education` : '';
   const rate =
     savingsRate !== null ? ` That is a savings rate of ${savingsRateText(savingsRate)} of income${addedTo.length ? ', what went into those plans counted as income too' : ''}.` : '';
-  return `An estimate: income minus spending over the same ${flows.scaled ? 'span' : '12 months'}${plus}.${rate}`;
+  return `An estimate: income minus spending over the same ${flows.scaled ? 'span' : '12 months'}${plus}${less}.${rate}`;
 }
 
 /**
@@ -390,11 +404,11 @@ function spendingText(a: FigureArgs, coverage: Coverage, flowsGap: Gap): FigureT
 
 /** Savings: bank income minus spending, plus workplace plan contributions. */
 function savingsText(a: FigureArgs, coverage: Coverage, flowsGap: Gap): FigureText {
-  const { view, flows, unread, withoutTransactions, workplace, workplaceCount, money, savingsRate } = a;
+  const { view, flows, unread, withoutTransactions, workplace, workplaceCount, child, childPending, money, savingsRate } = a;
   const { notes, add } = noteList('savings');
   const noSpending = coverage.noSpending;
   const namedWithout = coverage.named;
-  const why = flows && !flowsGap ? savingsWhy(flows, workplace, money, savingsRate) : null;
+  const why = flows && !flowsGap ? savingsWhy(flows, workplace, child, money, savingsRate) : null;
   if (view.savings.source === 'typed') {
     // The savings rate (Home's) is from the transactions whatever is typed
     // here, so it is said here too, as what they measure.
@@ -464,6 +478,15 @@ function savingsText(a: FigureArgs, coverage: Coverage, flowsGap: Gap): FigureTe
     workplace && workplace.unmeasured.length ? `Contributions to ${names(workplace.unmeasured)} couldn't be measured, so this figure may be low.` : null
   );
   for (const p of workplace?.problems ?? []) add('caution', NOTE_KINDS.problems, `${p.name}'s activity couldn't all be read, so this figure may be low.`);
+  // What accounts left out for a child take off, and where that isn't all of it.
+  add('caution', NOTE_KINDS.childChecking, childPending ? 'Checking what went into accounts for a child’s education…' : null);
+  for (const x of child?.plans ?? []) {
+    add('info', NOTE_KINDS.childRest, x.rest > 0 ? `${money(x.rest)} went into ${x.name} with no transfer Nya could match in your accounts, so nothing is taken off for it.` : null);
+  }
+  for (const p of child?.partial ?? []) add('caution', NOTE_KINDS.partial, `${p.name} is counted from ${dayName(p.from)}, when Nya's record of it starts.`);
+  for (const p of child?.shortHistory ?? []) add('caution', NOTE_KINDS.shortHistory, `Nya has activity for ${p.name} from ${dayName(p.from)}.`);
+  add('caution', NOTE_KINDS.childUnmeasured, child && child.unmeasured.length ? `What went into ${names(child.unmeasured)} couldn't be measured, so this figure may be high.` : null);
+  for (const p of child?.problems ?? []) add('caution', NOTE_KINDS.childProblems, `${p.name}'s activity couldn't all be read, so this figure may be high.`);
   addUnread(add, unread, 'off');
   addMissing(add, withoutTransactions, 'off');
   add('info', NOTE_KINDS.named, namedWithout);

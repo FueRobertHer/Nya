@@ -458,6 +458,10 @@ describe('contributionsFrom: each plan’s row as its own request gave it', () =
     expect(contributionsFrom(copy([row('i2:k3')]), plans)).toBeNull();
     expect(contributionsFrom(copy([row('i1:k1'), row('i2:k3')], 'i1:k1'), plans)).toBeNull();
     expect(contributionsFrom(copy([], ''), [])).toEqual([]);
+    // Some of a copy's plans, the copy being for more than these.
+    expect(contributionsFrom(copy([row('i1:k1'), row('i2:k3')], 'i1:k1,i2:k3'), plans.slice(0, 1), 'i1:k1,i2:k3')?.map((c) => c.account_id)).toEqual(['k1']);
+    expect(contributionsFrom(copy([row('i1:k1')], 'i1:k1'), plans.slice(0, 1), 'i1:k1,i2:k3')).toBeNull();
+    expect(contributionsFrom(copy([row('i1:k1')], 'i1:k1,i2:k3'), [], 'i1:k1,i2:k3')).toEqual([]);
     expect(contributionsFrom({ key: null, plan: null, lastPlan: null, rows: {}, asked: 0 }, [])).toBeNull();
   });
 });

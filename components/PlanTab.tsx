@@ -109,7 +109,7 @@ import { historyCount } from '@/lib/spending';
 import { figureNotes, inputFlags, names, stressNotice, windowText, type FigureArgs, type FigureNote, type FigureNotes, type FigureText } from './plan-figure-notes';
 import TotalCaveats, { Notice } from './TotalCaveats';
 import { chevron, RIGHT } from './ActivityBar';
-import { planAccountsOf, planId, saveTaxFact, usePlanInputs, useSharedPlanInputs, workplacePlansOf, yearFrom } from './plan-inputs';
+import { planAccountsOf, planId, plansAskedFor, saveTaxFact, usePlanInputs, useSharedPlanInputs, workplacePlansOf, yearFrom } from './plan-inputs';
 import { createPlanInputsStore, type PlanInputsStore } from '@/lib/plan-inputs-store';
 import AllocationCard, { mixToOffer, useAllocation } from './AllocationCard';
 import type { AllocHolding, PlanMix } from '@/lib/allocation/allocation';
@@ -404,7 +404,7 @@ export default function PlanTab({
   const inputsRef = useRef(planInputs);
   inputsRef.current = planInputs;
   const plansRef = useRef<string[]>([]);
-  plansRef.current = workplacePlansOf(institutions).map(planId);
+  plansRef.current = plansAskedFor(institutions, childOut).map(planId);
   const store = useMemo(
     () =>
       createWholeListStore<StoredPlan | null>({
@@ -539,7 +539,7 @@ export default function PlanTab({
   // cash withdrawals went on (lib/fire/inputs.ts trailingFlows), and names
   // them for the label. The workplace plans' contributions come from the
   // shared copy.
-  const shared = useSharedPlanInputs(planInputs, institutions);
+  const shared = useSharedPlanInputs(planInputs, institutions, childOut);
   const leaveOut = useMemo(() => leftOutOf(childOut, shared.taxFacts.countAnyway), [childOut, shared.taxFacts.countAnyway]);
   // The detailed tax model (lib/fire/plan-detail.ts): said on, and allowed now.
   const detailedOn = planTax && shared.factsKnown && shared.taxFacts.model === 'detailed';
@@ -554,10 +554,11 @@ export default function PlanTab({
     balanceFx,
     currency: ownCurrency,
     contributions: shared.contributions,
+    childContributions: shared.childContributions,
     leaveOut,
     paid: detailedOn ? shared.taxFacts.paidToday : null,
   });
-  const { flows, unread, assets, contributions, workplace, cashOn, cashUnmarked } = inputs;
+  const { flows, unread, assets, contributions, workplace, child, cashOn, cashUnmarked } = inputs;
   const figures = fiFigures(basePlan, inputs, currency);
   // The plan's own currency once recorded, which everything above is in;
   // otherwise the accounts' (figures.currency), and with typed amounts and no
@@ -738,7 +739,7 @@ export default function PlanTab({
   // In the plan's currency, so its mix is of what the plan counts.
   const allocation = useAllocation({ institutions, holdings, currency: displayCurrency, includeCash: basePlan.includeCash, fx: balanceFx, leaveOut });
   // The other accounts' last year, on top of the shared copy (lib/plan-inputs-store.ts
-  // fill): Home and the Plan ask for workplace plans alone. Asked for at load in the
+  // fill): Home and the Plan ask only for what moves the savings. Asked for at load in the
   // detailed model, and when a sheet that reads them opens in the flat one.
   const yearRows = useMemo(() => planAccountsOf(institutions).map(planId), [institutions]);
   useEffect(() => {
@@ -1232,7 +1233,7 @@ export default function PlanTab({
   // accounts counted again, on the Plan's answer alone, since a saved plan's
   // Progress line leaves them out at both its ends.
   const childMovedNew = childOut && !childMovedSeen && entry === null && stillNew(childNewUntil, todayUtc) && (assets.childAccounts?.length ?? 0) > 0;
-  const childOffFigures = childMovedNew && baseFigures ? figuresFor('child-moved', basePlan, yourChoices, measuredInputs({ ...inputs, assets: investedAssets(institutions, basePlan.includeCash, balanceFx, Date.now(), ownCurrency) })).figures : null;
+  const childOffFigures = childMovedNew && baseFigures ? figuresFor('child-moved', basePlan, yourChoices, measuredInputs({ ...inputs, child: null, workplace: inputs.workplaceCounted, assets: investedAssets(institutions, basePlan.includeCash, balanceFx, Date.now(), ownCurrency) })).figures : null;
   const childMoved = childOffFigures && baseFigures && !('refused' in childOffFigures) ? childMovedText(childOffFigures, baseFigures) : null;
   const overlay = useMemo(
     () =>
@@ -1332,6 +1333,8 @@ export default function PlanTab({
     balancesAsOf,
     workplace,
     workplaceCount: contributions === null ? null : contributions.length,
+    child,
+    childPending: shared.childPending,
     cashOn,
     cashUnmarked,
     money,
