@@ -34,7 +34,7 @@
 
 import { INCOME_KINDS, type PlanItem } from './items';
 import type { CompiledEvents, EventNote, EventPart } from './events';
-import { MAX_YEARS, type ConditionalEdge, type ConditionalFlows, type ConditionalItem } from './simulate';
+import { MAX_YEARS, type ConditionalEdge, type ConditionalFlows, type ConditionalItem, type OtherIncome } from './simulate';
 import type { PerRun, RunEdge } from './steady';
 
 /** An item's resolved ages: where it starts, and where it stops (null for
@@ -52,7 +52,14 @@ export type CompileAt = { age: number | null; startAge: number | null; stop: num
 
 export type ItemNote = EventNote & { at: number };
 
+/** One row of `sim.income`, with what it is: the detailed model taxes each by
+ *  its kind and owner (lib/fire/drawdown.ts). `gross` is the amount typed, before
+ *  the plan's rate takes anything. */
+export type IncomeRow = OtherIncome & { kind: PlanItem['kind']; owner: PlanItem['owner']; beforeTax: boolean; gross: number };
+
 export type CompiledItems = CompiledEvents & {
+  /** `sim.income`, row for row, with what each is. */
+  incomeBy: IncomeRow[];
   notes: ItemNote[];
   /** Whether each item put anything in the walk. */
   inWalk: boolean[];
@@ -92,7 +99,7 @@ function takeHomeBack(items: readonly PlanItem[], ages: readonly ItemAges[], a: 
 
 /** Where each item counts, at `ages` (one per item). */
 export function compileItems(items: readonly PlanItem[], ages: readonly ItemAges[], at: CompileAt, count: Count): CompiledItems {
-  const out: CompiledItems = { walk: { moneyIn: [], costs: [], spans: [] }, lasting: [], later: [], sim: { oneOffs: [], income: [], lowerSpending: [] }, notes: [], inWalk: items.map(() => false) };
+  const out: CompiledItems = { walk: { moneyIn: [], costs: [], spans: [] }, lasting: [], later: [], sim: { oneOffs: [], income: [], lowerSpending: [] }, incomeBy: [], notes: [], inWalk: items.map(() => false) };
   const { age: a, startAge: S, years: Y, stop, taxRate } = at;
   const comesBack = takeHomeBack(items, ages, a, stop);
   for (const [i, x] of items.entries()) {
@@ -110,6 +117,11 @@ export function compileItems(items: readonly PlanItem[], ages: readonly ItemAges
       out.inWalk[i] = true;
     };
     const afterTax = (v: number) => (x.beforeTax ? v * (1 - taxRate) : v);
+    /** An income in the simulation, and what it is. */
+    const addIncome = (row: OtherIncome, gross: number) => {
+      out.sim.income.push(row);
+      out.incomeBy.push({ ...row, kind: x.kind, owner: x.owner, beforeTax: x.beforeTax, gross });
+    };
 
     // A plan's one-offs and income: the simulation as enginePlan placed
     // them, and the walk behind D15's switch.
@@ -135,8 +147,8 @@ export function compileItems(items: readonly PlanItem[], ages: readonly ItemAges
       if (S === null) note('no-age');
       else {
         const fromYear = Math.max(0, start - S);
-        if (end === null) out.sim.income.push({ amount, fromYear, inflationAdjusted: x.inflationAdjusted });
-        else if (end - S > fromYear) out.sim.income.push({ amount, fromYear, toYear: end - S, inflationAdjusted: x.inflationAdjusted });
+        if (end === null) addIncome({ amount, fromYear, inflationAdjusted: x.inflationAdjusted }, x.yearly ?? 0);
+        else if (end - S > fromYear) addIncome({ amount, fromYear, toYear: end - S, inflationAdjusted: x.inflationAdjusted }, x.yearly ?? 0);
       }
       if (count.planInWalk && a !== null && amount > 0) {
         if (start >= a) {
@@ -192,7 +204,7 @@ export function compileItems(items: readonly PlanItem[], ages: readonly ItemAges
       if (S !== null && t >= S) {
         const y = t - S;
         if (y >= Y) note('after-end');
-        if (y < MAX_YEARS) out.sim.income.push({ amount, fromYear: y, toYear: y + 1, inflationAdjusted: true });
+        if (y < MAX_YEARS) addIncome({ amount, fromYear: y, toYear: y + 1, inflationAdjusted: true }, amount);
       }
     };
     /** A change in yearly spending over ages [t0, t1), t1 null for good. */
@@ -266,7 +278,7 @@ export function compileItems(items: readonly PlanItem[], ages: readonly ItemAges
         const y0 = Math.max(start, S) - S;
         const y1 = Math.min((end ?? S + MAX_YEARS) - S, MAX_YEARS);
         if (y1 > y0) {
-          out.sim.income.push({ amount: pays, fromYear: y0, toYear: y1, inflationAdjusted: x.inflationAdjusted });
+          addIncome({ amount: pays, fromYear: y0, toYear: y1, inflationAdjusted: x.inflationAdjusted }, yearly);
           if (y1 > Y) note('after-end');
         }
         break;

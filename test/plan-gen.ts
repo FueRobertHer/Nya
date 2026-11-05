@@ -78,7 +78,7 @@ export function fixedAges(items: readonly PlanItem[]): ItemAges[] {
  */
 export function compileEvents(events: readonly LifeEvent[], at: { age: number | null; startAge: number | null; years: number }): CompiledEvents & { notes: EventNote[] } {
   const items = events.map(itemFromEvent);
-  const { notes, inWalk: _inWalk, ...rest } = compileItems(items, fixedAges(items), { ...at, stop: null, taxRate: 0 }, OFF);
+  const { notes, inWalk: _inWalk, incomeBy: _incomeBy, ...rest } = compileItems(items, fixedAges(items), { ...at, stop: null, taxRate: 0 }, OFF);
   return { ...rest, notes: notes.map(({ id, part }) => ({ id, part })) };
 }
 

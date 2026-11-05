@@ -110,8 +110,10 @@ export type ConditionalItem = {
  *  before that year's money in and costs, and fires once. */
 export type ConditionalFlows = { triggers: number[]; items: ConditionalItem[] };
 
-/** The most conditional items a plan runs: a comparison each per path-year. */
-export const MAX_CONDITIONAL = 25;
+/** The most conditional items a plan runs: a comparison each per path-year.
+ *  Twice the items a plan holds (ITEM_LIMITS), as a home with a waiting end
+ *  compiles to two. */
+export const MAX_CONDITIONAL = 50;
 
 export type SimPlan = {
   startBalance: number;
