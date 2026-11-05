@@ -446,10 +446,10 @@ describe('forgetting an earlier account', () => {
   };
 
   describe('what the tax facts say about it', () => {
-    test('a disconnect alone leaves them', async () => {
+    test('a disconnect takes them, and leaves another account’s', async () => {
       await planFactsStore.set(ctx, factsAbout('acct_old', 'acct_other'));
       await setup();
-      expect(await planFactsStore.get(ctx)).toEqual(factsAbout('acct_old', 'acct_other'));
+      expect(await planFactsStore.get(ctx)).toEqual(factsAbout('acct_other'));
     });
 
     test('Forget takes them, and leaves another account’s', async () => {

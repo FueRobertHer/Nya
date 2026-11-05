@@ -775,7 +775,7 @@ const STORES: Readonly<Record<string, Entry>> = {
   'fire-plans': {
     group: 'plans',
     name: 'Your plans',
-    about: 'Your plan and each copy of it you made on the Plan tab: its name, its assumptions, the tax choices you made for it (your state and its rate, your health coverage and what it costs, the inflation and yield it uses), the currency its amounts are in and when it was made and changed, never a figure. Kept only once a newer version of Nya has made your plans copies.',
+    about: 'Your plan and each copy of it you made on the Plan tab: its name, its assumptions, the tax choices you made for it (your state and its rate, your health coverage and what it costs, how your savings split, the inflation and yield it uses), the currency its amounts are in and when it was made and changed, never a figure. Kept only once a newer version of Nya has made your plans copies.',
     unit: ['plan', 'plans'],
     kept: 'Your data',
     plain: 'The id main and random ids, as field names.',

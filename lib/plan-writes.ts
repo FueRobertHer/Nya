@@ -581,16 +581,18 @@ export async function optIn(ctx: Ctx) {
 }
 
 /**
- * Takes accounts gone for good out of the tax facts, since no screen is left to
+ * Takes accounts gone from Nya out of the tax facts, since no screen is left to
  * change what was said about them: forgetting an earlier account, deleting a
- * manual one, and a connector's account removed rather than kept. Never for a
- * disconnect, which a reconnect can undo, keeping what was typed.
+ * manual one, a connector's account removed rather than kept, and disconnecting
+ * a Plaid connection, whose accounts usually come back under new ids.
  *
  * Writes only when the facts name one, so it never makes `plan-facts` or turns
  * version 1 into 2. Bytes nobody can read hold nothing to take out, so they don't
  * hold a forget back. Facts this version doesn't recognise are intact and may name
  * the account, so they stop it (UnreadableValueError): each caller runs this
- * before the account goes, so the person can try again.
+ * before the account goes, so the person can try again. A disconnect alone carries
+ * on without it (lib/disconnect-item.ts): Forget can still take them, and ending a
+ * connection matters more.
  */
 export async function forgetAccountFacts(ctx: Ctx, account_ids: readonly string[]): Promise<void> {
   if (account_ids.length === 0) return;

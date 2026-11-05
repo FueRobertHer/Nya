@@ -158,9 +158,9 @@ export default function AdminUnusedItems({ onRemoved }: { onRemoved?: () => void
           <>
             <p className="panel-note" style={{ marginTop: 0 }}>
               This removes {name} ({shown.owner}) and its accounts from Nya, for that person too. They can
-              reconnect it later. Its stored transactions are deleted; net-worth history is kept. It is checked
-              again first, and nothing is removed if it turns out to be in use. Type <strong>{name}</strong> to
-              confirm.
+              reconnect it later. Its stored transactions, and what they told their plan about its accounts for
+              tax, are deleted; net-worth history is kept. It is checked again first, and nothing is removed if
+              it turns out to be in use. Type <strong>{name}</strong> to confirm.
             </p>
             <label className="field" style={{ marginTop: 12 }}>
               Institution name
