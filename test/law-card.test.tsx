@@ -36,7 +36,7 @@ describe('the card', () => {
     const card = lawCard('2026-11-04', YEARS);
     expect(card.years.map((y) => y.year)).toEqual([2026, 2027]);
     expect(row(card, 2026)).toMatchObject({ title: '2026 tax law', sub: 'In use · every part in, each with its source', badge: null });
-    expect(row(card, 2027)).toMatchObject({ title: '2027 tax law', sub: '8 of 11 parts in · still to come: brackets, Medicaid’s poverty guidelines and Medicare', badge: { text: 'Due by Jan 1', caution: false } });
+    expect(row(card, 2027)).toMatchObject({ title: '2027 tax law', sub: '9 of 12 parts in · still to come: brackets, Medicaid’s poverty guidelines and Medicare', badge: { text: 'Due by Jan 1', caution: false } });
     expect(card.attention).toBeNull();
   });
 
@@ -83,7 +83,7 @@ describe('the card', () => {
 
   test('a year’s parts: those to come first, with when, the rest with their source and date', () => {
     const parts = row(lawCard('2026-11-04', YEARS), 2027).parts;
-    expect(parts).toHaveLength(11);
+    expect(parts).toHaveLength(12);
     expect(parts.slice(0, 3).map((p) => p.part)).toEqual(['brackets', 'medicaidPoverty', 'medicare']);
     expect(parts[0]).toEqual({ part: 'brackets', name: 'Brackets, standard deduction and gains bands', source: 'The brackets notice', when: 'Expected Late 2026' });
     expect(parts.find((p) => p.part === 'aca')).toEqual({ part: 'aca', name: 'ACA applicable percentages', source: 'Rev. Proc. 2025-25, sec. 3.01', when: 'Published Jul 18, 2025' });
@@ -92,7 +92,7 @@ describe('the card', () => {
   test('the real tables say the same of the year in use', () => {
     const card = lawCard('2026-11-04');
     expect(row(card, 2026).sub).toBe('In use · every part in, each with its source');
-    expect(row(card, 2027).parts).toHaveLength(11);
+    expect(row(card, 2027).parts).toHaveLength(12);
   });
 });
 

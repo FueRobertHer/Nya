@@ -6,7 +6,7 @@
 //
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
 
-import { AGE_CURVE, HEALTH_GROWTH, LAW_2026, MEDICAID_STATES, STATUTE, UNIFORM_DIVISORS } from './2026';
+import { AGE_CURVE, HEALTH_GROWTH, LAW_2026, MEDICAID_STATES, STATE_INCOME_TAX, STATUTE, UNIFORM_DIVISORS } from './2026';
 import type { PartialLaw } from './types';
 
 export const LAW_2027: PartialLaw = {
@@ -29,6 +29,7 @@ export const LAW_2027: PartialLaw = {
   // out when 2027's open enrollment began.
   creditPoverty: LAW_2026.medicaidPoverty,
   medicaidStates: MEDICAID_STATES,
+  stateIncomeTax: STATE_INCOME_TAX,
   // SSA, contribution and benefit base for 2027 (announced October 14, 2026).
   wageBase: 192_300,
   uniform: { firstAge: 72, divisors: UNIFORM_DIVISORS },
@@ -41,6 +42,7 @@ export const LAW_2027: PartialLaw = {
     creditPoverty: { source: 'HHS poverty guidelines for 2026, 91 FR 1797', published: '2026-01-15', due: 'January 2026' },
     medicaidPoverty: { source: 'HHS poverty guidelines for 2027', published: null, due: 'January 2027', opens: '2027-01-01' },
     medicaidStates: LAW_2026.sources.medicaidStates,
+    stateIncomeTax: LAW_2026.sources.stateIncomeTax,
     medicare: { source: 'CMS, 2027 Medicare Parts A and B Premiums and Deductibles', published: null, due: 'Mid-November 2026', opens: '2026-11-01' },
     wageBase: { source: 'SSA, contribution and benefit base', published: '2026-10-14', due: 'October 2026' },
     uniform: LAW_2026.sources.uniform,

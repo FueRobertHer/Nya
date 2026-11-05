@@ -7,7 +7,7 @@
 // READS TAKE WHAT ANY RELEASE WROTE: isTaxChoices checks the shape and types,
 // never a range. This is the first reader (T2), knowing every field and every
 // enum value a release before anything writes them (T3), so a rollback from
-// the first writer loses nothing. Nothing here reaches the page yet.
+// the first writer loses nothing. A range is the writer's (parseTaxChoices).
 //
 // CLOSED, AND EVERY FIELD LOOKED AT, so a restore takes no field this release
 // doesn't know (lib/user-restore/check.ts unknownField).
@@ -112,4 +112,96 @@ export function isTaxChoices(v: unknown): v is TaxChoices {
   if (!isObject(v) || !closed(v, KEYS) || v.version !== 1) return false;
   if (v.state !== null && !STATE_CODES.includes(v.state as StateCode)) return false;
   return isNumber(v.stateRate) && isNumber(v.inflation) && isHealth(v.health) && isStrategy(v.strategy) && isSavingsSplit(v.savingsSplit) && numberOrNull(v.taxableYield);
+}
+
+// ---- Writes ----
+
+/** A plan's choices before anyone has made one: no state, no coverage, the
+ *  standard order, no conversions, measured savings and yield. */
+export const DEFAULT_TAX_CHOICES: TaxChoices = {
+  version: 1,
+  state: null,
+  stateRate: 0,
+  inflation: 0.03,
+  health: { beforeMedicare: null, medicareExtra: 0, meetsMedicaidRule: [], countMedicaid: false, acaLaw: '2026', growth: null },
+  strategy: { order: 'standard', conversions: { kind: 'none' }, convertUntil: null },
+  savingsSplit: null,
+  taxableYield: null,
+};
+
+/** More than any one household's coverage could cost in a year. */
+export const MAX_HEALTH_AMOUNT = 1_000_000;
+/** More than any state's top rate. */
+export const MAX_STATE_RATE = 0.2;
+const MAX_RATE = 0.2;
+/** A year over prices, as a fraction as the law tables hold it: far past any projection. */
+const HEALTH_GROWTH_RANGE = { low: -0.05, high: 0.1 };
+/** The age curve's last age, where a benchmark can be quoted. */
+const LAST_QUOTED_AGE = 64;
+
+const amount = (v: unknown, max: number) => isNumber(v) && v >= 0 && v <= max;
+
+function beforeMedicareError(v: unknown): string | null {
+  if (!isBeforeMedicare(v)) return 'beforeMedicare is the ACA’s benchmark, a yearly cost, or null';
+  if (v === null) return null;
+  const b = v as Exclude<BeforeMedicare, null>;
+  if (b.kind === 'other') return amount(b.yearly, MAX_HEALTH_AMOUNT) ? null : `A yearly cost is at most ${MAX_HEALTH_AMOUNT}`;
+  if (!amount(b.adult, MAX_HEALTH_AMOUNT) || (b.child !== null && !amount(b.child, MAX_HEALTH_AMOUNT))) return `A benchmark is at most ${MAX_HEALTH_AMOUNT} a year`;
+  return Number.isInteger(b.quotedAge) && b.quotedAge >= 0 && b.quotedAge <= LAST_QUOTED_AGE ? null : `The quoted age is a whole number up to ${LAST_QUOTED_AGE}`;
+}
+
+function healthError(v: unknown): string | null {
+  if (!isHealth(v)) return 'health is coverage before Medicare, Part D or a supplement, the Medicaid answers, the ACA’s law and health growth';
+  const h = v as TaxChoices['health'];
+  const before = beforeMedicareError(h.beforeMedicare);
+  if (before) return before;
+  if (!amount(h.medicareExtra, MAX_HEALTH_AMOUNT)) return `Part D or a supplement is at most ${MAX_HEALTH_AMOUNT} a year`;
+  if (new Set(h.meetsMedicaidRule).size !== h.meetsMedicaidRule.length) return 'Each person answers the Medicaid rule once';
+  if (h.growth !== null && (h.growth < HEALTH_GROWTH_RANGE.low || h.growth > HEALTH_GROWTH_RANGE.high)) return 'Health growth is from -5 to 10 points a year';
+  return null;
+}
+
+function splitError(v: unknown): string | null {
+  if (!isSavingsSplit(v)) return 'savingsSplit is each bucket’s share, or null';
+  if (v === null) return null;
+  const rows = v as NonNullable<TaxChoices['savingsSplit']>;
+  if (rows.length === 0) return 'savingsSplit needs at least one bucket, or null';
+  if (new Set(rows.map((r) => r.bucket)).size !== rows.length) return 'Each bucket comes once in savingsSplit';
+  if (rows.some((r) => !(r.share >= 0 && r.share <= 1))) return 'A bucket’s share is from 0 to 1';
+  return Math.abs(rows.reduce((sum, r) => sum + r.share, 0) - 1) <= 1e-6 ? null : 'The shares of savingsSplit add up to 100%';
+}
+
+/**
+ * What a page sent, or why it isn't choices this takes: the writer's rules,
+ * which the reader above doesn't hold. Conversions and the order come with T4,
+ * so a change to either is refused until then. Only a change: a save beside
+ * what a later release stored (`stored`, after a rollback from it) goes through,
+ * so nobody is trapped.
+ */
+export function parseTaxChoices(v: unknown, stored: TaxChoices | null): { choices: TaxChoices } | { error: string } {
+  if (!isObject(v) || !closed(v, KEYS)) return { error: 'Send every choice, as JSON' };
+  if (v.version !== 1) return { error: 'version is 1' };
+  if (v.state !== null && !STATE_CODES.includes(v.state as StateCode)) return { error: 'state is a state’s code, or null' };
+  if (!amount(v.stateRate, MAX_STATE_RATE)) return { error: 'A state’s rate is from 0 to 20%' };
+  if (!amount(v.inflation, MAX_RATE)) return { error: 'Inflation is from 0 to 20%' };
+  const health = healthError(v.health);
+  if (health) return { error: health };
+  if (!isStrategy(v.strategy)) return { error: 'strategy is the order, conversions and when they stop' };
+  const split = splitError(v.savingsSplit);
+  if (split) return { error: split };
+  if (v.taxableYield !== null && !amount(v.taxableYield, MAX_RATE)) return { error: 'The taxable yield is from 0 to 20%' };
+  const choices = v as TaxChoices;
+  const was = JSON.stringify((stored ?? DEFAULT_TAX_CHOICES).strategy);
+  const now = JSON.stringify(choices.strategy);
+  if (now !== was && now !== JSON.stringify(DEFAULT_TAX_CHOICES.strategy)) return { error: 'This version of Nya draws in the standard order, with no conversions' };
+  return { choices };
+}
+
+/** Whether the choices hold an amount typed in the plan's currency. A plan whose
+ *  only amount is a benchmark holds a currency all the same. */
+export function taxHoldsAmounts(tax: TaxChoices | null): boolean {
+  if (tax === null) return false;
+  const before = tax.health.beforeMedicare;
+  if (before !== null && (before.kind === 'aca' ? before.adult > 0 || (before.child ?? 0) > 0 : before.yearly > 0)) return true;
+  return tax.health.medicareExtra > 0 || (tax.strategy.conversions.kind === 'fixed' && tax.strategy.conversions.yearly > 0);
 }
