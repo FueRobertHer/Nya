@@ -86,6 +86,33 @@ export type OneOffExpense = {
   year: number;
 };
 
+/** An edge of a conditional item: a plan year, or so many years after one of
+ *  the plan's triggers fires in that run. */
+export type ConditionalEdge = { year: number } | { trigger: number; offset: number };
+
+/** What an item adds to a run from where it starts in that run. */
+export type ConditionalItem = {
+  start: ConditionalEdge;
+  /** Null: it doesn't stop. */
+  end: ConditionalEdge | null;
+  /** Spent once, so many years after it starts (in today's dollars). */
+  once: { amount: number; after: number }[];
+  /** Comes in once, the year it starts. */
+  moneyIn: number;
+  /** A year's income, from its start to its end. */
+  income: { amount: number; inflationAdjusted: boolean } | null;
+  /** A year's cost from its start to its end, or below zero, a lower cost. */
+  yearly: number;
+};
+
+/** Items that wait on a run's own balance (the tax plan's D11): each run checks
+ *  its balance at the start of each year against each trigger not yet fired,
+ *  before that year's money in and costs, and fires once. */
+export type ConditionalFlows = { triggers: number[]; items: ConditionalItem[] };
+
+/** The most conditional items a plan runs: a comparison each per path-year. */
+export const MAX_CONDITIONAL = 25;
+
 export type SimPlan = {
   startBalance: number;
   /** Length of the plan in years. */
@@ -103,6 +130,9 @@ export type SimPlan = {
   /** Lower costs (life events in a scenario, lib/fire/events.ts); absent for
    *  the Plan's own plans, which then run exactly as they always have. */
   lowerSpending?: LowerSpending[];
+  /** Items that wait on a run's own balance; absent for every plan but one
+   *  starting from what you'd have at your stop age, and then they cost nothing. */
+  conditional?: ConditionalFlows;
   /** Real return on cash, a year: see CASH_REAL_RETURN. */
   cashRealReturn: number;
 };
@@ -215,6 +245,20 @@ export function checkPlan(plan: SimPlan): void {
   for (const o of plan.oneOffs) {
     if (!finite(o.amount) || o.amount < 0 || !Number.isInteger(o.year) || o.year < 0) fail('a one-off expense needs an amount and a plan year');
   }
+  if (plan.conditional) checkConditional(plan.conditional);
+}
+
+function checkConditional({ triggers, items }: ConditionalFlows): void {
+  const finite = (v: number) => typeof v === 'number' && Number.isFinite(v);
+  if (items.length > MAX_CONDITIONAL) fail(`a plan runs ${MAX_CONDITIONAL} conditional items at most`);
+  if (!triggers.every((t) => finite(t) && t >= 0)) fail('a trigger is a balance of zero or more');
+  const edge = (e: ConditionalEdge) => ('year' in e ? Number.isInteger(e.year) : Number.isInteger(e.trigger) && e.trigger >= 0 && e.trigger < triggers.length && Number.isInteger(e.offset) && e.offset >= 0);
+  for (const x of items) {
+    if (!edge(x.start) || (x.end !== null && !edge(x.end))) fail('a conditional item needs a plan year or a trigger for each edge');
+    if (!finite(x.yearly) || !finite(x.moneyIn) || x.moneyIn < 0) fail('a conditional item needs its amounts');
+    if (x.income && (!finite(x.income.amount) || x.income.amount < 0)) fail('a conditional item needs its amounts');
+    if (!x.once.every((o) => finite(o.amount) && o.amount >= 0 && Number.isInteger(o.after) && o.after >= 0)) fail('a conditional item needs its amounts');
+  }
 }
 
 /** How a plan's money grows over the twelve months starting at each month. */
@@ -320,6 +364,10 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
     lastNominalReturn: 0,
     lastInflation: 0,
   };
+  const conditional = plan.conditional ?? null;
+  // The year each trigger fired in this run; -1 until it does.
+  const firedIn = conditional ? new Int32Array(conditional.triggers.length) : null;
+  const yearOf = (e: ConditionalEdge) => ('year' in e ? e.year : (firedIn as Int32Array)[e.trigger] < 0 ? Infinity : (firedIn as Int32Array)[e.trigger] + e.offset);
 
   for (let p = 0; p < count; p++) {
     let bal = plan.startBalance;
@@ -334,6 +382,7 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
     let lowest = Infinity;
     let failed = -1;
     priceAt[0] = 1;
+    if (firedIn) firedIn.fill(-1);
 
     for (let y = 0; y < years; y++) {
       if (out.balances) out.balances[p * (years + 1) + y] = bal;
@@ -357,8 +406,25 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
         income += s.inflationAdjusted ? s.amount : (s.amount * priceAt[Math.max(0, s.fromYear)]) / priceAt[y];
       }
 
-      const cost = spend + oneOffs[y];
-      const need = (lower[y] > 0 ? Math.max(0, cost - lower[y]) : cost) - income;
+      let more = oneOffs[y];
+      let less = lower[y];
+      if (conditional && firedIn) {
+        for (let t = 0; t < firedIn.length; t++) if (firedIn[t] < 0 && bal >= conditional.triggers[t]) firedIn[t] = y;
+        for (const x of conditional.items) {
+          const from = yearOf(x.start);
+          if (y < from) continue;
+          if (y === from) income += x.moneyIn;
+          for (const o of x.once) if (y === from + o.after) more += o.amount;
+          if (x.end !== null && y >= yearOf(x.end)) continue;
+          if (x.yearly > 0) more += x.yearly;
+          else if (x.yearly < 0) less -= x.yearly;
+          // A fixed-value income keeps its value until it starts in this run.
+          if (x.income) income += x.income.inflationAdjusted ? x.income.amount : (x.income.amount * priceAt[Math.max(0, from)]) / priceAt[y];
+        }
+      }
+
+      const cost = spend + more;
+      const need = (less > 0 ? Math.max(0, cost - less) : cost) - income;
       if (need > 0) {
         const gross = need / (1 - tax);
         if (gross > bal * (1 + EPS) + EPS) {

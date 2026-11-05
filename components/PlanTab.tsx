@@ -2520,6 +2520,7 @@ const MISSING_TEXT: Record<Missing, string> = {
   spending: 'The simulation withdraws your annual spending, so it needs it. Type it on Your path, or connect accounts with transactions.',
   assets: 'The simulation starts with your invested assets, and there are none to count yet. Type them on Your path, or start from your FI number (Assumptions, below).',
   balance: 'Type the balance to start with (Assumptions, below).',
+  'stop-balance': 'The simulation starts with what you’d have at your stop age, which needs your age, your stop age, and your invested assets or savings. If those are in, your path doesn’t get that far (Your path says why).',
 };
 
 /** Why the simulation can't run: what it needs, and when that is there but
@@ -2536,6 +2537,7 @@ const MISSING_FIGURE: Record<Missing, string> = {
   spending: SPENDING_NEED,
   assets: 'Needs your invested assets',
   balance: 'Needs a starting balance',
+  'stop-balance': 'Needs what you’d have at your stop age',
 };
 
 /** Drawdown's hero (the tax plan's P, Fue's call 2026-11-01): Will it last?,
@@ -2636,7 +2638,7 @@ export function SimulationCard({
     if (!at || unplaced.has(x.id)) return false;
     return startAge === null ? x.kind !== 'pay' : reachesStart(x, at, startAge) && at.start < startAge + sim.years;
   });
-  const startLabel = plan.start === 'fi-number' ? (plan.fiNumber != null ? 'your own FI number' : 'your FI number') : plan.start === 'assets' ? 'your invested assets' : 'the balance you typed';
+  const startLabel = plan.start === 'fi-number' ? (plan.fiNumber != null ? 'your own FI number' : 'your FI number') : plan.start === 'assets' ? 'your invested assets' : plan.start === 'at-stop' ? 'what you’d have' : 'the balance you typed';
   const when = plan.start === 'assets' ? `today${startAge !== null ? `, at ${startAge},` : ''}` : startAge !== null ? `at ${startAge}` : 'at your stop age';
   const spendingNow = view.spending.value;
   const vpw = plan.rule === 'vpw';

@@ -20,12 +20,17 @@
 //     (components/plan-text.ts fiHeadline). The first k that passes is the
 //     answer; none, and what waits on it isn't placed.
 //
+// With D11's start (Will it last? from what you'd have at your stop age), a
+// balance milestone not fired by then fires per run instead, and an edge on one
+// follows it there (`perRun`, compiled by lib/fire/compile.ts conditionalFlows);
+// every other start, and an edge on FI, takes the steady path's year in every run.
+//
 // The path itself is the caller's (lib/fire/plan-figures.ts), so this holds
 // only the order things are placed in. Imports nothing that touches storage.
 
 import type { ItemAges } from './compile';
 import { ONCE_KINDS, type PlanItem, type When } from './items';
-import { PLAN_TO_AGE, stopOf } from './plan';
+import { PLAN_TO_AGE, stopOf, type StartChoice } from './plan';
 
 /** Why an item isn't placed, or why it runs no years. */
 export type Unplaced = 'not-reached' | 'waits-on-stop' | 'waits-on-fi' | 'no-age' | 'no-years';
@@ -40,6 +45,19 @@ export type Resolution = {
   fi: number | null;
   /** Which search ran. */
   searched: 'none' | 'fi' | 'stop';
+  /** What waits on a run's own balance: only with D11's start, and only when
+   *  something does. */
+  perRun?: PerRun;
+};
+
+/** An edge that waits on a run's own balance: so many years after a trigger. */
+export type RunEdge = { trigger: number; offset: number };
+
+/** The balances each run checks, and per item (null: as the steady path has it)
+ *  each edge that waits on one, or the age of one that doesn't. */
+export type PerRun = {
+  triggers: number[];
+  edges: ({ start: RunEdge | number; end: RunEdge | number | null } | null)[];
 };
 
 /** What the resolution reads of the steady path, built by the caller from the
@@ -56,19 +74,25 @@ export type SteadyWorld = {
   fiAge(ages: ItemAges[], stop: number | null, opts: { through: number | null; skip: ReadonlySet<number> }): number | null;
 };
 
-type Plan = { items: readonly PlanItem[]; age: number | null; partnerAge: number | null; targetAge: number | null; stopAtFi: boolean };
+type Plan = { items: readonly PlanItem[]; age: number | null; partnerAge: number | null; targetAge: number | null; stopAtFi: boolean; start: StartChoice };
+
+/** An edge on a balance milestone, by so many years. */
+type Follows = { node: string; offset: number };
+/** Each edge placed, what it follows, and an end's age where it has one. */
+type Placed = { ages: ItemAges[]; why: (Unplaced | null)[]; onFi: Set<number>; follows: Map<string, Follows>; ends: (number | null)[] };
 
 type Edge = { value: number } | { why: Exclude<Unplaced, 'no-years'> | 'never' };
 
 /** The ages of every edge, given the stop, FI and the balance milestones
  *  fired so far (by node, `${index}:${side}`). */
-function place(plan: Plan, stop: number | null, fi: number | null, fired: ReadonlyMap<string, number>): { ages: ItemAges[]; why: (Unplaced | null)[]; onFi: Set<number> } {
+function place(plan: Plan, stop: number | null, fi: number | null, fired: ReadonlyMap<string, number>): Placed {
   const items = plan.items;
   const index = new Map(items.map((x, i) => [x.id, i]));
   const shift = plan.age !== null && plan.partnerAge !== null ? plan.age - plan.partnerAge : null;
   const today = plan.age;
   const memo = new Map<string, Edge>();
   const fromFi = new Set<string>();
+  const follows = new Map<string, Follows>();
   const busy = new Set<string>();
   const at = (w: When, node: string, owner: PlanItem['owner']): Edge => {
     const a = w.anchor;
@@ -86,6 +110,7 @@ function place(plan: Plan, stop: number | null, fi: number | null, fired: Readon
         fromFi.add(node);
         return { value: today !== null ? Math.max(today, fi + w.offset) : fi + w.offset };
       case 'balance': {
+        follows.set(node, { node, offset: w.offset });
         const t = fired.get(node);
         return t === undefined ? { why: 'not-reached' } : { value: t + w.offset };
       }
@@ -95,6 +120,8 @@ function place(plan: Plan, stop: number | null, fi: number | null, fired: Readon
         const other = `${j}:${a.edge}`;
         const e = edge(other);
         if (fromFi.has(other)) fromFi.add(node);
+        const on = follows.get(other);
+        if (on) follows.set(node, { node: on.node, offset: on.offset + w.offset });
         return 'value' in e ? { value: e.value + w.offset } : e;
       }
     }
@@ -112,6 +139,8 @@ function place(plan: Plan, stop: number | null, fi: number | null, fired: Readon
     else if ('years' in x.until) {
       const s = edge(`${i}:start`);
       if (fromFi.has(`${i}:start`)) fromFi.add(node);
+      const on = follows.get(`${i}:start`);
+      if (on) follows.set(node, { node: on.node, offset: on.offset + x.until.years });
       e = 'value' in s ? { value: s.value + x.until.years } : s;
     } else e = at(x.until, node, x.owner);
     busy.delete(node);
@@ -121,8 +150,11 @@ function place(plan: Plan, stop: number | null, fi: number | null, fired: Readon
   const ages: ItemAges[] = [];
   const why: (Unplaced | null)[] = [];
   const onFi = new Set<number>();
+  const ends: (number | null)[] = [];
   for (let i = 0; i < items.length; i++) {
     const s = edge(`${i}:start`);
+    const atEnd = edge(`${i}:end`);
+    ends.push('value' in atEnd ? atEnd.value : null);
     if (!('value' in s)) {
       ages.push(null);
       why.push(s.why === 'never' ? 'not-reached' : s.why);
@@ -141,7 +173,7 @@ function place(plan: Plan, stop: number | null, fi: number | null, fired: Readon
       why.push(null);
     }
   }
-  return { ages, why, onFi };
+  return { ages, why, onFi, follows, ends };
 }
 
 const anchoredOn = (plan: Plan, at: 'fi' | 'balance') =>
@@ -163,7 +195,7 @@ function settle(plan: Plan, world: SteadyWorld, stop: number | null, fi: number 
   const pending = milestones(plan);
   const fired = new Map<string, number>();
   let placed = place(plan, stop, fi, fired);
-  if (pending.length === 0 || plan.age === null) return placed;
+  if (pending.length === 0 || plan.age === null) return { ...placed, fired };
   const today = plan.age;
   for (let pass = 0; pass < pending.length; pass++) {
     const balances = world.path(placed.ages, stop);
@@ -183,7 +215,41 @@ function settle(plan: Plan, world: SteadyWorld, stop: number | null, fi: number 
     }
     placed = place(plan, stop, fi, fired);
   }
-  return placed;
+  return { ...placed, fired };
+}
+
+/** With D11's start, the edges that wait on a run's own balance: on a balance
+ *  milestone the steady path hasn't fired by the time Will it last? starts. A
+ *  run's first balance is the steady path's there, so none of these fires before
+ *  its second year. Nothing for any other start. */
+function perRunOf(plan: Plan, r: ReturnType<typeof settle>, stop: number | null): Pick<Resolution, 'perRun'> {
+  if (plan.start !== 'at-stop' || stop === null || plan.age === null) return {};
+  const by = Math.max(stop, plan.age);
+  const amounts = new Map(milestones(plan).map((m) => [m.node, m.amount]));
+  const triggers: number[] = [];
+  const index = new Map<string, number>();
+  const waiting = (node: string): RunEdge | null => {
+    const on = r.follows.get(node);
+    if (!on) return null;
+    const t = r.fired.get(on.node);
+    if (t !== undefined && t <= by) return null;
+    let trigger = index.get(on.node);
+    if (trigger === undefined) {
+      trigger = triggers.length;
+      index.set(on.node, trigger);
+      triggers.push(amounts.get(on.node) as number);
+    }
+    return { trigger, offset: on.offset };
+  };
+  const edges = plan.items.map((_, i) => {
+    const start = waiting(`${i}:start`);
+    const end = waiting(`${i}:end`);
+    if (!start && !end) return null;
+    const placed = r.ages[i];
+    if (!start && placed === null) return null;
+    return { start: start ?? (placed as { start: number }).start, end: end ?? r.ends[i] };
+  });
+  return triggers.length > 0 ? { perRun: { triggers, edges } } : {};
 }
 
 /** Each item's ages on the steady path, the stop, and FI where it was
@@ -193,7 +259,7 @@ export function resolveItems(plan: Plan, world: SteadyWorld): Resolution {
   const onFi = anchoredOn(plan, 'fi');
   if (!plan.stopAtFi && !onFi) {
     const r = settle(plan, world, fixedStop, null);
-    return { ages: r.ages, why: r.why, stop: fixedStop, fi: null, searched: 'none' };
+    return { ages: r.ages, why: r.why, stop: fixedStop, fi: null, searched: 'none', ...perRunOf(plan, r, fixedStop) };
   }
   const today = plan.age;
   const searched = plan.stopAtFi ? 'stop' : 'fi';
@@ -205,9 +271,9 @@ export function resolveItems(plan: Plan, world: SteadyWorld): Resolution {
       // dates it, so a cost after FI can't leave it with no answer.
       const skip = new Set([...r.onFi].filter((i) => (r.ages[i] as { start: number }).start > k));
       const fiAge = world.fiAge(r.ages, stop, { through: plan.stopAtFi ? k : null, skip });
-      if (fiAge !== null && Math.round(fiAge) <= k) return { ages: r.ages, why: r.why, stop, fi: k, searched };
+      if (fiAge !== null && Math.round(fiAge) <= k) return { ages: r.ages, why: r.why, stop, fi: k, searched, ...perRunOf(plan, r, stop) };
     }
   }
   const r = settle(plan, world, fixedStop, null);
-  return { ages: r.ages, why: r.why, stop: fixedStop, fi: null, searched };
+  return { ages: r.ages, why: r.why, stop: fixedStop, fi: null, searched, ...perRunOf(plan, r, fixedStop) };
 }

@@ -430,7 +430,7 @@ describe('the Plan, as this release writes it where C2 reads', () => {
       if (!sent) continue;
       const saved = { version: 1, plan: sent, savings: 10_000, currency: 'USD', inflation: 0.03, day: '2026-11-01', savedAt: '2026-11-01T12:00:00.000Z', rev: `r${i}` };
       expect(oSaved.isSavedPlan(saved)).toBe(true);
-      expect(typedAmounts(sent)).toEqual(oCurrency.typedAmounts(sent));
+      expect(typedAmounts(sent)).toEqual(oCurrency.typedAmounts(sent as import('./plan-gen').GenPlan));
     }
   });
 

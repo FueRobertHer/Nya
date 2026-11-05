@@ -123,10 +123,14 @@ const LABELS = ['Roof', 'Social Security', 'Pension', 'Car', 'Wedding', 'Rental 
 
 /** A version 1 plan parsePlan takes, with up to 5 incomes and 10 one-offs.
  *  `edge` adds what version 1 takes and life events don't: $0 amounts. */
-export function genPlan(g: Rand, edge = false): FirePlan {
+/** A plan the frozen fixtures can read: D11's start is held by its own tests
+ *  (test/plan-at-stop.test.ts), since no release before it reads it. */
+export type GenPlan = FirePlan & { start: Exclude<StartChoice, 'at-stop'> };
+
+export function genPlan(g: Rand, edge = false): GenPlan {
   const age = g.chance(0.9) ? g.int(22, 70) : null;
   const targetAge = g.chance(0.9) ? (age === null ? g.int(30, 75) : Math.min(100, age + g.int(0, 30))) : null;
-  const start = g.pick<StartChoice>(['fi-number', 'fi-number', 'assets', 'custom']);
+  const start = g.pick<GenPlan['start']>(['fi-number', 'fi-number', 'assets', 'custom']);
   const amount = (max: number) => (edge && g.chance(0.15) ? 0 : g.int(1, max / 1000) * 1000);
   const income: PlanIncome[] = Array.from({ length: g.int(0, 5) }, (_, i) => ({
     id: `inc${i}`,

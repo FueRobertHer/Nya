@@ -486,14 +486,17 @@ export function onSteadyPath(x: PlanItem, plan: Facts, seen = new Set<string>())
 
 /** The every-run note (timeline.md "Otherwise the steady-path year in every
  *  run"), its reason by where Will it last? starts. */
-export function everyRunText(start: number | null, plan: Pick<FirePlanV2, 'start'>): string | null {
+export function everyRunText(start: number | null, plan: Pick<FirePlanV2, 'start'>, perRun = false): string | null {
+  if (perRun) return 'Will it last? goes by each run’s own balance for this.';
   if (start === null) return null;
   const why =
     plan.start === 'fi-number'
       ? 'Will it last? starts from your FI number, not your own path'
       : plan.start === 'custom'
         ? 'Will it last? starts from the balance you typed, not your own path'
-        : 'Will it last? starts from today’s assets, so each run’s path differs from the steady one';
+        : plan.start === 'at-stop'
+          ? 'your FI date and what comes before your stop are the steady path’s, not each run’s'
+          : 'Will it last? starts from today’s assets, so each run’s path differs from the steady one';
   return `Starts at ${start} in every run, as on your steady path: ${why}.`;
 }
 
@@ -728,8 +731,9 @@ export function previewLines(p: PreviewInput): PreviewLines {
   if (a.at === 'balance') lines.push('Checked on the balance at the start of each year, and started once, so the spending it adds can’t switch it off again.');
 
   if (p.runsOutAt !== null) lines.push(`On ${p.where === 'copy' ? 'this copy’s' : 'this'} steady path your invested assets run out at ${p.runsOutAt}.`);
-  if (ages && onSteadyPath(x, f.plan)) {
-    const every = everyRunText(ages.start, f.plan);
+  const perRun = i >= 0 && !!f.resolution.perRun?.edges[i];
+  if ((ages || perRun) && onSteadyPath(x, f.plan)) {
+    const every = everyRunText(ages?.start ?? null, f.plan, perRun);
     if (every) lines.push(every);
   }
   if (why === 'no-years') lines.push('Ends before it starts, so it runs no years.');

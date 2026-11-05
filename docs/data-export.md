@@ -653,7 +653,7 @@ Only what you chose or typed: nothing Nya measures, and no result. A plan saved 
 | `includeCash` | Whether checking and savings count as invested. |
 | `withdrawalRate`, `realReturn`, `taxRate` | Fractions: `0.04` is 4%. |
 | `partTimeIncome` | Barista FI's part-time income a year, after tax; 0 leaves it out. |
-| `method`, `rule`, `start`, `startBalance`, `horizon` | The simulation: `historical` or `monte-carlo`, the withdrawal rule, where it starts (`fi-number`, `assets`, or `custom` with `startBalance`), and its length in years (`null` runs to age 95). |
+| `method`, `rule`, `start`, `startBalance`, `horizon` | The simulation: `historical` or `monte-carlo`, the withdrawal rule, where it starts (`fi-number`, `assets`, `custom` with `startBalance`, or `at-stop`, what the plan's own path has at the stop age; nothing writes this one yet), and its length in years (`null` runs to age 95). |
 | `stocksPct`, `bondsPct`, `rebalance`, `fee`, `floor`, `ceiling` | The mix in whole percents (cash is the rest), how often it is rebalanced, the fund fee, and the floor and ceiling rule's bounds. |
 | `income[]` | Version 1: `id`, `label`, `amount` a year after tax, `fromAge`, `inflationAdjusted`. |
 | `expenses[]` | Version 1: `id`, `label`, `amount`, `atAge`. |

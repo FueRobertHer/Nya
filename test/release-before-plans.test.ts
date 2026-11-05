@@ -60,7 +60,7 @@ beforeEach(async () => {
 const ctx = TEST_CTX;
 const income = itemFromIncome({ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true });
 const child = itemFromEvent({ id: 'kid', kind: 'child', label: 'A child', fromAge: 42, yearly: 10_000, years: 18 });
-const TYPED: FirePlanV2 = { ...DEFAULT_PLAN_V2, age: 40, targetAge: 55, spending: 40_000, items: [income] };
+const TYPED: FirePlanV2 & { start: 'fi-number' } = { ...DEFAULT_PLAN_V2, start: 'fi-number', age: 40, targetAge: 55, spending: 40_000, items: [income] };
 const DEFAULTS = factsOf(DEFAULT_PLAN_V2);
 
 const req = (path: string, method: string, body: unknown) => new Request(`http://localhost/api/${path}`, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });

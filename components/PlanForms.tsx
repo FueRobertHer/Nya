@@ -662,7 +662,7 @@ function typedRate(text: string, [min, max]: readonly [number, number], saved: n
  *  number: your spending, grossed up for tax, as a share of the balance it
  *  starts with (lib/fire/plan.ts enginePlan); null when either isn't known. */
 function startRate(start: FirePlan['start'], props: { assets: number | null; spending: number | null }, typed: number, tax: number): number | null {
-  if (start === 'fi-number') return null;
+  if (start === 'fi-number' || start === 'at-stop') return null;
   const balance = start === 'assets' ? props.assets : Number.isFinite(typed) && typed > 0 ? typed : null;
   return props.spending !== null && balance ? props.spending / (1 - tax) / balance : null;
 }
@@ -687,7 +687,7 @@ function startConsequence(
     return `Stops working at your stop age${stop !== null ? ` (${stop})` : ''} with your FI number, withdrawing ${pct(rate)} of it: ${spend}.`;
   }
   const actual = startRate(start, props, typed, tax);
-  const when = start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : `at your stop age with the balance you type`;
+  const when = start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : start === 'at-stop' ? 'at your stop age with what you’d have then' : `at your stop age with the balance you type`;
   return `Stops working ${when}, spending ${spend}${actual !== null ? `: a ${pct(actual, 1)} withdrawal rate${actual > rate * 1.001 ? `, above the ${pct(rate)} your FI number assumes` : ''}` : ''}. Answers whether what you spend now would have lasted.`;
 }
 
@@ -931,6 +931,7 @@ export function AssumptionsForm(
               </option>
             ))}
             <option value="custom">A balance I type</option>
+            {plan.start === 'at-stop' && <option value="at-stop">What I’d have at my stop age</option>}
           </select>
         </label>
         <p className="helper">
