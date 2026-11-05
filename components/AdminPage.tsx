@@ -2,8 +2,9 @@
 
 // The admin page (/admin, app/admin-view/page.tsx), for the deployment's
 // admin only: what needs doing, the feature switches, the nightly jobs and
-// storage, unused connections, the demo accounts, the deployment's settings
-// and operations, read only, and the record of changes to the switches. One
+// storage, unused connections, the demo accounts, the tax law tables, the
+// deployment's settings and operations, read only, and the record of changes
+// to the switches. One
 // page, so Settings keeps a single Admin row (components/AdminEntry.tsx) and
 // Home only the admin's Needs attention rows, which link here.
 //
@@ -16,11 +17,13 @@ import { useState } from 'react';
 import type { JobView } from '@/lib/backup';
 import type { AdminPageData } from '@/lib/admin-page';
 import type { ChangeLine } from '@/lib/flag-view';
+import type { LawCard } from '@/lib/law-card';
 import AdminUnusedItems from './AdminUnusedItems';
 import FeatureSwitchesCard from './FeatureSwitchesCard';
 import { chevron, RIGHT } from './MonthStepper';
 import { AdminAttentionList, adminAttentionRows } from './NeedsAttention';
 import { PageHeader } from './PageHeader';
+import { Sheet } from './Sheet';
 import { Notice } from './TotalCaveats';
 import { useBrowserDay, useBrowserWhen } from './browser-day';
 
@@ -112,10 +115,77 @@ function Changes({ changes, environment, when }: { changes: AdminPageData['chang
   );
 }
 
+/** The law years in use and on their way, each opening a sheet of its parts:
+ *  each one's source and date, or when it is expected. */
+export function TaxLaw({ law }: { law: LawCard }) {
+  const [opened, setOpened] = useState<number | null>(null);
+  const [open, setOpen] = useState(false);
+  const shown = law.years.find((y) => y.year === opened);
+  return (
+    <section id="tax-law" className="card" aria-labelledby="admin-law-title">
+      <Header id="admin-law-title">Tax law</Header>
+      <ul className="list-rows">
+        {law.years.map((y) => {
+          const badge = y.badge && <span className={y.badge.caution ? 'badge warn' : 'badge'}>{y.badge.text}</span>;
+          const text = (
+            <span className="list-row-text">
+              <span className="list-row-title">{y.title}</span>
+              <span className="list-row-sub">{y.sub}</span>
+            </span>
+          );
+          return (
+            <li key={y.year}>
+              {y.parts.length > 0 ? (
+                <button
+                  type="button"
+                  className="list-row"
+                  aria-haspopup="dialog"
+                  onClick={() => {
+                    setOpened(y.year);
+                    setOpen(true);
+                  }}
+                >
+                  {text}
+                  {badge}
+                  {chevron(RIGHT)}
+                </button>
+              ) : (
+                <div className="list-row">
+                  {text}
+                  {badge}
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <p className="helper">The Upkeep issue on GitHub lists what is due each week.</p>
+      {shown && (
+        <Sheet open={open} title={shown.title} onClose={() => setOpen(false)}>
+          <ul className="list-rows">
+            {shown.parts.map((p) => (
+              <li key={p.part}>
+                <div className="list-row">
+                  <span className="list-row-text">
+                    <span className="list-row-title">{p.name}</span>
+                    <span className="list-row-sub">
+                      {p.source} · {p.when}
+                    </span>
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Sheet>
+      )}
+    </section>
+  );
+}
+
 export default function AdminPage({ data }: { data: AdminPageData }) {
   const day = useBrowserDay();
   const when = useBrowserWhen();
-  const attention = adminAttentionRows(data.backup, data.files, data.ops, day);
+  const attention = adminAttentionRows(data.backup, data.files, data.ops, data.law.attention, day);
   // Each switch's latest five changes, for its sheet.
   const latest: Record<string, ChangeLine[]> = {};
   for (const c of data.changes?.lines ?? []) {
@@ -207,6 +277,8 @@ export default function AdminPage({ data }: { data: AdminPageData }) {
             </p>
           </section>
         )}
+
+        <TaxLaw law={data.law} />
 
         <section className="card" aria-labelledby="admin-environment-title">
           <Header id="admin-environment-title">Environment</Header>

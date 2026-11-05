@@ -29,11 +29,11 @@ export function isComplete(law: PartialLaw): law is TaxLaw {
 /** The law a plan in `year` uses: that year's table if complete, else the
  *  newest complete one before it, with `behind` set. Before the first table,
  *  the first. */
-export function lawFor(year: number): { law: TaxLaw; behind: boolean } {
+export function lawFor(year: number, years: readonly PartialLaw[] = LAW_YEARS): { law: TaxLaw; behind: boolean } {
   let found: TaxLaw | null = null;
-  for (const law of LAW_YEARS) if (law.year <= year && isComplete(law)) found = law;
+  for (const law of years) if (law.year <= year && isComplete(law)) found = law;
   if (found === null) {
-    const first = LAW_YEARS[0];
+    const first = years[0];
     if (!isComplete(first)) throw new Error('The first law year must be complete');
     return { law: first, behind: false };
   }

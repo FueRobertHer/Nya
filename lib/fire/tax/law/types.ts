@@ -129,10 +129,12 @@ export type Uniform = { firstAge: number; divisors: readonly number[] };
 export type HealthGrowth = { overPrices: number; incomeOverPrices: number };
 
 /** Where a part comes from: its source, when it was published (null: not yet,
- *  the year's table lacks it) and when it is due. Data, so the app can show
- *  each figure's source and the yearly update (docs/operations.md) can see
- *  what is still to come. */
-export type PartSource = { source: string; published: string | null; due: string };
+ *  the year's table lacks it), when it is due in words, and while it isn't out,
+ *  the day its window opens, for a program to compare (the admin page's Tax law
+ *  card and the upkeep issue, lib/law-card.ts). Data, so the app can show each
+ *  figure's source and the yearly update (docs/operations.md) can see what is
+ *  still to come. */
+export type PartSource = { source: string; published: string | null; due: string; opens?: string };
 
 /** One law year, every part present. */
 export type TaxLaw = {

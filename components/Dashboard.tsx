@@ -64,6 +64,7 @@ import type { ImportTarget } from './ImportSheet';
 import type { HistoryImportTarget } from './HistoryImportSheet';
 import type { ClientFlags } from '@/lib/flag-read';
 import type { OpsOpen } from '@/lib/flag-view';
+import type { LawAttention } from '@/lib/law-card';
 import ImportedHistoryNote from './ImportedHistoryNote';
 import type { ImportedHistoryView } from '@/lib/history-import/view';
 import { ConnectorCards, ConnectorSheet, useConnectors, type ConnectorAsk } from './Connectors';
@@ -294,6 +295,7 @@ export default function Dashboard({
   initialTab = 'home',
   initialSettings = null,
   adminOps = null,
+  adminLaw = null,
   newUntil = null,
   childNewUntil = null,
 }: {
@@ -315,6 +317,9 @@ export default function Dashboard({
    *  routes are open, and by what (lib/flag-view.ts OpsOpen), for Home's
    *  Admin card. */
   adminOps?: OpsOpen | null;
+  /** Set by the server (app/page.tsx), for the admin alone, so the law tables
+   *  stay out of this bundle: what Home's Admin card says of them. */
+  adminLaw?: LawAttention | null;
   /** Set by the server (app/page.tsx): the last day D15's change is new
    *  (lib/flag-read.ts newUntil), until which Your path and Progress say
    *  what it moved; null says nothing. */
@@ -2493,7 +2498,7 @@ export default function Dashboard({
                       fixed (rollout phase 4b); the admin's instructions for
                       the nightly jobs under it. */}
                   {attention && <NeedsAttention items={attention.items} notes={attention.notes} onGo={goTo} />}
-                  {admin && <AdminAttention backup={backupProblem} files={filesProblem} ops={adminOps} />}
+                  {admin && <AdminAttention backup={backupProblem} files={filesProblem} ops={adminOps} law={adminLaw} />}
 
                   <Insights
                     txns={txns}

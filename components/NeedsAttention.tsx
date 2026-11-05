@@ -11,6 +11,7 @@
 import type { ReactNode } from 'react';
 import type { AttachmentSweepProblem, BackupProblem } from '@/lib/backup';
 import type { OpsOpen } from '@/lib/flag-view';
+import type { LawAttention } from '@/lib/law-card';
 import type { AttentionItem, AttentionSeverity, Go } from './attention';
 import { ALERT, CAUTION } from './ConnectionStatus';
 import { Masked } from './HideAmounts';
@@ -128,8 +129,8 @@ export default function NeedsAttention({
  *  where it is done. */
 export type AdminAttentionRow = { key: string; title: string; sub: string; href: string };
 
-/** What the admin should do about the nightly jobs and the ops routes, as the
- *  redesign draws it ("Nightly backup failed" over "Last saved Oct 20 ·
+/** What the admin should do about the nightly jobs, the ops routes and the tax
+ *  law tables (lib/law-card.ts), as the redesign draws it ("Nightly backup failed" over "Last saved Oct 20 ·
  *  Check the backup cron in Vercel."); the fact in full is on the Net worth
  *  card. A job's row goes to the Nightly jobs page (/admin/jobs,
  *  components/AdminJobs.tsx), where its last runs are and it can be run
@@ -143,6 +144,7 @@ export function adminAttentionRows(
   backup: BackupProblem | null,
   files: AttachmentSweepProblem | null,
   ops: OpsOpen | null,
+  law: LawAttention | null,
   day: (iso: string) => string
 ): AdminAttentionRow[] {
   const rows: AdminAttentionRow[] = [];
@@ -176,6 +178,7 @@ export function adminAttentionRows(
       href: '/admin#feature-switches',
     });
   }
+  if (law) rows.push({ key: 'law', title: law.title, sub: law.sub, href: '/admin#tax-law' });
   return rows;
 }
 
@@ -203,9 +206,19 @@ export function AdminAttentionList({ rows }: { rows: AdminAttentionRow[] }) {
 }
 
 /** Home's card for the admin (adminAttentionRows), so Home holds no controls
- *  for what it says. `ops` is sent for the admin alone (app/page.tsx). */
-export function AdminAttention({ backup, files, ops = null }: { backup: BackupProblem | null; files: AttachmentSweepProblem | null; ops?: OpsOpen | null }) {
-  const rows = adminAttentionRows(backup, files, ops, fmtInstantDay);
+ *  for what it says. `ops` and `law` are sent for the admin alone (app/page.tsx). */
+export function AdminAttention({
+  backup,
+  files,
+  ops = null,
+  law = null,
+}: {
+  backup: BackupProblem | null;
+  files: AttachmentSweepProblem | null;
+  ops?: OpsOpen | null;
+  law?: LawAttention | null;
+}) {
+  const rows = adminAttentionRows(backup, files, ops, law, fmtInstantDay);
   if (rows.length === 0) return null;
   return (
     <section className="card needs-attention" aria-labelledby="admin-attention-title">

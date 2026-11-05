@@ -21,6 +21,7 @@ import { maxBlobChars } from './blob';
 import { unusedDays } from './item-usage';
 import { quotaBytes } from './attachments-mode';
 import { webhooksEnabled } from './webhook-url';
+import { lawCard, type LawCard } from './law-card';
 
 /** One setting of the deployment, read only: what it is, the variable that
  *  sets it, its value in words, and what it does. */
@@ -51,6 +52,9 @@ export type AdminPageData = {
    *  decides. */
   ops: OpsOpen | null;
   facts: AdminFact[];
+  /** The tax law tables by date (lib/law-card.ts), read from code, so never
+   *  unreadable. */
+  law: LawCard;
 };
 
 const ENVIRONMENT_WORDS = { production: 'Production', preview: 'Preview', development: 'Development' } as const;
@@ -147,5 +151,6 @@ export async function readAdminPage(admin: Ctx, now: Date = new Date()): Promise
     files,
     ops: opsOpen(opsStored),
     facts: adminFacts(),
+    law: lawCard(now.toISOString().slice(0, 10)),
   };
 }
