@@ -135,7 +135,8 @@ export function contributionsFrom(copy: PlanInputsCopy, plans: ReturnType<typeof
 }
 
 /** The tax facts in the plan's answer: the flat model and nothing given before
- *  any were written, or while the answer hasn't come. */
+ *  any were written, or before an answer has come (useSharedPlanInputs says
+ *  which: `factsKnown`). */
 export function taxFactsFrom(body: { tax_facts?: unknown } | null | undefined): TaxFacts {
   const facts = body?.tax_facts;
   return isTaxFacts(facts) ? facts : DEFAULT_TAX_FACTS;
@@ -146,7 +147,7 @@ export function taxFactsFrom(body: { tax_facts?: unknown } | null | undefined): 
  *  when its plans change and when the copy is invalidated, and at no other
  *  time: a copy that stays stale costs a request a screen, never a loop. A copy
  *  for the same plans is shown while a newer one loads. */
-export function useSharedPlanInputs(store: PlanInputsStore, institutions: AssetInstitution[]): { copy: PlanInputsCopy; contributions: PlanContributions[] | null; taxFacts: TaxFacts } {
+export function useSharedPlanInputs(store: PlanInputsStore, institutions: AssetInstitution[]): { copy: PlanInputsCopy; contributions: PlanContributions[] | null; taxFacts: TaxFacts; factsKnown: boolean } {
   const copy = useSyncExternalStore(store.subscribe, store.get, store.get);
   const plans = useMemo(() => workplacePlansOf(institutions), [institutions]);
   const key = plans.map(planId).join(',');
@@ -156,9 +157,11 @@ export function useSharedPlanInputs(store: PlanInputsStore, institutions: AssetI
     void store.load(plansRef.current.map(planId));
   }, [store, key, copy.asked]);
   const contributions = useMemo(() => contributionsFrom(copy, plans), [copy, plans]);
-  const body = copy.plan?.body;
+  // The last plan answered, so a failed reload moves nothing. `tax_facts: null`
+  // there is a known state, none written; before any answer there is no knowing.
+  const body = copy.lastPlan;
   const taxFacts = useMemo(() => taxFactsFrom(body), [body]);
-  return { copy, contributions, taxFacts };
+  return { copy, contributions, taxFacts, factsKnown: body !== null };
 }
 
 export type PlanInputs = FiInputs & {

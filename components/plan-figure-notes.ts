@@ -558,7 +558,7 @@ export function stressNotice(
       `Your annual spending may be low: it is missing ${spendingMissing}, and the simulation compares its first year's spending with it (Your path says which).`
     );
   }
-  if (assetsShort && (a.plan.start === 'assets' || startsWith?.more)) {
+  if (assetsShort && (a.plan.start === 'assets' || a.plan.start === 'at-stop' || startsWith?.more)) {
     add('caution', NOTE_KINDS.assetsLow, "Your invested assets may be low: some couldn't be counted (Your path says which).");
   }
   return notes;

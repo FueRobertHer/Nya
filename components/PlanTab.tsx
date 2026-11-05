@@ -933,6 +933,13 @@ export default function PlanTab({
   const closeFor = (n: number) => () => {
     if (openedNow.current === n) setSheet(null);
   };
+  // A level's save holds the drawer: what it answers belongs to that level, so
+  // the arrow, Escape and Close wait for it, as the level's own Cancel does.
+  const [levelSaves, setLevelSaves] = useState(0);
+  const heldBy = <T,>(saving: Promise<T>): Promise<T> => {
+    setLevelSaves((n) => n + 1);
+    return saving.finally(() => setLevelSaves((n) => n - 1));
+  };
   useEffect(() => {
     setSheet(null);
   }, [shownFor]);
@@ -1165,10 +1172,13 @@ export default function PlanTab({
       tax: shared.taxFacts,
       chosen: overridesOf(allocation.settings.value ?? null).buckets,
       level: figureLevel,
-      onLevel: setFigureLevel,
-      saveFact: (op) => saveTaxFact(planInputs, op),
-      factsLocked: savers.taxFacts ? null : 'What is said about an account is the same in every plan: change it on your plan.',
-      saveBucket: (account_id, bucket) => allocation.save(withBucket(allocation.settings.value ?? EMPTY_SETTINGS, account_id, bucket)),
+      // A save ending after its sheet was dismissed moves only that opening's level.
+      onLevel: (level) => {
+        if (openedNow.current === opened) setFigureLevel(level);
+      },
+      saveFact: (op) => heldBy(saveTaxFact(planInputs, op)),
+      factsLocked: !savers.taxFacts ? 'What is said about an account is the same in every plan: change it on your plan.' : !shared.factsKnown ? 'What’s saved about your accounts hasn’t loaded, so this can’t be changed yet.' : null,
+      saveBucket: (account_id, bucket) => heldBy(allocation.save(withBucket(allocation.settings.value ?? EMPTY_SETTINGS, account_id, bucket))),
       bucketsEditable: savers.allocationSettings && allocation.withSettings && !allocation.settings.saving,
     };
   };
@@ -1806,8 +1816,16 @@ export default function PlanTab({
       <Sheet
         open={!!sheet}
         title={shownSheet ? (shownSheet.kind === 'figure' ? (figureLevel?.title ?? FIGURE_TITLES[shownSheet.figure]) : SHEET_TITLES[shownSheet.kind]) : ''}
-        onClose={close}
-        onBack={figureLevel ? () => setFigureLevel(figureLevel.kind === 'bucket' ? { kind: 'account', account_id: figureLevel.account_id, title: figureLevel.back } : null) : undefined}
+        onClose={() => {
+          if (levelSaves === 0) close();
+        }}
+        onBack={
+          figureLevel
+            ? () => {
+                if (levelSaves === 0) setFigureLevel(figureLevel.kind === 'bucket' ? { kind: 'account', account_id: figureLevel.account_id, title: figureLevel.back } : null);
+              }
+            : undefined
+        }
         level={figureLevel ? `${figureLevel.kind}:${figureLevel.title}` : undefined}
       >
         {/* Atop every sheet that edits the copy open, so one isn't taken for
@@ -2126,7 +2144,7 @@ export function FiCard({
       figure={<Masked>{head.headline}</Masked>}
       figureClass="plan-answer"
       line={
-        (head.against || howLine || asks || moved) && (
+        (head.against || howLine || asks || moved || childMoved) && (
           <div className="stack tight plan-answer-lines">
             {head.against && (
               <p className="helper">

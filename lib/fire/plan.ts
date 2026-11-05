@@ -646,7 +646,8 @@ export function enginePlan(plan: PlanCore, view: FiView): EnginePlan | { missing
   if (plan.start !== 'fi-number' || typed) {
     const spending = view.spending.value;
     if (spending === null) return { missing: 'spending' };
-    if (!(startBalance > 0)) return { missing: MISSING_START[plan.start] };
+    // Your own FI number of nothing is a balance to give, not spending.
+    if (!(startBalance > 0)) return { missing: plan.start === 'fi-number' ? 'balance' : MISSING_START[plan.start] };
     rate = spending / (1 - plan.taxRate) / startBalance;
     rateFrom = 'spending';
   }

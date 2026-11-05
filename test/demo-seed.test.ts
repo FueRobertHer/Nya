@@ -387,8 +387,7 @@ describe('seeding', () => {
     expect(facts).toMatchObject({ version: 2, main: MAIN_ID, ...factsOf(plan) });
     if (facts?.version !== 2) throw new Error('expected version 2 facts');
     expect(facts.tax.model).toBe('flat');
-    expect(facts.tax.owners).toHaveLength(1);
-    expect(facts.tax.owners[0].owner).toBe('partner');
+    expect(facts.tax.owners.map((o) => o.owner)).toEqual(['partner', 'partner']);
     expect(facts.tax.basis.map((b) => b.amount)).toEqual([88_000]);
     expect(facts.tax.rothContributions).toEqual([
       { owner: 'you', amount: 42_000 },

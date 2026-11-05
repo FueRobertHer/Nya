@@ -501,6 +501,8 @@ describe('Drawdown’s notice', () => {
 
   test('invested assets that may be low: when the simulation starts from them, or its card says it starts with more than they would grow to', () => {
     expect(notice({ assets: unreachable, plan: { start: 'assets' } })).toEqual([ASSETS_LOW]);
+    // What you'd have at your stop age walks from them too.
+    expect(notice({ assets: unreachable, plan: { start: 'at-stop' } })).toEqual([ASSETS_LOW]);
     // From the FI number at 42, two years from now: the walk from today's
     // assets comes to less, and the card says so, from them.
     expect(start({ assets: unreachable, plan: { targetAge: 42 } })).toMatchObject({ more: true, short: false });

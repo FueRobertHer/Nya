@@ -4,6 +4,7 @@ import type { PlanItem } from '@/lib/fire/items';
 import { steadyRun } from '@/lib/fire/path';
 import { enginePlan, fiView, parsePlan, type EnginePlan, type Measured } from '@/lib/fire/plan';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
+import { unmeasuredNeed } from '@/lib/fire/progress';
 import { DEFAULT_PLAN_V2, parsePlanV2, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { makeMarket, type Market } from '@/lib/fire/market';
 import { checkPlan, historicalCycles, MAX_CONDITIONAL, type SimPlan } from '@/lib/fire/simulate';
@@ -88,6 +89,13 @@ describe('where it starts', () => {
     expect(noSpending.engine).toEqual({ missing: 'spending' });
     const view = fiView({ ...plan(), start: 'at-stop' }, M);
     expect(enginePlan(plan(), { ...view, atTargetAge: 0 })).toEqual({ missing: 'stop-balance' });
+    // And the other starts' words stay theirs: your own FI number of nothing has
+    // always asked for a balance.
+    expect(enginePlan({ ...plan(), start: 'fi-number', fiNumber: 0 }, { ...view, fiNumber: 0 })).toEqual({ missing: 'balance' });
+    expect(enginePlan({ ...plan(), start: 'assets' }, { ...view, assets: { ...view.assets, value: 0 } })).toEqual({ missing: 'assets' });
+    // Unmeasured assets are why, and it says so.
+    expect(unmeasuredNeed('stop-balance', { ...view, assets: { ...view.assets, source: 'unmeasured' } })).toBe('your invested assets, which aren’t measured');
+    expect(unmeasuredNeed('stop-balance', view)).toBeNull();
   });
 
   test('readers keep it, and the flat ones refuse nothing about it', () => {

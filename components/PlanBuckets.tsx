@@ -55,7 +55,8 @@ export type BucketSheet = {
   onLevel: (level: FigureLevel | null) => void;
   /** Saves one fact: true once the server has it, or why it wasn't. */
   saveFact: (op: TaxFactOp) => Promise<true | string>;
-  /** Why the facts can't be changed here (a copy is open); null while they can. */
+  /** Why the facts can't be changed here (a copy is open, or they haven't
+   *  loaded); null while they can. */
   factsLocked: string | null;
   /** Saves an account's bucket (Portfolio's own setting), or goes back to its
    *  type's. */
@@ -184,7 +185,9 @@ function LevelButtons({ onCancel, onSave, saving, off }: { onCancel: () => void;
   );
 }
 
-/** A money figure typed in a field: null when empty, or the problem. */
+/** A money figure typed in a field: null when empty, or the problem. These fields
+ *  are text, not `type="number"`, which reports what it can't read ("105,000" in
+ *  some browsers) as empty, and empty here erases the figure held. */
 function readAmount(text: string, what: string): { amount: number | null } | { problem: string } {
   const t = text.trim();
   if (t === '') return { amount: null };
@@ -216,7 +219,8 @@ function AccountLevel({
   const subtype = account ? account.subtype : (child?.subtype ?? null);
   const locked = sheet.factsLocked;
   const typed = sheet.tax.basis.find((b) => b.account_id === id)?.amount ?? null;
-  const [owner, setOwner] = useState<Owner>(sheet.tax.owners.find((o) => o.account_id === id)?.owner ?? 'you');
+  const heldOwner = sheet.tax.owners.find((o) => o.account_id === id)?.owner ?? 'you';
+  const [owner, setOwner] = useState<Owner>(heldOwner);
   const [basis, setBasis] = useState(typed === null ? '' : String(typed));
   const [counted, setCounted] = useState(sheet.tax.countAnyway.includes(id));
   const [saving, setSaving] = useState(false);
@@ -224,7 +228,8 @@ function AccountLevel({
   const [wrong, setWrong] = useState('');
   const errorId = useId();
   const showsBasis = account?.bucket === 'taxable' && account.basisFrom !== 'cash';
-  const showsWhose = !!account && sheet.partner;
+  // A partner since removed: the choice stays, to take the account back.
+  const showsWhose = !!account && (sheet.partner || heldOwner === 'partner');
   const showsCount = sheet.childOut && isChildAccount(subtype);
   const save = async () => {
     const read = showsBasis ? readAmount(basis, 'Cost basis') : { amount: typed };
@@ -281,7 +286,7 @@ function AccountLevel({
         <div className="stack tight">
           <label className="field">
             Cost basis
-            <input type="number" inputMode="decimal" placeholder={NO_EXAMPLE} value={basis} onChange={(e) => setBasis(e.target.value)} disabled={saving || !!locked} aria-invalid={wrong ? true : undefined} aria-describedby={wrong ? errorId : undefined} />
+            <input inputMode="decimal" placeholder={NO_EXAMPLE} value={basis} onChange={(e) => setBasis(e.target.value)} disabled={saving || !!locked} aria-invalid={wrong ? true : undefined} aria-describedby={wrong ? errorId : undefined} />
           </label>
           {wrong && <FieldError id={errorId}>{wrong}</FieldError>}
           <p className="helper">{basisNote(account)}</p>
@@ -354,7 +359,7 @@ function RothLevel({ owner, sheet, onBack }: { owner: Owner; sheet: BucketSheet;
       <div className="stack tight">
         <label className="field">
           Put in so far
-          <input type="number" inputMode="decimal" placeholder={NO_EXAMPLE} value={text} onChange={(e) => setText(e.target.value)} disabled={saving || !!locked} aria-invalid={wrong ? true : undefined} aria-describedby={wrong ? errorId : undefined} />
+          <input inputMode="decimal" placeholder={NO_EXAMPLE} value={text} onChange={(e) => setText(e.target.value)} disabled={saving || !!locked} aria-invalid={wrong ? true : undefined} aria-describedby={wrong ? errorId : undefined} />
         </label>
         {wrong && <FieldError id={errorId}>{wrong}</FieldError>}
       </div>
@@ -370,32 +375,40 @@ function RothLevel({ owner, sheet, onBack }: { owner: Owner; sheet: BucketSheet;
 }
 
 /** Whichever level is open. An account gone since it was opened (hidden, or
- *  disconnected) shows nothing and goes back by the arrow. */
+ *  disconnected) shows nothing and goes back by the arrow. Each is keyed by the
+ *  lock too, so facts that arrive while it is open are the ones it starts from. */
 export function BucketLevel({ level, today, sheet, money }: { level: FigureLevel; today: BucketsToday; sheet: BucketSheet; money: Money }) {
-  if (level.kind === 'roth') return <RothLevel key={level.owner} owner={level.owner} sheet={sheet} onBack={() => sheet.onLevel(null)} />;
+  const lock = sheet.factsLocked ?? '';
+  if (level.kind === 'roth') return <RothLevel key={`${level.owner}:${lock}`} owner={level.owner} sheet={sheet} onBack={() => sheet.onLevel(null)} />;
   const account = today.groups.flatMap((g) => g.accounts).find((a) => a.account_id === level.account_id) ?? null;
   const child = today.leftOut.accounts.find((a) => a.account_id === level.account_id) ?? null;
-  if (level.kind === 'bucket') {
-    if (!account) return null;
-    const bucket = accountBucket(account.subtype, sheet.chosen.get(account.account_id));
-    const back = () => sheet.onLevel({ kind: 'account', account_id: account.account_id, title: level.back });
-    return (
-      <>
-        <BucketForm
-          label={account.name}
-          bucket={bucket}
-          editable={sheet.bucketsEditable}
-          onSave={async (b) => {
-            const saved = await sheet.saveBucket(account.account_id, b);
-            if (saved) back();
-            return saved;
-          }}
-          onCancel={back}
-        />
-        {!sheet.bucketsEditable && sheet.factsLocked && <p className="helper">{sheet.factsLocked}</p>}
-      </>
-    );
-  }
   if (!account && !child) return null;
-  return <AccountLevel key={level.account_id} title={level.title} account={account} child={child} sheet={sheet} money={money} onBack={() => sheet.onLevel(null)} />;
+  const inBucket = level.kind === 'bucket';
+  const title = inBucket ? level.back : level.title;
+  const back = () => sheet.onLevel({ kind: 'account', account_id: level.account_id, title });
+  return (
+    <>
+      {/* The account's level stays under its bucket's, so what was typed in it is
+          there on the way back. */}
+      <div hidden={inBucket}>
+        <AccountLevel key={`${level.account_id}:${lock}`} title={title} account={account} child={child} sheet={sheet} money={money} onBack={() => sheet.onLevel(null)} />
+      </div>
+      {inBucket && account && (
+        <>
+          <BucketForm
+            label={account.name}
+            bucket={accountBucket(account.subtype, sheet.chosen.get(account.account_id))}
+            editable={sheet.bucketsEditable}
+            onSave={async (b) => {
+              const saved = await sheet.saveBucket(account.account_id, b);
+              if (saved) back();
+              return saved;
+            }}
+            onCancel={back}
+          />
+          {!sheet.bucketsEditable && sheet.factsLocked && <p className="helper">{sheet.factsLocked}</p>}
+        </>
+      )}
+    </>
+  );
 }

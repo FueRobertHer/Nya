@@ -7,9 +7,10 @@ import { copyRow, plansListing } from './plans-listing';
 // used as a person would: the groups in order, each row's words, the gaps said
 // quietly and never as a caution (the flat model draws none of the detailed
 // model's: the tax plan's Honesty), a row opening a level of the drawer with what
-// is shared about the account, one save each, a failed one staying open, facts
-// locked in a copy, the other accounts' rows asked for only when a sheet opens,
-// and Home and the Plan moving together on a fact. Every request is answered here.
+// is shared about the account, one save each, a failed one staying open, a save
+// holding the drawer, facts locked in a copy and until they are known, the other
+// accounts' rows asked for only when a sheet opens, and Home and the Plan moving
+// together on a fact. Every request is answered here.
 
 const dom = installDom();
 const realFetch = globalThis.fetch;
@@ -96,6 +97,36 @@ const part = (el: FakeElement, cls: string) => el.findAll((e) => has(e, cls))[0]
 const button = (within: FakeElement, words: string) => within.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === words)[0] ?? null;
 const rowIn = (within: FakeElement, title: string) => within.findAll((e) => e.tagName === 'BUTTON' && has(e, 'list-row') && part(e, 'list-row-title')?.textContent === title)[0] ?? null;
 const field = (sheet: FakeElement, label: string) => sheet.findAll((e) => e.tagName === 'LABEL' && e.textContent.startsWith(label))[0]?.findAll((e) => e.tagName === 'INPUT')[0] ?? null;
+/** A button a person can see: the levels under the one open stay, hidden. */
+const inView = (e: FakeElement) => {
+  for (let n: FakeElement | null = e; n; n = n.parentElement as FakeElement | null) if (n.hasAttribute('hidden')) return false;
+  return true;
+};
+const buttonShown = (within: FakeElement, words: string) => within.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === words && inView(e))[0] ?? null;
+/** What goes to this path waits until the function returned is called. */
+function holdRequests(path: string) {
+  const inner = globalThis.fetch;
+  let release = () => {};
+  const held = new Promise<void>((r) => (release = r));
+  (globalThis as any).fetch = async (url: string, init?: RequestInit) => {
+    if (String(url).startsWith(path) && (init?.method ?? 'GET') !== 'GET') await held;
+    return inner(url, init);
+  };
+  return async () => {
+    await act(async () => release());
+    await settle(60);
+  };
+}
+/** The plan's answer fails while `down`. */
+function planCanFail(down: boolean) {
+  const inner = globalThis.fetch;
+  const gate = { down };
+  (globalThis as any).fetch = async (url: string, init?: RequestInit) => {
+    if (gate.down && String(url).startsWith('/api/plan-inputs') && !String(url).includes('sync=1')) return new Response(JSON.stringify({ error: 'down' }), { status: 500, headers: { 'content-type': 'application/json' } });
+    return inner(url, init);
+  };
+  return gate;
+}
 const press = async (el: FakeElement | null | undefined) => {
   if (!el) throw new Error('nothing to press');
   await act(async () => {
@@ -147,6 +178,9 @@ const openRow = async (tab: Tab, title: string) => {
   const d = tab.dialog()!;
   await press(rowIn(d, title));
 };
+const arrow = (tab: Tab) => press(tab.dialog()!.findAll((e) => e.getAttribute('aria-label') === 'Back')[0]);
+const closeDrawer = (tab: Tab) => press(tab.dialog()!.findAll((e) => e.getAttribute('aria-label') === 'Close')[0]);
+const subOf = (tab: Tab, title: string) => part(rowIn(tab.dialog()!, title)!, 'list-row-sub')!.textContent;
 /** The one box a level has, ticked. */
 const tick = async (tab: Tab) => {
   const box = tab.dialog()!.findAll((e) => e.tagName === 'INPUT' && e.getAttribute('type') === 'checkbox').find((e) => has(e.parentElement, 'check-row'))!;
@@ -296,6 +330,116 @@ describe('the account level', () => {
     await tab.unmount();
   });
 
+  test('what a browser might read as nothing is said too, and the figure held stays', async () => {
+    const server = serve({ tax: { ...DEFAULT_TAX_FACTS, basis: [{ account_id: 'brk', amount: 120_000 }] } });
+    const tab = await mount();
+    await openAssets(tab);
+    await openRow(tab, 'Brokerage');
+    // A plain field, so "105,000" reaches the check as typed: a number field would
+    // report it as empty in some browsers, and empty clears the figure.
+    expect(field(tab.dialog()!, 'Cost basis')!.getAttribute('type')).toBeNull();
+    await act(async () => type(field(tab.dialog()!, 'Cost basis')!, '105,000'));
+    await press(button(tab.dialog()!, 'Save'));
+    expect(server.facts()).toEqual([]);
+    expect(tab.shown()).toContain('Cost basis must be a number, zero or more.');
+    expect(tab.title()).toBe('Brokerage');
+    await tab.unmount();
+  });
+
+  test('what was typed is there after a trip to Change its bucket', async () => {
+    const server = serve({ plan: { ...PLAN, partnerAge: 40 } });
+    const tab = await mount();
+    await settle(60);
+    await openAssets(tab);
+    await openRow(tab, 'Brokerage');
+    await act(async () => type(field(tab.dialog()!, 'Cost basis')!, '120000'));
+    await press(button(tab.dialog()!, 'Your partner'));
+    await openRow(tab, 'Change its bucket');
+    expect(tab.title()).toBe('Change its bucket');
+    expect(tab.shown()).not.toContain('Cost basis');
+    await arrow(tab);
+    expect(tab.title()).toBe('Brokerage');
+    expect(field(tab.dialog()!, 'Cost basis')!.value).toBe('120000');
+    await press(button(tab.dialog()!, 'Save'));
+    expect(server.facts()[0].body).toEqual({ kind: 'account', account_id: 'brk', owner: 'partner', basis: 120_000, count: false });
+    await tab.unmount();
+  });
+
+  test('a save under way holds the drawer: the arrow and Close wait, then it goes back', async () => {
+    const server = serve();
+    const release = holdRequests('/api/plan-facts');
+    const tab = await mount();
+    await openAssets(tab);
+    await openRow(tab, 'Brokerage');
+    await act(async () => type(field(tab.dialog()!, 'Cost basis')!, '120000'));
+    await press(button(tab.dialog()!, 'Save'));
+    expect(button(tab.dialog()!, 'Saving…')).not.toBeNull();
+    await arrow(tab);
+    expect(tab.title()).toBe('Brokerage');
+    await closeDrawer(tab);
+    expect(tab.dialog()).not.toBeNull();
+    expect(tab.title()).toBe('Brokerage');
+    await release();
+    expect(server.facts().length).toBe(1);
+    expect(tab.title()).toBe('Invested assets');
+    // And it is free again.
+    await closeDrawer(tab);
+    expect(tab.dialog()).toBeNull();
+    await tab.unmount();
+  });
+
+  test('so a refusal is said on the level it belongs to', async () => {
+    serve({ refuse: 'Refused for a reason.' });
+    const release = holdRequests('/api/plan-facts');
+    const tab = await mount();
+    await openAssets(tab);
+    await openRow(tab, 'Brokerage');
+    await act(async () => type(field(tab.dialog()!, 'Cost basis')!, '120000'));
+    await press(button(tab.dialog()!, 'Save'));
+    await arrow(tab);
+    await release();
+    expect(tab.title()).toBe('Brokerage');
+    expect(part(tab.dialog()!, 'notice')!.textContent).toContain('Refused for a reason.');
+    expect(field(tab.dialog()!, 'Cost basis')!.value).toBe('120000');
+    await tab.unmount();
+  });
+
+  test('a bucket’s save holds it too, and comes back to its account', async () => {
+    const server = serve();
+    server.state.settings = { v: 1, buckets: [], funds: [], accounts: [], target: null };
+    const release = holdRequests('/api/allocation-settings');
+    const tab = await mount();
+    await settle(60);
+    await openAssets(tab);
+    await openRow(tab, '401(k)');
+    await openRow(tab, 'Change its bucket');
+    await press(tab.dialog()!.findAll((e) => e.getAttribute('type') === 'radio')[2]);
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    expect(buttonShown(tab.dialog()!, 'Saving…')).not.toBeNull();
+    await closeDrawer(tab);
+    expect(tab.dialog()).not.toBeNull();
+    expect(tab.title()).toBe('Change its bucket');
+    await arrow(tab);
+    expect(tab.title()).toBe('Change its bucket');
+    await release();
+    expect(tab.title()).toBe('401(k)');
+    expect(server.facts()).toEqual([]);
+    await tab.unmount();
+  });
+
+  test('a partner since removed: the choice stays, to take the account back', async () => {
+    const server = serve({ tax: { ...DEFAULT_TAX_FACTS, owners: [{ account_id: 'k', owner: 'partner' }] } });
+    const tab = await mount();
+    await openAssets(tab);
+    await openRow(tab, '401(k)');
+    expect(tab.shown()).toContain('Whose it is');
+    await press(button(tab.dialog()!, 'You'));
+    expect(tab.shown()).toContain('Whose it is');
+    await press(button(tab.dialog()!, 'Save'));
+    expect(server.facts()[0].body.owner).toBe('you');
+    await tab.unmount();
+  });
+
   test('a save that fails stays open, keeps what was typed and says why', async () => {
     const server = serve({ refuse: 'Nya keeps these for at most 500 accounts.' });
     const tab = await mount();
@@ -405,6 +549,81 @@ describe('Roth contributions', () => {
     await press(button(tab.dialog()!, 'Save'));
     expect(server.facts()[0].body).toEqual({ kind: 'roth', owner: 'you', amount: 45_000 });
     expect(part(rowIn(tab.dialog()!, 'Your Roth contributions')!, 'list-row-sub')!.textContent).toBe('Put in $45,000');
+    await tab.unmount();
+  });
+});
+
+describe('before the facts are known', () => {
+  const STORED = { ...DEFAULT_TAX_FACTS, basis: [{ account_id: 'brk', amount: 120_000 }], owners: [{ account_id: 'brk', owner: 'partner' as const }], countAnyway: ['c'] };
+
+  test('the plan’s answer failed: nothing can be saved over what is stored, and once it comes the level starts from it', async () => {
+    const server = serve({ tax: STORED, plan: { ...PLAN, partnerAge: 40 } });
+    const gate = planCanFail(true);
+    const store = createPlanInputsStore();
+    const tab = await mount({ planInputs: store });
+    await settle(60);
+    await openAssets(tab);
+    await openRow(tab, 'Brokerage');
+    expect(tab.shown()).toContain('What’s saved about your accounts hasn’t loaded, so this can’t be changed yet.');
+    expect(field(tab.dialog()!, 'Cost basis')!.disabled).toBe(true);
+    expect(button(tab.dialog()!, 'Save')!.disabled).toBe(true);
+    await press(button(tab.dialog()!, 'Save'));
+    expect(server.facts()).toEqual([]);
+    gate.down = false;
+    await act(async () => store.invalidate());
+    await settle(60);
+    expect(tab.shown()).not.toContain('hasn’t loaded');
+    expect(field(tab.dialog()!, 'Cost basis')!.value).toBe('120000');
+    await press(button(tab.dialog()!, 'Save'));
+    expect(server.facts()[0].body).toEqual({ kind: 'account', account_id: 'brk', owner: 'partner', basis: 120_000, count: false });
+    expect(server.state.tax.owners).toEqual(STORED.owners);
+    await tab.unmount();
+  });
+
+  test('a Roth amount waits too', async () => {
+    const server = serve({ tax: { ...DEFAULT_TAX_FACTS, rothContributions: [{ owner: 'you', amount: 45_000 }] } });
+    planCanFail(true);
+    const tab = await mount();
+    await settle(60);
+    await openAssets(tab);
+    await openRow(tab, 'Your Roth contributions');
+    expect(button(tab.dialog()!, 'Save')!.disabled).toBe(true);
+    expect(server.facts()).toEqual([]);
+    await tab.unmount();
+  });
+
+  test('none written is known: Save is on', async () => {
+    serve();
+    const tab = await mount();
+    await settle(60);
+    await openAssets(tab);
+    await openRow(tab, 'Brokerage');
+    expect(tab.shown()).not.toContain('hasn’t loaded');
+    expect(button(tab.dialog()!, 'Save')!.disabled).toBe(false);
+    await tab.unmount();
+  });
+
+  test('a reload that fails moves nothing: the rows and what a save sends stay as they were', async () => {
+    const server = serve({ tax: STORED, plan: { ...PLAN, partnerAge: 40 } });
+    const gate = planCanFail(false);
+    const store = createPlanInputsStore();
+    const tab = await mount({ planInputs: store });
+    await settle(60);
+    await openAssets(tab);
+    const head = () => tab.dialog()!.findAll((e) => has(e, 'bucket-head')).map((h) => h.textContent);
+    const before = subOf(tab, 'Brokerage');
+    expect(before).toContain('Cost basis $120,000');
+    expect(head()).toContain('Education$48,000');
+    gate.down = true;
+    await act(async () => store.invalidate());
+    await settle(60);
+    expect(store.get().plan?.status).toBe(500);
+    expect(subOf(tab, 'Brokerage')).toBe(before);
+    expect(head()).toContain('Education$48,000');
+    await openRow(tab, 'Brokerage');
+    expect(field(tab.dialog()!, 'Cost basis')!.value).toBe('120000');
+    await press(button(tab.dialog()!, 'Save'));
+    expect(server.facts()[0].body).toEqual({ kind: 'account', account_id: 'brk', owner: 'partner', basis: 120_000, count: false });
     await tab.unmount();
   });
 });

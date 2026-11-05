@@ -536,6 +536,7 @@ function sam(today: string): DemoProfile {
     tax: {
       partnerAge: 37,
       accounts: [
+        { mask: '5530', owner: 'partner', basis: null },
         { mask: '7742', owner: 'partner', basis: null },
         { mask: '9013', owner: 'you', basis: 88_000 },
       ],

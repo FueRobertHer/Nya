@@ -31,6 +31,7 @@ const { setAccountHidden } = await import('@/lib/hidden');
 const { investedSeries, progressAccountsOf } = await import('@/lib/fire/invested-series');
 const route = await import('@/app/api/invested-history/route');
 const { planFactsStore } = await import('@/lib/plan-copies');
+const { leftOutOf } = await import('@/lib/fire/child-accounts');
 const { DEFAULT_TAX_FACTS } = await import('@/lib/fire/tax-facts');
 const { factsOf } = await import('@/lib/fire/copies');
 const { DEFAULT_PLAN_V2 } = await import('@/lib/fire/plan-v2');
@@ -223,6 +224,20 @@ describe('a child’s accounts (D7)', () => {
     expect((await ask({ accounts })).body.anchor).toMatchObject({ total: 12_000, counted: 2 });
   });
 
+  test('on: counted under an id since replaced, it reads as out here as in the browser, until counted again', async () => {
+    await turnOn();
+    await saved('2026-10-01');
+    await facts(['old529']);
+    await fake.hset(ctxKey('account-links'), { old529: await encrypt(ctx, JSON.stringify({ to: 'new529', linked_at: '2026-10-02T00:00:00.000Z', evidence: {} })) });
+    await measured('2026-10-01', { brk: 10_000, old529: 4_000 });
+    const listed = [acct('brk'), { ...acct('new529'), subtype: '529' }];
+    expect((await ask({ accounts: listed })).body.anchor).toMatchObject({ total: 10_000, counted: 1 });
+    expect(leftOutOf(true, ['old529'])?.({ account_id: 'new529', subtype: '529' })).toBe(true);
+    await facts(['old529', 'new529']);
+    expect((await ask({ accounts: listed })).body.anchor).toMatchObject({ total: 14_000, counted: 2 });
+    expect(leftOutOf(true, ['old529', 'new529'])?.({ account_id: 'new529', subtype: '529' })).toBe(false);
+  });
+
   test('on: one counted anyway stays, on every path', async () => {
     await turnOn();
     await saved('2026-10-01');
@@ -238,7 +253,7 @@ describe('a child’s accounts (D7)', () => {
     expect((await ask({ accounts: [acct('brk')] })).status).toBe(200);
   });
 
-  test('the page’s list says each account’s subtype, and none for one it can’t show', () => {
+  test('the page’s list says the subtype of an account for a child, and no other: a manual one’s is free text', async () => {
     const list = progressAccountsOf([
       {
         name: 'Broker',
@@ -247,11 +262,17 @@ describe('a child’s accounts (D7)', () => {
         staleAsOf: null,
         staleAsOfAt: null,
         missing: 0,
-        accounts: [{ account_id: 'a', name: 'A', type: 'investment', subtype: '529', balance: 1, currency: 'USD' }],
+        accounts: [
+          { account_id: 'a', name: 'A', type: 'investment', subtype: '529', balance: 1, currency: 'USD' },
+          { account_id: 'b', name: 'B', type: 'investment', subtype: 'brokerage', balance: 1, currency: 'USD' },
+          { account_id: 'm', name: 'M', type: 'investment', subtype: 'Kid’s fund, mostly', balance: 1, currency: 'USD' },
+        ],
         unshown: [{ account_id: 'u', name: 'U', type: 'investment', currency: 'USD' }],
       },
     ]);
-    expect(list).toEqual([listedAs('a', 'investment', 'USD', '529'), listedAs('u')]);
+    expect(list).toEqual([listedAs('a', 'investment', 'USD', '529'), acct('b'), acct('m'), acct('u')]);
+    await saved('2026-10-01');
+    expect((await ask({ accounts: list })).status).toBe(200);
   });
 
   test('a question’s subtype is a word or null, and a fifth key is refused', async () => {
@@ -423,6 +444,6 @@ describe('the pure series and the page’s list', () => {
         ],
       },
     ]);
-    expect(list).toEqual([listedAs('a'), listedAs('c', 'depository', null), listedAs('u', 'investment', 'EUR')]);
+    expect(list).toEqual([acct('a'), acct('c', 'depository', null), acct('u', 'investment', 'EUR')]);
   });
 });

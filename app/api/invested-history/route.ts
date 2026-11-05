@@ -30,8 +30,9 @@ import { investedSeries, isComplete, type InvestedSeriesAccount, type InvestedDa
 //        unreadable_days }
 //
 // `accounts` is every account the dashboard knows, hidden ones aside, with
-// its type and currency (lib/fire/invested-series.ts progressAccountsOf):
-// those it shows and those an institution is known to have but can't show.
+// its type and currency, and an account for a child's education its subtype
+// (lib/fire/invested-series.ts progressAccountsOf): those it shows and those an
+// institution is known to have but can't show.
 // A POST because that list is the question and can be longer than a URL.
 // What counts comes from the SAVED PLAN, read here, never from the page:
 // investment accounts, and checking and savings when it was saved with
@@ -156,10 +157,12 @@ export async function POST(req: Request) {
     const ends = endDays(lifecycle);
 
     // Accounts for a child's education, while they are out (D7): by every id
-    // an account is known under, and those the person counts kept. Off, nothing
-    // more is read.
+    // an account is known under, and those the person counts kept, by the id
+    // they said it under, as the browser compares them (lib/fire/child-accounts.ts):
+    // so one reconnected reads as out on every screen until it is counted again.
+    // Off, nothing more is read.
     const facts = childOut ? await planFactsStore.get(ctx) : null;
-    const countedAnyway = new Set((facts?.version === 2 ? facts.tax.countAnyway : []).map((id) => place(id)?.account ?? id));
+    const countedAnyway = new Set(facts?.version === 2 ? facts.tax.countAnyway : []);
     const knownSubtype = new Map<string, string>();
     if (childOut) {
       for (const [id, k] of directory.known) {
