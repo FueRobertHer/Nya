@@ -38,6 +38,16 @@ import AlsoChange from '@/components/AlsoChange';
 import { copyDiffParts, figureChoices, itemChoices } from '@/components/plan-diff';
 import { ProgressView, SheetBody as ProgressSheetBody } from '@/components/PlanProgress';
 import { TimelineCard } from '@/components/PlanTimeline';
+import { CompareCard, HowYouDrawCard, RuleLevel } from '@/components/PlanHowYouDraw';
+import { OptInSheet } from '@/components/PlanOptIn';
+import { PlanTaxSheet } from '@/components/PlanTaxSheet';
+import { compareRows } from '@/lib/fire/compare-conversions';
+import { detailWork, type DetailedInput } from '@/lib/fire/plan-detail';
+import { planFigures } from '@/lib/fire/plan-figures';
+import { lawFor } from '@/lib/fire/tax/law';
+import { NO_STRATEGY } from '@/lib/fire/tax/rules';
+import type { FirePlanV2 } from '@/lib/fire/plan-v2';
+import { ON } from './plan-gen';
 import { INITIAL_PLANS } from '@/components/plan-list';
 import { DEFAULT_PLAN } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
@@ -946,6 +956,54 @@ function planFigureArgs(): FigureArgs {
   };
 }
 
+/** The tax plan's household, worked out year by year: its figures and Compare's rows. */
+function WORKED() {
+  const money = (n: number) => wholeMoney(n, 'USD');
+  const account = (bucket: string, value: number, basis: number | null = null) => ({ owner: 'you', value, basis, account_id: bucket, bucket });
+  const group = (bucket: string, value: number, basis: number | null = null) => ({ bucket, accounts: [account(bucket, value, basis)], total: value });
+  const BUCKETS = {
+    groups: [group('taxable', 140_000, 105_000), group('tax-deferred', 360_000), group('roth', 70_000), group('hsa', 25_000)],
+    roth: [{ owner: 'you', amount: 45_000 }],
+    total: 595_000,
+  };
+
+  const social = (id: string, owner: 'you' | 'partner', age: number, yearly: number): PlanItem => ({ id, label: id, kind: 'social-security', from: { anchor: { at: 'age', age }, offset: 0 }, until: null, once: null, yearly, replaces: null, every: null, times: null, inflationAdjusted: true, owner, beforeTax: true });
+
+  const worked: FirePlanV2 = {
+    ...planOf({ ...DEFAULT_PLAN, age: 41, targetAge: 50, spending: 64_000, savings: 50_000, assets: 595_000, realReturn: 0.05, withdrawalRate: 0.04, fee: 0.001, stocksPct: 75, bondsPct: 25, rebalance: 'annual', rule: 'constant' }),
+    partnerAge: 40,
+    start: 'at-stop',
+    // The partner's 67 is your 68.
+    items: [social('you', 'you', 67, 30_000), social('partner', 'partner', 68, 18_000)],
+  };
+
+  const input: DetailedInput = {
+    calendarYear: 2026,
+    filing: 'joint',
+    dependents: [],
+    rmdAges: { you: 75, partner: 75 },
+    buckets: BUCKETS as never,
+    savingsSplit: [
+      { bucket: 'taxable', share: 18 / 50 },
+      { bucket: 'tax-deferred', share: 24 / 50 },
+      { bucket: 'roth', share: 8 / 50 },
+    ],
+    share457: { you: 0, partner: 0 },
+    inflation: 0.03,
+    taxableYield: 0.02,
+    health: { coverage: { kind: 'aca', adult: 11_000, quotedAge: 50, child: null }, medicareExtra: 0, meetsRule: [], countMedicaid: false, acaLaw: '2026', growth: 0.021, incomeGrowth: 0.011 },
+    state: 'NV',
+    stateRate: 0,
+    paidToday: 0,
+    strategy: NO_STRATEGY,
+    law: lawFor(2026).law,
+    lawYear: { year: 2026, behind: false },
+  };
+  const f = planFigures(worked, { spending: null, savings: null, assets: null }, { count: ON, detailed: detailWork(input) });
+  if ('refused' in f || !f.shares || f.detail === null || 'failed' in f.detail) throw new Error('no drawdown');
+  return { money, f, shares: f.shares, rows: compareRows(f, input, f.detail.start), detail: f.detail };
+}
+
 const SCREENS: Record<string, () => React.ReactElement> = {
   'Home: the net worth chart': () => (
     <NetWorthChart
@@ -1258,6 +1316,40 @@ const SCREENS: Record<string, () => React.ReactElement> = {
         today="2026-10-23"
       />
     );
+  },
+  'Plan: How you draw, a fixed rule’s amount': () => (
+    <HowYouDrawCard strategy={{ order: 'standard', conversions: { kind: 'fixed', yearly: 40_000 }, convertUntil: null }} defaultUntil={74} money={(n) => wholeMoney(n, 'USD')} onOrder={() => {}} onConversions={() => {}} />
+  ),
+  'Plan: Compare conversions, what each rule leaves and costs': () => {
+    const { rows, money } = WORKED();
+    return <CompareCard rows={rows} money={money} realReturn={0.05} lawYear={2026} healthGrowth={0.021} onRule={() => {}} />;
+  },
+  'Plan: a rule’s sheet, its figures and stages': () => {
+    const { rows, money } = WORKED();
+    return <RuleLevel row={rows[2]} money={money} lawYear={2026} copyOpen={false} whyNot={null} onTry={async () => true} />;
+  },
+  'Plan: Tax after you stop, how it goes into your FI number': () => {
+    const { shares, money, f, detail } = WORKED();
+    return (
+      <PlanTaxSheet
+        shares={shares}
+        held={false}
+        number={f.view.fiNumber}
+        withdrawalRate={0.04}
+        realReturn={0.05}
+        start={{ ...detail.start, t: detail.start.t + 0.01 }}
+        startBalance={1_500_000}
+        hypothetical="Hypothetical."
+        money={money}
+        onYears={() => {}}
+        onFlatRate={null}
+        onDone={() => {}}
+      />
+    );
+  },
+  'Plan: the way in, your figures before and after': () => {
+    const { f, money } = WORKED();
+    return <OptInSheet before={f} after={f} working={false} coverageSet={false} money={money} lawYear={2026} onConfirm={async () => true} onDone={() => {}} />;
   },
   'Plan: Compare, each plan’s figures and how it differs from yours': () => {
     const { plans, money } = COPIES();

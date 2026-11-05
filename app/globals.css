@@ -8421,6 +8421,48 @@ button.review-keys-toggle {
   display: block;
 }
 
+/* Compare conversions: a heading to sort by, and a rule's name that opens its
+   sheet. Both fill their cell to a full-size target. */
+.th-sort {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.th-sort .section-chevron {
+  margin-left: 0;
+}
+
+tbody .th-sort {
+  color: var(--accent);
+}
+
+.plan-rules-table {
+  min-width: 480px;
+}
+
+.plan-rules-table th {
+  width: auto;
+  overflow-wrap: normal;
+}
+
+.plan-rules-table td {
+  padding-block: 18px;
+}
+
+.plan-rules-table th .badge {
+  width: fit-content;
+}
+
 .plan-compare-diff {
   width: 28%;
   color: var(--text-2);

@@ -89,13 +89,24 @@ describe('while what a plan’s years rest on is out', () => {
     });
   }, 30_000);
 
-  test('a plan it can’t move has no reason to wait', async () => {
+  test('every detailed plan waits, its FI number, tax and health with it, since all three come from its years', async () => {
     await (await detailed(PLAN, props)).unmount();
     await holding('/api/allocation-settings', async (letGo) => {
       const tab = await render({ planTax: true, ...(props as object) });
-      expect(tab.said()).not.toContain('Working it out');
+      expect(tab.said()).toContain('Working it out');
+      await pick(tab.container, 'Your path');
+      const fi = () => tab.row('FI number')!.textContent ?? '';
+      expect(fi()).toContain('--');
+      expect(tab.row('Tax after you stop')!.textContent).toContain('--');
+      // A sheet opened meanwhile has no flat number or rate to type.
+      await press(tab.row('Assumptions'));
+      expect(tab.dialog()!.textContent).not.toContain('Tax on withdrawals');
+      await press(closeOf(tab.dialog()!));
       letGo();
       await page.settle(200);
+      expect(tab.said()).not.toContain('Working it out');
+      expect(fi()).toMatch(/\$[\d,]+/);
+      expect(tab.row('Tax after you stop')!.textContent).toMatch(/[\d.]+%/);
       await tab.unmount();
     });
   }, 30_000);
@@ -351,7 +362,7 @@ describe('the way in', () => {
     await press(tab.row(WAY_IN));
     const sheet = tab.dialog()!;
     expect(sheet.getAttribute('aria-label')).toBe(WAY_IN);
-    expect(sheet.textContent).toContain('Your FI number changes when this reaches it, in a later version.');
+    expect(sheet.textContent).toContain('your FI number, Home and every copy use them.');
     expect(sheet.textContent).toContain('Each account’s tax bucket, owner and cost basis');
     expect(sheet.textContent).toContain('2026 tax law. Not tax advice.');
     await press(button(sheet, 'Not now'));
@@ -455,9 +466,17 @@ describe('the years', () => {
     await press(first);
     const sheet = tab.dialog()!;
     expect(sheet.getAttribute('aria-label')).toBe(stage);
-    const years = sheet.findAll((e) => e.tagName === 'BUTTON' && classOf(e).includes('list-row'));
-    expect(years.length).toBeGreaterThan(0);
-    await press(years[0]);
+    const rows = () => tab.dialog()!.findAll((e) => e.tagName === 'BUTTON' && classOf(e).includes('list-row'));
+    expect(rows().length).toBeGreaterThan(0);
+    // Years that read the same are one row, which opens to them in place.
+    const run = rows().find((e) => e.getAttribute('aria-expanded') === 'false');
+    if (run) {
+      const before = rows().length;
+      await press(run);
+      expect(rows().length).toBeGreaterThan(before);
+      expect(rows().find((e) => e.getAttribute('aria-expanded') === 'true')).toBeTruthy();
+    }
+    await press(rows().find((e) => e.getAttribute('aria-expanded') === null)!);
     const year = tab.dialog()!;
     expect(year.getAttribute('aria-label')).toMatch(/^Age \d+ · \d{4}$/);
     for (const title of ['Where the money comes from', 'What it pays for', 'Income the law counts', 'How the tax is worked out', 'Health coverage']) expect(year.textContent).toContain(title);

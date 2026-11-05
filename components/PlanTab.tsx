@@ -152,7 +152,7 @@ import PlanHealthForm, { type PaidChoice } from './PlanHealthForm';
 import { OptInRow, OptInSheet, OPT_IN_TITLE } from './PlanOptIn';
 import { CompareCard, ConversionsForm, HowYouDrawCard, OrderForm, RuleLevel } from './PlanHowYouDraw';
 import { PlanTaxSheet } from './PlanTaxSheet';
-import { copyNameFor, ruleName, strategyDiffParts } from './plan-conversions';
+import { choicesDiffParts, copyNameFor, ruleTitle } from './plan-conversions';
 import { ABOUT_DETAIL, assumptionsLine, assumptionsWorked, HEALTH_NOT_SET, healthSub, honestyNotes, householdLine, lawLabel, namesCoverage, stageHealthLines, stageTitle, STATE_NAMES, taxHypothetical, taxLine, yearTitle, type YearContext } from './plan-drawdown';
 import { planFigures, resolveSaved, type FiguresRefused, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
 import { compareRows, conversionRun, type CompareRow } from '@/lib/fire/compare-conversions';
@@ -1470,13 +1470,8 @@ export default function PlanTab({
     [shown, drawn]
   );
   const shownUntil = shownInput && shownPlan.age !== null ? untilByDefault(shownInput.rmdAges, { age: shownPlan.age, partnerAge: shownPlan.partnerAge }) : null;
-  /** How a copy's choices differ from your plan's, in words. */
-  const choicesParts = (tax: TaxChoices | null): string[] => {
-    if (!detailShown || tax === null) return [];
-    const mine = yourChoices ?? DEFAULT_TAX_CHOICES;
-    const rest = (c: TaxChoices) => JSON.stringify({ ...c, strategy: null });
-    return [...strategyDiffParts(mine.strategy, tax.strategy, shownUntil, money), ...(rest(tax) !== rest(mine) ? ['Other settings differ'] : [])];
-  };
+  /** A copy's choices beside your plan's, where tax is worked out. */
+  const choicesBeside = (copy: TaxChoices | null) => (detailShown && copy !== null ? { mine: yourChoices ?? DEFAULT_TAX_CHOICES, copy, until: shownUntil } : null);
   // Taxes don't move a saved plan's assets before the stop, so a year your plan draws
   // leaves its line above Your path.
   const firstTax = baseFigures?.walk.taxes?.[0] ?? null;
@@ -1678,7 +1673,7 @@ export default function PlanTab({
   const tryItem = (item: PlanItem, name: string) => createCopy(plansState.main, name, true, withItem(basePlan, item));
   /** Compare's Try it: a copy of the plan shown with a rule, opened on Drawdown. */
   const tryRule = async (row: CompareRow): Promise<true | string> => {
-    const name = copyNameFor(row.strategy.conversions, money, plansState.list.map((r) => r.name));
+    const name = copyNameFor(row.strategy.conversions, plansState.list.map((r) => r.name));
     const strategy: Strategy = { ...detailChoices.strategy, conversions: row.strategy.conversions, convertUntil: row.strategy.convertUntil };
     const r = await createCopy(entry ? entry.id : plansState.main, name, true, undefined, { ...detailChoices, strategy });
     if (r === true) close();
@@ -1737,7 +1732,7 @@ export default function PlanTab({
           const v = views.get(row.id);
           if (!v) return [];
           const outcome: PlanOutcome = v.other ? { kind: 'not-run', reason: currencyText(v.other, planCurrency ?? v.other, currencyKnown) } : outcomeOf(v.figures, v);
-          return [{ id: row.id, name: row.name, isMain: false, updatedAt: row.updated_at, plan: v.plan, outcome, moreParts: choicesParts(row.tax), taxWorked: detailShown }];
+          return [{ id: row.id, name: row.name, isMain: false, updatedAt: row.updated_at, plan: v.plan, outcome, choices: choicesBeside(row.tax), taxWorked: detailShown }];
         });
   // Mounted always, closed or open, from its first render: the plans picked
   // for Compare last for the visit, and the sheet can be opened while the
@@ -1776,9 +1771,10 @@ export default function PlanTab({
   // Lasting changes below zero: nothing is worked out, and the Timeline's
   // items are what to change, so they stay with the card, on every segment.
   const refused = !!openFigures && 'refused' in openFigures;
+  const choicesOpen = entry ? choicesBeside(entry.tax) : null;
   const copyCard = entry && openView && (
     <CopyCard
-      parts={[...copyDiffParts(basePlan, openView.plan, money, { taxWorked: detailShown }), ...choicesParts(entry.tax)]}
+      parts={[...copyDiffParts(basePlan, openView.plan, money, { taxWorked: detailShown }), ...(choicesOpen ? choicesDiffParts(choicesOpen, money) : [])]}
       taxLine={detailShown && entry.tax === null ? 'It takes your plan’s tax settings.' : null}
       other={other}
       currencyLine={other && planCurrency ? currencyText(other, planCurrency, currencyKnown) : null}
@@ -2171,7 +2167,7 @@ export default function PlanTab({
 
       <Sheet
         open={!!sheet}
-        title={shownSheet ? (shownSheet.kind === 'figure' ? (figureLevel?.title ?? FIGURE_TITLES[shownSheet.figure]) : shownSheet.kind === 'stage' ? (sheetYear ? yearTitle(sheetYear) : sheetStage ? stageTitle(sheetStage) : 'Year by year') : shownSheet.kind === 'rule' ? (sheetRule ? ruleName(sheetRule.strategy.conversions, money) : 'Roth conversions') : SHEET_TITLES[shownSheet.kind]) : ''}
+        title={shownSheet ? (shownSheet.kind === 'figure' ? (figureLevel?.title ?? FIGURE_TITLES[shownSheet.figure]) : shownSheet.kind === 'stage' ? (sheetYear ? yearTitle(sheetYear) : sheetStage ? stageTitle(sheetStage) : 'Year by year') : shownSheet.kind === 'rule' ? (sheetRule ? ruleTitle(sheetRule.strategy.conversions) : 'Roth conversions') : SHEET_TITLES[shownSheet.kind]) : ''}
         onClose={() => {
           if (levelSaves === 0) close();
         }}

@@ -31,6 +31,7 @@ import PlanCompare from './PlanCompare';
 import { chevron, RIGHT } from './ActivityBar';
 import type { CompareColumn, ColumnOutcome } from './plan-compare';
 import { plansCount as countOf, type PlansState } from './plan-list';
+import { choicesDiffParts, type ChoicesBeside } from './plan-conversions';
 import { copyDiffParts, diffText, rowText } from './plan-diff';
 import { fiWhen } from './plan-fi-when';
 import { plansText } from './PlanBar';
@@ -93,8 +94,8 @@ export type SheetPlan = {
   /** The plan as it runs, the facts every plan shares in its fields. */
   plan: FirePlanV2;
   outcome: PlanOutcome;
-  /** What it says beside the plan that differs from your plan's, in words. */
-  moreParts?: readonly string[];
+  /** Its tax choices beside your plan's, where tax is worked out. */
+  choices?: ChoicesBeside | null;
   /** Its tax is worked out from your accounts, so a typed rate isn't a difference. */
   taxWorked?: boolean;
 };
@@ -341,7 +342,7 @@ export function PlansSheet({
   const main = plans.find((p) => p.isMain) ?? null;
   // How each copy differs from your plan, in words, written here with the
   // sheet's own money, so hidden amounts stay hidden.
-  const partsOf = (p: SheetPlan): string[] => (p.isMain || !main ? [] : [...copyDiffParts(main.plan, p.plan, money, { taxWorked: p.taxWorked ?? false }), ...(p.moreParts ?? [])]);
+  const partsOf = (p: SheetPlan): string[] => (p.isMain || !main ? [] : [...copyDiffParts(main.plan, p.plan, money, { taxWorked: p.taxWorked ?? false }), ...(p.choices ? choicesDiffParts(p.choices, money) : [])]);
   const mainWhen = main ? fiWhen(main.outcome.kind === 'figures' ? main.outcome.figures : null) : null;
   // A row that says a date, or a copy's against yours, waits for what it says.
   const mainWorking = main?.outcome.kind === 'figures' && main.outcome.working === true;

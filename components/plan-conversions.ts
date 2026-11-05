@@ -6,6 +6,7 @@
 // tax plan's D4). What holds an amount is drawn through Masked by the view.
 
 import type { Drawdown } from '@/lib/fire/drawdown';
+import type { TaxChoices } from '@/lib/fire/tax-choices';
 import type { Strategy } from '@/lib/fire/tax/rules';
 import { pct } from './plan-text';
 
@@ -17,8 +18,8 @@ export const ORDER_WORDS: Record<Strategy['order'], string> = {
   'roth-before-deferred': 'Taxable, then Roth, then tax-deferred',
 };
 
-/** A rule's short name: a row of Compare, and a copy's name. */
-export function ruleName(rule: Rule, money: Money): string {
+/** A rule with no amount in it: a sheet's title, which is read out whole, and a copy's name. */
+export function ruleTitle(rule: Rule): string {
   switch (rule.kind) {
     case 'none':
       return 'None';
@@ -27,9 +28,12 @@ export function ruleName(rule: Rule, money: Money): string {
     case 'aca-then-bracket':
       return `ACA limit, then ${pct(rule.top)}`;
     case 'fixed':
-      return `${money(rule.yearly)} a year`;
+      return 'A fixed amount';
   }
 }
+
+/** A rule's short name, as a row of Compare has it. */
+export const ruleName = (rule: Rule, money: Money) => (rule.kind === 'fixed' ? `${money(rule.yearly)} a year` : ruleTitle(rule));
 
 /** The rule in a line, to the age it runs. */
 export function ruleSentence(strategy: Pick<Strategy, 'conversions' | 'convertUntil'>, defaultUntil: number | null, money: Money): string {
@@ -74,13 +78,22 @@ export function previewLine(rule: Drawdown, none: Drawdown, money: Money): strin
 }
 
 /** A copy's name after its rule, with a number if that is taken. */
-export function copyNameFor(rule: Rule, money: Money, taken: readonly string[]): string {
-  const base = ruleName(rule, money);
+export function copyNameFor(rule: Rule, taken: readonly string[]): string {
+  const base = ruleTitle(rule);
   if (!taken.includes(base)) return base;
   for (let n = 2; ; n++) {
     const name = `${base} ${n}`;
     if (!taken.includes(name)) return name;
   }
+}
+
+/** A copy's choices beside your plan's, and the age a rule runs to by default. */
+export type ChoicesBeside = { mine: TaxChoices; copy: TaxChoices; until: number | null };
+
+/** How a copy's choices differ from your plan's, in words. */
+export function choicesDiffParts({ mine, copy, until }: ChoicesBeside, money: Money): string[] {
+  const rest = (c: TaxChoices) => JSON.stringify({ ...c, strategy: null });
+  return [...strategyDiffParts(mine.strategy, copy.strategy, until, money), ...(rest(copy) !== rest(mine) ? ['Other settings differ'] : [])];
 }
 
 /** How a copy's order and conversions differ from your plan's, a sentence each. */

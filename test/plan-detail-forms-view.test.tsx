@@ -165,7 +165,7 @@ describe('Health coverage', () => {
     expect(sent.tax.health.beforeMedicare).toEqual({ kind: 'aca', adult: 11_000, quotedAge: 50, child: null });
     expect(sent.household).toBeUndefined();
     expect((await read()).tax.health.beforeMedicare.adult).toBe(11_000);
-    expect(subOf(tab, 'Health coverage')).toBe('ACA before 65, then Medicare · in Drawdown');
+    expect(subOf(tab, 'Health coverage')).toBe('ACA before 65, then Medicare · in your FI number');
     expect(tab.row('Health coverage')?.textContent).toMatch(/About \$[\d,]+ a year/);
     await tab.unmount();
   }, 30_000);
@@ -360,7 +360,8 @@ describe('Assumptions', () => {
   test('its fields, its words, and the way back to a flat rate', async () => {
     const tab = await optedIn();
     const form = await sheet(tab, 'Assumptions');
-    expect(form.textContent).toContain('Your FI number still uses this rate. Drawdown works tax out from your accounts.');
+    expect(field(form, 'Tax on withdrawals')).toBeFalsy();
+    expect(form.textContent).not.toContain('Use a flat rate instead');
     expect(form.textContent).toContain('What the simulation withdraws comes from your spending, health coverage and their tax.');
     expect(form.textContent).toContain('health coverage, with their tax');
     await fill(form, 'Inflation', '2.5');
@@ -369,8 +370,8 @@ describe('Assumptions', () => {
     const sent = lastSave();
     expect([sent.tax.inflation, sent.tax.health.growth]).toEqual([0.025, 0.015]);
     expect(subOf(tab, 'Assumptions')).toContain('2.5% inflation · health costs +1.5 points');
-    await sheet(tab, 'Assumptions');
-    await press(button(tab.dialog(), 'Use a flat rate instead'));
+    await sheet(tab, 'Tax after you stop');
+    await press(tab.sheetRow('Use a flat rate instead'));
     expect(tab.dialog()).toBeNull();
     expect((await read()).tax_facts.model).toBe('flat');
     await pick(tab.container, 'Drawdown');

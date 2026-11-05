@@ -403,20 +403,18 @@ export function RuleLevel({
   const { drawn } = row;
   const moved = convertedIn(drawn);
   const endAge = endAgeOf(drawn);
-  const line = (label: string, value: string, sum = false) => (
-    <div className={sum ? 'txn-detail-row txn-detail-sum' : 'txn-detail-row'}>
+  const line = (label: string, value: React.ReactNode) => (
+    <div className="txn-detail-row">
       <dt>{label}</dt>
-      <dd className="money">
-        <Masked>{value}</Masked>
-      </dd>
+      <dd className="money">{value}</dd>
     </div>
   );
   return (
     <div className="stack loose">
       <dl className="txn-detail txn-detail-wide">
-        {line(endAge === null ? 'Left, after tax' : `Left at ${endAge}, after tax`, endWords(drawn, money))}
-        {line('Tax and health costs, in all', money(drawn.taxAndHealth))}
-        {moved >= 0.5 && line('Converted to Roth, in all', money(moved))}
+        {line(endAge === null ? 'Left, after tax' : `Left at ${endAge}, after tax`, <Masked>{endWords(drawn, money)}</Masked>)}
+        {line('Tax and health costs, in all', <Masked>{money(drawn.taxAndHealth)}</Masked>)}
+        {moved >= 0.5 && line('Converted to Roth, in all', <Masked>{money(moved)}</Masked>)}
         {drawn.aca.on > 0 && line('Years with an ACA credit', `${drawn.aca.withCredit} of ${drawn.aca.on}`)}
       </dl>
       <section className="stack tight" aria-labelledby="plan-rule-stages">

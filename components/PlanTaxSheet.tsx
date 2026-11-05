@@ -8,8 +8,7 @@ import { useState } from 'react';
 import { taxShares, type Drawdown } from '@/lib/fire/drawdown';
 import type { FiShares } from '@/lib/fire/plan-figures';
 import { Masked } from './HideAmounts';
-import { fiYearly, sharesNote } from './plan-drawdown';
-import { stageTitle } from './plan-drawdown';
+import { fiYearly, sharesNote, stageTitle } from './plan-drawdown';
 import { pct } from './plan-text';
 import { Notice } from './TotalCaveats';
 

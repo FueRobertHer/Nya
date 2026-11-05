@@ -157,7 +157,7 @@ describe('a year’s sheet', () => {
 
   test('the meter and its limit only on the ACA, and no limit under enhanced credits', () => {
     const d = run();
-    expect(lines(yearAt(d, 51), 'Income the law counts').meter?.limitLabel).toBe('Limit 400%');
+    expect(lines(yearAt(d, 51), 'Income the law counts').meter?.limitLabel).toMatch(/^Limit 400%, \$[\d,]+$/);
     expect(lines(yearAt(d, 51), 'Income the law counts', { ...CONTEXT, acaLaw: 'enhanced' }).meter?.limit).toBeNull();
     expect(lines(yearAt(d, 70), 'Income the law counts').meter).toBeUndefined();
   });
@@ -241,7 +241,7 @@ describe('what a detailed plan says it can’t know', () => {
     expect(householdLine({ filing: 'joint' }, { state: 'NV' })).toBe('joint · Nevada');
     expect(householdLine({ filing: null }, { state: null })).toBe('single · no state yet');
     expect(healthSub(DEFAULT_TAX_CHOICES)).toContain('Not set');
-    expect(healthSub({ ...DEFAULT_TAX_CHOICES, health: { ...DEFAULT_TAX_CHOICES.health, beforeMedicare: { kind: 'aca', adult: 1, quotedAge: 50, child: null } } })).toBe('ACA before 65, then Medicare · in Drawdown');
+    expect(healthSub({ ...DEFAULT_TAX_CHOICES, health: { ...DEFAULT_TAX_CHOICES.health, beforeMedicare: { kind: 'aca', adult: 1, quotedAge: 50, child: null } } })).toBe('ACA before 65, then Medicare · in your FI number');
   });
 
   test('a plan folded to single, and one that held spending at zero, say so', () => {
