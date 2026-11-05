@@ -89,6 +89,7 @@ import {
 import type { SeriesAccount, SeriesAccountSpan, SeriesDay } from '@/lib/allocation/series';
 import type { PlanCore } from '@/lib/fire/plan';
 import type { PageFx } from '@/lib/fx/view';
+import type { LeaveOut } from '@/lib/fire/child-accounts';
 import { Masked } from './HideAmounts';
 import { Why } from './Why';
 import { Notice } from './TotalCaveats';
@@ -134,6 +135,7 @@ export function useAllocation({
   currency,
   includeCash,
   fx = null,
+  leaveOut = null,
 }: {
   institutions: AllocInstitution[];
   holdings: AllocHolding[];
@@ -142,6 +144,8 @@ export function useAllocation({
   /** With a home currency (/api/net-worth base.fx): what is in another
    *  currency converts into `currency` at the newest rates (inputsIn). */
   fx?: PageFx | null;
+  /** The accounts the Plan doesn't count (D7), out of `mix` and nothing else. */
+  leaveOut?: LeaveOut | null;
 }): AllocationState {
   const [settings, setSettings] = useState<ListState<AllocationSettings | null>>(initialListState<AllocationSettings | null>(null));
   const store = useMemo(
@@ -172,8 +176,18 @@ export function useAllocation({
   );
   const mix = useMemo(() => {
     const bank = includeCash ? bankCash(inputs.institutions, currency) : { amount: 0, otherCurrencies: [] };
-    return planMix(alloc, bank.amount, bank.otherCurrencies);
-  }, [alloc, includeCash, inputs, currency]);
+    // The Plan's mix is of what it counts, so without a child's accounts when
+    // they are out (D7): worked out on its own, since the card shows them all.
+    const out = new Set(leaveOut ? inputs.institutions.flatMap((i) => i.accounts.filter((a) => leaveOut(a)).map((a) => a.account_id)) : []);
+    if (out.size === 0) return planMix(alloc, bank.amount, bank.otherCurrencies);
+    const counted = allocate({
+      institutions: inputs.institutions.map((i) => ({ ...i, accounts: i.accounts.filter((a) => !out.has(a.account_id)) })),
+      holdings: inputs.holdings.filter((h) => !h.account_id || !out.has(h.account_id)),
+      settings: value,
+      currency,
+    });
+    return planMix(counted, bank.amount, bank.otherCurrencies);
+  }, [alloc, includeCash, inputs, currency, leaveOut, value]);
   return { settings, load: store.load, save: (next) => store.save(next), withSettings, alloc, mix };
 }
 

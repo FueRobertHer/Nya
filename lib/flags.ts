@@ -132,6 +132,15 @@ export const FLAGS = {
     defaults: NOBODY,
     offMeans: 'A plan’s one-offs and income count only from the age Will it last? starts, as before. Nothing stored changes.',
   },
+  'plan-child-accounts': {
+    name: 'Child’s accounts out of invested assets',
+    about: 'Leaves accounts for a child’s education (a 529, UTMA, UGMA, Coverdell or RESP) out of invested assets, on Home, in the Plan and in a saved plan’s Progress line, unless the person counts one.',
+    kind: 'release',
+    removeBy: '2027-04-30',
+    value: 'audience',
+    defaults: NOBODY,
+    offMeans: 'Those accounts count in invested assets, as before. Nothing stored changes.',
+  },
   csp: {
     name: 'Content security policy',
     about: 'How pages send their Content-Security-Policy: enforced, only reported, or off.',

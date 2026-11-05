@@ -53,6 +53,9 @@ type SaveProps = {
   /** D15's switch (the flag 'plan-items-in-fi'): one-offs and income count
    *  in the FI date, which the income and one-off forms say. */
   planInWalk?: boolean;
+  /** D7's switch (the flag 'plan-child-accounts'): a child's accounts are out
+   *  of invested assets, which that figure's form says. */
+  childOut?: boolean;
 };
 
 /** Said beside an input a copy can't change. */
@@ -433,6 +436,9 @@ const FIGURE_TEXT: Record<FigureKind, { title: string; field: string; note: stri
   },
 };
 
+/** Said after that note with a child's accounts out (D7). */
+const CHILD_ACCOUNTS_NOTE = ' Accounts for a child’s education are left out unless you count one.';
+
 type CountedAccount = { account_id: string; name: string; institution: string; balance: number; currency?: string | null };
 
 export function FigureForm(
@@ -482,6 +488,7 @@ export function FigureForm(
     <>
       <p className="panel-note" style={{ marginTop: 0 }}>
         {t.note}
+        {kind === 'assets' && props.childOut ? CHILD_ACCOUNTS_NOTE : ''}
       </p>
       <Choice
         label={t.title}

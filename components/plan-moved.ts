@@ -77,6 +77,22 @@ export function fiMovedText(off: PlanFigures, on: PlanFigures): string | null {
   return `Your FI date is around ${b} now that ${list} ${counts} in it.`;
 }
 
+/**
+ * D7's line: the plan's FI date with a child's accounts counted and left out.
+ * Null when the rounded answers are the same.
+ *   - "Your FI date moved from 53 to 54: accounts for a child's education are now left out."
+ *   - "Your FI date was around 53 before accounts for a child's education were left out." (none now)
+ *   - "Your FI date is around 60 now that accounts for a child's education are left out." (none before)
+ */
+export function childMovedText(off: PlanFigures, on: PlanFigures): string | null {
+  const a = off.view.fiAge === null ? null : Math.round(off.view.fiAge);
+  const b = on.view.fiAge === null ? null : Math.round(on.view.fiAge);
+  if (a === b) return null;
+  if (a !== null && b !== null) return `Your FI date moved from ${a} to ${b}: accounts for a child’s education are now left out.`;
+  if (a !== null) return `Your FI date was around ${a} before accounts for a child’s education were left out.`;
+  return `Your FI date is around ${b} now that accounts for a child’s education are left out.`;
+}
+
 /** The saved plan's one-offs and income its line counts from the `start`
  *  day through `day`, in item order. */
 export function savedNames(items: SavedItems, start: string, day: string): string[] {

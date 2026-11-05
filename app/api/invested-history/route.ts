@@ -10,6 +10,9 @@ import { isManualId, MANUAL_CURRENCY } from '@/lib/manual';
 import { bankCurrencies } from '@/lib/sharing';
 import { readFx } from '@/lib/fx/read';
 import { savedPlanStore } from '@/lib/saved-plan';
+import { flagOnCached, requestWho } from '@/lib/flag-read';
+import { planFactsStore } from '@/lib/plan-copies';
+import { isChildAccount } from '@/lib/fire/child-accounts';
 import { investedSeries, isComplete, type InvestedSeriesAccount, type InvestedDay } from '@/lib/fire/invested-series';
 
 // Invested assets day by day since the plan the person saved as their plan
@@ -20,7 +23,7 @@ import { investedSeries, isComplete, type InvestedSeriesAccount, type InvestedDa
 // no Plaid calls, and writes nothing.
 //
 //   POST /api/invested-history
-//     { accounts: [{ account_id, type, currency }] }
+//     { accounts: [{ account_id, type, currency, subtype? }] }
 //   -> { currency, saved_day, anchor, latest,
 //        months: [{ date, total }],
 //        accounts: [{ account_id, first, last, ended, label }],
@@ -33,7 +36,11 @@ import { investedSeries, isComplete, type InvestedSeriesAccount, type InvestedDa
 // What counts comes from the SAVED PLAN, read here, never from the page:
 // investment accounts, and checking and savings when it was saved with
 // include cash; summed in its currency; from the day it was saved. So both
-// ends of the comparison are counted by the same rules.
+// ends of the comparison are counted by the same rules. With the flag
+// 'plan-child-accounts' on, accounts for a child's education are in no day
+// unless the person counts one (lib/fire/child-accounts.ts): by the subtype the
+// page sends, else the directory's, which knows the accounts a page can't show.
+// An ended manual account has neither, so it stays counted up to its end.
 //
 // Ids are followed through account links, one balance per account a day
 // (the id its history would be read from first, never two), and every id of
@@ -67,6 +74,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const CURRENCY = /^[A-Z0-9]{2,12}$/;
 const ACCOUNT_ID = /^[A-Za-z0-9_:.=-]{1,128}$/;
 const TYPE = /^[a-z_ ]{1,40}$/;
+const SUBTYPE = /^[A-Za-z0-9_ ()/.-]{1,60}$/;
 
 const bad = (error: string) => NextResponse.json({ error }, { status: 400 });
 const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
@@ -91,7 +99,7 @@ function daysIn(from: string, to: string): string[] {
   return out;
 }
 
-type Listed = { account_id: string; type: string; currency: string | null };
+type Listed = { account_id: string; type: string; currency: string | null; subtype: string | null };
 
 /** The question, strictly: exactly `accounts`, each well formed, or why not. */
 function parseQuestion(body: unknown): Listed[] | string {
@@ -107,13 +115,16 @@ function parseQuestion(body: unknown): Listed[] | string {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'Each account is an object';
     const a = raw as Record<string, unknown>;
     const keys = Object.keys(a);
-    if (keys.length !== 3 || !['account_id', 'type', 'currency'].every((k) => keys.includes(k))) return 'Each account has account_id, type and currency';
+    // A page from before T2 sends no subtype.
+    if (!['account_id', 'type', 'currency'].every((k) => keys.includes(k)) || keys.length !== (keys.includes('subtype') ? 4 : 3)) return 'Each account has account_id, type and currency, and may have subtype';
     if (typeof a.account_id !== 'string' || !ACCOUNT_ID.test(a.account_id)) return 'An account_id is not one';
     if (typeof a.type !== 'string' || !TYPE.test(a.type)) return 'An account’s type is a word, such as investment';
     if (a.currency !== null && !(typeof a.currency === 'string' && CURRENCY.test(a.currency))) return "An account's currency is a currency code, or null";
+    const subtype = a.subtype ?? null;
+    if (subtype !== null && !(typeof subtype === 'string' && SUBTYPE.test(subtype))) return 'An account’s subtype is a word, such as 529, or null';
     if (seen.has(a.account_id)) return 'Each account once';
     seen.add(a.account_id);
-    out.push({ account_id: a.account_id, type: a.type, currency: a.currency as string | null });
+    out.push({ account_id: a.account_id, type: a.type, currency: a.currency as string | null, subtype: subtype as string | null });
   }
   return out;
 }
@@ -141,8 +152,22 @@ export async function POST(req: Request) {
 
     const effective = await getEffectiveHidden(ctx);
     const place = placeRecorded({ links: effective.links ?? undefined, hidden: effective.hidden });
-    const [directory, lifecycle] = await Promise.all([readKnownAccounts(ctx), getEffectiveLifecycle(ctx, effective.links)]);
+    const [directory, lifecycle, childOut] = await Promise.all([readKnownAccounts(ctx), getEffectiveLifecycle(ctx, effective.links), requestWho(ctx).then((who) => flagOnCached('plan-child-accounts', who))]);
     const ends = endDays(lifecycle);
+
+    // Accounts for a child's education, while they are out (D7): by every id
+    // an account is known under, and those the person counts kept. Off, nothing
+    // more is read.
+    const facts = childOut ? await planFactsStore.get(ctx) : null;
+    const countedAnyway = new Set((facts?.version === 2 ? facts.tax.countAnyway : []).map((id) => place(id)?.account ?? id));
+    const knownSubtype = new Map<string, string>();
+    if (childOut) {
+      for (const [id, k] of directory.known) {
+        const placed = place(id);
+        if (placed && k.subtype && !knownSubtype.has(placed.account)) knownSubtype.set(placed.account, k.subtype);
+      }
+    }
+    const leftOut = (account: string, subtype: string | null) => childOut && isChildAccount(subtype ?? knownSubtype.get(account)) && !countedAnyway.has(account);
 
     // The accounts that count, under the ids they are known by now, hidden
     // ones left out.
@@ -150,7 +175,7 @@ export async function POST(req: Request) {
     for (const a of listedIn) {
       if (!counts(a.type)) continue;
       const placed = place(a.account_id);
-      if (!placed || listed.has(placed.account)) continue;
+      if (!placed || listed.has(placed.account) || leftOut(placed.account, a.subtype)) continue;
       const end = ends.get(placed.account);
       listed.set(placed.account, { account_id: placed.account, currency: a.currency, ...(end !== undefined ? { ended: end } : {}) });
     }
@@ -164,7 +189,7 @@ export async function POST(req: Request) {
       const end = endOf(entry.lifecycle);
       if (end === null || !counts(entry.type ?? null)) continue;
       const placed = place(root);
-      if (!placed || listed.has(placed.account) || added.some((a) => a.account === placed.account)) continue;
+      if (!placed || listed.has(placed.account) || added.some((a) => a.account === placed.account) || leftOut(placed.account, null)) continue;
       added.push({ account: placed.account, end, currency: entry.currency ?? (isManualId(placed.account) ? MANUAL_CURRENCY : null), ids: [...new Set([root, placed.account])] });
     }
     const unpriced = added.filter((a) => a.currency === null).flatMap((a) => a.ids);

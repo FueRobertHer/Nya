@@ -21,7 +21,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ [
   // page's other server values (lib/flag-read.ts clientFlags): whether to offer
   // connecting a brokerage or retirement account (lib/item-products.ts), Lunch
   // Flow (lib/connectors/switch.ts), and the rest, never their lists.
-  if (!clerkEnabled()) return <Dashboard clerk={false} admin flags={await passwordFlags()} initialTab={tab} initialSettings={settings} adminOps={await adminOps()} newUntil={await newUntil('plan-items-in-fi')} />;
+  if (!clerkEnabled()) return <Dashboard clerk={false} admin flags={await passwordFlags()} initialTab={tab} initialSettings={settings} adminOps={await adminOps()} newUntil={await newUntil('plan-items-in-fi')} childNewUntil={await newUntil('plan-child-accounts')} />;
   // Who is signed in, and whether they are the admin, are read before the
   // dashboard is sent. Meanwhile the page streams the app loading
   // (components/LoadingSkeletons.tsx), the header and Net worth card the
@@ -83,5 +83,5 @@ async function SignedInHome({ tab, params }: { tab: Tab; params: { [key: string]
   // no container known, only Everyone and the variables count.
   const flags = await clientFlags(flagWho(container, userId ?? null, { admin }));
   const settings = parseSettings(params, { sharing: true, admin });
-  return <Dashboard clerk viewer={userId ?? undefined} admin={admin} flags={flags} initialTab={tab} initialSettings={settings} adminOps={admin ? await adminOps() : null} newUntil={await newUntil('plan-items-in-fi')} />;
+  return <Dashboard clerk viewer={userId ?? undefined} admin={admin} flags={flags} initialTab={tab} initialSettings={settings} adminOps={admin ? await adminOps() : null} newUntil={await newUntil('plan-items-in-fi')} childNewUntil={await newUntil('plan-child-accounts')} />;
 }

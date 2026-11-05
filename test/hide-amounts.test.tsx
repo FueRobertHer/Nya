@@ -915,8 +915,8 @@ function planFigureArgs(): FigureArgs {
   const assets: InvestedAssets = {
     total: 250_000,
     accounts: [
-      { account_id: 'a', name: 'Brokerage', type: 'investment', balance: 150_000, currency: 'USD', institution: 'Vanguard', item_id: 'i1' },
-      { account_id: 'b', name: '401(k)', type: 'investment', subtype: '401k', balance: 100_000, currency: 'USD', institution: 'Fidelity', item_id: 'i2' },
+      { account_id: 'a', name: 'Brokerage', type: 'investment', balance: 150_000, value: 150_000, currency: 'USD', institution: 'Vanguard', item_id: 'i1' },
+      { account_id: 'b', name: '401(k)', type: 'investment', subtype: '401k', balance: 100_000, value: 100_000, currency: 'USD', institution: 'Fidelity', item_id: 'i2' },
     ],
     unknown: 0,
     caveats: [{ kind: 'missing', institution: 'Vanguard', count: 1 }],

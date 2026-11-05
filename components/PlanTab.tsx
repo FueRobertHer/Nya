@@ -88,10 +88,11 @@ import {
   walkWords,
   EVENTS_WORDS,
 } from './plan-text';
-import { fiMovedText, stillNew } from './plan-moved';
+import { childMovedText, fiMovedText, stillNew } from './plan-moved';
 import { Hero } from './Hero';
 import { createWholeListStore, initialListState, type ListState, type ListStatus } from '@/lib/whole-list-store';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
+import { leftOutOf } from '@/lib/fire/child-accounts';
 import { investedAssets, type AssetInstitution, type InvestedAssets, type TrailingFlows, type UnreadTransactions, type WorkplaceSavings } from '@/lib/fire/inputs';
 import { fiFigures, measuredInputs, notMeasuredWhat, notWorkedOutText, unmeasuredNeed, type ShareRates } from '@/lib/fire/progress';
 import { historyCount } from '@/lib/spending';
@@ -284,6 +285,13 @@ export type PlanTabProps = {
    *  it stays hidden across tabs), and tapping it. */
   movedSeen?: boolean;
   onMovedSeen?: () => void;
+  /** D7's switch (the flag 'plan-child-accounts'): accounts for a child's
+   *  education are out of invested assets unless counted. */
+  childOut?: boolean;
+  /** The last day D7's change is new, and its own Got it, as D15's above. */
+  childNewUntil?: string | null;
+  childMovedSeen?: boolean;
+  onChildMovedSeen?: () => void;
 };
 
 /** Said by New copy, Duplicate and a rename of your plan while your plan
@@ -314,6 +322,10 @@ export default function PlanTab({
   newUntil = null,
   movedSeen = false,
   onMovedSeen,
+  childOut = false,
+  childNewUntil = null,
+  childMovedSeen = false,
+  onChildMovedSeen,
 }: PlanTabProps) {
   const count: Count = useMemo(() => ({ planInWalk }), [planInWalk]);
   const [state, setState] = useState<ListState<StoredPlan | null>>(initialListState<StoredPlan | null>(null));
@@ -485,6 +497,7 @@ export default function PlanTab({
   // them for the label. The workplace plans' contributions come from the
   // shared copy.
   const shared = useSharedPlanInputs(planInputs, institutions);
+  const leaveOut = useMemo(() => leftOutOf(childOut, shared.taxFacts.countAnyway), [childOut, shared.taxFacts.countAnyway]);
   const inputs = usePlanInputs({
     txns,
     txnNotes,
@@ -496,6 +509,7 @@ export default function PlanTab({
     balanceFx,
     currency: ownCurrency,
     contributions: shared.contributions,
+    leaveOut,
   });
   const { flows, unread, assets, contributions, workplace, cashOn, cashUnmarked } = inputs;
   const figures = fiFigures(basePlan, inputs, currency);
@@ -683,7 +697,7 @@ export default function PlanTab({
   // With a home currency: what was converted into the Plan's currency.
   const convertedNote = figures.convertedNote;
   // In the plan's currency, so its mix is of what the plan counts.
-  const allocation = useAllocation({ institutions, holdings, currency: displayCurrency, includeCash: basePlan.includeCash, fx: balanceFx });
+  const allocation = useAllocation({ institutions, holdings, currency: displayCurrency, includeCash: basePlan.includeCash, fx: balanceFx, leaveOut });
 
   // Every copy as the tab shows it: with your plan's facts in it, repaired
   // where a value no longer fits them (your age moved past its stop age,
@@ -1058,7 +1072,7 @@ export default function PlanTab({
   };
   // The plan saved as your plan and what was recorded since (rollout 8e), for
   // the Progress card and, with the Plan shown, the chart's lines before today.
-  const progress = useProgress(institutions);
+  const progress = useProgress(institutions, childOut ? shared.taxFacts.countAnyway.join(',') : '');
   const progressSaved = progress.savedState.kind === 'ready' ? progress.savedState.saved : null;
   // Only where both are of one thing: the saved plan's currency and include
   // cash are the path's (the Progress card says when they changed).
@@ -1077,6 +1091,12 @@ export default function PlanTab({
   const movedNew = planInWalk && !movedSeen && stillNew(newUntil, todayUtc);
   const offFigures = movedNew && entry === null && baseFigures ? planFigures(basePlan, measured, { count: { planInWalk: false } }) : null;
   const movedText = offFigures && baseFigures && !('refused' in offFigures) ? fiMovedText(offFigures, baseFigures) : null;
+  // D7's the same way, with its own Got it: the plan's figures with a child's
+  // accounts counted again, on the Plan's answer alone, since a saved plan's
+  // Progress line leaves them out at both its ends.
+  const childMovedNew = childOut && !childMovedSeen && entry === null && stillNew(childNewUntil, todayUtc) && (assets.childAccounts?.length ?? 0) > 0;
+  const childOffFigures = childMovedNew && baseFigures ? planFigures(basePlan, measuredInputs({ ...inputs, assets: investedAssets(institutions, basePlan.includeCash, balanceFx, Date.now(), ownCurrency) }), { count }) : null;
+  const childMoved = childOffFigures && baseFigures && !('refused' in childOffFigures) ? childMovedText(childOffFigures, baseFigures) : null;
   const overlay = useMemo(
     () =>
       entry === null &&
@@ -1103,7 +1123,7 @@ export default function PlanTab({
               ? "Some of your transactions haven't loaded or couldn't be read, so Nya's savings figure may be off: save once they have, or type your savings in Your figures."
               : null;
   const copyName = entry?.name ?? null;
-  const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, copy: copyName, paused, planInWalk };
+  const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, copy: copyName, paused, planInWalk, childOut };
 
   // What each figure the plan shown rests on says, worked out once for the
   // rows under the FI card, their sheets' Why? and Drawdown's notice
@@ -1573,6 +1593,8 @@ export default function PlanTab({
               walkFrom={shown?.walkFrom}
               moved={movedText}
               onMovedSeen={onMovedSeen}
+              childMoved={childMoved}
+              onChildMovedSeen={onChildMovedSeen}
               fiShort={shown?.short ? shortText(shown.short, plan.age, money) : null}
               stopShort={
                 stopShort && view.stopAge !== null
@@ -1639,6 +1661,7 @@ export default function PlanTab({
             items={savedItems}
             moved={movedNew}
             onMovedSeen={onMovedSeen}
+            childOut={childOut}
           />
         )}
         </>
@@ -1742,7 +1765,7 @@ export default function PlanTab({
             measured={measuredInputs(inputs)[shownSheet.figure]}
             measuredText={flows ? `from ${windowText(flows)}` : ''}
             why={figureTexts[shownSheet.figure].why}
-            assetsFor={(includeCash) => investedAssets(institutions, includeCash, balanceFx, Date.now(), ownCurrency)}
+            assetsFor={(includeCash) => investedAssets(institutions, includeCash, balanceFx, Date.now(), ownCurrency, leaveOut)}
             workplacePlans={workplacePlansOf(institutions).map((p) => ({ account_id: p.account_id, label: `${p.institution} ${p.name}` }))}
             also={figureChoices(alsoTargets, shownSheet.figure, money)}
           />
@@ -1868,6 +1891,8 @@ export function FiCard({
   walkFrom = { items: false, events: true },
   moved = null,
   onMovedSeen,
+  childMoved = null,
+  onChildMovedSeen,
   fiShort = null,
   stopShort = null,
   stopWalked = false,
@@ -1910,6 +1935,9 @@ export function FiCard({
    *  answer's lines with Got it, which hides it for the session. */
   moved?: string | null;
   onMovedSeen?: () => void;
+  /** D7's line while new (childMovedText), the same way with its own Got it. */
+  childMoved?: string | null;
+  onChildMovedSeen?: () => void;
   /** Why there is no FI date: a cost the walk can't pay. */
   fiShort?: string | null;
   /** Why there is no balance at the stop age: the walk can't get there. */
@@ -2040,6 +2068,16 @@ export function FiCard({
                 {moved}
                 <div className="btn-row">
                   <button type="button" className="btn ghost" onClick={onMovedSeen}>
+                    Got it
+                  </button>
+                </div>
+              </Notice>
+            )}
+            {childMoved && (
+              <Notice level="info">
+                {childMoved}
+                <div className="btn-row">
+                  <button type="button" className="btn ghost" onClick={onChildMovedSeen}>
                     Got it
                   </button>
                 </div>

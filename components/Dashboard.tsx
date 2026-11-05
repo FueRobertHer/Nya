@@ -284,7 +284,7 @@ const TAB_LABELS: Record<Tab, string> = {
 };
 
 /** Every feature switch off: what a page sent without them (a test) shows. */
-const NO_FLAGS: ClientFlags = { restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-tax': false, 'plan-items-in-fi': false };
+const NO_FLAGS: ClientFlags = { restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-tax': false, 'plan-items-in-fi': false, 'plan-child-accounts': false };
 
 export default function Dashboard({
   clerk = false,
@@ -295,6 +295,7 @@ export default function Dashboard({
   initialSettings = null,
   adminOps = null,
   newUntil = null,
+  childNewUntil = null,
 }: {
   clerk?: boolean;
   viewer?: string;
@@ -318,6 +319,8 @@ export default function Dashboard({
    *  (lib/flag-read.ts newUntil), until which Your path and Progress say
    *  what it moved; null says nothing. */
   newUntil?: string | null;
+  /** The same for D7's (a child's accounts leaving invested assets). */
+  childNewUntil?: string | null;
 }) {
   // Whether to offer connecting a brokerage or retirement account
   // (lib/item-products.ts), and Lunch Flow (lib/connectors/switch.ts): a
@@ -350,6 +353,8 @@ export default function Dashboard({
   // Got it on D15's line (components/plan-moved.ts), on Your path or
   // Progress: hidden for the session, whichever tab is open.
   const [planMovedSeen, setPlanMovedSeen] = useState(false);
+  // And on D7's line, its own.
+  const [childMovedSeen, setChildMovedSeen] = useState(false);
   // The month Activity and Budgets show, shared between them and kept the
   // same way (components/view-month-state.ts); Home's links reset it.
   const viewMonth = useViewMonth();
@@ -2516,6 +2521,7 @@ export default function Dashboard({
                         balanceFx={base?.fx ?? null}
                         planInputs={planInputs}
                         planInWalk={flags['plan-items-in-fi']}
+                        childOut={flags['plan-child-accounts']}
                         onOpenPlan={() => {
                           window.scrollTo(0, 0);
                           setPlanSegment('path');
@@ -2879,6 +2885,10 @@ export default function Dashboard({
                   newUntil={newUntil}
                   movedSeen={planMovedSeen}
                   onMovedSeen={() => setPlanMovedSeen(true)}
+                  childOut={flags['plan-child-accounts']}
+                  childNewUntil={childNewUntil}
+                  childMovedSeen={childMovedSeen}
+                  onChildMovedSeen={() => setChildMovedSeen(true)}
                 />
               )}
             </>

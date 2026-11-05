@@ -14,6 +14,8 @@
 // disagree.
 
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import type { LeaveOut } from '@/lib/fire/child-accounts';
+import { DEFAULT_TAX_FACTS, isTaxFacts, type TaxFacts } from '@/lib/fire/tax-facts';
 import type { Txn } from './MonthBreakdown';
 import { localDate } from '@/lib/local-date';
 import {
@@ -90,12 +92,19 @@ export function contributionsFrom(copy: PlanInputsCopy, plans: ReturnType<typeof
   return out;
 }
 
+/** The tax facts in the plan's answer: the flat model and nothing given before
+ *  any were written, or while the answer hasn't come. */
+export function taxFactsFrom(body: { tax_facts?: unknown } | null | undefined): TaxFacts {
+  const facts = body?.tax_facts;
+  return isTaxFacts(facts) ? facts : DEFAULT_TAX_FACTS;
+}
+
 /** The shared copy of the Plan's inputs, and the workplace plans'
- *  contributions from it. Loads when the screen is shown, when its plans
- *  change and when the copy is invalidated, and at no other time: a copy
- *  that stays stale costs a request a screen, never a loop. A copy for the
- *  same plans is shown while a newer one loads. */
-export function useSharedPlanInputs(store: PlanInputsStore, institutions: AssetInstitution[]): { copy: PlanInputsCopy; contributions: PlanContributions[] | null } {
+ *  contributions and the tax facts from it. Loads when the screen is shown,
+ *  when its plans change and when the copy is invalidated, and at no other
+ *  time: a copy that stays stale costs a request a screen, never a loop. A copy
+ *  for the same plans is shown while a newer one loads. */
+export function useSharedPlanInputs(store: PlanInputsStore, institutions: AssetInstitution[]): { copy: PlanInputsCopy; contributions: PlanContributions[] | null; taxFacts: TaxFacts } {
   const copy = useSyncExternalStore(store.subscribe, store.get, store.get);
   const plans = useMemo(() => workplacePlansOf(institutions), [institutions]);
   const key = plans.map(planId).join(',');
@@ -105,7 +114,9 @@ export function useSharedPlanInputs(store: PlanInputsStore, institutions: AssetI
     void store.load(plansRef.current.map(planId));
   }, [store, key, copy.asked]);
   const contributions = useMemo(() => contributionsFrom(copy, plans), [copy, plans]);
-  return { copy, contributions };
+  const body = copy.plan?.body;
+  const taxFacts = useMemo(() => taxFactsFrom(body), [body]);
+  return { copy, contributions, taxFacts };
 }
 
 export type PlanInputs = FiInputs & {
@@ -143,6 +154,7 @@ export function usePlanInputs({
   balanceFx = null,
   currency = null,
   contributions,
+  leaveOut = null,
 }: {
   txns: Txn[] | null;
   txnNotes: string[];
@@ -164,6 +176,9 @@ export function usePlanInputs({
   /** What went into workplace plans (useSharedPlanInputs), null while it
    *  loads. */
   contributions: PlanContributions[] | null;
+  /** Accounts for a child's education out of invested assets (D7,
+   *  lib/fire/child-accounts.ts); null counts them, as before. */
+  leaveOut?: LeaveOut | null;
 }): PlanInputs {
   // "Today" is the viewer's calendar day.
   const today = localDate();
@@ -174,7 +189,7 @@ export function usePlanInputs({
   // The accounts first: their currency is the Plan's, which the year's
   // flows are converted into with a home currency (lib/fire/inputs.ts),
   // unless the Plan has its own, which both are in.
-  const assets = useMemo(() => investedAssets(institutions, includeCash, balanceFx, Date.now(), currency), [institutions, includeCash, balanceFx, currency]);
+  const assets = useMemo(() => investedAssets(institutions, includeCash, balanceFx, Date.now(), currency, leaveOut), [institutions, includeCash, balanceFx, currency, leaveOut]);
   const into = assets.currency;
   const flows = useMemo(
     () => (txns ? trailingFlows(txns, today, { cashAccounts, fx, into, ...(currency ? { currency } : {}) }) : null),
