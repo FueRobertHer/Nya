@@ -65,7 +65,7 @@ const HISTORY = {
 
 function serve(plan: FirePlan, saved: unknown = null) {
   (globalThis as { fetch: unknown }).fetch = async (url: string, init?: RequestInit) => {
-    const key = `${init?.method ?? 'GET'} ${url}`;
+    const key = `${init?.method ?? 'GET'} ${url.split('?')[0]}`;
     const answers: Record<string, [number, unknown]> = {
       'GET /api/plan-inputs': [200, { plan, currency: 'USD' }],
       'GET /api/allocation-settings': [200, { settings: null }],

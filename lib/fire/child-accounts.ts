@@ -6,7 +6,8 @@
 // `countAnyway`). A 529, UTMA, UGMA, Coverdell or RESP, by Plaid's subtype.
 // The browser (components/plan-inputs.ts) and invested history's route
 // (app/api/invested-history) read the same rule, so Home, the Plan and Progress
-// count the same accounts.
+// count the same accounts. What a bank paid into one leaves savings with it
+// (lib/fire/inputs.ts childSavings), so FI and the drawdown plan on neither.
 //
 // Pure, importing nothing.
 
