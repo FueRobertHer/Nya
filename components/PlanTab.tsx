@@ -833,7 +833,11 @@ export default function PlanTab({
   // line, and where it can't go on, which the At age row says. Every plan's
   // ages are parsed (each is repaired), so it is never longer than a plan
   // can be.
-  const path = useMemo(() => (shown ? planPath(shown) : null), [shown]);
+  // Until a detailed plan's years are in, what follows the stop would be flat, and then move.
+  const path = useMemo(() => {
+    const p = shown ? planPath(shown) : null;
+    return p && detailHeld ? { ...p, after: null } : p;
+  }, [shown, detailHeld]);
   const stopShort = path?.short ?? null;
   const stopWalked = path?.fromWalk ?? false;
   const engine: EnginePlan | { missing: Missing } = shown?.engine ?? { missing: 'spending' };
@@ -1963,6 +1967,7 @@ export default function PlanTab({
               pending={pending}
               failed={shownFailed}
               detail={drawn ? { t: drawn.start.t, lawYear: drawn.law.year } : null}
+              setupHeld={detailHeld}
               money={money}
               currency={displayCurrency}
               badge={stressBadge}
@@ -2937,6 +2942,7 @@ export function SimulationCard({
   pending,
   failed = false,
   detail = null,
+  setupHeld = false,
   money,
   currency,
   badge = null,
@@ -2981,6 +2987,8 @@ export function SimulationCard({
   startAtStop?: (() => Promise<boolean | string>) | null;
   /** A save is under way: the link waits, and stays, so a save that fails can say so. */
   startBusy?: boolean;
+  /** A detailed plan's years aren't in, so the setup would say what's about to change. */
+  setupHeld?: boolean;
 }) {
   // Over the label: an open copy's tag, and the badge.
   const top =
@@ -3073,7 +3081,7 @@ export function SimulationCard({
   } else {
     setup = `Stop working ${when} with ${money(sim.startBalance)} (${startLabel}), withdrawing ${pct(rate)} of it, ${money(spendingNow ?? 0)} a year after tax, your spending now, for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}.`;
   }
-  const setupNote = <p className="panel-note">{typeof setup === 'string' ? <Masked>{setup}</Masked> : setup}</p>;
+  const setupNote = setupHeld ? null : <p className="panel-note">{typeof setup === 'string' ? <Masked>{setup}</Masked> : setup}</p>;
 
   if (!outcome) {
     return hero(
@@ -3181,7 +3189,11 @@ export function SimulationCard({
         </div>
 
         {canRunOut(plan.rule) === false && r.successRate === 1 && (
-          <p className="panel-note">This rule only ever withdraws a share of what is there, so it cannot run out; how far spending falls is the risk to watch.</p>
+          <p className="panel-note">
+            {detail
+              ? 'This rule withdraws a share of what is there, with health coverage on top, and it lasted every start; how far spending falls is the risk to watch.'
+              : 'This rule only ever withdraws a share of what is there, so it cannot run out; how far spending falls is the risk to watch.'}
+          </p>
         )}
 
         {/* How far a flexible rule cut spending: a row at the hero's foot,

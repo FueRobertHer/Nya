@@ -1408,7 +1408,7 @@ The exact definitions are in `lib/fire/rules.ts`.
 
 Tax and health coverage worked out from your own accounts, year by year (T3 of the tax plan). Behind the switch `plan-tax`, on for nobody until it is turned on, and only for a plan in US dollars, since the law is in dollars. With the switch off nothing here shows and no figure changes.
 
-**Your FI number stays on the flat rate for now**, and a later release brings it in. Everything else below is worked out. Where a plan's years can't be, Drawdown says so and the plan uses the flat rate.
+**Your FI number stays on the flat rate for now**, and a later release brings it in. Everything else below is worked out. Where a plan's years can't be, Drawdown says so and the plan uses the flat rate. A rule that takes a share of what is there can run out here, since health coverage and one-offs come on top of the share.
 
 **Asking for it.** In Drawdown, **Work it out from your accounts** opens a sheet saying what changes, what it reads and that it is hypothetical, on one year's tax law, and not tax advice. It needs your age, and takes it first when there is none. It holds for every plan, so a copy says to do it on your plan, and **Use a flat rate instead**, in Assumptions, goes back and keeps everything you said.
 

@@ -266,7 +266,7 @@ export function TimelineCard({
 
   // Across history, once the steady path's answer for this draft is in.
   const [across, setAcross] = useState<{ key: string; fired: FiredResult | null } | null>(null);
-  const waiting = worked?.key === checkedKey && worked.f !== 'refused' && checked && 'ok' in checked ? waitingStart(worked.f, checked.ok.id) : null;
+  const waiting = worked?.key === checkedKey && worked.f !== 'refused' && !worked.working && checked && 'ok' in checked ? waitingStart(worked.f, checked.ok.id) : null;
   useEffect(() => {
     if (!open || !firedFor || !waiting) return;
     let live = true;

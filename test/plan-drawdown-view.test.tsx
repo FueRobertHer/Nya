@@ -20,8 +20,8 @@ const drawdown = async (tab: Tab) => {
 const WAY_IN = 'Work it out from your accounts';
 
 async function detailed(plan = PLAN, props: Parameters<typeof render>[0] = {}) {
-  await seedPlan(plan);
   await flagged();
+  await seedPlan(plan);
   const tab = await render({ planTax: true, ...props });
   await drawdown(tab);
   await press(tab.row(WAY_IN));
@@ -134,6 +134,55 @@ describe('while what a plan’s years rest on is out', () => {
     });
   }, 60_000);
 
+  test('nothing flat that would then move: the setup line and what follows the stop', async () => {
+    const atStop = { ...PLAN, spending: 60_000, start: 'at-stop' } as typeof PLAN;
+    await (await detailed(atStop, props)).unmount();
+    await holding('/api/allocation-settings', async (letGo) => {
+      const tab = await render({ planTax: true, ...(props as object) });
+      await page.settle(800);
+      const flatSetup = /Stop working at \d+ with/;
+      const whole = () => tab.container.findAll((e) => e.getAttribute('role') === 'radio' && e.textContent === 'Whole path');
+      expect(tab.text()).not.toMatch(flatSetup);
+      expect(whole().length).toBe(0);
+      letGo();
+      await page.settle(800);
+      await page.settle(1500);
+      expect(tab.text()).toContain('your spending and health coverage with their tax');
+      expect(whole().length).toBe(1);
+      await tab.unmount();
+    });
+  }, 60_000);
+
+  test('Across history runs on the years it will show', async () => {
+    const atStop = { ...PLAN, start: 'at-stop' } as typeof PLAN;
+    await (await detailed(atStop, props)).unmount();
+    await holding('/api/allocation-settings', async (letGo) => {
+      const tab = await render({ planTax: true, ...(props as object) });
+      const sheet = await page.addTemplate(tab, 'A change in spending');
+      await page.fill(sheet, 'Change a year', '4000');
+      await press(tab.sheetRow('Starts'));
+      await pick(tab.dialog()!, 'When invested assets reach');
+      await page.fill(tab.dialog()!, 'Invested assets', '5000000');
+      await press(button(tab.dialog(), 'Done'));
+      await page.rest();
+      await page.settle(800);
+      const said = /It starts in \d+% of runs/;
+      expect(tab.dialog()!.textContent).toContain('Working it out');
+      expect(tab.dialog()!.textContent).not.toMatch(said);
+      letGo();
+      // One figure from here on: no flat one first, for this to replace.
+      const seen = new Set<string>();
+      for (let i = 0; i < 60; i++) {
+        await page.settle(10);
+        const now = tab.dialog()!.textContent.match(said);
+        if (now) seen.add(now[0]);
+      }
+      expect(tab.dialog()!.textContent).not.toContain('Working it out');
+      expect(seen.size).toBe(1);
+      await tab.unmount();
+    });
+  }, 90_000);
+
   test('an item sheet’s preview takes the answer as it comes, with nothing typed', async () => {
     await (await detailed(moved, props)).unmount();
     await holding('/api/allocation-settings', async (letGo) => {
@@ -173,6 +222,20 @@ describe('while what a plan’s years rest on is out', () => {
       await tab.unmount();
     });
   }, 30_000);
+});
+
+describe('a rule that takes a share of what is there', () => {
+  test('doesn’t say it can’t run out', async () => {
+    const k = { account_id: 'k', name: '401(k)', type: 'investment', subtype: '401k', balance: 300_000, currency: 'USD' };
+    const props = { institutions: [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [k] }], planInWalk: true } as never;
+    const tab = await detailed({ ...PLAN, spending: 40_000, rule: 'percent', start: 'at-stop' } as typeof PLAN, props);
+    await pick(tab.container, 'Drawdown');
+    await page.settle(800);
+    await page.settle(1500);
+    expect(tab.text()).not.toContain('it cannot run out');
+    expect(tab.text()).toContain('with health coverage on top, and it lasted every start');
+    await tab.unmount();
+  }, 60_000);
 });
 
 describe('the start link', () => {

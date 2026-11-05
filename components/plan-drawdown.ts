@@ -433,7 +433,7 @@ export const ABOUT_DETAIL = {
     'Only premiums count as health costs: deductibles, coinsurance, dental, vision and hearing don’t. Premiums are about 45% of a 65-year-old’s lifetime health costs (Fidelity’s 2026 estimate).',
     'Your state takes one rate on ordinary income and gains, with Social Security left out. Washington’s tax on capital gains isn’t counted.',
     'Medicare’s income surcharge (IRMAA) reads your income from two years before, and nothing for a year with no such year in the plan.',
-    'Where a flexible rule cuts spending below your average health cost in a run, coverage is cut with it, until a later version keeps them apart.',
+    'Where a flexible rule’s spending falls to your average health cost in a run, it holds there: all of it goes to coverage, with nothing left to live on.',
     'An education account you count stands in as tax-deferred.',
     'What’s left at the end takes taxable at full value, Roth as it is, and tax-deferred and an HSA after tax at the last year’s top rate, which understates cashing out a large balance at once.',
     'A year you’d draw before you stop has no wages counted beside it.',
