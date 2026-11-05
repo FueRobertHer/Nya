@@ -207,8 +207,9 @@ export function yearBadges(y: DrawdownYear, money: Money): string[] {
  *  say is shorter than ten near-identical rows, and each year is still a tap away. */
 export type YearRun = { first: number; last: number };
 
-export function yearRuns(rows: readonly DrawdownYear[], money: Money): YearRun[] {
-  const say = (y: DrawdownYear) => JSON.stringify([yearSources(y), onAca(y), yearBadges(y, money), yearValueLabel(y)]);
+export function yearRuns(rows: readonly DrawdownYear[]): YearRun[] {
+  // Figures as they are, not as the page writes them, so hiding amounts draws the same rows.
+  const say = (y: DrawdownYear) => JSON.stringify([yearSources(y), onAca(y), yearBadges(y, String), yearValueLabel(y)]);
   const runs: YearRun[] = [];
   for (let i = 0; i < rows.length; ) {
     let j = i + 1;

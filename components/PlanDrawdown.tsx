@@ -195,7 +195,7 @@ export function StageLevel({ stage, years, money, rmdAge, cautions = [], onYear 
         </Notice>
       ))}
       <ul className="list-rows">
-        {yearRuns(rows, money).flatMap((r) => {
+        {yearRuns(rows).flatMap((r) => {
           const span = rows.slice(r.first, r.last);
           const one = (y: DrawdownYear, i: number) => <YearRow key={y.age} y={y} money={money} onOpen={() => onYear(stage.first + i)} />;
           if (span.length === 1) return [one(span[0], r.first)];

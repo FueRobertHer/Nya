@@ -6,7 +6,7 @@ import type { IncomeRow } from '@/lib/fire/compile';
 import { DEFAULT_TAX_CHOICES } from '@/lib/fire/tax-choices';
 import { DEFAULT_TAX_FACTS } from '@/lib/fire/tax-facts';
 import { markRows } from '@/components/DrawdownChart';
-import { detailLines, healthSub, honestyNotes, householdLine, householdNotes, lawLabel, onAca, stageHelper, stageSentence, stageSources, stageTitle, survivorLine, taxLine, yearBadges, yearHelper, yearSections, yearSub, yearTitle, yearValueLabel, type YearContext } from '@/components/plan-drawdown';
+import { assumptionsWorked, detailLines, healthSub, honestyNotes, householdLine, householdNotes, lawLabel, onAca, stageHelper, stageSentence, stageSources, stageTitle, survivorLine, taxLine, yearBadges, yearHelper, yearSections, yearSub, yearTitle, yearValueLabel, type YearContext } from '@/components/plan-drawdown';
 
 // What Year by year says, on real years: the stages, a stage's rows and a year's sheet.
 
@@ -162,6 +162,36 @@ describe('a year’s sheet', () => {
     expect(lines(yearAt(d, 70), 'Income the law counts').meter).toBeUndefined();
   });
 
+  test('the meter counts the family it measures, and the limit is in dollars', () => {
+    const y = yearAt(run(), 51);
+    const meter = lines(y, 'Income the law counts').meter!;
+    expect(meter.label).toMatch(/^\d+% of the poverty line, for 2$/);
+    expect(meter.limitLabel).toMatch(/^Limit 400%, \$[\d,]+$/);
+    const withChild = yearAt(run({ dependents: [{ untilAge: 60 }] }), 51);
+    expect(lines(withChild, 'Income the law counts').meter!.label).toMatch(/, for 3$/);
+  });
+
+  test('the benchmark says whose it is', () => {
+    const labels = (y: DrawdownYear) => yearSections(y, CONTEXT).flatMap((s) => s.lines.map((l) => l.label));
+    const d = run();
+    const both = d.years.find((y) => y.care.benchmark > 0 && y.age < 65)!;
+    expect(labels(both)).toContain(`Benchmark plan for ages ${both.age} and ${both.partnerAge}, full price`);
+    // You at Medicare, your partner still on it.
+    expect(labels(yearAt(d, 65))).toContain('Benchmark plan for age 64, full price');
+  });
+
+  test('gains at 0% say up to where, in dollars', () => {
+    const why = lines(yearAt(run(), 51), 'How the tax is worked out').why!;
+    expect(why.text).toContain('$98,900');
+  });
+
+  test('a conversion is in the year’s income and in what it says it did', () => {
+    const y = yearAt(run({ strategy: { order: 'standard', conversions: { kind: 'bracket', top: 0.12 }, convertUntil: null } }), 51);
+    expect(y.conversion).toBeGreaterThan(0);
+    const all = yearSections(y, CONTEXT).flatMap((s) => s.lines.map((l) => l.label));
+    expect(all.some((l) => l.includes('converted to Roth') || l === 'Converted to Roth')).toBe(true);
+  });
+
   test('its lines add up to what the year says it paid', () => {
     const y = yearAt(run(), 51);
     const parse = (v: string) => Number(v.replace(/[^\d.-]/g, ''));
@@ -232,6 +262,13 @@ describe('what a detailed plan says it can’t know', () => {
     expect(notes.map((n) => n.level)).toEqual(['info', 'caution']);
     expect(notes[0].text).toContain('capital gains only');
     expect(notes[1].text).toContain('The child tax credit and head of household aren’t counted.');
+  });
+
+  test('the Assumptions row: its rate and growth, what prices and health do, no tax of its own', () => {
+    const plan = { withdrawalRate: 0.04, realReturn: 0.05, partTimeIncome: 0 };
+    expect(assumptionsWorked(plan, { inflation: 0.03 }, 0.021, money)).toBe('4% withdrawal · 5% growth until FI · 3% inflation · health costs +2.1 points');
+    expect(assumptionsWorked({ ...plan, partTimeIncome: 12_000 }, { inflation: 0.03 }, 0.021, money)).toContain('$12,000 part-time');
+    expect(assumptionsWorked(plan, { inflation: 0.03 }, 0.021, money)).not.toContain('tax');
   });
 
   test('the small lines', () => {
