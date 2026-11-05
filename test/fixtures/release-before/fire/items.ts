@@ -4,23 +4,23 @@
 // scenario's life events were, as one kind of thing, each timed by an anchor
 // (an age, the stop, another item's start or end, a balance invested assets
 // reach, or FI) and an offset in whole years. FirePlan version 2 holds them
-// (lib/fire/plan-v2.ts); version 1's income and one-offs and a scenario's
-// life events upgrade to them in memory, keeping their ids and figures.
+// (lib/fire/plan-v2.ts); version 1's income and one-offs upgrade to them in
+// memory, keeping their ids and figures.
 //
 // ONE SHAPE: every item has every field. A field that doesn't apply to its
 // kind is null, `owner` null, `beforeTax` false and `inflationAdjusted` true
-// (FIELDS, below), so a stored item is checked by one closed shape, as a life
-// event is by its kind's keys (lib/fire/events.ts).
+// (FIELDS, below), so a stored item is checked by one closed shape.
 //
 // Two checks, as for a plan: isPlanItem is what a stored item must be to read
 // back (the shape and types), parseItem what a save must meet (ranges per
 // kind). One-offs and the three kinds of income take version 1's ranges (an
 // amount from 0), so every version 1 plan's items parse; the life event kinds
-// take parseLifeEvent's. itemRules holds the rules between items.
+// take EVENT_LIMITS (lib/fire/events.ts). itemRules holds the rules between
+// items.
 //
-// The cards that show version 1's lists (components/PlanTab.tsx EventsCard,
-// components/PlanForms.tsx) read and write items through the views here
-// (incomeOf, withIncome, ...), so a plan read as version 1 saves back as
+// What still reads version 1's lists (the simulation's From Your path, a
+// copy's diff, the release before's readers) goes through the views here
+// (incomeOf, expensesOf, ...), so a plan read as version 1 saves back as
 // version 1 (lib/fire/plan-v2.ts toStored) and its currency record, which
 // compares the lists position by position, still holds.
 //
@@ -280,36 +280,6 @@ export function itemFromExpense(x: PlanExpense): PlanItem {
   return item(x.id, x.label, 'one-off', ageWhen(x.atAge), { once: x.amount });
 }
 
-/** A scenario's life event, as an item with the same figures and id, its ages
- *  as age anchors: a raise is pay up for good, a career break pay down by
- *  what it costs in saving for its years, part-time work with what it
- *  replaces not said (so it stays out of the walk, as it was). */
-export function itemFromEvent(e: LifeEvent): PlanItem {
-  switch (e.kind) {
-    case 'house':
-      return item(e.id, e.label, 'home', ageWhen(e.atAge), { until: e.years === null ? null : { years: e.years }, once: e.cost, yearly: e.yearly });
-    case 'child':
-      return item(e.id, e.label, 'child', ageWhen(e.fromAge), { until: { years: e.years }, yearly: e.yearly });
-    case 'sabbatical':
-      return item(e.id, e.label, 'pay', ageWhen(e.fromAge), { until: { years: e.years }, yearly: -e.savingsLost });
-    case 'part-time':
-      return item(e.id, e.label, 'part-time', ageWhen(e.fromAge), { until: ageWhen(e.toAge), yearly: e.yearly });
-    case 'spending':
-      return item(e.id, e.label, 'spending', ageWhen(e.fromAge), { until: e.years === null ? null : { years: e.years }, yearly: e.yearly });
-    case 'car':
-      return item(e.id, e.label, 'car', ageWhen(e.atAge), { once: e.cost, every: e.every, times: e.times });
-    case 'raise':
-      return item(e.id, e.label, 'pay', ageWhen(e.fromAge), { yearly: e.yearly });
-    case 'windfall':
-      return item(e.id, e.label, 'windfall', ageWhen(e.atAge), { once: e.amount });
-    case 'loan-end':
-      return item(e.id, e.label, 'loan-end', ageWhen(e.atAge), { yearly: e.yearly });
-  }
-}
-
-/** A scenario's life events as items, for running; never parsed into a plan. */
-export const eventItems = (events: readonly LifeEvent[]): PlanItem[] => events.map(itemFromEvent);
-
 const plainAge = (w: When): number | null => (w.anchor.at === 'age' && w.offset === 0 ? w.anchor.age : null);
 const plain = (x: PlanItem) => x.owner === null && !x.beforeTax && x.replaces === null && x.every === null && x.times === null;
 
@@ -338,9 +308,9 @@ export const expensesOf = (plan: Items): PlanExpense[] => plan.items.map(asExpen
 
 const yearsOf = (until: PlanItem['until']): number | null | undefined => (until === null ? null : 'years' in until ? until.years : undefined);
 
-/** The item as a life event, or null unless it is exactly what itemFromEvent
- *  makes of one: what the Life events card shows and edits (until E2 shows
- *  every item kind in its own forms). */
+/** The item as a life event, or null unless it says only what one could, with
+ *  its ages as plain age anchors: what a copy's diff and the release before's
+ *  readers call a life event. */
 export function asEvent(x: PlanItem): LifeEvent | null {
   const age = plainAge(x.from);
   if (age === null || x.owner !== null || x.beforeTax || x.replaces !== null || !x.inflationAdjusted) return null;
@@ -373,33 +343,15 @@ export function asEvent(x: PlanItem): LifeEvent | null {
   }
 }
 
-/** The plan's items that are life events, in item order. */
-export const eventsOf = (plan: Pick<FirePlanV2, 'items'>): LifeEvent[] => plan.items.map(asEvent).filter((e): e is LifeEvent => e !== null);
+/** The plan with `x` in place of the item with its id, or added at the end
+ *  (the Timeline's item sheet). */
+export const withItem = <P extends Items>(plan: P, x: PlanItem): P => ({
+  ...plan,
+  items: plan.items.some((y) => y.id === x.id) ? plan.items.map((y) => (y.id === x.id ? x : y)) : [...plan.items, x],
+});
 
-/** The plan with `list` as its version 1 lists' one: an item whose id is in
- *  the list (of any kind) replaced where it is, so no id is ever doubled; one
- *  of that view the list leaves out removed; a new one at the end. Every
- *  other item stays where it is. */
-function withList<T extends { id: string }, P extends Items>(plan: P, list: readonly T[], view: (x: PlanItem) => unknown, make: (x: T) => PlanItem): P {
-  const byId = new Map(list.map((x) => [x.id, x]));
-  const items: PlanItem[] = [];
-  for (const x of plan.items) {
-    const next = byId.get(x.id);
-    if (next) {
-      items.push(make(next));
-      byId.delete(x.id);
-    } else if (view(x) === null) {
-      items.push(x);
-    }
-  }
-  for (const x of byId.values()) items.push(make(x));
-  return { ...plan, items };
-}
-
-export const withIncome = <P extends Items>(plan: P, list: readonly PlanIncome[]): P => withList(plan, list, asIncome, itemFromIncome);
-export const withExpenses = <P extends Items>(plan: P, list: readonly PlanExpense[]): P => withList(plan, list, asExpense, itemFromExpense);
-/** The plan with `list` as its life events, as withIncome does it. */
-export const withEvents = <P extends Items>(plan: P, list: readonly LifeEvent[]): P => withList(plan, list, asEvent, itemFromEvent);
+/** The plan without the item with this id. */
+export const withoutItem = <P extends Items>(plan: P, id: string): P => ({ ...plan, items: plan.items.filter((y) => y.id !== id) });
 
 /** The ages of the items' edges known before anything runs (an age, yours or
  *  the partner's as yours; the stop while it is an age; an edge anchored on

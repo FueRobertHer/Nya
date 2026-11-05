@@ -1,8 +1,10 @@
 // lib/fire/plan-currency.ts
 //
 // The currency the Plan's typed figures are in, and what the Plan tab does
-// with it. Pure: the store is lib/fire-plan.ts (planCurrencyStore), the route
-// app/api/fire-plan, the page components/PlanTab.tsx and FiProgressCard.tsx.
+// with it. Pure: each plan's entry holds its currency (`fire-plans`,
+// lib/fire/copies.ts), written by lib/plan-writes.ts through the routes
+// app/api/fire-plan and app/api/plans; the page is components/PlanTab.tsx and
+// FiProgressCard.tsx.
 //
 // KEPT, NEVER CONVERTED. What the person typed in the Plan (spending, savings,
 // assets, a start balance, part-time income, other income, one-offs) stays in
@@ -16,28 +18,18 @@
 // or a load still under way changes it), and every typed figure was read in
 // whatever it had become.
 //
-// RECORDED BESIDE THE PLAN, NOT IN IT. FirePlan's shape is closed (a field
-// it doesn't know makes the reader refuse the plan), so a field there would
-// make the release before read the whole Plan as unrecognised. The record is
-// a store of its own, which that release never reads: the currency, and the
-// typed amounts as the save that wrote the record left them. It holds only
-// while those equal the stored plan's typed amounts. A save the release before
-// made after a rollback, a save that stopped between its two writes, two
-// devices' writes interleaved, or a plan restored without its record each
-// leaves them apart, and the Plan then asks rather than guess.
+// RECORDED WITH THE PLAN. A plan's entry holds its currency beside the plan,
+// written in the same write as its amounts, so the two never part.
 //
 // WHICH CURRENCY THE PLAN IS IN (planCurrencyState):
-//   - recorded: the record holds; its currency, whatever the accounts are in.
+//   - recorded: the entry has one; its currency, whatever the accounts are in.
 //   - follows: the plan holds no typed amount, so nothing can be relabelled:
 //     the accounts' currency, as before.
-//   - unknown: typed amounts and no record that holds. With no record at
-//     all (every Plan saved before this release), the tab records the
-//     currency it shows when that can be told reliably (shownReliably) and no
-//     save is under way, and asks otherwise. With a record that no longer
-//     fits (stale), or one that can't be read, it always asks, offering the
-//     recorded currency first: a record is never replaced without the
-//     person's word. Until then the figures are shown in the accounts'
-//     currency, said to be unconfirmed, and nothing on the Plan is saved.
+//   - unknown: typed amounts and no currency. The tab records the currency
+//     it shows when that can be told reliably (shownReliably) and no save is
+//     under way, and asks otherwise. Until then the figures are shown in the
+//     accounts' currency, said to be unconfirmed, and nothing on the Plan is
+//     saved.
 //
 // THE FIRST AMOUNT. The save that gives a plan its first typed amount
 // records the currency in its own write: the one shown, when it can be told
@@ -61,7 +53,7 @@ export type TypedAmounts = {
 
 export function typedAmounts(plan: StoredPlan): TypedAmounts {
   // Version 2's lists are its items as version 1 shows them
-  // (lib/fire/items.ts), so a record made under either version reads the same.
+  // (lib/fire/items.ts), so amounts compare the same under either version.
   const income = plan.version === 2 ? incomeOf(plan) : plan.income;
   const expenses = plan.version === 2 ? expensesOf(plan) : plan.expenses;
   return {
@@ -96,18 +88,9 @@ export function sameAmounts(a: TypedAmounts, b: TypedAmounts): boolean {
   );
 }
 
-/** A currency as the record holds it: three capital letters (ISO 4217's
+/** A currency as an entry holds it: three capital letters (ISO 4217's
  *  form, which an account's unofficial code such as BTC also has). */
 export const CURRENCY_CODE = /^[A-Z]{3}$/;
-
-/** What the store holds (lib/fire-plan.ts planCurrencyStore). */
-export type PlanCurrencyRecord = {
-  version: 1;
-  /** The currency the plan's typed figures are in. */
-  currency: string;
-  /** The plan's typed amounts as the save that wrote this left them. */
-  amounts: TypedAmounts;
-};
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const closed = (o: Record<string, unknown>, keys: readonly string[]) => Object.keys(o).length === keys.length && keys.every((k) => Object.hasOwn(o, k));
@@ -115,8 +98,8 @@ const amount = (v: unknown) => typeof v === 'number' && Number.isFinite(v);
 const amountOrNull = (v: unknown) => v === null || amount(v);
 const AMOUNT_KEYS = ['spending', 'savings', 'assets', 'startBalance', 'partTimeIncome', 'income', 'expenses'] as const;
 
-/** Whether a value is typed amounts, as a record holds them or the page
- *  sends them: the shape and types only (the plan's own ranges are
+/** Whether a value is typed amounts, as the page sends them (POST
+ *  /api/fire-plan): the shape and types only (the plan's own ranges are
  *  lib/fire/plan.ts's). */
 export function isTypedAmounts(v: unknown): v is TypedAmounts {
   if (!isObject(v) || !closed(v, AMOUNT_KEYS)) return false;
@@ -125,41 +108,16 @@ export function isTypedAmounts(v: unknown): v is TypedAmounts {
   return amountOrNull(v.spending) && amountOrNull(v.savings) && amountOrNull(v.assets) && amountOrNull(v.startBalance) && amount(v.partTimeIncome) && list(v.income) && list(v.expenses);
 }
 
-/** The store's check (isValid): version 1, exactly these fields. Anything
- *  else is a later release's, read as not understood, never as damage. */
-export function isPlanCurrencyRecord(v: unknown): v is PlanCurrencyRecord {
-  return isObject(v) && closed(v, ['version', 'currency', 'amounts']) && v.version === 1 && typeof v.currency === 'string' && CURRENCY_CODE.test(v.currency) && isTypedAmounts(v.amounts);
-}
+/** What the route answers beside the plan: the recorded currency, or null
+ *  with no record at all or a plan with nothing typed. */
+export type CurrencyAnswer = { currency: string | null };
 
-/** The record a save of `plan` in `currency` writes. */
-export function currencyRecord(plan: StoredPlan, currency: string): PlanCurrencyRecord {
-  return { version: 1, currency, amounts: typedAmounts(plan) };
-}
-
-/** The currency the record says `plan`'s typed figures are in, or null when
- *  it says nothing about them: no record, a plan with nothing typed, or a
- *  record of other amounts than the plan's (see the top of this file). */
-export function recordedCurrency(plan: StoredPlan | null, record: PlanCurrencyRecord | null): string | null {
-  if (!plan || !record || !hasTypedAmounts(plan)) return null;
-  return sameAmounts(typedAmounts(plan), record.amounts) ? record.currency : null;
-}
-
-/** What the route answers beside the plan: the recorded currency when the
- *  record holds, and why a record there doesn't (`stale`: a record of other
- *  amounts, whose currency is `was`, which only the person's answer
- *  replaces; `unreadable`: damaged bytes, likewise; `newer`: a later
- *  release's, which is never written over). No currency and no problem: no
- *  record at all, or a plan with nothing typed. */
-export type CurrencyAnswer = { currency: string | null; problem: 'stale' | 'unreadable' | 'newer' | null; was: string | null };
-
-export const NO_ANSWER: CurrencyAnswer = { currency: null, problem: null, was: null };
+export const NO_ANSWER: CurrencyAnswer = { currency: null };
 
 /** The answer as the page reads it from /api/fire-plan's body. */
 export function readCurrencyAnswer(data: Record<string, unknown> | null | undefined): CurrencyAnswer {
-  const code = (v: unknown) => (typeof v === 'string' && CURRENCY_CODE.test(v) ? v : null);
-  const p = data?.currency_problem;
-  const problem = p === 'stale' || p === 'unreadable' || p === 'newer' ? p : null;
-  return { currency: code(data?.currency), problem, was: problem === 'stale' ? code(data?.currency_was) : null };
+  const c = data?.currency;
+  return { currency: typeof c === 'string' && CURRENCY_CODE.test(c) ? c : null };
 }
 
 /** How far the accounts and transactions have loaded, as the page has it. */
@@ -223,34 +181,33 @@ export function shownReliably(
 export type PlanCurrencyState =
   | { kind: 'recorded'; currency: string }
   | { kind: 'follows'; currency: string | null }
-  | { kind: 'unknown'; shown: string | null; problem: CurrencyAnswer['problem']; was: string | null };
+  | { kind: 'unknown'; shown: string | null };
 
 /** From the plan the server last confirmed (never one a save has yet to
  *  write) and its answer. */
 export function planCurrencyState(stored: StoredPlan | null, answer: CurrencyAnswer, shown: string | null): PlanCurrencyState {
   if (answer.currency) return { kind: 'recorded', currency: answer.currency };
   if (!stored || !hasTypedAmounts(stored)) return { kind: 'follows', currency: shown };
-  return { kind: 'unknown', shown, problem: answer.problem, was: answer.was };
+  return { kind: 'unknown', shown };
 }
 
 /** The currency the Plan is worked out and shown in, in any state. */
 export const currencyOfState = (s: PlanCurrencyState): string | null => (s.kind === 'unknown' ? s.shown : s.currency);
 
 /** The currencies to offer when asking which one the figures are in: the
- *  one a record that no longer fits said, first; the one shown; then the
- *  others in sight (the accounts', most first, the transactions', and the
- *  home currency), each once. Any other is in the list of every code. */
-export function candidates(shown: string | null, inputs: { assets: InvestedAssets; flows: TrailingFlows | null }, more: { was?: string | null; home?: string | null } = {}): string[] {
+ *  one shown; then the others in sight (the accounts', most first, the
+ *  transactions', and the home currency), each once. Any other is in the list
+ *  of every code. */
+export function candidates(shown: string | null, inputs: { assets: InvestedAssets; flows: TrailingFlows | null }, home: string | null = null): string[] {
   const out: string[] = [];
   const add = (c: string | null | undefined) => {
     if (c && CURRENCY_CODE.test(c) && !out.includes(c)) out.push(c);
   };
-  add(more.was);
   add(shown);
   for (const c of inputs.assets.byCurrency ?? []) add(c.currency);
   add(inputs.flows?.mostIn);
   add(inputs.flows?.currency);
-  add(more.home);
+  add(home);
   return out;
 }
 
@@ -284,16 +241,7 @@ const shownText = (shown: string | null, from: ReturnType<typeof shownFrom>, why
 
 /** The question, when the Plan's currency isn't known: true to why. */
 export function askText(state: Extract<PlanCurrencyState, { kind: 'unknown' }>, why: NotReliable | null, from: ReturnType<typeof shownFrom>): string {
-  if (state.problem === 'newer') {
-    return `The currency your plan’s figures are in was recorded by a newer version of Nya, so it can’t be read here.${state.shown ? ` They’re shown in ${state.shown} for now.` : ''} Nothing on the Plan can be saved until that version is back.`;
-  }
-  const start =
-    state.problem === 'stale'
-      ? `Nya recorded your plan’s figures as ${state.was ?? 'another currency'}, but they were changed since in a way that didn’t record a currency (an older version of Nya, a page open since before the update, or a save that didn’t finish), so whether they’re still in ${state.was ?? 'it'} can’t be told.`
-      : state.problem === 'unreadable'
-        ? 'The record of the currency your plan’s figures are in couldn’t be read.'
-        : 'Your plan’s figures were saved before Nya kept the currency they were typed in.';
-  return `${start}${shownText(state.shown, from, why)} Which currency are they in? Nothing on the Plan can be saved until you say, and once you do they stay in it, whatever your accounts are in.`;
+  return `Your plan’s figures were saved before Nya kept the currency they were typed in.${shownText(state.shown, from, why)} Which currency are they in? Nothing on the Plan can be saved until you say, and once you do they stay in it, whatever your accounts are in.`;
 }
 
 /** Before a plan's first typed amount, when the currency can't be told from
