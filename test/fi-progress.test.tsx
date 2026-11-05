@@ -121,6 +121,7 @@ const planTabHtml = (p: FirePlan, i = inputs()) => {
     money: (n) => wholeMoney(n, f.currency),
     savingsRate: f.savingsRate,
     shareRates: i.rates ?? null,
+    taxOnHold: false,
   };
   return renderToStaticMarkup(<YourPath a={a} currencyNote={f.currencyNote} />);
 };

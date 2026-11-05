@@ -709,6 +709,7 @@ describe('the Plan', () => {
       money,
       savingsRate: null,
       shareRates: null,
+      taxOnHold: false,
     };
     return renderToStaticMarkup(<YourPath a={a} />);
   };

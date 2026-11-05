@@ -942,6 +942,7 @@ function planFigureArgs(): FigureArgs {
     money: (n) => wholeMoney(n, 'USD'),
     savingsRate: figures.savingsRate,
     shareRates: null,
+    taxOnHold: false,
   };
 }
 

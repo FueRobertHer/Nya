@@ -1211,6 +1211,7 @@ export default function PlanTab({
     money,
     savingsRate: figures.savingsRate,
     shareRates: inputs.rates ?? null,
+    taxOnHold: shared.taxFacts.model === 'detailed',
   };
   const figureTexts = figureNotes(figureArgs);
   const stressNotes = stressNotice(figureArgs, engine, shown?.startsWith ?? null);
@@ -1824,6 +1825,7 @@ export default function PlanTab({
             currency={displayCurrency}
             allocationMix={shownSheet.mix ?? mixToOffer(allocation)}
             at={shownSheet.at ?? null}
+            taxOnHold={figureArgs.taxOnHold}
           />
         )}
         {shownSheet?.kind === 'numbers' && <AboutNumbers />}

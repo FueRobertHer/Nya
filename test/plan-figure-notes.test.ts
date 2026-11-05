@@ -105,6 +105,7 @@ function at(over: Over = {}): FigureArgs {
     money,
     savingsRate: figures.savingsRate,
     shareRates: null,
+    taxOnHold: false,
     ...rest,
   };
 }

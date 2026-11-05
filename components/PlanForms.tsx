@@ -28,6 +28,7 @@ import { Masked, NO_EXAMPLE, spokenLabel } from './HideAmounts';
 import { Why } from './Why';
 import { Segmented } from './Segmented';
 import FieldError from './FieldError';
+import { taxOnHoldText } from './plan-figure-notes';
 import { Notice } from './TotalCaveats';
 import AlsoChange, { type AlsoChoice } from './AlsoChange';
 import { itemRuleText } from './plan-items';
@@ -719,6 +720,9 @@ export function AssumptionsForm(
     allocationMix?: (PlanMix & { ok: true }) | null;
     /** The part to open at; null or left out, the top. */
     at?: AssumptionsAt | null;
+    /** Detailed tax is saved and can't be worked out here, so the rate below
+     *  is what counts (components/plan-figure-notes.ts). */
+    taxOnHold?: boolean;
   }
 ) {
   const { plan, at = null } = props;
@@ -839,6 +843,7 @@ export function AssumptionsForm(
           />
         </label>
         {s.under('The tax rate')}
+        {props.taxOnHold && <Notice level="caution">{taxOnHoldText(plan.taxRate)}</Notice>}
         <p className="helper">A flat share of every withdrawal: the FI number, and what the simulation withdraws, are larger to pay it.</p>
         <label className="field">
           Part-time income for Barista FI (a year, after tax)

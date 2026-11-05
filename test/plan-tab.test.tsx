@@ -166,6 +166,7 @@ describe('the FI card', () => {
     money,
     savingsRate: null,
     shareRates: null,
+    taxOnHold: false,
   });
   /** The FI card with the figures it rests on under it, as Your path draws them. */
   const cardHtml = (p: FirePlan, opts: Opts = {}) => renderToStaticMarkup(<YourPath a={args(p, opts)} currencyNote={opts.currencyNote ?? null} />);

@@ -509,3 +509,59 @@ describe('the rows asked for', () => {
     await tab.unmount();
   });
 });
+
+describe('detailed tax saved, while it can’t be worked out', () => {
+  const HELD = 'Worked-out tax is paused; using a flat 15%.';
+  const open = async (tab: Tab) => {
+    await press(tab.row('Assumptions'));
+    await settle(60);
+  };
+
+  test('a caution on Assumptions and a notice by the rate, never silently', async () => {
+    serve({ tax: { ...DEFAULT_TAX_FACTS, model: 'detailed' }, plan: { ...PLAN, taxRate: 0.15 } });
+    const tab = await mount();
+    await settle(60);
+    expect(tab.container.textContent).toContain(HELD);
+    await open(tab);
+    const notices = tab.dialog()!.findAll((e) => has(e, 'notice') && e.textContent.includes(HELD));
+    expect(notices).toHaveLength(1);
+    expect(has(notices[0], 'caution')).toBe(true);
+    await tab.unmount();
+  });
+
+  test('the flat model draws neither', async () => {
+    serve({ plan: { ...PLAN, taxRate: 0.15 } });
+    const tab = await mount();
+    await settle(60);
+    expect(tab.container.textContent).not.toContain(HELD);
+    await open(tab);
+    expect(tab.shown()).not.toContain(HELD);
+    await tab.unmount();
+  });
+});
+
+describe('the start from what you’d have at your stop age', () => {
+  const options = (tab: Tab) => tab.dialog()!.findAll((e) => e.tagName === 'OPTION').map((e) => e.textContent);
+  const open = async (tab: Tab) => {
+    await press(tab.row('Assumptions'));
+    await settle(60);
+  };
+
+  test('is an option only for a plan already on it', async () => {
+    serve({ plan: { ...PLAN, start: 'at-stop' } });
+    const tab = await mount();
+    await settle(60);
+    await open(tab);
+    expect(options(tab).filter((o) => o.includes('at my stop age'))).toHaveLength(1);
+    await tab.unmount();
+  });
+
+  test('and isn’t offered to any other', async () => {
+    serve();
+    const tab = await mount();
+    await settle(60);
+    await open(tab);
+    expect(options(tab).filter((o) => o.includes('at my stop age'))).toHaveLength(0);
+    await tab.unmount();
+  });
+});
