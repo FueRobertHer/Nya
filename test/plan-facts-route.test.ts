@@ -1,5 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { factsAbout } from './facts-about';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { PlanFacts } from '@/lib/fire/copies';
 import type { TaxChoices } from '@/lib/fire/tax-choices';
@@ -24,6 +25,9 @@ const planRoute = await import('@/app/api/fire-plan/route');
 const plansRoute = await import('@/app/api/plans/route');
 const inputsRoute = await import('@/app/api/plan-inputs/route');
 const factsRoute = await import('@/app/api/plan-facts/route');
+const { forgetAccountFacts } = await import('@/lib/plan-writes');
+const { encrypt } = await import('@/lib/crypto');
+const { UnreadableValueError } = await import('@/lib/repo');
 
 beforeEach(async () => {
   fake.reset();
@@ -230,6 +234,58 @@ describe('what the route refuses', () => {
   test('zero is an amount: a Roth nothing has gone into, a basis of nothing', () => {
     expect(applyTaxFactOp(DEFAULT_TAX_FACTS, { kind: 'roth', owner: 'you', amount: 0 }).rothContributions).toEqual([{ owner: 'you', amount: 0 }]);
     expect(applyTaxFactOp(DEFAULT_TAX_FACTS, { kind: 'account', account_id: 'a', owner: 'you', basis: 0, count: false }).basis).toEqual([{ account_id: 'a', amount: 0 }]);
+  });
+});
+
+describe('accounts gone for good (forgetAccountFacts)', () => {
+  test('everything said about them goes, and only that: other accounts, the Roth amounts and the rest of the facts stay', async () => {
+    await planFactsStore.set(ctx, { ...factsAbout('gone', 'also-gone', 'stays'), main: 'x', age: 41 });
+    await forgetAccountFacts(ctx, ['gone', 'also-gone']);
+    expect(await planFactsStore.get(ctx)).toEqual({ ...factsAbout('stays'), main: 'x', age: 41 });
+  });
+
+  test('one said of in only one list goes from it', async () => {
+    await planFactsStore.set(ctx, { version: 2, main: MAIN_ID, ...DEFAULTS, tax: { ...DEFAULT_TAX_FACTS, countAnyway: ['gone', 'stays'] } });
+    await forgetAccountFacts(ctx, ['gone']);
+    expect(taxIn(await planFactsStore.get(ctx)).countAnyway).toEqual(['stays']);
+  });
+
+  test('your plan’s stamp stays, so a page holding it can still save', async () => {
+    const saved = await save(TYPED, null);
+    await give(account('gone', { basis: 5 }));
+    const before = await fake.hgetall<Record<string, string>>(ctxKey('fire-plans'));
+    await forgetAccountFacts(ctx, ['gone']);
+    expect(taxIn(await planFactsStore.get(ctx)).basis).toEqual([]);
+    expect(await fake.hgetall<Record<string, string>>(ctxKey('fire-plans'))).toEqual(before);
+    expect((await save({ ...TYPED, spending: 41_000 }, saved.body.updated_at, factsOf(TYPED))).status).toBe(200);
+  });
+
+  test('none of them named: nothing is written, so facts aren’t made, or made version 2', async () => {
+    await forgetAccountFacts(ctx, ['gone']);
+    expect(await fake.type(ctxKey('plan-facts'))).toBe('none');
+    const version1: PlanFacts = { version: 1, main: MAIN_ID, ...DEFAULTS };
+    await planFactsStore.set(ctx, version1);
+    const bytes = await fake.get<string>(ctxKey('plan-facts'));
+    await forgetAccountFacts(ctx, ['gone']);
+    expect(await fake.get<string>(ctxKey('plan-facts'))).toBe(bytes);
+    await planFactsStore.set(ctx, factsAbout('stays'));
+    const named = await fake.get<string>(ctxKey('plan-facts'));
+    await forgetAccountFacts(ctx, ['gone']);
+    await forgetAccountFacts(ctx, []);
+    expect(await fake.get<string>(ctxKey('plan-facts'))).toBe(named);
+  });
+
+  test('damaged bytes hold nothing to take out: they don’t stop a forget, and stay as they are', async () => {
+    await fake.set(ctxKey('plan-facts'), DAMAGED);
+    await forgetAccountFacts(ctx, ['gone']);
+    expect(await fake.get<string>(ctxKey('plan-facts'))).toBe(DAMAGED);
+  });
+
+  test('facts this version doesn’t recognise may name it: they stop a forget, and stay as they are', async () => {
+    const newer = await encrypt(ctx, '{"version":3}');
+    await fake.set(ctxKey('plan-facts'), newer);
+    await expect(forgetAccountFacts(ctx, ['gone'])).rejects.toBeInstanceOf(UnreadableValueError);
+    expect(await fake.get<string>(ctxKey('plan-facts'))).toBe(newer);
   });
 });
 

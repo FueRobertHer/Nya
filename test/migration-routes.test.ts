@@ -1,6 +1,7 @@
 import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { factsAbout } from './facts-about';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 
 // Importing another app's export, as the app calls it: app/api/migration
@@ -61,6 +62,7 @@ const { budgetMonthsStore } = await import('@/lib/budget-months-store');
 const { setOverride, getOverrides } = await import('@/lib/overrides');
 const { commitMigration } = await import('@/lib/migration/commit');
 const { planMigration } = await import('@/lib/migration/plan');
+const { planFactsStore } = await import('@/lib/plan-copies');
 const { readTargets } = await import('@/lib/migration/targets');
 const { readAppFile } = await import('@/lib/import/apps/read');
 const routes = await import('@/app/api/migration/route');
@@ -397,10 +399,14 @@ for (const c of CASES) {
       // What it takes out, as each account's own Undo would say it.
       expect(plan.body.undo.remove).toBe((await manualTxnStore.getAll(ctx)).size > 0 ? [...(await manualTxnStore.getAll(ctx)).values()].reduce((n, b) => n + b.rows.length, 0) : 0);
       expect(plan.body.undo.edited).toBe(0);
+      // Said of an account the import made, it goes with the account.
+      await planFactsStore.set(ctx, factsAbout('manual_of_mine', ...(await getManualAccounts(ctx)).map((a) => a.account_id)));
       const undone = await undo({ migration_id, confirm: true });
       expect(undone.status).toBe(200);
       expect(undone.body.accounts.removed.sort()).toEqual([...c.accounts].sort());
       expect(await getManualAccounts(ctx)).toEqual([]);
+      expect(await planFactsStore.get(ctx)).toEqual(factsAbout('manual_of_mine'));
+      await planFactsStore.remove(ctx);
       expect((await manualTxnStore.getAll(ctx)).size).toBe(0);
       expect((await splitStore.getAll(ctx)).size).toBe(0);
       expect((await txnAnnotationStore.getAll(ctx)).size).toBe(0);

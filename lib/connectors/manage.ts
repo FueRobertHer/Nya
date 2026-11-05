@@ -91,6 +91,7 @@ import { isOwedType } from '../balance';
 import { leftWhy, MAX_WEIGHED, retypeWithHistory, SignRepairRefused, type Why } from '../sign-repair';
 import { pendingJob, WHYS } from '../sign-repair-store';
 import { ForgetRefused } from '../links';
+import { forgetAccountFacts } from '../plan-writes';
 
 /** How many connections a container may have: one SimpleFIN Bridge account
  *  holds the person's banks there; a second is for another server that speaks
@@ -575,6 +576,9 @@ export async function releaseAccounts(ctx: Ctx, account_ids: string[], keep: boo
   const accounts = [...(await connectorAccountsStore.getMany(ctx, account_ids)).values()];
   const refused = keep ? keepRefusal(accounts) : null;
   if (refused) throw new ConnectorRefused(refused, 409);
+  // Nothing more can be said of one removed. One kept carries on under its id, so
+  // what was said about it stays. Before anything changes, as this can stop.
+  await forgetAccountFacts(ctx, accounts.filter((a) => !keep || nyaBalance(a) === null).map((a) => a.account_id));
   // What is let go, and how, recorded before anything changes, so a report on
   // a period it was tracked in says its transactions may be gone, or since
   // then only entered by hand (lib/report/read.ts). Strict: an account goes

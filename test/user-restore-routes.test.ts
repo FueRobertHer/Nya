@@ -1,4 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { factsAbout } from './facts-about';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, testKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { seedOld, TXNS } from './restore-fixture';
 import { clerk } from './clerk-mock';
@@ -25,6 +26,7 @@ const { startBody, startRestore, sendBatches, finishRestore, RestoreStopped, NOT
 const { newUserRestoreId, restoredId, MAX_BATCH_BODY } = await import('@/lib/user-restore/ids');
 const { userRestoreStore, restoredTxnStore, restoredAccountsStore, startsCount, STARTS_PER_DAY } = await import('@/lib/user-restore/store');
 const { scanAccount } = await import('@/lib/user-restore/empty');
+const { planFactsStore } = await import('@/lib/plan-copies');
 const { restoreUnfinished } = await import('@/lib/user-restore/restored');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { encrypt } = await import('@/lib/crypto');
@@ -309,9 +311,14 @@ describe('the routes', () => {
     expect((await forget('acc_card')).status).toBe(409);
     expect((await forget('acc_old')).status).toBe(409);
     expect((await fake.hget(ctxKey('restored-accounts'), 'acc_old')) as unknown).toBe('not a value Nya wrote');
+    // What the tax facts say about each stays through a refusal, and goes with the account.
+    await planFactsStore.set(ctx, factsAbout('acc_lost', 'acc_old'));
+    expect((await forget('acc_old')).status).toBe(409);
+    expect(await planFactsStore.get(ctx)).toEqual(factsAbout('acc_lost', 'acc_old'));
     // With restores turned off too: what it ends holds the totals either way.
     delete process.env.RESTORE_ENABLED;
     expect(await forget('acc_lost')).toEqual({ status: 200, body: { forgotten: true, unreadable_days: 0 } });
+    expect(await planFactsStore.get(ctx)).toEqual(factsAbout('acc_old'));
     expect(await fake.hget(ctxKey('restored-accounts'), 'acc_lost')).toBeNull();
     expect(await fake.hget(ctxKey('accounts:directory'), 'acc_lost')).toBeNull();
     expect(await restoredTxnStore.has(ctx, 'acc_lost.1')).toBe(false);
@@ -327,6 +334,7 @@ describe('the routes', () => {
     ]);
     const forgot = await linksRoute.POST(new Request('http://localhost/api/account-links', { method: 'POST', body: JSON.stringify({ action: 'forget', old: 'acc_old' }) }));
     expect(forgot.status).toBe(200);
+    expect(await planFactsStore.get(ctx)).toEqual(factsAbout());
     expect((await call('GET', '/api/user-restore')).body.accounts_unreadable.entries.map((e: any) => e.account_id)).toEqual(['acc_chk']);
   });
 

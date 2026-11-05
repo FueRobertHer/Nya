@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, tes
 import './clerk-mock';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { FakeLunchFlow, daysAgo, lfAccount, lfTxn } from './lunchflow-fake';
+import { factsAbout } from './facts-about';
 import { parseCsv } from './csv-parse';
 
 // Lunch Flow through the routes the app calls (app/api/connectors) and
@@ -63,6 +64,7 @@ const rulesRoute = await import('@/app/api/rules/route');
 const mcp = await import('@/app/api/mcp/route');
 
 const ctx = TEST_CTX;
+const { planFactsStore } = await import('@/lib/plan-copies');
 const OTHER = { container: '3f0b8c1e-6d2a-4b5c-9e7f-0a1b2c3d4e5f' } as typeof TEST_CTX;
 
 let server: FakeLunchFlow;
@@ -214,12 +216,17 @@ describe('connecting through the routes', () => {
     const card = conn.accounts.find((a: any) => a.name === 'Credit Card');
     const retyped = await call(accountsRoute.PUT, 'PUT', { connection_id: id, retype: [{ account_id: card.account_id, type: 'loan' }] });
     expect([retyped.status, retyped.body.retyped]).toEqual([200, 1]);
+    // What the tax facts say about an account goes when it is removed, and stays when it is kept.
+    const everyday = conn.accounts.find((a: any) => a.name === 'Everyday').account_id;
+    await planFactsStore.set(ctx, factsAbout(card.account_id, everyday));
     const stopped = await call(accountsRoute.PUT, 'PUT', { connection_id: id, stop: { account_ids: [card.account_id], keep: false } });
     expect([stopped.status, stopped.body.removed]).toEqual([200, 1]);
+    expect(await planFactsStore.get(ctx)).toEqual(factsAbout(everyday));
     ({ body } = await list());
     expect(body.connections[0].accounts.map((a: any) => a.name)).toEqual(['Everyday']);
     const gone = await call(connectors.DELETE, 'DELETE', { connection_id: id });
     expect([gone.status, gone.body.kept]).toEqual([200, 1]);
+    expect(await planFactsStore.get(ctx)).toEqual(factsAbout(everyday));
     ({ body } = await list());
     expect(body.connections).toEqual([]);
     // What was let go is listed, by its connector, on the Reports page.
