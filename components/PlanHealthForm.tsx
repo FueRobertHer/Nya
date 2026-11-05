@@ -216,7 +216,7 @@ export default function PlanHealthForm(
           checked={paysNow ? ['paid'] : []}
           onChange={(keys) => setPaysNow(keys.includes('paid'))}
           disabled={s.saving || detail.factsLocked}
-          rows={[{ key: 'paid', title: 'You already pay for coverage from your accounts', sub: 'COBRA, a plan of your own, a retired spouse’s. Drawdown leaves its category out of your measured spending, so it isn’t counted twice. Your FI number still counts it, for now.' }]}
+          rows={[{ key: 'paid', title: 'You already pay for coverage from your accounts', sub: 'COBRA, a plan of your own, a retired spouse’s. Drawdown and your FI number leave its category out of your measured spending, so it isn’t counted twice.' }]}
         />
         {detail.factsLocked && <p className="helper">What already pays for coverage is {SAME_IN_EVERY_PLAN}</p>}
         {paysNow && (

@@ -318,6 +318,13 @@ describe('the FI number in the detailed model', () => {
     expect(fromToday.view.workedOut).toBeCloseTo(fromStop.view.workedOut as number, 6);
     // And Will it last? still starts from today's spending.
     expect(detailOf(fromToday).start.years[0].living).toBeCloseTo(60_000, 4);
+    // It is in the number, so nothing says the number leaves it out.
+    expect(fromToday.events?.later ?? []).toEqual([]);
+    expect(planPath(fromToday)!.after!.leftOut.events).toBe(false);
+    // A change after the stop still is left out.
+    const afterStop = figures(plan({ items: [item({ kind: 'spending', from: when(60), yearly: 12_000 })], start: 'assets' }));
+    expect(afterStop.events?.later.map((l) => l.fromAge)).toEqual([60]);
+    expect(planPath(afterStop)!.after!.leftOut.events).toBe(true);
   });
 
   test('Barista: what part-time work leaves, with health, grossed up for tax', () => {

@@ -741,8 +741,10 @@ export default function PlanTab({
     const saved = await store.save(next);
     if (saved) factsWere.current = factsOf(next);
     // A plan that has just been given both ages, with no rate typed, starts worked out
-    // from its accounts. A failure leaves it flat, with its offer on Drawdown.
-    if (saved === true && offerDetail && next.taxRate === 0 && bothAges(next) && !bothAges(basePlan)) await chooseModel({ kind: 'opt-in' });
+    // from its accounts, unless it has been worked out before and was taken back to
+    // flat (opting in leaves its choices). The sheet closes on the save. A failure
+    // leaves it flat, with its offer on Drawdown.
+    if (saved === true && offerDetail && yourChoices === null && next.taxRate === 0 && bothAges(next) && !bothAges(basePlan)) void chooseModel({ kind: 'opt-in' });
     return saved;
   };
 
@@ -1019,6 +1021,7 @@ export default function PlanTab({
   const [figureLevel, setFigureLevel] = useState<FigureLevel | null>(null);
   // A stage's year, by its place in Year by year's years, drawn over the stage.
   const [yearLevel, setYearLevel] = useState<number | null>(null);
+  const [stageRuns, setStageRuns] = useState<readonly number[]>([]);
   const [opened, setOpened] = useState(0);
   const shownSheet = useLast(sheet);
   // The figure's row a sheet was opened from (InputsCard), by its kind, set
@@ -1052,6 +1055,7 @@ export default function PlanTab({
     setSheet(s);
     setFigureLevel(null);
     setYearLevel(null);
+    setStageRuns([]);
   };
   const close = () => setSheet(null);
   useEffect(() => setOptInOpen(sheet?.kind === 'opt-in'), [sheet?.kind]);
@@ -1402,14 +1406,14 @@ export default function PlanTab({
   // The tax and health in the FI number. Until what they rest on settles, nothing flat
   // shows that would then move; once it has, a plan they can't be worked out for keeps
   // the flat rate's words and its field.
-  const shownShares = shown?.shares ?? null;
-  const fiHeld = detailShown && shownWorking && shownShares === null;
+  const fiHeld = detailShown && shownWorking;
+  const shownShares = fiHeld ? null : (shown?.shares ?? null);
   const taxWorked = shownShares !== null || fiHeld;
   const honesty = shown?.detail && !('failed' in shown.detail) ? honestyNotes({ today: detailBuckets, choices: detailChoices, items: shownPlan.items, law: shown.detail.law, unansweredPaid, money }) : [];
   const healthRow: (FigureText & { value: string | null }) | null = !detailShown
     ? null
     : {
-        sub: healthSub(detailChoices),
+        sub: healthSub(detailChoices, shownPlan.fiNumber === null && taxWorked),
         line: null,
         why: null,
         value: detailChoices.health.beforeMedicare === null ? null : shownShares ? `About ${money(shownShares.h)} a year` : '--',
@@ -1469,7 +1473,7 @@ export default function PlanTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [shown, drawn]
   );
-  const shownUntil = shownInput && shownPlan.age !== null ? untilByDefault(shownInput.rmdAges, { age: shownPlan.age, partnerAge: shownPlan.partnerAge }) : null;
+  const shownUntil = shownInput && shownPlan.age !== null ? untilByDefault(shownInput.rmdAges, { age: shownPlan.age, partnerAge: shownInput.filing === 'joint' ? shownPlan.partnerAge : null }) : null;
   /** A copy's choices beside your plan's, where tax is worked out. */
   const choicesBeside = (copy: TaxChoices | null) => (detailShown && copy !== null ? { mine: yourChoices ?? DEFAULT_TAX_CHOICES, copy, until: shownUntil } : null);
   // Taxes don't move a saved plan's assets before the stop, so a year your plan draws
@@ -1673,7 +1677,7 @@ export default function PlanTab({
   const tryItem = (item: PlanItem, name: string) => createCopy(plansState.main, name, true, withItem(basePlan, item));
   /** Compare's Try it: a copy of the plan shown with a rule, opened on Drawdown. */
   const tryRule = async (row: CompareRow): Promise<true | string> => {
-    const name = copyNameFor(row.strategy.conversions, plansState.list.map((r) => r.name));
+    const name = copyNameFor(row.strategy.conversions, plansState.list);
     const strategy: Strategy = { ...detailChoices.strategy, conversions: row.strategy.conversions, convertUntil: row.strategy.convertUntil };
     const r = await createCopy(entry ? entry.id : plansState.main, name, true, undefined, { ...detailChoices, strategy });
     if (r === true) close();
@@ -2102,7 +2106,9 @@ export default function PlanTab({
                   realReturn={plan.realReturn}
                   lawYear={drawn.law.year}
                   healthGrowth={yearContext.healthGrowth}
+                  copyOpen={entry !== null}
                   held={reloading}
+                  working={shownWorking}
                   onRule={(r) => open({ kind: 'rule', key: r.key }, `rule-${r.key}`)}
                   ruleRef={(key, el) => inputRowRef(`rule-${key}`, el)}
                 />
@@ -2120,7 +2126,7 @@ export default function PlanTab({
             />
           )}
 
-          {worked && 'sim' in engine && !shownFailed && (
+          {worked && 'sim' in engine && !holdSim && (
             <GridCard
               copyName={copyName}
               plan={plan}
@@ -2167,7 +2173,7 @@ export default function PlanTab({
 
       <Sheet
         open={!!sheet}
-        title={shownSheet ? (shownSheet.kind === 'figure' ? (figureLevel?.title ?? FIGURE_TITLES[shownSheet.figure]) : shownSheet.kind === 'stage' ? (sheetYear ? yearTitle(sheetYear) : sheetStage ? stageTitle(sheetStage) : 'Year by year') : shownSheet.kind === 'rule' ? (sheetRule ? ruleTitle(sheetRule.strategy.conversions) : 'Roth conversions') : SHEET_TITLES[shownSheet.kind]) : ''}
+        title={shownSheet ? (shownSheet.kind === 'figure' ? (figureLevel?.title ?? FIGURE_TITLES[shownSheet.figure]) : shownSheet.kind === 'stage' ? (sheetYear ? yearTitle(sheetYear) : sheetStage ? stageTitle(sheetStage) : 'Year by year') : shownSheet.kind === 'rule' ? (sheetRule ? ruleTitle(sheetRule.strategy.conversions, sheetRule.strategy.convertUntil) : 'Roth conversions') : SHEET_TITLES[shownSheet.kind]) : ''}
         onClose={() => {
           if (levelSaves === 0) close();
         }}
@@ -2246,7 +2252,7 @@ export default function PlanTab({
             detail={detailForm}
             defaultUntil={shownUntil ?? (yearContext ? yearContext.rmdAge - 1 : 74)}
             onAca={(drawn?.start.aca.on ?? 0) > 0}
-            partner={plan.partnerAge !== null}
+            partner={shared.taxFacts.filing === 'joint' && plan.partnerAge !== null}
             preview={previewConversions}
             movingStart={plan.start === 'fi-number' && plan.fiNumber === null && 'sim' in engine ? engine.sim.startBalance : null}
             money={money}
@@ -2277,7 +2283,7 @@ export default function PlanTab({
             detail={detailForm}
             drawnRate={drawn?.start.rate ?? null}
             taxWorked={taxWorked}
-            workedNumber={view.workedOut}
+            workedNumber={fiHeld ? null : view.workedOut}
             onFlatRate={entry ? null : () => chooseModel({ kind: 'model', model: 'flat' })}
             planTax={planTax}
             defaultGrowth={HEALTH_GROWTH.overPrices * 100}
@@ -2289,7 +2295,7 @@ export default function PlanTab({
           <OptInSheet
             key={opened}
             before={baseFigures}
-            after={optInAfter && !('refused' in optInAfter.figures) ? optInAfter.figures : null}
+            after={optInAfter && !optInAfter.failed && !('refused' in optInAfter.figures) ? optInAfter.figures : null}
             working={!optInAfter || optInAfter.working}
             coverageSet={detailChoices.health.beforeMedicare !== null}
             money={money}
@@ -2299,7 +2305,7 @@ export default function PlanTab({
             onDone={closeFor(opened)}
           />
         )}
-        {sheetStage && drawn && yearContext && !sheetYear && <StageLevel stage={sheetStage} years={drawn.start.years} money={money} rmdAge={yearContext.rmdAge} cautions={sheetStage.key === 'before-60' ? rothCautions : []} onYear={setYearLevel} />}
+        {sheetStage && drawn && yearContext && !sheetYear && <StageLevel stage={sheetStage} years={drawn.start.years} money={money} rmdAge={yearContext.rmdAge} cautions={sheetStage.key === 'before-60' ? rothCautions : []} openRuns={stageRuns} onRuns={setStageRuns} onYear={setYearLevel} />}
         {sheetYear && yearContext && <YearLevel year={sheetYear} context={yearContext} />}
         {shownSheet?.kind === 'figure' && (
           <FigureForm
@@ -3207,7 +3213,7 @@ export function SimulationCard({
   // than it is); with less, or from today's assets, a note.
   const startLine = startsWith && !startsWith.more ? startLineText(startsWith, money, { age: plan.age, stopAge: view.stopAge, atStop: view.atTargetAge }) : null;
   const startLink = startAtStop && view.stopAge !== null ? <StartAtStop stopAge={view.stopAge} busy={startBusy} onStart={startAtStop} /> : null;
-  const startNote = startsWith?.more ? (
+  const startNote = setupHeld ? null : startsWith?.more ? (
     <Notice level="caution">
       <Masked>{`It starts with ${startsWithText(startsWith, money, 'on Your path').replace(/\.$/, '')}: it starts with money it wouldn’t have then, so it reads safer than it is.`}</Masked>
       {startLink}

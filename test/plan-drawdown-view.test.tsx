@@ -101,6 +101,8 @@ describe('while what a plan’s years rest on is out', () => {
       // A sheet opened meanwhile has no flat number or rate to type.
       await press(tab.row('Assumptions'));
       expect(tab.dialog()!.textContent).not.toContain('Tax on withdrawals');
+      expect(tab.dialog()!.textContent).toContain('FI number');
+      expect(tab.dialog()!.textContent).not.toMatch(/FI number \(\$/);
       await press(closeOf(tab.dialog()!));
       letGo();
       await page.settle(200);
@@ -160,6 +162,23 @@ describe('while what a plan’s years rest on is out', () => {
       await page.settle(1500);
       expect(tab.text()).toContain('your spending and health coverage with their tax');
       expect(whole().length).toBe(1);
+      await tab.unmount();
+    });
+  }, 60_000);
+
+  test('nothing flat from the FI number: By withdrawal rate and length, and the start’s note', async () => {
+    const taxed = { ...PLAN, taxRate: 0.15 } as typeof PLAN;
+    await (await detailed(taxed, props)).unmount();
+    await holding('/api/allocation-settings', async (letGo) => {
+      const tab = await render({ planTax: true, ...(props as object) });
+      await pick(tab.container, 'Drawdown');
+      await page.settle(800);
+      expect(tab.text()).not.toContain('each starting with');
+      expect(tab.text()).not.toContain('Starting from your FI number');
+      letGo();
+      await page.settle(800);
+      await page.settle(1500);
+      expect(tab.text()).toContain('each starting with');
       await tab.unmount();
     });
   }, 60_000);
@@ -483,6 +502,13 @@ describe('the years', () => {
     expect(year.textContent).toContain('Hypothetical, not tax advice.');
     await press(year.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('aria-label') === 'Back')[0]);
     expect(tab.dialog()!.getAttribute('aria-label')).toBe(stage);
+    // Back to the stage with its run still open, and a stage opened again starts closed.
+    if (run) {
+      expect(rows().find((e) => e.getAttribute('aria-expanded') === 'true')).toBeTruthy();
+      await press(closeOf(tab.dialog()!));
+      await press(first);
+      expect(rows().find((e) => e.getAttribute('aria-expanded') === 'true')).toBeFalsy();
+    }
     await press(closeOf(tab.dialog()!));
     expect(tab.dialog()).toBeNull();
     await tab.unmount();

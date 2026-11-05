@@ -263,7 +263,7 @@ function runYears(inp: DrawdownInput, rule: RuleSpec, t: number, h: number): Run
   let irmaaUnknown = false;
   const meets = (owner: Owner) => health.meetsRule.includes(owner);
   const strategy = inp.strategy ?? NO_STRATEGY;
-  const until = strategy.convertUntil ?? defaultUntil(inp.rmdAges, today);
+  const until = strategy.convertUntil ?? defaultUntil(inp.rmdAges, { age: today.age, partnerAge: joint ? today.partnerAge : null });
   const aca = { on: 0, withCredit: 0 };
 
   for (let y = 0; y < years; y++) {

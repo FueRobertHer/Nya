@@ -7,6 +7,7 @@
 
 import type { Drawdown } from '@/lib/fire/drawdown';
 import type { TaxChoices } from '@/lib/fire/tax-choices';
+import { nameTaken } from '@/lib/fire/plan-list';
 import type { Strategy } from '@/lib/fire/tax/rules';
 import { pct } from './plan-text';
 
@@ -18,8 +19,9 @@ export const ORDER_WORDS: Record<Strategy['order'], string> = {
   'roth-before-deferred': 'Taxable, then Roth, then tax-deferred',
 };
 
-/** A rule with no amount in it: a sheet's title, which is read out whole, and a copy's name. */
-export function ruleTitle(rule: Rule): string {
+const untilWords = (until: number | null) => (until === null ? '' : `, until ${until}`);
+
+function bareTitle(rule: Rule): string {
   switch (rule.kind) {
     case 'none':
       return 'None';
@@ -32,8 +34,12 @@ export function ruleTitle(rule: Rule): string {
   }
 }
 
+/** A rule with no amount in it: a sheet's title, which is read out whole, and a copy's name.
+ *  An age set is said, so the rule isn't taken for the same rule to its usual age. */
+export const ruleTitle = (rule: Rule, until: number | null = null) => `${bareTitle(rule)}${untilWords(until)}`;
+
 /** A rule's short name, as a row of Compare has it. */
-export const ruleName = (rule: Rule, money: Money) => (rule.kind === 'fixed' ? `${money(rule.yearly)} a year` : ruleTitle(rule));
+export const ruleName = (rule: Rule, money: Money, until: number | null = null) => (rule.kind === 'fixed' ? `${money(rule.yearly)} a year${untilWords(until)}` : ruleTitle(rule, until));
 
 /** The rule in a line, to the age it runs. */
 export function ruleSentence(strategy: Pick<Strategy, 'conversions' | 'convertUntil'>, defaultUntil: number | null, money: Money): string {
@@ -72,18 +78,18 @@ export function previewLine(rule: Drawdown, none: Drawdown, money: Money): strin
   const moved = convertedIn(rule);
   const last = lastConverting(rule);
   const end = (d: Drawdown, age: number | null) => (d.runsOutAt !== null ? `it runs short at ${d.runsOutAt}` : `${money(d.leftAtEnd)} left${age === null ? '' : ` at ${age}`} after tax`);
-  const about = moved >= 0.5 && last !== null ? `about ${money(Math.round(moved / 1000) * 1000)} converted by ${last}, ` : 'nothing converted, ';
+  const about = moved >= 0.5 && last !== null ? `about ${money(moved < 1000 ? moved : Math.round(moved / 1000) * 1000)} converted by ${last}, ` : 'nothing converted, ';
   const age = endAgeOf(rule);
   return `With this rule: ${about}tax and health costs ${money(rule.taxAndHealth)} in all, and ${end(rule, age)}. With none: ${money(none.taxAndHealth)} and ${none.runsOutAt !== null ? `runs short at ${none.runsOutAt}` : money(none.leftAtEnd)}.`;
 }
 
 /** A copy's name after its rule, with a number if that is taken. */
-export function copyNameFor(rule: Rule, taken: readonly string[]): string {
+export function copyNameFor(rule: Rule, plans: readonly { id: string; name: string }[]): string {
   const base = ruleTitle(rule);
-  if (!taken.includes(base)) return base;
+  if (!nameTaken(plans, base)) return base;
   for (let n = 2; ; n++) {
     const name = `${base} ${n}`;
-    if (!taken.includes(name)) return name;
+    if (!nameTaken(plans, name)) return name;
   }
 }
 

@@ -231,7 +231,7 @@ describe('Health coverage', () => {
   test('coverage already paid, with spending typed: nothing is taken out of it', async () => {
     const tab = await optedIn();
     await pick(await sheet(tab, 'Health coverage'), 'You already pay for coverage');
-    expect(tab.dialog()!.textContent).toContain('Your FI number still counts it, for now.');
+    expect(tab.dialog()!.textContent).toContain('Drawdown and your FI number leave its category out of your measured spending');
     expect(tab.dialog()!.textContent).toContain('Your spending is typed, so nothing is taken out of it: leave coverage out of what you type.');
     await tab.unmount();
   }, 30_000);

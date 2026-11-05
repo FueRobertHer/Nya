@@ -152,7 +152,9 @@ export function stageFoot(s: DrawdownStage, years: readonly DrawdownYear[]): str
   const rows = years.slice(s.first, s.last);
   const firstEarly = rows.findIndex((y) => some(y.law.penalty));
   if (firstEarly < 0) return null;
-  const from = rows.find((y) => some(y.start.taxable) && !some(y.end.taxable)) ?? rows[firstEarly];
+  const early = rows[firstEarly];
+  const drained = rows.find((y) => some(y.start.taxable) && !some(y.end.taxable));
+  const from = drained && drained.age < early.age ? drained : early;
   return `From ${from.age} what can be reached without a penalty is going, so these years’ income, and the coverage it pays for, change.`;
 }
 
@@ -318,7 +320,7 @@ export function yearSections(y: DrawdownYear, c: YearContext): YearSection[] {
     ...line('Drawn from tax-deferred early', d.penalized),
     ...line('Required minimum distribution (RMD)', y.rmd),
     ...line('Roth contributions', d.roth),
-    ...line('Roth conversions over five years old', d.young),
+    ...line('Roth conversions under five years old', d.young),
     ...line('Roth earnings', d.earnings),
     ...line('HSA, for premiums', d.hsaPremiums),
     ...line('HSA, taxed', d.hsaTaxed + d.hsaEarly),
@@ -348,9 +350,9 @@ export function yearSections(y: DrawdownYear, c: YearContext): YearSection[] {
     title: 'Income the law counts',
     lines: [
       { label: 'Ordinary income', value: money(Math.max(0, y.law.agi - Math.max(0, gains))) },
-      ...line('Gains and qualified dividends', Math.max(0, gains)),
       ...(some(y.law.taxableSocialSecurity) ? [{ label: 'of it Social Security', value: money(y.law.taxableSocialSecurity) }] : []),
       ...(some(y.conversion) ? [{ label: 'of it converted to Roth', value: money(y.conversion) }] : []),
+      ...line('Gains and qualified dividends', Math.max(0, gains)),
       onAca(y) ? { label: 'ACA income (MAGI)', value: money(y.law.magiAca), sum: true } : { label: 'Adjusted gross income', value: money(y.law.agi), sum: true },
     ],
   };
@@ -372,8 +374,8 @@ export function yearSections(y: DrawdownYear, c: YearContext): YearSection[] {
       some(y.law.penalty) ? { label: 'Early withdrawal penalty', value: money(y.law.penalty) } : { label: 'Early withdrawal penalty', value: 'None' },
     ],
   };
-  if (some(gains) && !some(y.law.gainsTax)) tax.why = { label: 'Why are the gains taxed at 0%?', text: `Gains sit on top of ordinary income. Taxable income up to ${money(c.gainsZeroTo)} takes gains at 0%, and this year’s ${money(y.law.ordinaryTaxable + Math.max(0, gains))} stays under it.` };
-  else if (some(y.law.penalty)) tax.why = { label: 'Why a penalty?', text: 'Money drawn early pays a penalty on top of its tax, once the money that can be reached without one has run out: 10% from tax-deferred money or a Roth’s earnings before 59½, 20% from an HSA before 65. Nya knows your age in whole years, so the year you turn 59 counts as before 59½.' };
+  if (some(gains) && !some(y.law.gainsTax)) tax.why = { label: 'Why are the gains taxed at 0%?', text: `Gains sit on top of ordinary income. Taxable income up to ${money(c.gainsZeroTo)} takes gains at 0%, and this year’s ${money(Math.max(0, y.law.agi - y.law.deduction))} stays under it.` };
+  else if (some(y.law.penalty)) tax.why = { label: 'Why a penalty?', text: 'Money drawn early pays a penalty on top of its tax, once the money that can be reached without one has run out: 10% from tax-deferred money, a Roth conversion under five years old or a Roth’s earnings before 59½, 20% from an HSA before 65. Nya knows your age in whole years, so the year you turn 59 counts as before 59½.' };
 
   const [you, them] = y.care.people;
   const people = y.partnerAge === null ? [you] : [you, them];
@@ -438,10 +440,10 @@ export const survivorLine = (endAge: number) => `Assumes you both live to ${endA
 export const HEALTH_NOT_SET = 'Not set: measured spending leaves out coverage through work.';
 
 /** The Health coverage row's sub. */
-export function healthSub(choices: TaxChoices): string {
+export function healthSub(choices: TaxChoices, inNumber: boolean): string {
   const before = choices.health.beforeMedicare;
   if (!before) return 'Not set yet';
-  return `${before.kind === 'aca' ? 'ACA' : 'Your own coverage'} before 65, then Medicare · in your FI number`;
+  return `${before.kind === 'aca' ? 'ACA' : 'Your own coverage'} before 65, then Medicare${inNumber ? ' · in your FI number' : ''}`;
 }
 
 /** Each part of coverage in each stage, a year on average, as the years have it. */

@@ -46,7 +46,8 @@ export function bracketTop(law: TaxLaw, filing: Filing, rate: number): number {
 }
 
 /** The age, yours, a rule runs until when none is set: the year before the earlier
- *  owner's RMDs, the partner's RMD age put in your age. */
+ *  owner's RMDs, the partner's RMD age put in your age. `partnerAge` only on a joint
+ *  return: filing single, a partner's accounts are counted as yours, at your RMD age. */
 export function defaultUntil(rmdAges: Record<Owner, number>, today: { age: number; partnerAge: number | null }): number {
   const partner = today.partnerAge === null ? rmdAges.you : rmdAges.partner + today.age - today.partnerAge;
   return Math.min(rmdAges.you, partner) - 1;

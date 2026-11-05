@@ -102,7 +102,7 @@ export function PlanTaxSheet({
           </h3>
           <dl className="txn-detail txn-detail-wide">
             <div className="txn-detail-row">
-              <dt>{shares.paid >= 0.5 ? 'Spending, less coverage through work' : 'Spending'}</dt>
+              <dt>{shares.paid >= 0.5 ? 'Spending, less coverage you already pay for' : 'Spending'}</dt>
               <dd className="money">
                 <Masked>{money(spending)}</Masked>
               </dd>

@@ -555,14 +555,14 @@ export function FiNumberForm(
           </h3>
           <dl className="txn-detail">
             <div className="txn-detail-row">
-              <dt>{retirementSpending !== null ? 'Spending in retirement' : 'Spending'}</dt>
+              <dt>{retirementSpending !== null || (shares !== null && shares.spending !== view.spending.value) ? 'Spending in retirement' : 'Spending'}</dt>
               <dd>
                 <Masked>{`${money(shares ? shares.spending : spending)} a year`}</Masked>
               </dd>
             </div>
             {shares && shares.paid >= 0.5 && (
               <div className="txn-detail-row">
-                <dt>Coverage through work, taken off</dt>
+                <dt>Coverage you already pay for, taken off</dt>
                 <dd>
                   <Masked>{`${money(Math.min(shares.paid, shares.spending))} a year`}</Masked>
                 </dd>
@@ -1002,7 +1002,7 @@ function startConsequence(
   }
   if (start === 'fi-number') {
     const stop = stopOf(plan);
-    return `Stops working at your stop age${stop !== null ? ` (${stop})` : ''} with your FI number, withdrawing ${pct(rate)} of it: ${spend}.`;
+    return `Stops working at your stop age${stop !== null ? ` (${stop})` : ''} with your FI number, withdrawing ${pct(rate)} of it: ${spend}${taxWorked ? ' and health coverage, with their tax' : ''}.`;
   }
   const actual = taxWorked ? null : startRate(start, props, typed, tax);
   const when = start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : start === 'at-stop' ? 'at your stop age with what you’d have then' : `at your stop age with the balance you type`;

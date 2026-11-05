@@ -185,6 +185,26 @@ describe('a year’s sheet', () => {
     expect(why.text).toContain('$98,900');
   });
 
+  test('gains at 0%: the year’s taxable income is after the whole deduction, which gains can use', () => {
+    const y = yearAt(run(), 51);
+    // Ordinary income under the deduction: $1,000 of it is left for the gains.
+    const gainsYear: DrawdownYear = { ...y, income: { ...y.income, qualified: 0 }, drawn: { ...y.drawn, taxable: 60_000, gain: 60_000 }, law: { ...y.law, agi: 75_000, deduction: 16_000, ordinaryTaxable: 0, gainsTax: 0, penalty: 0 } };
+    expect(lines(gainsYear, 'How the tax is worked out', { ...CONTEXT, gainsZeroTo: 49_450 }).why!.text).toContain('Taxable income up to $49,450 takes gains at 0%, and this year’s $59,000 stays under it.');
+  });
+
+  test('money from a Roth conversion under five years old is named as that, and in why there is a penalty', () => {
+    const y = yearAt(run(), 51);
+    const early: DrawdownYear = { ...y, drawn: { ...y.drawn, young: 20_000, gain: 0, taxable: 0 }, income: { ...y.income, qualified: 0 }, law: { ...y.law, penalty: 2_000, gainsTax: 0 } };
+    expect(lines(early, 'Where the money comes from').lines.map((l) => l.label)).toContain('Roth conversions under five years old');
+    expect(lines(early, 'How the tax is worked out').why!.text).toContain('a Roth conversion under five years old');
+  });
+
+  test('what is of ordinary income sits under it, not under gains', () => {
+    const y = yearAt(run(), 51);
+    const labels = lines({ ...y, conversion: 20_000, drawn: { ...y.drawn, gain: 5_000 }, law: { ...y.law, taxableSocialSecurity: 1_000 } }, 'Income the law counts').lines.map((l) => l.label);
+    expect(labels.slice(0, 4)).toEqual(['Ordinary income', 'of it Social Security', 'of it converted to Roth', 'Gains and qualified dividends']);
+  });
+
   test('a conversion is in the year’s income and in what it says it did', () => {
     const y = yearAt(run({ strategy: { order: 'standard', conversions: { kind: 'bracket', top: 0.12 }, convertUntil: null } }), 51);
     expect(y.conversion).toBeGreaterThan(0);
@@ -277,8 +297,10 @@ describe('what a detailed plan says it can’t know', () => {
     expect(survivorLine(95)).toBe('Assumes you both live to 95. A survivor files single, at higher rates.');
     expect(householdLine({ filing: 'joint' }, { state: 'NV' })).toBe('joint · Nevada');
     expect(householdLine({ filing: null }, { state: null })).toBe('single · no state yet');
-    expect(healthSub(DEFAULT_TAX_CHOICES)).toContain('Not set');
-    expect(healthSub({ ...DEFAULT_TAX_CHOICES, health: { ...DEFAULT_TAX_CHOICES.health, beforeMedicare: { kind: 'aca', adult: 1, quotedAge: 50, child: null } } })).toBe('ACA before 65, then Medicare · in your FI number');
+    expect(healthSub(DEFAULT_TAX_CHOICES, true)).toContain('Not set');
+    const onTheAca = { ...DEFAULT_TAX_CHOICES, health: { ...DEFAULT_TAX_CHOICES.health, beforeMedicare: { kind: 'aca' as const, adult: 1, quotedAge: 50, child: null } } };
+    expect(healthSub(onTheAca, true)).toBe('ACA before 65, then Medicare · in your FI number');
+    expect(healthSub(onTheAca, false)).toBe('ACA before 65, then Medicare');
   });
 
   test('a plan folded to single, and one that held spending at zero, say so', () => {

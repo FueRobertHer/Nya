@@ -12,7 +12,7 @@
 // CLOSED, AND EVERY FIELD LOOKED AT, so a restore takes no field this release
 // doesn't know (lib/user-restore/check.ts unknownField).
 //
-// Pure, importing only the law's state codes: the next release holds it byte
+// Pure, importing only the law's state codes and the plan's limits: the next release holds it byte
 // for byte as its release before's (test/release-before.test.ts).
 
 import { LIMITS } from './plan';

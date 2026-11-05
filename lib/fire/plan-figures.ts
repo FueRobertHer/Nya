@@ -48,7 +48,7 @@ import type { Drawdown } from './drawdown';
 import type { DetailRun, DetailWork, PlanDetail } from './plan-detail';
 import type { SavedItems, SavedPlan } from './saved-plan';
 import { planPath } from './path';
-import { anchoredOn, resolveItems, type PerRun, type Resolution, type SteadyWorld } from './steady';
+import { resolveItems, type PerRun, type Resolution, type SteadyWorld } from './steady';
 
 export type StartsWith = {
   balance: number;
@@ -149,6 +149,8 @@ type Built = {
   /** The parts the simulation runs as fixed: all of `compiled`'s but what waits
    *  on a run's own balance. */
   fixed: CompiledItems;
+  /** What the FI number leaves out: changes after the age it reads its lasting changes at. */
+  later: CompiledItems['later'];
   at: CompileAt;
   walk: WalkChanges;
   retirement: PlanFigures['retirement'];
@@ -196,8 +198,11 @@ function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], 
   // The FI number's lasting changes are those at the stop, as its own run has them;
   // a start from today reads the simulation's at today.
   const fiStart = plan.age === null ? null : Math.max(stop ?? plan.age, plan.age);
+  let later = compiled.later;
   if (worked && display.spending.value !== null && fiStart !== null && fiStart !== at.startAge) {
-    const atFi = compileItems(plan.items, ages, { ...at, startAge: fiStart, stop: fiStart, years: planYears({ ...plan, start: 'fi-number' }, stop) }, count).lasting.reduce((s, x) => s + x.amount, 0);
+    const fiItems = compileItems(plan.items, ages, { ...at, startAge: fiStart, stop: fiStart, years: planYears({ ...plan, start: 'fi-number' }, stop) }, count);
+    later = fiItems.later;
+    const atFi = fiItems.lasting.reduce((s, x) => s + x.amount, 0);
     const number = fiView(atFi === 0 ? plan : { ...plan, spending: Math.max(0, display.spending.value + atFi) }, measured, stop, worked);
     core = { ...number, spending: core.spending };
   }
@@ -243,13 +248,13 @@ function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], 
     }
   }
   if (walkAtStop !== null) view = { ...view, atTargetAge: atStop };
-  return { view, core, engine, compiled, fixed, at, walk, retirement, short, walked, walkedSavings };
+  return { view, core, engine, compiled, fixed, later, at, walk, retirement, short, walked, walkedSavings };
 }
 
 function assemble(plan: FirePlanV2, b: Built, resolution: Resolution, shares: FiShares | null): PlanFigures {
   const { compiled } = b;
   const counts = hasWalk(compiled.walk) || compiled.lasting.length > 0 || compiled.later.length > 0;
-  const events: CompiledEvents | null = counts ? { walk: compiled.walk, lasting: compiled.lasting, later: compiled.later, sim: compiled.sim } : null;
+  const events: CompiledEvents | null = counts ? { walk: compiled.walk, lasting: compiled.lasting, later: b.later, sim: compiled.sim } : null;
   const money = (i: number) => MONEY_KINDS.includes(plan.items[i].kind);
   return {
     plan,

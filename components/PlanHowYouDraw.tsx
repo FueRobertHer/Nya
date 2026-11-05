@@ -189,7 +189,7 @@ export function ConversionsForm(
           <input type="number" inputMode="numeric" value={until} onChange={(e) => setUntil(e.target.value)} placeholder={String(defaultUntil)} {...s.field('Until age')} disabled={s.saving} />
         </label>
         {s.under('Until age')}
-        <p className="helper">{`The year before your RMDs start at ${defaultUntil + 1}. The rule you pick is yours: Nya starts with none.`}</p>
+        <p className="helper">{`${props.partner ? `The year before the first RMDs, when you’re ${defaultUntil + 1}` : `The year before your RMDs start at ${defaultUntil + 1}`}. The rule you pick is yours: Nya starts with none.`}</p>
       </>
     );
   const bracketSelect = <T extends number>(label: string, list: readonly T[], value: T, set: (v: T) => void) => (
@@ -222,7 +222,7 @@ export function ConversionsForm(
           { value: 'none', name: 'None', note: 'Move nothing.' },
           { value: 'bracket', name: 'Fill a bracket', note: 'Up to the top of a tax bracket each year.', detail: fieldsWith(bracketSelect('Up to the top of', BRACKETS, top, setTop)) },
           ...(props.onAca || rule.kind === 'aca-then-bracket'
-            ? [{ value: 'aca-then-bracket', name: 'Up to the ACA limit, then a bracket', note: 'Under the limit while either is on the ACA, then a bracket.', detail: fieldsWith(bracketSelect('After 65, up to the top of', ACA_BRACKETS, acaTop, setAcaTop)) }]
+            ? [{ value: 'aca-then-bracket', name: 'Up to the ACA limit, then a bracket', note: `Under the limit while ${props.partner ? 'either of you is' : 'you’re'} on the ACA, then a bracket.`, detail: fieldsWith(bracketSelect('After 65, up to the top of', ACA_BRACKETS, acaTop, setAcaTop)) }]
             : []),
           {
             value: 'fixed',
@@ -245,7 +245,7 @@ export function ConversionsForm(
           <Masked>{saying}</Masked>
         </Notice>
       )}
-      {props.movingStart !== null && kind !== stored.conversions.kind && (
+      {props.movingStart !== null && typed !== null && JSON.stringify(typed) !== JSON.stringify(stored) && (
         <p className="helper">
           <Masked>{`From your start of ${money(props.movingStart)}. Your FI number moves with the rule, so once saved this plan starts from a different number.`}</Masked>
         </p>
@@ -298,7 +298,9 @@ export function CompareCard({
   realReturn,
   lawYear,
   healthGrowth,
+  copyOpen,
   held = false,
+  working = false,
   onRule,
   ruleRef,
 }: {
@@ -308,7 +310,11 @@ export function CompareCard({
   lawYear: number;
   /** Fractions of a point, as the years have it. */
   healthGrowth: number;
+  /** A copy is shown: its rule is this copy's, not your plan's. */
+  copyOpen: boolean;
   held?: boolean;
+  /** A job is working out this plan's date: these rows are the last found. */
+  working?: boolean;
   onRule: (row: CompareRow) => void;
   ruleRef?: (key: string, el: HTMLButtonElement | null) => void;
 }) {
@@ -331,7 +337,7 @@ export function CompareCard({
     );
   };
   return (
-    <section className="card" aria-labelledby="plan-compare-rules">
+    <section className={working ? 'card plan-answer-pending' : 'card'} aria-labelledby="plan-compare-rules" aria-busy={working || undefined}>
       <div className="card-header">
         <h3 id="plan-compare-rules">Compare conversions</h3>
       </div>
@@ -360,9 +366,9 @@ export function CompareCard({
                       if (!held) onRule(r);
                     }}
                   >
-                    <Masked>{ruleName(r.strategy.conversions, money)}</Masked>
+                    <Masked>{ruleName(r.strategy.conversions, money, r.strategy.convertUntil)}</Masked>
                   </button>
-                  {r.mine && <span className="badge accent">Your plan</span>}
+                  {r.mine && <span className="badge accent">{copyOpen ? 'This copy' : 'Your plan'}</span>}
                 </th>
                 <td className="money">
                   <Masked>{endWords(r.drawn, money)}</Masked>

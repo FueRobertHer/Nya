@@ -242,6 +242,8 @@ function afterStop(f: PlanFigures, from: PathPoint): PathAfter | null {
   // the other items' parts in these years.
   const life = compileItems(plan.items, ages.map((x, i) => (MONEY_KINDS.includes(plan.items[i].kind) ? null : x)), at, { planInWalk: false }).sim;
   const counted = life.oneOffs.some((o) => o.year < years) || life.income.some((s) => s.fromYear < years) || life.lowerSpending.some((l) => l.fromYear < years);
+  // The FI number reads its lasting changes at the stop where tax is worked out.
+  const inNumber = f.shares ? f.shares.spending === spending : lasting === (f.retirement?.lasting ?? 0);
   const whole = f.detail !== null && 'whole' in f.detail ? f.detail.whole : null;
   let steady: ReturnType<typeof steadyRun>;
   try {
@@ -268,7 +270,7 @@ function afterStop(f: PlanFigures, from: PathPoint): PathAfter | null {
     points: steady.balances.map((balance, k) => ({ age: d + k, balance })),
     endAge,
     runsOutAt: steady.failedYear === null ? null : d + steady.failedYear,
-    leftOut: { items, events: counted || lasting !== (f.retirement?.lasting ?? 0) },
+    leftOut: { items, events: counted || !inNumber },
     withEvents: counted || lasting !== 0,
   };
 }

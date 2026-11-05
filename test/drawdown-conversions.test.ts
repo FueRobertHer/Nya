@@ -48,6 +48,19 @@ const fill = (top: 0.1 | 0.12 | 0.22 | 0.24, convertUntil: number | null = null)
 const ACA = { coverage: { kind: 'aca', adult: 11_000, quotedAge: 50, child: null }, medicareExtra: 0, meetsRule: [], countMedicaid: false, acaLaw: '2026', growth: 0.021, incomeGrowth: 0.011 } as DrawdownInput['health'];
 const sum = (ns: readonly number[]) => ns.reduce((a, b) => a + b, 0);
 
+describe('the age a rule runs to by default', () => {
+  const lastConverted = (d: Drawdown) => d.years.reduce<number | null>((n, y) => (y.conversion > 0 ? y.age : n), null);
+  const couple = (filing: DrawdownInput['filing']) => run(fill(0.12), { filing, today: { age: 45, partnerAge: 55, calendarYear: 2026 }, years: 40, slots: [slot('you', 'tax-deferred', 3_000_000)] });
+
+  test('on a joint return, the year before the older partner’s RMDs, in your age', () => {
+    expect(lastConverted(couple('joint'))).toBe(64);
+  });
+
+  test('filing single, the year before your own, as a partner’s accounts are counted as yours', () => {
+    expect(lastConverted(couple('single'))).toBe(74);
+  });
+});
+
 describe('a rule over the years', () => {
   test('none moves nothing', () => {
     const d = run(NO_STRATEGY);

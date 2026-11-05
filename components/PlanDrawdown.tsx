@@ -5,7 +5,6 @@
 // stage's sheet holds its years, and a year's sheet, a level over it, how it was
 // worked out. Words in components/plan-drawdown.ts.
 
-import { useState } from 'react';
 import type { DrawdownStage, DrawdownYear } from '@/lib/fire/drawdown';
 import type { PlanDetail } from '@/lib/fire/plan-detail';
 import { spoken } from '@/lib/format';
@@ -175,12 +174,12 @@ function YearRow({ y, money, onOpen }: { y: DrawdownYear; money: Money; onOpen: 
 }
 
 /** A stage's sheet: what it is, its years as rows, each opening its own sheet. Years
- *  that read the same are one row, which opens to them in place. */
-export function StageLevel({ stage, years, money, rmdAge, cautions = [], onYear }: { stage: DrawdownStage; years: readonly DrawdownYear[]; money: Money; rmdAge: number; cautions?: readonly string[]; onYear: (index: number) => void }) {
+ *  that read the same are one row, which opens to them in place, and stays open while
+ *  a year's sheet is over it, so the page holds which are open. */
+export function StageLevel({ stage, years, money, rmdAge, cautions = [], openRuns, onRuns, onYear }: { stage: DrawdownStage; years: readonly DrawdownYear[]; money: Money; rmdAge: number; cautions?: readonly string[]; openRuns: readonly number[]; onRuns: (runs: readonly number[]) => void; onYear: (index: number) => void }) {
   const sentence = stageSentence(stage, years, money);
   const foot = stageFoot(stage, years);
   const rows = years.slice(stage.first, stage.last);
-  const [openRuns, setOpenRuns] = useState<readonly number[]>([]);
   return (
     <div className="stack loose">
       <p className="helper">{stageHelper(stage, rmdAge)}</p>
@@ -203,7 +202,7 @@ export function StageLevel({ stage, years, money, rmdAge, cautions = [], onYear 
           const badges = yearBadges(span[0], money);
           return [
             <li key={`run-${r.first}`}>
-              <button type="button" className="list-row" aria-expanded={opened} onClick={() => setOpenRuns(opened ? openRuns.filter((x) => x !== r.first) : [...openRuns, r.first])}>
+              <button type="button" className="list-row" aria-expanded={opened} onClick={() => onRuns(opened ? openRuns.filter((x) => x !== r.first) : [...openRuns, r.first])}>
                 <span className="list-row-text">
                   <span className="list-row-title">{runTitle(span)}</span>
                   <span className="list-row-sub">{runSub(span)}</span>

@@ -19,11 +19,14 @@ describe('a rule’s words', () => {
     expect(ruleName(fill.conversions, money)).toBe('Fill 12%');
     expect(ruleName(aca.conversions, money)).toBe('ACA limit, then 22%');
     expect(ruleName(fixed.conversions, money)).toBe('$40,000 a year');
+    expect(ruleName(fill.conversions, money, 60)).toBe('Fill 12%, until 60');
+    expect(ruleName(fixed.conversions, money, 60)).toBe('$40,000 a year, until 60');
   });
 
   test('a title, read out whole, and a copy’s name hold no amount', () => {
     expect(ruleTitle(fixed.conversions)).toBe('A fixed amount');
     expect(ruleTitle(fill.conversions)).toBe('Fill 12%');
+    expect(ruleTitle(fixed.conversions, 60)).toBe('A fixed amount, until 60');
     expect(copyNameFor(fixed.conversions, [])).toBe('A fixed amount');
   });
 
@@ -37,8 +40,11 @@ describe('a rule’s words', () => {
 
   test('a copy’s name after its rule, with a number where that is taken', () => {
     expect(copyNameFor(fill.conversions, [])).toBe('Fill 12%');
-    expect(copyNameFor(fill.conversions, ['Fill 12%'])).toBe('Fill 12% 2');
-    expect(copyNameFor(fill.conversions, ['Fill 12%', 'Fill 12% 2'])).toBe('Fill 12% 3');
+    const plans = (...names: string[]) => names.map((name, i) => ({ id: String(i), name }));
+    expect(copyNameFor(fill.conversions, plans('Fill 12%'))).toBe('Fill 12% 2');
+    expect(copyNameFor(fill.conversions, plans('Fill 12%', 'Fill 12% 2'))).toBe('Fill 12% 3');
+    // As the server tells names apart.
+    expect(copyNameFor(fill.conversions, plans('fill 12%'))).toBe('Fill 12% 2');
   });
 
   test('neither says one is better than another', () => {
@@ -68,6 +74,7 @@ describe('where a run ends', () => {
     const rule = run({ years: [{ age: 60, conversion: 60_400 }, { age: 61, conversion: 0 }] as DrawdownYear[], leftAtEnd: 3_660_060, taxAndHealth: 497_310 });
     const none = run({ years: [{ age: 60, conversion: 0 }] as DrawdownYear[], leftAtEnd: 2_850_840, taxAndHealth: 707_530 });
     expect(previewLine(rule, none, money)).toBe('With this rule: about $60,000 converted by 60, tax and health costs $497,310 in all, and $3,660,060 left at 62 after tax. With none: $707,530 and $2,850,840.');
+    expect(previewLine(run({ years: [{ age: 60, conversion: 300 }] as DrawdownYear[] }), none, money)).toContain('about $300 converted by 60');
     expect(previewLine(run({ years: [{ age: 60, conversion: 0 }] as DrawdownYear[], runsOutAt: 88 }), { ...none, runsOutAt: 90 }, money)).toBe('With this rule: nothing converted, tax and health costs $300,000 in all, and it runs short at 88. With none: $707,530 and runs short at 90.');
   });
 });
@@ -158,6 +165,11 @@ describe('a stage’s sentence and its foot', () => {
   test('its foot: from when income and coverage change', () => {
     const rows = [year(50), year(51, { start: { taxable: 100, deferred: 100, roth: 0, hsa: 0 }, end: { taxable: 0, deferred: 100, roth: 0, hsa: 0 } }), year(52, { law: { penalty: 1_000 } })];
     expect(stageFoot(stage(rows), rows)).toBe('From 51 what can be reached without a penalty is going, so these years’ income, and the coverage it pays for, change.');
+  });
+
+  test('its foot, from the first year drawn early where that comes before taxable money is gone', () => {
+    const rows = [year(50, { law: { penalty: 1_000 } }), year(51, { start: { taxable: 100, deferred: 100, roth: 0, hsa: 0 }, end: { taxable: 0, deferred: 100, roth: 0, hsa: 0 } })];
+    expect(stageFoot(stage(rows), rows)).toStartWith('From 50 ');
   });
 
   test('no foot where nothing is drawn early', () => {
