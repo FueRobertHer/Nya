@@ -7,7 +7,7 @@
 //
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
 
-import type { MedicaidLine, StateCode, Statute, TaxLaw } from './types';
+import { STATE_CODES, type MedicaidLine, type StateCode, type Statute, type TaxLaw } from './types';
 
 /** Fixed by statute, the same in every law year until Congress changes it. */
 export const STATUTE: Statute = {
@@ -138,6 +138,15 @@ export const UNIFORM_DIVISORS: readonly number[] = [
  *  A projection, not law. */
 export const HEALTH_GROWTH = { overPrices: 0.021, incomeOverPrices: 0.011 } as const;
 
+/** Whether a state taxes wages and other ordinary income. Tax Foundation, "State
+ *  Individual Income Tax Rates and Brackets, 2026" (February 17, 2026): eight
+ *  states levy none, New Hampshire having repealed its interest and dividends
+ *  tax as of 2025. Washington taxes capital gains only; the engine has one rate
+ *  on all income, so it counts as none here and the sheet says its gains tax
+ *  isn't counted. */
+const NO_STATE_INCOME_TAX: readonly StateCode[] = ['AK', 'FL', 'NV', 'NH', 'SD', 'TN', 'TX', 'WA', 'WY'];
+export const STATE_INCOME_TAX = Object.fromEntries(STATE_CODES.map((s) => [s, !NO_STATE_INCOME_TAX.includes(s)])) as Record<StateCode, boolean>;
+
 export const LAW_2026: TaxLaw = {
   year: 2026,
   // Rev. Proc. 2025-32 (October 9, 2025): sec. 4.01 Tables 1 and 3, sec. 4.03,
@@ -198,6 +207,7 @@ export const LAW_2026: TaxLaw = {
     HI: { first: 18_360, added: 6_530 },
   },
   medicaidStates: MEDICAID_STATES,
+  stateIncomeTax: STATE_INCOME_TAX,
   // CMS, "2026 Medicare Parts A & B Premiums and Deductibles" (November 14,
   // 2025): the standard Part B premium and the income-related tiers, total
   // monthly Part B premium and monthly Part D adjustment, as printed (each
@@ -237,6 +247,7 @@ export const LAW_2026: TaxLaw = {
     creditPoverty: { source: 'HHS poverty guidelines for 2025, 90 FR 5917', published: '2025-01-17', due: 'January of the year before' },
     medicaidPoverty: { source: 'HHS poverty guidelines for 2026, 91 FR 1797', published: '2026-01-15', due: 'January' },
     medicaidStates: { source: 'Medicaid.gov eligibility levels (as of December 1, 2023); CMS approval of Georgia Pathways through 2026', published: '2023-12-01', due: 'When a state changes' },
+    stateIncomeTax: { source: 'Tax Foundation, State Individual Income Tax Rates and Brackets, 2026', published: '2026-02-17', due: 'When a state changes' },
     medicare: { source: 'CMS, 2026 Medicare Parts A and B Premiums and Deductibles', published: '2025-11-14', due: 'Mid-November of the year before' },
     wageBase: { source: 'SSA, contribution and benefit base', published: '2025-10-24', due: 'October of the year before' },
     uniform: { source: 'Treas. Reg. 1.401(a)(9)-9(c); Pub 590-B (2025) Table III', published: '2020-11-12', due: 'Rarely' },

@@ -18,7 +18,9 @@ import { SCENARIO_NAME_MAX } from '@/lib/fire/plan-list';
 //   POST   { from, name, plan, currency } a new copy: `plan` whole, made from
 //                                         `from` (New copy, Duplicate, Try it)
 //   PUT    { saves, facts_were }          saves plans whole, all or none:
-//                                         [{ id, plan, currency, based_on }]
+//                                         [{ id, plan, currency, based_on, tax? }],
+//                                         `tax` its tax choices, when they changed
+//                                         (behind `plan-tax`)
 //   PATCH  { id, name, based_on }         renames one
 //          { id, currency, based_on }     says a copy's amounts are in that
 //                                         currency (the person's answer)
@@ -101,7 +103,7 @@ export async function PUT(req: Request) {
   for (const raw of b.saves) {
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return bad('Each save is { id, plan, currency, based_on }');
     const x = raw as Record<string, unknown>;
-    const e = extraKey(x, ['id', 'plan', 'currency', 'based_on']);
+    const e = extraKey(x, ['id', 'plan', 'currency', 'based_on', 'tax']);
     if (e) return bad(`${e.slice(0, 40)} isn’t taken here`);
     if (!isId(x.id)) return bad('id is a plan’s id');
     const currency = x.currency ?? null;
@@ -109,7 +111,7 @@ export async function PUT(req: Request) {
     if (!isBasedOn(x.based_on)) return bad('based_on is the version (updated_at) the plan was loaded at');
     const parsed = parsePlanV2(x.plan);
     if ('error' in parsed) return bad(`Invalid plan: ${parsed.error}`);
-    saves.push({ id: x.id, plan: parsed.plan, currency, basedOn: x.based_on });
+    saves.push({ id: x.id, plan: parsed.plan, currency, basedOn: x.based_on, ...(Object.hasOwn(x, 'tax') ? { tax: x.tax } : {}) });
   }
   try {
     const { main, rows } = await saveEntries(await dataCtx(), saves, loaded);

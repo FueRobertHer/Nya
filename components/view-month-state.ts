@@ -45,6 +45,7 @@ export const resetsMonth: Record<Go['to'], boolean> = {
   account: false,
   restore: false,
   currency: false,
+  plan: false,
 };
 
 /** Where Activity opens: the latest month listed not after this one (a row

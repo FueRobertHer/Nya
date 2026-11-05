@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { TEST_CONTAINER } from './fake-redis';
 import { planPage } from './plan-page';
 
 // The Timeline's item sheet (the tax plan's E2, components/PlanItemSheet.tsx),
@@ -188,6 +189,23 @@ describe('what is possible', () => {
     expect(t).toContain('Checked on the balance at the start of each year');
     await tab.unmount();
   }, 20_000);
+
+  test('with a start from what you would have then, a later milestone says where it falls across the runs', async () => {
+    const { flagsStore } = await import('@/lib/flag-store');
+    await flagsStore.update('plan-tax', async () => ({ on: 'nobody', containers: [TEST_CONTAINER], updatedAt: new Date().toISOString() }) as never, TEST_CONTAINER);
+    await seedPlan({ ...PLAN, start: 'at-stop', items: [ROOF] });
+    const tab = await render({ planTax: true });
+    const sheet = await addTemplate(tab, 'A change in spending');
+    await fill(sheet, 'Change a year', '4000');
+    await press(tab.sheetRow('Starts'));
+    await pick(tab.dialog()!, 'When invested assets reach');
+    await fill(tab.dialog()!, 'Invested assets', '5000000');
+    await press(button(tab.dialog(), 'Done'));
+    await rest();
+    await settle(800);
+    expect(tab.dialog()!.textContent).toMatch(/Across historyIt (starts in (every run|\d+% of runs), by \d+ in half of (them|those)|never starts, in any run)/);
+    await tab.unmount();
+  }, 30_000);
 
   test('a milestone never reached says the nearest', async () => {
     await seedPlan({ ...PLAN, items: [ROOF] });

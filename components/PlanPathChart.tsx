@@ -34,6 +34,7 @@ import { useMemo } from 'react';
 import type { PathAfter, PathPoint, PathRange } from '@/lib/fire/path';
 import { onDay, spoken } from '@/lib/format';
 import { dayLabel, dayName, leftOutText, pct, wholeMoney } from './plan-text';
+import type { DrawdownMark } from './DrawdownChart';
 import { Masked } from './HideAmounts';
 import type { ProgressOverlay } from './PlanProgress';
 import { Segmented } from './Segmented';
@@ -53,6 +54,8 @@ const RULE_LABEL_GAP = 4;
 const RULE_LABEL_HEIGHT = 12;
 // "stop 50" this far from its rule on Whole path.
 const STOP_GAP = 4;
+// A mark's tick, up from the axis.
+const TICK = 8;
 
 type XLabel = { x: number; label: string; anchor: 'start' | 'middle' | 'end' };
 
@@ -83,6 +86,8 @@ export type PathChartProps = {
   /** Offers the switch between the two ranges, where there are years on
    *  both sides of the stop. */
   onRange?: (range: PathRange) => void;
+  /** The ages a detailed plan's rules change at, marked on Whole path. */
+  ticks?: readonly DrawdownMark[] | null;
 };
 
 /** Whether the chart shows the whole path: asked for, with years after the
@@ -119,7 +124,7 @@ function keepsTo(lines: readonly (readonly PathPoint[])[], x: (age: number) => n
 /** Where everything goes, in viewBox units (CSS pixels at its width): plain
  *  numbers only, so it can be kept between renders. `after` only on Whole
  *  path. */
-function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNumber' | 'fiAge' | 'recorded'> & { after: PathAfter | null }, W: number, H: number) {
+function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNumber' | 'fiAge' | 'recorded' | 'ticks'> & { after: PathAfter | null }, W: number, H: number) {
   const { points, today, stopAge, fiAge, recorded = null, after } = p;
   // No saving years (the stop has come): no FI number to reach.
   const saving = points.length >= 2;
@@ -154,6 +159,8 @@ function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNu
     // Today's balance below the FI number with money in today: on its step.
     marker = fiAge <= points[0].age && points[0].balance >= fiNumber ? { x: x(points[0].age), y: y(points[0].balance) } : { x: x(Math.max(fiAge, points[0].age)), y: y(fiNumber) };
   }
+  // On Whole path, inside the axis; the stop has its own line.
+  const tickXs = after ? (p.ticks ?? []).filter((t) => t.age > first && t.age < last && t.age !== stopAge).map((t) => ({ x: x(t.age), short: t.short })) : [];
   const span = (t: XLabel) => {
     const w = labelWidth(t.label);
     return t.anchor === 'start' ? [t.x, t.x + w] : t.anchor === 'end' ? [t.x - w, t.x] : [t.x - w / 2, t.x + w / 2];
@@ -189,6 +196,11 @@ function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNu
     const endAt: XLabel = { x: W - PAD_X, label: `${after.endAge}`, anchor: 'end' };
     labels = [start];
     for (const l of [stop, endAt, now, fi]) if (l && labels.every((k) => clear(k, l))) labels.push(l);
+    // A mark's age only where there is room for it: its tick always stays.
+    for (const t of tickXs) {
+      const l: XLabel = { x: t.x, label: t.short, anchor: 'middle' };
+      if (labels.every((k) => clear(k, l))) labels.push(l);
+    }
     labels.sort((a, b) => span(a)[0] - span(b)[0]);
   }
   const fiY = fiNumber !== null ? y(fiNumber) : null;
@@ -208,7 +220,7 @@ function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNu
     if (fiX2 - PAD_X >= nameW && (!after || keepsTo(lines, x, fiX2 - nameW, fiX2, fiNumber, under))) fiName = { x: fiX2, y: under ? fiY + 14 : fiY - 5, rule: false };
     else fiName = { x: PAD_X, y: fiY - RULE_LABEL_GAP - RULE_LABEL_HEIGHT >= 0 ? fiY - RULE_LABEL_GAP : fiY + RULE_LABEL_GAP + RULE_LABEL_HEIGHT, rule: true };
   }
-  return { x, y, baseY, line, area, marker, labels, fiY, fiX2, fiName, stopX: stopAge > first ? x(stopAge) : null, recordedLine, plannedLine, todayX: recorded ? x(today) : null };
+  return { x, y, baseY, line, area, marker, labels, ticks: tickXs, fiY, fiX2, fiName, stopX: stopAge > first ? x(stopAge) : null, recordedLine, plannedLine, todayX: recorded ? x(today) : null };
 }
 
 /** What the chart shows, in words, for a screen reader: built when drawn,
@@ -218,7 +230,9 @@ function summary(p: PathChartProps, stopped: boolean, after: PathAfter | null): 
   const start = points[0];
   const end = points[points.length - 1];
   const events = p.walkWords ? ` with ${p.walkWords}` : p.withEvents || after?.withEvents ? ' with this plan’s items' : '';
-  const wrap = (path: string) => (p.recorded ? `${recordedWords(p.recorded, currency)} ${path}` : path);
+  const marks = after ? (p.ticks ?? []).filter((t) => t.age > start.age && t.age < after.endAge && t.age !== stopAge).map((t) => t.label) : [];
+  const marked = marks.length > 0 ? ` Marks at ${marks.slice(0, -1).join(', ')}${marks.length > 1 ? ' and ' : ''}${marks[marks.length - 1]}.` : '';
+  const wrap = (path: string) => `${p.recorded ? `${recordedWords(p.recorded, currency)} ` : ''}${path}${marked}`;
   const last = after ? after.points[after.points.length - 1] : null;
   const tail = after ? (after.runsOutAt !== null ? `run out at ${after.runsOutAt}` : `about ${wholeMoney((last as PathPoint).balance, currency)} at ${after.endAge}`) : '';
   if (after && points.length < 2) {
@@ -249,7 +263,8 @@ export default function PlanPathChart(props: PathChartProps) {
   const after = whole ? (props.after as PathAfter) : null;
   const [drawnRef, W] = useDrawnWidth<SVGSVGElement>();
   const H = Math.round(W * ASPECT);
-  const geo = useMemo(() => geometry({ points, today, stopAge, fiNumber, fiAge, recorded, after }, W, H), [points, today, stopAge, fiNumber, fiAge, recorded, after, W, H]);
+  const ticks = props.ticks ?? null;
+  const geo = useMemo(() => geometry({ points, today, stopAge, fiNumber, fiAge, recorded, after, ticks }, W, H), [points, today, stopAge, fiNumber, fiAge, recorded, after, ticks, W, H]);
   const stopped = points[points.length - 1].age < stopAge;
   const rows = after ? [...points, ...after.points.slice(1)] : points;
   const switchable = onRange !== undefined && points.length >= 2 && wholeShown(points, props.after, 'whole');
@@ -287,6 +302,9 @@ export default function PlanPathChart(props: PathChartProps) {
             {FI_NAME}
           </text>
         )}
+        {geo.ticks.map((t, i) => (
+          <line key={i} x1={t.x} x2={t.x} y1={geo.baseY - TICK} y2={geo.baseY} stroke="var(--text-3)" strokeWidth={1} />
+        ))}
         {geo.labels.map((t) => (
           <text key={t.label} className="chart-xlabel" x={t.x} y={H - 6} textAnchor={t.anchor}>
             {t.label}

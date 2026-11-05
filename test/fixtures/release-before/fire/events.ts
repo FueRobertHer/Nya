@@ -150,8 +150,8 @@ export function lastChange(w: WalkChanges): number {
   return k;
 }
 
-const costIn = (w: WalkChanges, year: number) => w.costs.reduce((sum, c) => (c.year === year ? sum + c.amount : sum), 0);
-const moneyInAt = (w: WalkChanges, year: number) => w.moneyIn.reduce((sum, m) => (m.year === year ? sum + m.amount : sum), 0);
+export const costIn = (w: WalkChanges, year: number) => w.costs.reduce((sum, c) => (c.year === year ? sum + c.amount : sum), 0);
+export const moneyInAt = (w: WalkChanges, year: number) => w.moneyIn.reduce((sum, m) => (m.year === year ? sum + m.amount : sum), 0);
 
 /** Where the walk can't go on: a cost from investments larger than what it
  *  has then, or a year's savings below zero taking it below zero. `year` is

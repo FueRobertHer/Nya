@@ -556,11 +556,12 @@ describe('the privacy page', () => {
 
   test('names the tax facts a plan keeps, and who never sees them', () => {
     expect(privacy()).toContain(
-      'What you tell your plan about tax Whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count: until you change them, or delete your account. What you said about an account goes once you Forget it or remove it, or disconnect a bank connected through Plaid. An account you keep as a manual account when you disconnect SimpleFIN or Lunch Flow keeps it. Encrypted, and in your download. None of these are shown to anyone you share with, sent to a program with an API token, or put in an email. The buckets you choose for your accounts are a separate setting, and what you share of your holdings is split by them.'
+      'What you tell your plan about tax Whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count; and if you have Nya work tax out from your accounts, how you file, your birth years, how long each dependent counts, which category or tag already pays for coverage and, for each plan, your state and its rate, your health coverage and what it costs, how your savings split and the inflation and yield it uses: until you change them, or delete your account. What you said about an account goes once you Forget it or remove it, or disconnect a bank connected through Plaid. An account you keep as a manual account when you disconnect SimpleFIN or Lunch Flow keeps it. Encrypted, and in your download. None of these are shown to anyone you share with, sent to a program with an API token, or put in an email. The buckets you choose for your accounts are a separate setting, and what you share of your holdings is split by them.'
     );
     // The same words as Your data's list, and the list says nobody else sees them.
     const entry = containerEntry('plan-facts')!;
-    expect(entry.about).toContain('whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count');
+    expect(entry.about).toContain('whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count, whether Nya works tax out from your accounts, how you file, your birth years, how long each dependent counts and which category or tag already pays for coverage');
+    expect(containerEntry('fire-plans')!.about).toContain('your state and its rate, your health coverage and what it costs');
     expect(entry.seen).toBeUndefined();
     expect(entry.plain).toBeUndefined();
   });

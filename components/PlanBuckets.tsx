@@ -27,7 +27,7 @@ import { normalizedAmountText } from '@/lib/manual-txn-input';
 import type { BucketAccount, BucketsToday } from '@/lib/fire/buckets-today';
 import type { ChildAccount } from '@/lib/fire/inputs';
 import { byBucket, type SavingsSplit } from '@/lib/fire/savings-split';
-import { ROTH_HELD_NOTE, STILL_READING, UNCLASSIFIED_NOTE, accountSub, basisNote, bucketsWhy, leftOutLine, namesOf, rowTitle, splitNote, yieldWords } from './plan-buckets';
+import { HSA_WORDS, ROTH_HELD_NOTE, STILL_READING, UNCLASSIFIED_NOTE, accountSub, basisNote, bucketsWhy, leftOutLine, namesOf, rmdLine, rowTitle, splitNote, yieldWords } from './plan-buckets';
 
 /** The drawer's level past the figure: an account, its bucket, or a person's Roth
  *  contributions. The title goes with it, for the drawer's head. */
@@ -39,6 +39,8 @@ export type FigureLevel =
 
 /** What the sheets need beyond the figure's own form. */
 export type BucketSheet = {
+  /** Under a detailed plan: when required withdrawals start, and what isn't known. */
+  detail?: { rmdAges: { you: number; partner: number }; cautions: readonly string[] } | null;
   /** The accounts by bucket, with or without cash. */
   bucketsFor: (includeCash: boolean) => BucketsToday;
   /** When the balances were read, in words. */
@@ -128,12 +130,20 @@ export function BucketGroups({ today, sheet, mix, money }: { today: BucketsToday
             </span>
           </div>
           {g.bucket === 'unclassified' && <p className="helper">{UNCLASSIFIED_NOTE}</p>}
+          {sheet.detail && (g.bucket === 'tax-deferred' || g.bucket === 'unclassified') && <p className="helper">{rmdLine(sheet.detail.rmdAges, sheet.partner)}</p>}
+          {sheet.detail && g.bucket === 'hsa' && <p className="helper">{HSA_WORDS}</p>}
           <ul className="list-rows">
             {g.accounts.map((a) => (
               <AccountRow key={a.account_id} title={rowTitle(a, names)} sub={accountSub(a, money, sheet.partner)} value={money(a.value)} onOpen={() => openAccount(a)} />
             ))}
             {g.bucket === 'roth' && today.roth.map((r) => <RothRow key={r.owner} row={r} sheet={sheet} money={money} />)}
           </ul>
+          {g.bucket === 'roth' &&
+            sheet.detail?.cautions.map((c) => (
+              <Notice key={c} level="caution">
+                {c.replace(' on Invested assets', ' here')}
+              </Notice>
+            ))}
         </section>
       ))}
       {heldWithoutRoth.length > 0 && (
@@ -162,7 +172,7 @@ export function BucketGroups({ today, sheet, mix, money }: { today: BucketsToday
       )}
       {mix && <p className="helper">{mix}</p>}
       <Why label="Why do buckets matter?">
-        <p className="helper">{bucketsWhy(sheet.partner)}</p>
+        <p className="helper">{bucketsWhy(sheet.partner, !!sheet.detail)}</p>
       </Why>
     </div>
   );
@@ -171,10 +181,10 @@ export function BucketGroups({ today, sheet, mix, money }: { today: BucketsToday
 const rothTitle = (owner: Owner) => (owner === 'you' ? 'Your Roth contributions' : 'Your partner’s Roth contributions');
 
 /** Annual savings' split, one line a bucket. */
-export function SavingsSplitLines({ split, reading }: { split: SavingsSplit; reading: boolean }) {
+export function SavingsSplitLines({ split, reading, heading = true }: { split: SavingsSplit; reading: boolean; heading?: boolean }) {
   return (
     <section className="stack tight">
-      <h3 className="section-label">Where it goes</h3>
+      {heading && <h3 className="section-label">Where it goes</h3>}
       <dl className="txn-detail">
         {byBucket(split)
           .filter((s) => Math.round(s.share * 100) > 0)

@@ -19,6 +19,7 @@ import { accountName, questionText } from './AccountLifecycle';
 import { statusBadge } from './ConnectionStatus';
 import type { Offer } from './CurrencyNotes';
 import { reconnectAlerts, type budgetAlerts, type paymentAlerts } from './Insights';
+import type { FigureNote } from './plan-figure-notes';
 import type { RestoreHoldNote } from './total-notes';
 
 export type AttentionSeverity = Severity | 'info';
@@ -26,8 +27,8 @@ export type AttentionSeverity = Severity | 'info';
 /** Where a row goes: its card on Accounts, Settings > Connections (focused
  *  on the connection's card there, when it has one, or the card `focus`
  *  names), an account's sheet over Home, the
- *  Budgets tab, Activity's review count, Settings > Your data, or the offer
- *  of a home currency. */
+ *  Budgets tab, Activity's review count, Settings > Your data, the offer
+ *  of a home currency, or the Plan's Your path. */
 export type Go =
   | { to: 'card'; item_id: string }
   | { to: 'accounts'; focus: string }
@@ -36,7 +37,8 @@ export type Go =
   | { to: 'budgets' }
   | { to: 'review' }
   | { to: 'restore' }
-  | { to: 'currency' };
+  | { to: 'currency' }
+  | { to: 'plan' };
 
 export type AttentionItem = {
   key: string;
@@ -77,6 +79,9 @@ export type AttentionInput = {
   /** The reconnected accounts Settings > Connections suggests linking, by
    *  name (lib/links.ts linkOfferForDisplay). */
   linkOffer?: readonly string[];
+  /** What a detailed plan still needs said (components/plan-drawdown.ts
+   *  attentionNotes), each two sentences: what stands in, then where to say. */
+  plan?: readonly Pick<FigureNote, 'key' | 'text'>[];
   now?: Date;
 };
 
@@ -228,6 +233,13 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
       sub: accounts ? 'Your accounts are in more than one currency' : 'Your transactions are in more than one currency',
       go: { to: 'currency' },
     });
+  }
+
+  // A detailed plan's gaps, in the words its Drawdown says them, going where the
+  // words send the person: Invested assets and the Timeline are on Your path.
+  for (const note of input.plan ?? []) {
+    const at = note.text.lastIndexOf('. ');
+    items.push({ key: note.key, severity: 'caution', title: note.text.slice(0, at), sub: note.text.slice(at + 2).replace(/\.$/, ''), go: { to: 'plan' } });
   }
 
   // What couldn't be read leaves the list short: said, so an empty card

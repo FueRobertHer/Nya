@@ -229,6 +229,21 @@ describe('the mix at the start age', () => {
     expect(mixToday({ groups: [], roth: [], total: 0 }, 0)).toEqual([]);
   });
 
+  test('an overdrawn account: nothing below zero, and the rest comes to the figure', () => {
+    const acct = (bucket: string, value: number, basis: number | null = null) => ({ owner: 'you', value, basis, bucket });
+    const of = (accounts: ReturnType<typeof acct>[]) => {
+      const groups = ['taxable', 'tax-deferred'].map((bucket) => ({ bucket, total: 0, accounts: accounts.filter((a) => a.bucket === bucket) }));
+      return { groups, roth: [], total: accounts.reduce((s, a) => s + a.value, 0) } as never;
+    };
+    // Less than the rest of its bucket: the bucket holds, and only what was paid stops at 0.
+    const held = mixToday(of([acct('taxable', -200, -200), acct('taxable', 300_000), acct('tax-deferred', 700_000)]), 999_800);
+    expect(held.find((s) => s.bucket === 'taxable')).toMatchObject({ value: 299_800, basis: 0 });
+    // All its bucket holds: that bucket is left out, and the others come to the figure.
+    const gone = mixToday(of([acct('taxable', -200, -200), acct('tax-deferred', 700_000)]), 699_800);
+    expect(gone.map((s) => s.bucket)).toEqual(['tax-deferred']);
+    expect(gone[0].value).toBeCloseTo(699_800, 6);
+  });
+
   test('reachable is never more than the Roth holds', () => {
     const big = bucketsToday({ assets: investedAssets([inst([ROTH])], false), holdings: [], tax: facts({ rothContributions: [{ owner: 'you', amount: 900_000 }] }), overrides: NONE });
     expect(mixToday(big, 100_000)[0].reachable).toBe(100_000);

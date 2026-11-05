@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { conditionalFlows } from '@/lib/fire/compile';
-import type { PlanItem } from '@/lib/fire/items';
+import { ITEM_LIMITS, type PlanItem } from '@/lib/fire/items';
 import { steadyRun } from '@/lib/fire/path';
 import { enginePlan, fiView, parsePlan, type EnginePlan, type Measured } from '@/lib/fire/plan';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
@@ -274,6 +274,17 @@ describe('in a run', () => {
     const a = historicalCycles({ ...BASE, oneOffs: [{ amount: 10_000, year: 2 }], lowerSpending: [{ amount: 500, fromYear: 1 }] }, m);
     const b = historicalCycles({ ...BASE, oneOffs: [{ amount: 10_000, year: 2 }], lowerSpending: [{ amount: 500, fromYear: 1 }], conditional: { triggers: [], items: [] } }, m);
     expect(b.balance).toEqual(a.balance);
+  });
+
+  test('a plan full of homes with waiting ends runs', () => {
+    // A home bought before the start, ending on a balance, compiles to two.
+    const items: PlanItem[] = Array.from({ length: ITEM_LIMITS.items }, (_, i) => ({
+      id: `h${i}`, label: `Home ${i}`, kind: 'home', from: { anchor: { at: 'age', age: 45 }, offset: 0 }, until: { anchor: { at: 'balance', amount: 5_000_000 }, offset: 0 },
+      once: 1_000, yearly: 100, replaces: null, every: null, times: null, inflationAdjusted: true, owner: null, beforeTax: false,
+    }));
+    const flows = conditionalFlows(items, { triggers: [5_000_000], edges: items.map(() => ({ start: 45, end: { trigger: 0, offset: 0 } })) }, items.map(() => ({ start: 45, end: null })), { age: 40, startAge: 50, stop: 50, years: 45, taxRate: 0 });
+    expect(flows.items.length).toBe(2 * ITEM_LIMITS.items);
+    expect(() => checkPlan({ ...BASE, conditional: flows })).not.toThrow();
   });
 
   test('the engine checks what it is given, and the cap', () => {

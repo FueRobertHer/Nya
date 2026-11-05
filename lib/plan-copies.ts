@@ -17,7 +17,7 @@
 import { defineMapStore, defineValueStore, UnreadableEntriesError } from './repo';
 import { eager } from './eager';
 import type { Ctx } from './containers';
-import { MAIN_ID, factsOf, holdsAmounts, isPlanEntry, isPlanFacts, mainOf, upgradePlanEntry, withFacts, type PlanEntry, type PlanFacts } from './fire/copies';
+import { MAIN_ID, entryHoldsAmounts, factsOf, isPlanEntry, isPlanFacts, mainOf, upgradePlanEntry, withFacts, type PlanEntry, type PlanFacts } from './fire/copies';
 import type { TaxFacts } from './fire/tax-facts';
 
 export const firePlansStore = defineMapStore<PlanEntry>('fire-plans', {
@@ -77,14 +77,15 @@ const taxFactsIn = (facts: PlanFacts | null): TaxFacts | null => (facts?.version
 /** What GET answers from your plan's entry: the plan with the facts in its
  *  fields, its currency where it holds an amount (else null, so the Plan
  *  follows the accounts, as a plan with nothing typed always has), its id
- *  and its stamp, so a page can name the version a save was made on, and the
- *  tax facts every plan shares. */
+ *  and its stamp, so a page can name the version a save was made on, its tax
+ *  choices, and the tax facts every plan shares. */
 export function mainAnswer(m: MainPlan) {
   return {
     id: m.id,
     plan: withFacts(m.entry.plan, m.facts ?? factsOf(m.entry.plan)),
-    currency: holdsAmounts(m.entry.plan) ? m.entry.currency : null,
+    currency: entryHoldsAmounts(m.entry.plan, m.entry.tax) ? m.entry.currency : null,
     updated_at: m.entry.updatedAt,
+    tax: m.entry.tax,
     tax_facts: taxFactsIn(m.facts),
   };
 }
@@ -92,7 +93,7 @@ export function mainAnswer(m: MainPlan) {
 /** What GET answers while your plan has no entry: the defaults, never saved,
  *  with no stamp (a save then sends `based_on: null`), and any tax facts:
  *  those can be given before a plan is, and the plan stays new for all that. */
-export const noPlanAnswer = (facts: PlanFacts | null) => ({ id: MAIN_ID, plan: null, currency: null, updated_at: null, tax_facts: taxFactsIn(facts) });
+export const noPlanAnswer = (facts: PlanFacts | null) => ({ id: MAIN_ID, plan: null, currency: null, updated_at: null, tax: null, tax_facts: taxFactsIn(facts) });
 
 /** The plan and its currency, as GET /api/fire-plan and /api/plan-inputs
  *  answer them: your plan's entry, or the defaults while there is none. With
@@ -115,6 +116,9 @@ export type PlanRow = {
   currency: string | null;
   created_at: string | null;
   updated_at: string | null;
+  /** Its own tax choices; null is the flat model's, or your plan's under the
+   *  detailed one. */
+  tax: PlanEntry['tax'];
 };
 
 export function rowOf(id: string, entry: PlanEntry, facts: PlanFacts | null, main: PlanEntry): PlanRow {
@@ -122,9 +126,10 @@ export function rowOf(id: string, entry: PlanEntry, facts: PlanFacts | null, mai
     id,
     name: entry.name,
     plan: withFacts(entry.plan, facts ?? factsOf(main.plan)),
-    currency: holdsAmounts(entry.plan) ? entry.currency : null,
+    currency: entryHoldsAmounts(entry.plan, entry.tax) ? entry.currency : null,
     created_at: entry.createdAt,
     updated_at: entry.updatedAt,
+    tax: entry.tax,
   };
 }
 
@@ -137,7 +142,7 @@ export async function readPlans(ctx: Ctx): Promise<{ main: string; missing: bool
   const factsRead = eager(planFactsStore.get(ctx));
   const reportRead = eager(firePlansStore.getAllReport(ctx));
   if ((await firePlansStore.count(ctx)) === 0) {
-    return { main: MAIN_ID, missing: false, plans: [{ id: MAIN_ID, name: FIRST_PLAN, plan: null, currency: null, created_at: null, updated_at: null }], unreadable_ids: [], unrecognised_ids: [] };
+    return { main: MAIN_ID, missing: false, plans: [{ id: MAIN_ID, name: FIRST_PLAN, plan: null, currency: null, created_at: null, updated_at: null, tax: null }], unreadable_ids: [], unrecognised_ids: [] };
   }
   const facts = await factsRead;
   const report = await reportRead;

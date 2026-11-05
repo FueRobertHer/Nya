@@ -1,6 +1,7 @@
 // Runs the Plan tab's simulations (lib/fire/jobs.ts) in a Web Worker
 // (lib/fire/plan.worker.ts), so the page stays responsive while 5,000 Monte
-// Carlo runs or the grid's cells are worked out.
+// Carlo runs or the grid's cells are worked out, and a detailed plan's search
+// (lib/fire/search-job.ts) in a worker of its own.
 //
 // ONE JOB AT A TIME, queued here on the page. A job goes to the worker only
 // once the one before it is answered, so a job whose caller has moved on (the
@@ -20,36 +21,39 @@
 //
 // No React here, so the switching can be tested on its own.
 
-import type { PlanJob, PlanJobResult, PlanReply } from '@/lib/fire/jobs';
+import type { PlanJob, PlanJobResult } from '@/lib/fire/jobs';
+
+/** A job's answer when no run answered it. */
+type JobFailure = { ok: false; error: string; unavailable?: true };
 
 /** The part of a Worker this uses. */
-export type WorkerLike = {
+export type WorkerLike<R = PlanJobResult> = {
   postMessage(message: unknown): void;
   terminate(): void;
-  onmessage: ((e: MessageEvent<PlanReply>) => void) | null;
+  onmessage: ((e: MessageEvent<{ id: number; result: R }>) => void) | null;
   onerror: ((e: Event) => void) | null;
 };
 
-export type PlanRunner = {
+export type PlanRunner<J = PlanJob, R = PlanJobResult> = {
   /** Runs a job after the ones before it. Aborting `signal` while it waits
    *  drops it, answered "cancelled"; once it runs, it finishes. */
-  run(job: PlanJob, signal?: AbortSignal): Promise<PlanJobResult>;
+  run(job: J, signal?: AbortSignal): Promise<R | JobFailure>;
   /** Stops the worker; jobs running or waiting are answered with an error. */
   dispose(): void;
 };
 
-const STOPPED: PlanJobResult = { ok: false, error: 'stopped' };
-const CANCELLED: PlanJobResult = { ok: false, error: 'cancelled' };
+const STOPPED: JobFailure = { ok: false, error: 'stopped' };
+const CANCELLED: JobFailure = { ok: false, error: 'cancelled' };
 
-type Entry = { job: PlanJob; resolve: (r: PlanJobResult) => void; forget: () => void };
-
-export function createPlanRunner(opts: {
+export function createPlanRunner<J = PlanJob, R = PlanJobResult>(opts: {
   /** Starts the worker, or returns null (or throws) where there is none. */
-  startWorker: () => WorkerLike | null;
+  startWorker: () => WorkerLike<R> | null;
   /** Runs a job on the page. */
-  runHere: (job: PlanJob) => Promise<PlanJobResult>;
-}): PlanRunner {
-  let worker: WorkerLike | null = null;
+  runHere: (job: J) => Promise<R>;
+}): PlanRunner<J, R> {
+  type Answer = R | JobFailure;
+  type Entry = { job: J; resolve: (r: Answer) => void; forget: () => void };
+  let worker: WorkerLike<R> | null = null;
   let started = false;
   let broken = false;
   let disposed = false;
@@ -59,7 +63,7 @@ export function createPlanRunner(opts: {
    *  on the page (null). */
   let running: { entry: Entry; id: number | null } | null = null;
 
-  const settle = (entry: Entry, result: PlanJobResult) => {
+  const settle = (entry: Entry, result: Answer) => {
     entry.forget();
     entry.resolve(result);
   };
@@ -86,7 +90,7 @@ export function createPlanRunner(opts: {
       if (disposed) return; // dispose() has answered it
       opts
         .runHere(entry.job)
-        .catch((err): PlanJobResult => ({ ok: false, error: err instanceof Error ? err.message : String(err), unavailable: true }))
+        .catch((err): Answer => ({ ok: false, error: err instanceof Error ? err.message : String(err), unavailable: true }))
         .then((result) => {
           if (disposed) return;
           running = null;
@@ -114,7 +118,7 @@ export function createPlanRunner(opts: {
     next();
   }
 
-  function ensureWorker(): WorkerLike | null {
+  function ensureWorker(): WorkerLike<R> | null {
     if (!started) {
       started = true;
       try {
@@ -141,7 +145,7 @@ export function createPlanRunner(opts: {
 
   return {
     run(job, signal) {
-      return new Promise<PlanJobResult>((resolve) => {
+      return new Promise<Answer>((resolve) => {
         if (disposed) return resolve(STOPPED);
         if (signal?.aborted) return resolve(CANCELLED);
         const entry: Entry = { job, resolve, forget: () => {} };

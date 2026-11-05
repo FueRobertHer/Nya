@@ -73,6 +73,9 @@ describe("the tables' shape", () => {
     expect(LAW_2026.medicaidStates.WI).toEqual({ line: 1, through: null, ownRule: false });
     expect(LAW_2026.medicaidStates.GA).toEqual({ line: 1, through: 2026, ownRule: true });
     expect(STATE_CODES.filter((s) => LAW_2026.medicaidStates[s] === null)).toEqual(['AL', 'FL', 'KS', 'MS', 'SC', 'TN', 'TX', 'WY']);
+    // Tax Foundation's eight, and Washington, whose tax is on capital gains only.
+    expect(STATE_CODES.filter((s) => !LAW_2026.stateIncomeTax[s])).toEqual(['AK', 'FL', 'NV', 'NH', 'SD', 'TN', 'TX', 'WA', 'WY']);
+    expect(Object.keys(LAW_2026.stateIncomeTax).length).toBe(STATE_CODES.length);
   });
 
   test('IRMAA tiers ascend; only the top is "at or above"', () => {

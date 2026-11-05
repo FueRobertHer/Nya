@@ -14,6 +14,7 @@ import type { ItemAges } from '@/lib/fire/compile';
 import { INCOME_KINDS, ITEM_LIMITS, ONCE_KINDS, type Anchor, type ItemKind, type PlanItem, type When } from '@/lib/fire/items';
 import { PLAN_TO_AGE } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
+import type { FiredResult, SimPlan } from '@/lib/fire/simulate';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import { nameTaken, SCENARIO_NAME_MAX } from '@/lib/fire/plan-list';
 import type { Unplaced } from '@/lib/fire/steady';
@@ -503,8 +504,10 @@ export function everyRunText(start: number | null, plan: Pick<FirePlanV2, 'start
 /** The Honesty table's cautions on an item (screens.md): part-time work
  *  before you stop that doesn't say what it replaces, and income before FI
  *  given before tax. */
-export function itemCautions(x: PlanItem, at: { start: number | null; stop: number | null; inFi: boolean; taxRate: number }): string[] {
+export function itemCautions(x: PlanItem, at: { start: number | null; stop: number | null; inFi: boolean; taxRate: number; detailed?: boolean }): string[] {
   const out: string[] = [];
+  if (at.detailed && !x.beforeTax && (x.kind === 'pension' || x.kind === 'social-security' || x.kind === 'other-income')) out.push('Give it before tax, so its tax and its part in your ACA income count.');
+  if (at.detailed && !x.beforeTax && x.kind === 'part-time') out.push('Given after tax, it may hide a year over the ACA limit.');
   if (x.kind === 'part-time' && x.replaces === null && at.start !== null && at.stop !== null && at.start < at.stop) out.push('Say what take-home it replaces, so it counts in your FI date.');
   if (INCOME_KINDS.includes(x.kind) && x.beforeTax && at.inFi) {
     out.push(`In your FI date after ${Math.round(at.taxRate * 1000) / 10}% tax, your plan’s rate on withdrawals. It may keep less: give its take-home for a closer date.`);
@@ -591,6 +594,10 @@ export type PreviewInput = {
   before: PlanFigures | null;
   /** The plan with the draft in it; null while it can't be worked out. */
   after: PlanFigures | 'refused' | null;
+  /** A detailed plan's search for it is under way. */
+  working?: boolean;
+  /** It couldn't be run. */
+  failed?: boolean;
   /** The plan without the item, for an item on FI ("without it, FI would
    *  be around 53"). */
   without: PlanFigures | null;
@@ -607,7 +614,32 @@ export type PreviewInput = {
   savings: number | null;
   /** The age the steady path with the draft runs out at, if it does. */
   runsOutAt: number | null;
+  /** Where it falls across the runs, for a start that waits on a run's own balance. */
+  across?: AcrossAnswer | null;
 };
+
+/** Across history, while it is worked out and once it has been. */
+export type AcrossAnswer = { working: true } | { fired: FiredResult; startAge: number };
+
+/** The item's start when it waits on a run's own balance: what to run, to say where it
+ *  falls across the runs. Only when Will it last? starts from what you'd have at the
+ *  stop, and the steady path hasn't fired it by then. */
+export function waitingStart(f: PlanFigures, id: string): { sim: SimPlan; trigger: number; offset: number; startAge: number } | null {
+  if (f.plan.start !== 'at-stop' || !('sim' in f.engine) || !f.engine.sim.conditional || f.engine.startAge === null) return null;
+  const edge = f.resolution.perRun?.edges[f.plan.items.findIndex((y) => y.id === id)]?.start;
+  if (edge === undefined || typeof edge === 'number') return null;
+  return { sim: f.engine.sim, trigger: edge.trigger, offset: edge.offset, startAge: f.engine.startAge };
+}
+
+/** "It starts in 74% of runs, by 62 in half of those; in 26% of runs it never does." */
+export function acrossText({ fired, startAge }: { fired: FiredResult; startAge: number }): string {
+  if (fired.fired === 0 || fired.byHalf === null) return 'It never starts, in any run';
+  const by = startAge + fired.byHalf;
+  if (fired.fired === fired.runs) return `It starts in every run, by ${by} in half of them`;
+  // Some and not all stay so, whatever the rounding says.
+  const share = Math.min(99, Math.max(1, Math.round((fired.fired / fired.runs) * 100)));
+  return `It starts in ${share}% of runs, by ${by} in half of those; in ${100 - share}% of runs it never does`;
+}
 
 export type PreviewLines = {
   /** The steady path's start and end, the FI date, and for pay what you'd
@@ -635,6 +667,9 @@ export function previewLines(p: PreviewInput): PreviewLines {
     return { rows: [], lines: [p.draft.missing ? `Fill in the figures to see how it moves ${whose} FI age.` : `Once the figures are in range, this says how they move ${whose} FI age.`], cautions: [], warnings: [] };
   }
   if (p.after === 'refused') return { rows: [], lines: ['With this item, the figures can’t be worked out: its lasting change takes your spending in retirement below zero.'], cautions: [], warnings: [] };
+  // A detailed plan's search takes a moment, and what it finds replaces this.
+  if (p.working) return { rows: [], lines: ['Working it out'], cautions: [], warnings: [] };
+  if (p.failed) return { rows: [], lines: [`Tax on this plan couldn’t be worked out on this page, so this can’t say how it moves ${whose} FI age.`], cautions: [], warnings: [] };
   if (!p.after) return { rows: [], lines: [], cautions: [], warnings: [] };
   const x = p.draft.ok;
   const f = p.after;
@@ -671,6 +706,8 @@ export function previewLines(p: PreviewInput): PreviewLines {
     const text = unplacedText(x, why, f.plan);
     if (text) rows.push({ key: 'On your steady path', value: text.replace(/\.$/, '') });
   }
+
+  if (p.across) rows.push({ key: f.plan.method === 'historical' ? 'Across history' : 'Across simulated runs', value: 'working' in p.across ? 'Working it out' : acrossText(p.across) });
 
   // The FI date, before and with it.
   if (after.kind === 'age' && before.kind === 'age') {
@@ -738,6 +775,6 @@ export function previewLines(p: PreviewInput): PreviewLines {
   }
   if (why === 'no-years') lines.push('Ends before it starts, so it runs no years.');
 
-  const cautions = itemCautions(x, { start: ages?.start ?? null, stop, inFi: i >= 0 && countsInFiDate(f, i), taxRate: f.plan.taxRate });
+  const cautions = itemCautions(x, { start: ages?.start ?? null, stop, inFi: i >= 0 && countsInFiDate(f, i), taxRate: f.plan.taxRate, detailed: !!f.detail && !('failed' in f.detail) });
   return { rows, lines, cautions, warnings: i >= 0 ? itemWarnings(x, f, i) : [] };
 }

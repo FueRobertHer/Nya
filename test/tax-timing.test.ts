@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { runDrawdown, type DrawdownInput } from '@/lib/fire/drawdown';
 import { seededRandom } from '@/lib/fire/random';
 import { monteCarlo, type SimPlan } from '@/lib/fire/simulate';
 import { LAW_2026 } from '@/lib/fire/tax/law/2026';
@@ -160,4 +161,29 @@ describe('the cost of the year', () => {
     expect(total / flat).toBeLessThan(200);
     expect(total).toBeLessThan(20_000);
   }, 120_000);
+
+  // One drawdown is what a sheet's preview, the search's candidates and each
+  // plan in Compare wait on: 46 years, a Medicaid and ACA stretch, the cells
+  // included. A rule that isn't constant runs it up to 8 times.
+  test('46 years of the drawdown stay well under what a page can wait for', () => {
+    const inp: DrawdownInput = {
+      startAge: 50, years: 46, today: { age: 41, partnerAge: 40, calendarYear: 2026 }, filing: 'joint', dependents: [], rmdAges: { you: 75, partner: 75 },
+      slots: [{ owner: 'you', bucket: 'taxable', value: 420_000, basis: 280_000, reachable: 0 }, { owner: 'you', bucket: 'tax-deferred', value: 900_000, basis: 0, reachable: 0 }, { owner: 'you', bucket: 'roth', value: 120_000, basis: 0, reachable: 70_000 }, { owner: 'you', bucket: 'hsa', value: 35_000, basis: 0, reachable: 0 }],
+      share457: { you: 0, partner: 0 }, spending: 64_000, rule: (rate) => ({ kind: 'percent', rate }), realReturn: 0.05, inflation: 0.03, taxableYield: 0.02, oneOffs: [], lower: [],
+      income: [{ amount: 0, fromYear: 17, inflationAdjusted: true, kind: 'social-security', owner: 'you', beforeTax: true, gross: 30_000 }, { amount: 0, fromYear: 18, inflationAdjusted: true, kind: 'social-security', owner: 'partner', beforeTax: true, gross: 18_000 }],
+      health: { coverage: { kind: 'aca', adult: 11_000, quotedAge: 50, child: null }, medicareExtra: 0, meetsRule: [], countMedicaid: false, acaLaw: '2026', growth: 0.021, incomeGrowth: 0.011 },
+      state: 'NV', stateRate: 0, law: LAW_2026,
+    };
+    let rounds = 0;
+    const ms = readMs(() => {
+      for (let i = 0; i < 50; i++) {
+        const d = runDrawdown(inp);
+        if ('failed' in d) throw new Error(d.failed);
+        rounds = d.rounds;
+      }
+    });
+    if (process.env.TAX_TIMING) console.log(JSON.stringify({ drawdownMs: +(ms / 50).toFixed(2), rounds }));
+    expect(rounds).toBeGreaterThan(1);
+    expect(ms / 50).toBeLessThan(40);
+  }, 60_000);
 });

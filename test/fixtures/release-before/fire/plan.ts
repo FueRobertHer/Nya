@@ -23,7 +23,7 @@ import { baristaFiNumber, coastFiNumber, fiNumber, projectBalance, projectionSho
 import { vpwExpectedReturn, type RuleKind, type RuleSpec } from './rules';
 import { CASH_REAL_RETURN, MAX_YEARS, type Method, type Rebalance, type SimPlan } from './simulate';
 
-export type StartChoice = 'fi-number' | 'assets' | 'custom';
+export type StartChoice = 'fi-number' | 'assets' | 'custom' | 'at-stop';
 
 export type PlanIncome = {
   id: string;
@@ -164,7 +164,7 @@ export const LIMITS = {
 
 const METHODS: readonly Method[] = ['historical', 'monte-carlo'];
 const RULES: readonly RuleKind[] = ['constant', 'percent', 'guardrails', 'vpw', 'floor-ceiling'];
-const STARTS: readonly StartChoice[] = ['fi-number', 'assets', 'custom'];
+const STARTS: readonly StartChoice[] = ['fi-number', 'assets', 'custom', 'at-stop'];
 const REBALANCES: readonly Rebalance[] = ['annual', 'monthly', 'none'];
 const PAID_FROM: readonly PlanFunding['paidFrom'][] = ['payroll', 'bank'];
 const KEYS = Object.keys(DEFAULT_PLAN) as (keyof FirePlan)[];
@@ -614,7 +614,9 @@ export type EnginePlan = {
   rateFrom: 'plan' | 'spending';
 };
 
-export type Missing = 'spending' | 'assets' | 'balance';
+export type Missing = 'spending' | 'assets' | 'balance' | 'stop-balance';
+
+const MISSING_START: Record<StartChoice, Missing> = { 'fi-number': 'spending', assets: 'assets', custom: 'balance', 'at-stop': 'stop-balance' };
 
 /**
  * The plan as the engine runs it, or what it needs first, at the view's
@@ -627,16 +629,16 @@ export type Missing = 'spending' | 'assets' | 'balance';
  * question is whether what you SPEND would have lasted, so the first year
  * withdraws your spending, grossed up for tax, and the rate is what that is
  * of the balance (a 10% rate is said as 10%, not quietly replaced by the
- * plan's 4%).
+ * plan's 4%). Starting from what you'd have at your stop age, the view's balance
+ * there, the question is the same.
  */
 export function enginePlan(plan: PlanCore, view: FiView): EnginePlan | { missing: Missing } {
   let startBalance: number | null;
   if (plan.start === 'fi-number') startBalance = view.fiNumber;
   else if (plan.start === 'assets') startBalance = view.assets.value;
+  else if (plan.start === 'at-stop') startBalance = view.atTargetAge;
   else startBalance = plan.startBalance;
-  if (startBalance === null) {
-    return { missing: plan.start === 'fi-number' ? 'spending' : plan.start === 'assets' ? 'assets' : 'balance' };
-  }
+  if (startBalance === null) return { missing: MISSING_START[plan.start] };
   let rate = plan.withdrawalRate;
   let rateFrom: EnginePlan['rateFrom'] = 'plan';
   // Your own FI number: the rate gives way, never the spending.
@@ -644,7 +646,8 @@ export function enginePlan(plan: PlanCore, view: FiView): EnginePlan | { missing
   if (plan.start !== 'fi-number' || typed) {
     const spending = view.spending.value;
     if (spending === null) return { missing: 'spending' };
-    if (!(startBalance > 0)) return { missing: plan.start === 'assets' ? 'assets' : 'balance' };
+    // Your own FI number of nothing is a balance to give, not spending.
+    if (!(startBalance > 0)) return { missing: plan.start === 'fi-number' ? 'balance' : MISSING_START[plan.start] };
     rate = spending / (1 - plan.taxRate) / startBalance;
     rateFrom = 'spending';
   }

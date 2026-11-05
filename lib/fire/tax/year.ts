@@ -152,6 +152,10 @@ export type YearInput = {
   /** The year's return after inflation. */
   growth: number;
   inflation: number;
+  /** Leave health coverage out of what the year pays: a year still working
+   *  (lib/fire/tax/mix.ts), whose coverage isn't the plan's to know. Coverage
+   *  alone can't say so: Medicare is charged from 65 whatever it is. */
+  skipHealth?: boolean;
 };
 
 export type Drawn = {
@@ -316,8 +320,8 @@ function evaluate(inp: YearInput, law: TaxLaw, out: YearResult, right: boolean):
   hin.magi.s = fo.magiAca.s;
   const ho = health(hin, law, out.health);
   if (ceilingUnder && inp.ceiling !== null) reaching(measure(inp.ceiling, fo), inp.ceiling.at);
-  f.v = cashFixed + x - needFixed - fo.total.v - ho.total.v;
-  f.s = (active >= 0 ? 1 : 0) - fo.total.s - ho.total.s;
+  f.v = cashFixed + x - needFixed - fo.total.v - (inp.skipHealth ? 0 : ho.total.v);
+  f.s = (active >= 0 ? 1 : 0) - fo.total.s - (inp.skipHealth ? 0 : ho.total.s);
 }
 
 function measure(c: Ceiling, fo: FederalResult): Lin {
@@ -519,7 +523,7 @@ function prepare(inp: YearInput, law: TaxLaw, out: YearResult): void {
   delta = 0;
   ceilingUnder = false;
   let premiumsLeft = 0;
-  if ((inp.people[0].age >= 65 && inp.people[0].hsa > 0) || (joint && inp.people[1].age >= 65 && inp.people[1].hsa > 0)) {
+  if (!inp.skipHealth && ((inp.people[0].age >= 65 && inp.people[0].hsa > 0) || (joint && inp.people[1].age >= 65 && inp.people[1].hsa > 0))) {
     evaluate(inp, law, out, false);
     premiumsLeft = out.health.hsaEligible;
   }

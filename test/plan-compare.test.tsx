@@ -44,6 +44,7 @@ const row = (id: string, name: string, over: Partial<PlanRow> = {}): PlanRow => 
   currency: 'USD',
   created_at: '2026-10-01T00:00:00.000Z',
   updated_at: `u-${id}`,
+  tax: null,
   ...over,
 });
 const noop = async () => true as const;
@@ -130,6 +131,29 @@ describe('one seed and one dataset', () => {
     const r = {} as SimResult;
     for (let i = 0; i < 15; i++) rememberResult(cache, `k${i}`, r);
     expect([...cache.keys()]).toEqual(['k3', 'k4', 'k5', 'k6', 'k7', 'k8', 'k9', 'k10', 'k11', 'k12', 'k13', 'k14']);
+  });
+});
+
+describe('a detailed plan still at work in compare mode', () => {
+  const f = figs(plan({ age: 40, targetAge: 50 }));
+
+  test('no job is run on its flat figures', () => {
+    expect(compareJobs([{ kind: 'figures', figures: f, working: true }], 'historical')).toEqual([]);
+    expect(compareJobs([{ kind: 'figures', figures: f, held: true }], 'historical')).toEqual([]);
+    expect(compareJobs([{ kind: 'figures', figures: f }], 'historical')).toHaveLength(1);
+  });
+
+  test('every cell waits, the FI date too', () => {
+    const { rows } = compareRows([{ id: 'p', name: 'p', isPlan: true, outcome: { kind: 'figures', figures: f, result: 'pending', working: true } }], money, TODAY);
+    for (const r of rows) expect(r.cells[0].pending).toBe(true);
+  });
+
+  test('what it is says nothing from them', () => {
+    const copy = { id: 'c', name: 'c', isMain: false, updatedAt: 'u', plan: planOf(plan()), outcome: { kind: 'figures', figures: f } } as SheetPlan;
+    const short = { ...f, short: { kind: 'cost', year: 3, have: 1, need: 2 } } as PlanFigures;
+    const details = (working: boolean) => text(renderToStaticMarkup(<PlanDetails plan={copy} parts={[]} outcome={{ kind: 'figures', figures: short, result: 'pending', working }} money={money} />));
+    expect(details(false)).toContain('no FI date');
+    expect(details(true)).not.toContain('no FI date');
   });
 });
 
@@ -462,6 +486,19 @@ describe('the copy’s card and the Plans sheet', () => {
       />
     );
   };
+
+  test('a detailed plan still at work: its row waits, as a copy’s against it does', () => {
+    const at45 = planOf(plan({ age: 40, targetAge: 45 }));
+    const f = (p: Partial<FirePlan>) => figs(plan(p));
+    const list = (mainWorking: boolean, copyWorking: boolean): SheetPlan[] => [
+      { id: 'main', name: 'First plan', isMain: true, updatedAt: 'u-main', plan: base, outcome: { kind: 'figures', figures: f({ age: 40, targetAge: 55 }), working: mainWorking } },
+      { id: 'c1', name: 'Retire at 45', isMain: false, updatedAt: 'u-c1', plan: at45, outcome: { kind: 'figures', figures: f({ age: 40, targetAge: 45 }), working: copyWorking } },
+    ];
+    const skeletons = (html: string) => (html.match(/rows-skeleton-sub/g) ?? []).length;
+    expect(skeletons(sheet({ plans: list(false, false) }))).toBe(0);
+    expect(skeletons(sheet({ plans: list(false, true) }))).toBe(1);
+    expect(skeletons(sheet({ plans: list(true, false) }))).toBe(2);
+  });
 
   test('the Plans sheet: titled Plans, your plan first with its badge, each copy with its FI age and how it differs, the newer-version note, and Compare and New copy', () => {
     const html = sheet();

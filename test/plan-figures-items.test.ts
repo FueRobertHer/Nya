@@ -113,7 +113,7 @@ describe('with the switch on (D15)', () => {
     expect(fi(roof, false)).toBe(fi(p, false));
     expect(fi(roof, true)).toBeGreaterThan(fi(p, true));
     const f = figuresOf(roof, m, [], ON) as PlanFigures;
-    expect(f.walkFrom).toEqual({ items: true, events: false });
+    expect(f.walkFrom).toEqual({ items: true, events: false, tax: false });
     expect(f.events?.walk.costs).toEqual([{ year: 5, amount: 100_000 }]);
     // The FI number never moves with D15.
     expect(f.view.fiNumber).toBe((figuresOf(roof, m) as PlanFigures).view.fiNumber);

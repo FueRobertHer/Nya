@@ -61,19 +61,27 @@ export const jobKey = (method: Method, sim: SimPlan) => JSON.stringify([method, 
 
 /** What a plan has before its simulation: why it isn't worked out, or its
  *  figures. */
-export type PlanOutcome = { kind: 'not-run'; reason: string } | { kind: 'figures'; figures: PlanFigures };
+export type PlanOutcome =
+  | { kind: 'not-run'; reason: string }
+  /** `working`: a detailed plan's date isn't in yet, so these are its flat ones, and
+   *  nothing is run or said on them. `held`: its date stands, but what its stress test
+   *  runs at isn't in yet, so that waits. */
+  | { kind: 'figures'; figures: PlanFigures; working?: boolean; held?: boolean };
 
 /** The jobs compare mode asks for: one per plan that can be simulated, each
  *  with your plan's method and no options of its own, so every plan gets
  *  the engine's one seed, run count and block length, on the worker's one
  *  market. */
 export function compareJobs(outcomes: readonly PlanOutcome[], method: Method): { key: string; job: PlanJob & { kind: 'simulate' } }[] {
-  return outcomes.flatMap((o) => (o.kind === 'figures' && 'sim' in o.figures.engine ? [{ key: jobKey(method, o.figures.engine.sim), job: { kind: 'simulate' as const, method, plan: o.figures.engine.sim } }] : []));
+  return outcomes.flatMap((o) => (o.kind === 'figures' && !o.working && !o.held && 'sim' in o.figures.engine ? [{ key: jobKey(method, o.figures.engine.sim), job: { kind: 'simulate' as const, method, plan: o.figures.engine.sim } }] : []));
 }
 
 /** Said for a copy whose lasting changes take spending in retirement below
  *  zero. */
 export const REFUSED_TEXT = 'Its lasting changes in spending take your spending in retirement below zero, so it isn’t worked out: change them, or remove one.';
+
+/** Said for a detailed plan whose date couldn't be worked out on this page. */
+export const JOB_FAILED_TEXT = 'Tax on this plan couldn’t be worked out on this page: open it to try again.';
 
 /** One plan as the sheet shows it. */
 export type SheetPlan = {
@@ -152,7 +160,7 @@ export function PlanDetails({ plan, parts, outcome, money }: { plan: SheetPlan; 
         {outcome.reason}
       </li>
     );
-  } else {
+  } else if (!outcome.working) {
     const f = outcome.figures;
     // What of a life event is left out, and why.
     for (const n of f.itemNotes) {
@@ -331,6 +339,8 @@ export function PlansSheet({
   // sheet's own money, so hidden amounts stay hidden.
   const partsOf = (p: SheetPlan): string[] => (p.isMain || !main ? [] : copyDiffParts(main.plan, p.plan, money));
   const mainWhen = main ? fiWhen(main.outcome.kind === 'figures' ? main.outcome.figures : null) : null;
+  // A row that says a date, or a copy's against yours, waits for what it says.
+  const mainWorking = main?.outcome.kind === 'figures' && main.outcome.working === true;
   /** Where focus goes once a copy is deleted: the next row, else the one
    *  before, else New copy. */
   const afterDelete = (gone: string): string[] => {
@@ -366,6 +376,7 @@ export function PlansSheet({
   const compared: CompareColumn[] = columns.map(({ column, plan }) => {
     if (plan.outcome.kind === 'not-run') return { ...column, outcome: plan.outcome };
     const f = plan.outcome.figures;
+    if (plan.outcome.working) return { ...column, outcome: { kind: 'figures', figures: f, result: 'pending', working: true } };
     if (!('sim' in f.engine)) return { ...column, outcome: { kind: 'figures', figures: f, result: { missing: f.engine.missing } } };
     return { ...column, outcome: { kind: 'figures', figures: f, result: answers.get(jobKey(method, f.engine.sim)) ?? 'pending' } };
   });
@@ -402,7 +413,7 @@ export function PlansSheet({
                   <button type="button" className="list-row" ref={keep(`plan:${p.id}`)} aria-haspopup="dialog" onClick={() => go({ kind: 'plan', id: p.id })}>
                     <span className="list-row-text">
                       <span className="list-row-title">{p.name}</span>
-                      {measuring ? (
+                      {measuring || mainWorking || (p.outcome.kind === 'figures' && p.outcome.working) ? (
                         <span className="skeleton rows-skeleton-sub" />
                       ) : (
                         <span className="list-row-sub">
@@ -706,6 +717,7 @@ function NameForm({
  *  heading of its own: the bar's names the copy. */
 export function CopyCard({
   parts,
+  taxLine = null,
   other,
   currencyLine,
   confirmWhyNot,
@@ -721,6 +733,8 @@ export function CopyCard({
 }: {
   /** How it differs from your plan (components/plan-diff.ts). */
   parts: string[];
+  /** Under a detailed plan, where it holds no tax settings of its own. */
+  taxLine?: string | null;
   /** The currency its amounts were typed in, when it isn't your plan's now. */
   other: string | null;
   /** That said, in words (components/plan-scenario-text.ts currencyText). */
@@ -753,6 +767,7 @@ export function CopyCard({
       <p className="helper">
         <Masked>{diffText(parts)}</Masked>
       </p>
+      {taxLine && <p className="helper">{taxLine}</p>}
       {other && currencyLine && (
         <>
           <Notice level="critical" role="alert">

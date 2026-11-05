@@ -45,6 +45,7 @@ export async function planPage() {
   const firePlan = await import('@/app/api/fire-plan/route');
   const plansRoute = await import('@/app/api/plans/route');
   const planInputs = await import('@/app/api/plan-inputs/route');
+  const planFacts = await import('@/app/api/plan-facts/route');
   type FirePlanV2 = import('@/lib/fire/plan-v2').FirePlanV2;
   type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
 
@@ -70,6 +71,7 @@ export async function planPage() {
     new Request(`http://nya.test${path}`, { method, ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }) });
   const ROUTES: Record<string, (r: Request) => Promise<Response>> = {
     'GET /api/plan-inputs': (r) => planInputs.GET(r),
+    'POST /api/plan-facts': (r) => planFacts.POST(r),
     'GET /api/fire-plan': () => firePlan.GET(),
     'PUT /api/fire-plan': (r) => firePlan.PUT(r),
     'POST /api/fire-plan': (r) => firePlan.POST(r),
@@ -94,7 +96,7 @@ export async function planPage() {
       if (answers[key]) return await answers[key]();
       const route = ROUTES[key];
       if (!route) return Response.json(STUBS[key] ?? { error: 'not here' }, { status: key in STUBS ? 200 : 404 });
-      return await route(new Request(url, { method, body: init?.body }));
+      return await route(new Request(url, { method, headers: init?.headers, body: init?.body }));
     } finally {
       inflight--;
     }
@@ -158,7 +160,8 @@ export async function planPage() {
     const container = dom.document.createElement('div');
     dom.document.body.appendChild(container);
     const root = createRoot(container as unknown as Element);
-    const all: PlanTabProps = { txns: [], txnsLoading: false, txnNotes: [], institutions: [], balancesAsOf: null, currency: 'USD', holdings: [], ...props };
+    // A detailed plan's years wait for the balances, so with the flag they are in, unless a test says not.
+    const all: PlanTabProps = { txns: [], txnsLoading: false, txnNotes: [], institutions: [], balancesAsOf: props.planTax ? '2026-01-01T12:00:00.000Z' : null, currency: 'USD', holdings: [], ...props };
     await act(async () => root.render(<PlanTab {...all} />));
     await settle(100);
     const find = (pred: (e: FakeElement) => boolean) => container.findAll(pred)[0] ?? null;

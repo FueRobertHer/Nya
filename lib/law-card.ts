@@ -37,6 +37,7 @@ const PARTS: Record<LawPart, { name: string; short: string }> = {
   creditPoverty: { name: 'Poverty guidelines for the credit', short: 'the credit’s poverty guidelines' },
   medicaidPoverty: { name: 'Poverty guidelines for Medicaid', short: 'Medicaid’s poverty guidelines' },
   medicaidStates: { name: 'Medicaid lines by state', short: 'Medicaid’s state lines' },
+  stateIncomeTax: { name: 'States with an income tax', short: 'the states with an income tax' },
   medicare: { name: 'Part B premium and IRMAA tiers', short: 'Medicare' },
   wageBase: { name: 'Social Security wage base', short: 'the wage base' },
   uniform: { name: 'RMD ages and the Uniform Lifetime Table', short: 'the RMD table' },

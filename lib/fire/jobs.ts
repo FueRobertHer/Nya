@@ -11,16 +11,19 @@
 // 60 years).
 
 import type { Market } from './market';
-import { simulate, successGrid, type GridCell, type Method, type SimPlan, type SimResult } from './simulate';
+import { firedAcross, simulate, successGrid, type FiredResult, type GridCell, type Method, type SimPlan, type SimResult } from './simulate';
 
 export type PlanJob =
   | { kind: 'simulate'; method: Method; plan: SimPlan }
   /** One grid cell: the plan at `rate` (null for a rule without one) for `years`. */
-  | { kind: 'grid-cell'; method: Method; plan: SimPlan; rate: number | null; years: number };
+  | { kind: 'grid-cell'; method: Method; plan: SimPlan; rate: number | null; years: number }
+  /** Where an item that waits on a run's own balance falls across the runs. */
+  | { kind: 'fired'; method: Method; plan: SimPlan; trigger: number; offset: number };
 
 export type PlanJobResult =
   | { ok: true; kind: 'simulate'; result: SimResult }
   | { ok: true; kind: 'grid-cell'; cell: GridCell }
+  | { ok: true; kind: 'fired'; fired: FiredResult }
   /** The engine refused the plan; or, with `unavailable`, the job couldn't be
    *  run at all (its code failed to load: offline, say), which says nothing
    *  about the plan. */
@@ -33,6 +36,7 @@ export type PlanReply = { id: number; result: PlanJobResult };
 export function runPlanJob(job: PlanJob, market: Market): PlanJobResult {
   try {
     if (job.kind === 'simulate') return { ok: true, kind: 'simulate', result: simulate(job.method, job.plan, market) };
+    if (job.kind === 'fired') return { ok: true, kind: 'fired', fired: firedAcross(job.method, job.plan, market, job.trigger, job.offset) };
     // successGrid gives a rule without a rate one cell per length whatever
     // rates it is given, so a null rate asks for that cell.
     const [cell] = successGrid(job.method, job.plan, market, job.rate === null ? [] : [job.rate], [job.years]);

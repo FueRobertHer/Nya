@@ -44,15 +44,18 @@
 // shown in the accounts' currency, said to be unconfirmed: the Plan tab
 // records it, or asks.
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import type { Txn } from './MonthBreakdown';
 import { leftOutOf } from '@/lib/fire/child-accounts';
-import { usePlanInputs, useSharedPlanInputs, workplacePlansOf, type PlanInputs } from './plan-inputs';
+import { planAccountsOf, planId, usePlanInputs, useSharedPlanInputs, workplacePlansOf, type PlanInputs } from './plan-inputs';
 import { createPlanInputsStore, type PlanInputsCopy, type PlanInputsStore } from '@/lib/plan-inputs-store';
 import { PAYROLL_NOTE, dayName, fiHeadline, pct, progressText, savingsRateText, wholeMoney } from './plan-text';
 import { projectFrom, type PlanCore } from '@/lib/fire/plan';
 import { basePlanOf, isStoredPlan, type StoredPlan } from '@/lib/fire/plan-v2';
-import { planFigures } from '@/lib/fire/plan-figures';
+import { drawdownMovesFi, planFigures } from '@/lib/fire/plan-figures';
+import type { BasisHolding } from '@/lib/fire/buckets-today';
+import { detailAttention, useDetailOnHome, useSettingsRead } from './plan-detailed-home';
+import type { FigureNote } from './plan-figure-notes';
 import { planPath } from '@/lib/fire/path';
 import { shortText } from './plan-scenario-text';
 import { projectionShort } from '@/lib/fire/fi';
@@ -89,6 +92,14 @@ export type FiProgressProps = {
   planInWalk?: boolean;
   /** D7's switch (the flag 'plan-child-accounts'), as the Plan tab has it. */
   childOut?: boolean;
+  /** The flag 'plan-tax', as the Plan tab has it. */
+  planTax?: boolean;
+  /** Every position, for what a detailed plan's buckets hold: read only for a plan
+   *  the drawdown can move. */
+  holdings?: readonly BasisHolding[];
+  /** What a detailed plan still needs said, for Needs attention above: worked out here,
+   *  since Dashboard can't hold the plan's inputs without loading them with Home. */
+  onAttention?: (notes: readonly FigureNote[]) => void;
 };
 
 /** What /api/plan-inputs answered of the plan: the saved plan, or null for
@@ -106,7 +117,11 @@ function loadedFrom(answered: PlanInputsCopy['plan']): Loaded {
   return (status === 409 && body?.unreadable === true) || (status === 200 && plan !== undefined) ? 'unreadable' : 'failed';
 }
 
-export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan, planInputs, planInWalk = false, childOut = false }: FiProgressProps) {
+const NO_HOLDINGS: readonly BasisHolding[] = [];
+const NO_IDS: readonly string[] = [];
+const NO_NOTES: readonly FigureNote[] = [];
+
+export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan, planInputs, planInWalk = false, childOut = false, planTax = false, holdings = NO_HOLDINGS, onAttention }: FiProgressProps) {
   const own = useMemo(() => planInputs ?? createPlanInputsStore(), [planInputs]);
   const shared = useSharedPlanInputs(own, institutions);
   const leaveOut = useMemo(() => leftOutOf(childOut, shared.taxFacts.countAnyway), [childOut, shared.taxFacts.countAnyway]);
@@ -118,6 +133,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
   // replaced by its default there too, with the same result.
   const repair = useMemo(() => basePlanOf(stored), [stored]);
   const plan = repair.plan;
+  const detailedOn = planTax && shared.factsKnown && shared.taxFacts.model === 'detailed';
   const inputs = usePlanInputs({
     txns,
     txnNotes,
@@ -130,16 +146,52 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
     currency: answer.currency,
     contributions: shared.contributions,
     leaveOut,
+    paid: detailedOn ? shared.taxFacts.paidToday : null,
   });
+  const count = useMemo(() => ({ planInWalk }), [planInWalk]);
   // The Plan's own figures: its items placed and counted as the Plan's are,
   // the answer the walk's and where the path runs out the path's.
-  const planned = useMemo(() => {
-    const f = planFigures(plan, measuredInputs(inputs), { count: { planInWalk } });
-    if ('refused' in f) return null;
-    const path = planPath(f);
-    return { view: f.view, short: f.short, runsOutAt: !f.short && path?.short && plan.age !== null ? plan.age + path.short.year : null };
-  }, [plan, inputs, planInWalk]);
+  const flat = useMemo(() => planFigures(plan, measuredInputs(inputs), { count }), [plan, inputs, count]);
   const measured = fiFigures(plan, inputs, currency);
+  // A detailed plan the drawdown can move works its answer out as the Plan does; any
+  // other's is its flat figures, so Home loads none of it.
+  const worked = detailedOn && measured.currency === 'USD' && plan.age !== null;
+  const moved = worked && !('refused' in flat) && drawdownMovesFi(plan, flat.walk, flat.view.savings.value ?? 0, flat.view.stopAge);
+  const settings = useSettingsRead(worked);
+  const deep = useDetailOnHome(moved, {
+    plan,
+    measured: measuredInputs(inputs),
+    count,
+    flat,
+    assets: inputs.assets,
+    holdings,
+    facts: shared.taxFacts,
+    choices: shared.choices,
+    settings,
+    store: own,
+    rows: shared.copy.rows,
+    ids: moved ? planAccountsOf(institutions).map(planId) : NO_IDS,
+    paid: inputs.flows?.paid ?? 0,
+    calendarYear: Number(inputs.today.slice(0, 4)),
+  });
+  const shown = deep?.figures ?? flat;
+  // Null while they aren't known, so coming back to Home keeps the rows it had.
+  const notes = useMemo(() => {
+    if (!shared.factsKnown || !loaded || typeof loaded !== 'object') return null;
+    if (!worked) return NO_NOTES;
+    return settings && detailAttention({ assets: inputs.assets, holdings, facts: shared.taxFacts, settings: settings.value, plan });
+  }, [shared.factsKnown, loaded, worked, settings, inputs.assets, holdings, shared.taxFacts, plan]);
+  const notesKey = notes && JSON.stringify(notes);
+  useEffect(() => {
+    if (notes) onAttention?.(notes);
+    // notesKey stands for notes, a new list whenever an input is.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notesKey, onAttention]);
+  const planned = useMemo(() => {
+    if ('refused' in shown) return null;
+    const path = planPath(shown);
+    return { view: shown.view, short: shown.short, runsOutAt: !shown.short && path?.short && plan.age !== null ? plan.age + path.short.year : null };
+  }, [shown, plan.age]);
   const figures = planned ? { ...measured, view: planned.view } : measured;
   if (loaded === 'unreadable') return <FiRow what="FI isn’t worked out" detail="Your saved plan couldn’t be read: the Plan tab says why." onOpenPlan={onOpenPlan} notes={[]} />;
   if (
@@ -162,6 +214,8 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
       inputs={inputs}
       onOpenPlan={onOpenPlan}
       walk={planned ? { short: planned.short && shortText(planned.short, plan.age, (n) => wholeMoney(n, figures.currency)), runsOutAt: planned.runsOutAt } : { short: null, runsOutAt: null, refused: true }}
+      working={deep?.working ?? false}
+      failed={deep?.failed ?? false}
     />
   );
 }
@@ -192,6 +246,8 @@ export function FiProgressView({
   inputs,
   onOpenPlan,
   walk = null,
+  working = false,
+  failed = false,
 }: {
   figures: FiFigures;
   /** Which currency the plan's typed figures are in isn't known yet: what
@@ -210,6 +266,10 @@ export function FiProgressView({
    *  retirement below zero, which the Plan tab says. Left out, where the
    *  steady projection runs out is worked out here. */
   walk?: { short: string | null; runsOutAt: number | null; refused?: boolean } | null;
+  /** A detailed plan's answer is still being worked out: this one is dimmed. */
+  working?: boolean;
+  /** It couldn't be: the Plan tab can try again. */
+  failed?: boolean;
 }) {
   const { view, savingsRate, currency, currencyNote, convertedNote } = figures;
   // Without a home currency, a figure that would rest on a part of what it
@@ -223,6 +283,7 @@ export function FiProgressView({
   const yearText = yearGap && !flowsGap ? gapText(yearGap, view.savings.source === 'typed' ? 'rate' : 'year') : null;
   const accountsGap = view.assets.source === 'unmeasured' ? assetsGap(inputs.assets, inputs.rates) : null;
   if (walk?.refused) return <FiRow what="FI isn’t worked out" detail="Your plan’s changes take spending in retirement below zero: the Plan tab says which." onOpenPlan={onOpenPlan} notes={[]} />;
+  if (failed) return <FiRow what="FI isn’t worked out" detail="Tax on your plan couldn’t be worked out on this page: the Plan tab can try again." onOpenPlan={onOpenPlan} notes={[]} />;
   const waitsFor = view.yearsToFi === null && !walk?.short ? notMeasuredWhat(view) : null;
   const notWorkedOut = waitsFor ? `Years to FI aren’t worked out: ${waitsFor} measured (above), and a figure that isn’t measured is never counted as zero.` : null;
   // Every note the card said, in its words and its level (amber where it says
@@ -337,7 +398,7 @@ export function FiProgressView({
         ? `${money(view.assets.value ?? 0)} invested · ${there} of the FI number ${money(view.fiNumber)}`
         : `${money(view.assets.value ?? 0)} of ${money(view.fiNumber)} invested${title.startsWith(there) ? '' : ` (${there})`}`;
   const sub = [saved ? null : 'Plan defaults', invested, rate].filter((s): s is string => !!s).join(' · ');
-  return <FiRow what={title} detail={sub || undefined} onOpenPlan={onOpenPlan} notes={notes} />;
+  return <FiRow what={title} detail={sub || undefined} working={working} onOpenPlan={onOpenPlan} notes={notes} />;
 }
 
 const CHEVRON = (
@@ -348,11 +409,17 @@ const CHEVRON = (
 
 /** The FI line in This month: the row opens the Plan tab; its notes sit
  *  under it, outside the button (a <details> can't be inside one). */
-function FiRow({ what, detail, onOpenPlan, notes }: { what: string; detail?: string; onOpenPlan: () => void; notes: readonly Caveat[] }) {
+function FiRow({ what, detail, working = false, onOpenPlan, notes }: { what: string; detail?: string; working?: boolean; onOpenPlan: () => void; notes: readonly Caveat[] }) {
   return (
     <li>
-      <button type="button" className="list-row" onClick={onOpenPlan}>
-        <span className="list-row-text">
+      {working && (
+        <div className="visually-hidden" role="status">
+          Working it out
+        </div>
+      )}
+      <button type="button" className="list-row" aria-busy={working || undefined} onClick={onOpenPlan}>
+        <span className={working ? 'list-row-text plan-answer-pending' : 'list-row-text'}>
+          {working && <span className="list-row-sub plan-working-line">Working it out</span>}
           <span className="list-row-title">
             <Masked>{what}</Masked>
           </span>

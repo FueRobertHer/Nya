@@ -58,14 +58,17 @@
 // your plan unasked. The repair and the allocation settings are your plan's
 // own, so a copy has no saver for them.
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { Txn } from './MonthBreakdown';
 import { Sheet, focusInsteadOf } from './Sheet';
 import PlanFanChart from './PlanFanChart';
 import PlanGrid, { type FailedCell } from './PlanGrid';
-import { AboutForm, AssumptionsForm, FiNumberForm, FigureForm, type AssumptionsAt, type FigureKind } from './PlanForms';
+import { AboutForm, AssumptionsForm, FiNumberForm, FigureForm, type AssumptionsAt, type DetailForm, type FigureKind } from './PlanForms';
 import { Why } from './Why';
 import { createPlanRunner, type PlanRunner, type WorkerLike } from './plan-runner';
+import { planSearch } from './plan-search';
+import { createDetailedFigures, detailedInput, measuredYield, pageBuckets, type DetailedAnswer } from './plan-detailed';
+import { DEFAULT_TAX_CHOICES } from '@/lib/fire/tax-choices';
 import {
   DATA_BONDS,
   DATA_STOCKS,
@@ -96,7 +99,7 @@ import { leftOutOf } from '@/lib/fire/child-accounts';
 import { bucketsToday, type AccountYear } from '@/lib/fire/buckets-today';
 import { savingsSplit } from '@/lib/fire/savings-split';
 import { mixShares, mixToday, projectMix } from '@/lib/fire/tax/mix';
-import { mixLine } from './plan-buckets';
+import { balanceShares, mixLine } from './plan-buckets';
 import type { BucketSheet, FigureLevel } from './PlanBuckets';
 import { fmtAsOf } from './accounts-format';
 import { EMPTY_SETTINGS, overridesOf, withBucket } from '@/lib/allocation/settings';
@@ -116,19 +119,21 @@ import {
   type EnginePlan,
   type FirePlan,
   type FiView,
+  type Measured,
   type Missing,
   type PlanCore,
   type Repair,
 } from '@/lib/fire/plan';
-import { basePlanOf, isStoredPlan, parsePlanV2, planOf, type FirePlanV2, type StoredPlan } from '@/lib/fire/plan-v2';
-import { MAX_FIRE_PLANS, factsOf, holdsAmounts, withFacts, type Facts } from '@/lib/fire/copies';
+import { basePlanOf, DEFAULT_PLAN_V2, isStoredPlan, NEW_PLAN_START, parsePlanV2, planOf, type FirePlanV2, type StoredPlan } from '@/lib/fire/plan-v2';
+import { MAX_FIRE_PLANS, entryHoldsAmounts, factsOf, withFacts, type Facts } from '@/lib/fire/copies';
+import type { TaxChoices } from '@/lib/fire/tax-choices';
 import { withItem, type PlanItem } from '@/lib/fire/items';
 import type { Count, ItemAges, ItemNote } from '@/lib/fire/compile';
 import type { GridCell, SimResult } from '@/lib/fire/simulate';
 import { canRunOut } from '@/lib/fire/rules';
 import type { PlanJob } from '@/lib/fire/jobs';
 import { Masked } from './HideAmounts';
-import { CopyCard, PlansSheet, REFUSED_TEXT, rememberResult, type PlanOutcome, type SheetPlan } from './PlansSheet';
+import { CopyCard, JOB_FAILED_TEXT, PlansSheet, REFUSED_TEXT, rememberResult, type PlanOutcome, type SheetPlan } from './PlansSheet';
 import PlanBar, { openingSegment, planPanelId, planTabId, type PlanSegment } from './PlanBar';
 import { PlanPanelSkeleton } from './LoadingSkeletons';
 import PlanProgress, { progressOverlay, useProgress, type ProgressOverlay } from './PlanProgress';
@@ -136,11 +141,19 @@ import { CopyTag } from './CopyTag';
 import { TimelineCard } from './PlanTimeline';
 import { itemRuleText, itemSentence, reachesStart } from './plan-items';
 import { copiesOf, createPlansClient, INITIAL_PLANS, plansCount, type PlanRow, type PlanSave, type PlansState } from './plan-list';
-import { planSavers, type Save } from './plan-savers';
+import { planSavers, type Save, type SaveMore } from './plan-savers';
 import { DEFAULT_INFLATION } from '@/lib/fire/saved-plan';
 import { copyDiffParts, figureChoices, itemChoices, sameChange, type AlsoTarget } from './plan-diff';
 import { currencyText, laterText, retirementText, shortText, startLineText, startsWithText } from './plan-scenario-text';
-import { planFigures, resolveSaved, type FiguresRefused, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
+import { DrawdownCard, drawdownMarks, DrawdownMore, StageLevel, YearLevel } from './PlanDrawdown';
+import type { DrawdownMark } from './DrawdownChart';
+import PlanHealthForm, { type PaidChoice } from './PlanHealthForm';
+import { OptInRow, OptInSheet, OPT_IN_TITLE } from './PlanOptIn';
+import { ABOUT_DETAIL, assumptionsLine, HEALTH_NOT_SET, healthSub, honestyNotes, householdLine, lawLabel, namesCoverage, stageHealthLines, stageTitle, STATE_NAMES, taxLine, yearTitle, type YearContext } from './plan-drawdown';
+import { drawdownMovesFi, planFigures, resolveSaved, type FiguresRefused, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
+import { lawFor } from '@/lib/fire/tax/law';
+import { householdOf, type TaxFactOp } from '@/lib/fire/tax-facts';
+import { HEALTH_GROWTH } from '@/lib/fire/tax/law/2026';
 import { planPath, type PathRange, type PlanPath } from '@/lib/fire/path';
 import PlanPathChart, { wholeShown } from './PlanPathChart';
 import { hasWalk, type Shortfall } from '@/lib/fire/events';
@@ -192,13 +205,18 @@ function useLast<T>(value: T | null): T | null {
  *  a value no longer fits them (and what had to change), the currency its
  *  amounts were typed in when it isn't your plan's now, and its figures
  *  (none then). */
-type PlanView = { row: PlanRow; plan: FirePlanV2; fixed: Repair[]; other: string | null; figures: PlanFigures | FiguresRefused | null };
+type PlanView = { row: PlanRow; plan: FirePlanV2; fixed: Repair[]; other: string | null; figures: PlanFigures | FiguresRefused | null; working: boolean; failed: boolean };
 
 /** Said for a save with nowhere to record its amounts' currency. */
+/** A plan never saved, behind `plan-tax`: it starts from what it would have then. */
+const NEW_PLAN: FirePlanV2 = { ...DEFAULT_PLAN_V2, start: NEW_PLAN_START };
+
 const NO_COPY_CURRENCY = 'Your plan has no currency yet, so this copy can’t hold amounts: say which currency your plan’s figures are in first (above), then save again.';
 
 /** A save's answer as a button on a card shows it: done, or why not. */
 const said = (r: boolean | string): true | string => (r === true ? true : r === false ? 'It wasn’t saved. Try again in a moment.' : r);
+
+const NO_TAGS: readonly { id: string; name: string }[] = [];
 
 export type SheetState =
   | { kind: 'about' }
@@ -208,7 +226,12 @@ export type SheetState =
   // when "Use my allocation in the plan" was pressed.
   | { kind: 'assumptions'; at?: AssumptionsAt; mix?: PlanMix & { ok: true } }
   | { kind: 'numbers' }
-  | { kind: 'fi-number' };
+  | { kind: 'fi-number' }
+  // Work it out from your accounts, and a stage of Year by year, with its
+  // years as a level (drawn over it, as a figure's accounts are).
+  | { kind: 'opt-in' }
+  | { kind: 'stage'; at: number }
+  | { kind: 'health' };
 
 const SHEET_TITLES: Record<SheetState['kind'], string> = {
   about: 'Household',
@@ -216,6 +239,9 @@ const SHEET_TITLES: Record<SheetState['kind'], string> = {
   assumptions: 'Assumptions',
   numbers: 'About these numbers',
   'fi-number': 'FI number',
+  'opt-in': OPT_IN_TITLE,
+  stage: '',
+  health: 'Health coverage',
 };
 
 const FIGURE_TITLES: Record<FigureKind, string> = {
@@ -300,6 +326,10 @@ export type PlanTabProps = {
   childNewUntil?: string | null;
   childMovedSeen?: boolean;
   onChildMovedSeen?: () => void;
+  /** The flag 'plan-tax': the detailed tax model may be offered and run. */
+  planTax?: boolean;
+  /** Your tags, for what already pays for coverage (a tag is held by its id). */
+  tags?: readonly { id: string; name: string }[];
 };
 
 /** Said by New copy, Duplicate and a rename of your plan while your plan
@@ -334,6 +364,8 @@ export default function PlanTab({
   childNewUntil = null,
   childMovedSeen = false,
   onChildMovedSeen,
+  planTax = false,
+  tags = NO_TAGS,
 }: PlanTabProps) {
   const count: Count = useMemo(() => ({ planInWalk }), [planInWalk]);
   const [state, setState] = useState<ListState<StoredPlan | null>>(initialListState<StoredPlan | null>(null));
@@ -355,6 +387,9 @@ export default function PlanTab({
   const factsWere = useRef<Facts>(factsOf(DEFAULT_PLAN));
   const stampRef = useRef<string | null>(null);
   const answeringSave = useRef(false);
+  // What the one save under way says beside the plan (a detailed plan's choices, the
+  // household), so every other save stays what a release before takes.
+  const sendMore = useRef<Record<string, unknown> | null>(null);
   // Your plans (components/plan-list.ts): yours and its copies, for the
   // Plans sheet, Also change it in and the copy open. Made before the store,
   // whose answers its row of your plan takes.
@@ -383,7 +418,7 @@ export default function PlanTab({
         // A save refused for what is stored now (its currency changed on
         // another device, say) says why.
         showRefusal: true,
-        extra: () => ({ currency: sendCurrency.current, facts_were: factsWere.current, based_on: stampRef.current }),
+        extra: () => ({ currency: sendCurrency.current, facts_were: factsWere.current, based_on: stampRef.current, ...sendMore.current }),
         onAnswer: (data) => {
           const plan = isStoredPlan(data.plan) ? data.plan : null;
           stampRef.current = typeof data.updated_at === 'string' ? data.updated_at : null;
@@ -429,7 +464,7 @@ export default function PlanTab({
   // computes with a value outside what the formulas take.
   // A version 1 plan is repaired by today's repair and held as version 2
   // (lib/fire/plan-v2.ts basePlanOf), which each save sends.
-  const stored: StoredPlan = state.value ?? DEFAULT_PLAN;
+  const stored: StoredPlan = state.value ?? (planTax ? NEW_PLAN : DEFAULT_PLAN);
   const repair = useMemo(() => basePlanOf(stored), [stored]);
   /** The Plan as the tab shows it: the repaired one while a repair waits. */
   const basePlan = repair.plan;
@@ -506,6 +541,8 @@ export default function PlanTab({
   // shared copy.
   const shared = useSharedPlanInputs(planInputs, institutions);
   const leaveOut = useMemo(() => leftOutOf(childOut, shared.taxFacts.countAnyway), [childOut, shared.taxFacts.countAnyway]);
+  // The detailed tax model (lib/fire/plan-detail.ts): said on, and allowed now.
+  const detailedOn = planTax && shared.factsKnown && shared.taxFacts.model === 'detailed';
   const inputs = usePlanInputs({
     txns,
     txnNotes,
@@ -518,6 +555,7 @@ export default function PlanTab({
     currency: ownCurrency,
     contributions: shared.contributions,
     leaveOut,
+    paid: detailedOn ? shared.taxFacts.paidToday : null,
   });
   const { flows, unread, assets, contributions, workplace, cashOn, cashUnmarked } = inputs;
   const figures = fiFigures(basePlan, inputs, currency);
@@ -627,7 +665,7 @@ export default function PlanTab({
             kept: keptText(currencyState.currency, inputs, !!(txnFx || balanceFx)),
             relabelTo: relabelOffer(currencyState.currency, inputs),
             previous,
-            copiesIn: copiesOf(plansState).filter((r) => r.plan !== null && holdsAmounts(r.plan) && r.currency === currencyState.currency).length,
+            copiesIn: copiesOf(plansState).filter((r) => r.plan !== null && entryHoldsAmounts(r.plan, r.tax) && r.currency === currencyState.currency).length,
             offer,
           }
         : // Nothing typed yet: asked only when the accounts can't tell it.
@@ -668,16 +706,16 @@ export default function PlanTab({
   }, [currencyMode.kind]);
   /** Why a save must wait: it gives your plan its first typed amount, with
    *  no currency yet to record it in. */
-  const firstAmountWait = (p: FirePlanV2): string | null =>
-    sendCurrency.current === null && currencyState.kind === 'follows' && holdsAmounts(p)
+  const firstAmountWait = (p: FirePlanV2, tax: TaxChoices | null = shared.choices): string | null =>
+    sendCurrency.current === null && currencyState.kind === 'follows' && entryHoldsAmounts(p, tax)
       ? waitingOnAccounts
         ? 'Your accounts are still loading, and the currency your plan’s figures are in is taken from them: save again in a moment.'
         : 'Say which currency you type your plan’s figures in first (above the figures), then save again: nothing was saved.'
       : null;
   // Every save of your plan alone, through its store, with the currency its
   // figures are in: never a first typed amount without one.
-  const savePlanIn = async (next: FirePlanV2): Promise<boolean | string> => {
-    const wait = firstAmountWait(next);
+  const savePlanIn = async (next: FirePlanV2, tax?: TaxChoices): Promise<boolean | string> => {
+    const wait = firstAmountWait(next, tax);
     if (wait) return wait;
     const saved = await store.save(next);
     if (saved) factsWere.current = factsOf(next);
@@ -685,13 +723,6 @@ export default function PlanTab({
   };
 
   const measured = measuredInputs(inputs);
-  // The Plan's figures by the same function a copy's come from
-  // (lib/fire/plan-figures.ts).
-  // Null when your plan isn't worked out: its lasting changes take its
-  // spending in retirement below zero (measured spending can fall with no
-  // save at all), and Your path says so, with its Timeline to fix them.
-  const baseRun = planFigures(basePlan, measured, { count });
-  const baseFigures: PlanFigures | null = 'refused' in baseRun ? null : baseRun;
   // Plan amounts are in the Plan's own currency, the one its figures were
   // typed in, once recorded; otherwise the accounts' own, or the
   // transactions' (lib/fire/plan-currency.ts).
@@ -706,6 +737,56 @@ export default function PlanTab({
   const convertedNote = figures.convertedNote;
   // In the plan's currency, so its mix is of what the plan counts.
   const allocation = useAllocation({ institutions, holdings, currency: displayCurrency, includeCash: basePlan.includeCash, fx: balanceFx, leaveOut });
+  // The other accounts' last year, on top of the shared copy (lib/plan-inputs-store.ts
+  // fill): Home and the Plan ask for workplace plans alone. Asked for at load in the
+  // detailed model, and when a sheet that reads them opens in the flat one.
+  const yearRows = useMemo(() => planAccountsOf(institutions).map(planId), [institutions]);
+  useEffect(() => {
+    if (detailedOn) planInputs.fill(yearRows);
+  }, [detailedOn, planInputs, yearRows]);
+  // What a detailed plan's years rest on. They wait for all of it to settle, a failed
+  // part counting as settled with its stand-ins and their words, so the stress test
+  // below never runs on a guess and then again. The law is in dollars. Balances come
+  // first: until they are in there are no accounts to wait on. Once settled it stays so
+  // for these accounts: a failed row asked for again when a sheet opens reads as it did
+  // until it answers, and doesn't take the answer back to a flat one.
+  const taxInDollars = displayCurrency === 'USD';
+  const yearRowsKey = yearRows.join();
+  const settledFor = useRef<string | null>(null);
+  if (detailedOn && taxInDollars && (balancesAsOf !== null || balancesFailed) && allocation.settings.status !== 'loading' && yearRows.every((id) => shared.copy.rows[id] && !shared.copy.rows[id].pending)) settledFor.current = yearRowsKey;
+  const detailReady = detailedOn && taxInDollars && settledFor.current === yearRowsKey;
+  const detailHeld = detailedOn && taxInDollars && !detailReady;
+  const detailBuckets = useMemo(
+    () => (detailReady ? pageBuckets({ assets, holdings, facts: shared.taxFacts, settings: allocation.settings.value ?? null, rows: shared.copy.rows, partner: basePlan.partnerAge !== null }) : null),
+    [detailReady, assets, holdings, shared.taxFacts, allocation.settings.value, shared.copy.rows, basePlan.partnerAge]
+  );
+  const calendarYear = Number(inputs.today.slice(0, 4));
+  const paidToday = flows?.paid ?? 0;
+  const yourChoices = shared.choices;
+  const inputOf = (p: FirePlanV2, tax: TaxChoices | null) => (detailBuckets && p.age !== null ? detailedInput({ plan: p, tax: tax ?? yourChoices, facts: shared.taxFacts, today: detailBuckets, paid: paidToday, calendarYear }) : null);
+  const detailKey = detailBuckets ? JSON.stringify([detailBuckets, shared.taxFacts, paidToday, calendarYear, yourChoices]) : null;
+  // The page's searches (components/plan-search.ts): an answer draws the tab again.
+  const search = planSearch();
+  const searchVersion = useSyncExternalStore(search.subscribe, search.version, search.version);
+  const detailedRun = useMemo(() => createDetailedFigures(search), [search]);
+  /** Every plan's figures, by one flow (components/plan-detailed.ts), so a preview
+   *  agrees with the answer it would save. A flat plan costs what it always did. */
+  const figuresFor = (slot: string, p: FirePlanV2, tax: TaxChoices | null, m: Measured = measured, c: Count = count): DetailedAnswer => {
+    const flat = planFigures(p, m, { count: c });
+    const input = inputOf(p, tax);
+    if (input) return detailedRun(slot, p, m, c, input, flat);
+    // What it rests on hasn't settled: a plan the drawdown can move isn't at its answer yet.
+    const waits = detailHeld && p.age !== null && !('refused' in flat) && drawdownMovesFi(p, flat.walk, flat.view.savings.value ?? 0, flat.view.stopAge);
+    return { figures: flat, working: waits, failed: false };
+  };
+  // The Plan's figures by the same function a copy's come from
+  // (lib/fire/plan-figures.ts).
+  // Null when your plan isn't worked out: its lasting changes take its
+  // spending in retirement below zero (measured spending can fall with no
+  // save at all), and Your path says so, with its Timeline to fix them.
+  const baseAnswer = figuresFor('plan', basePlan, yourChoices);
+  const baseRun = baseAnswer.figures;
+  const baseFigures: PlanFigures | null = 'refused' in baseRun ? null : baseRun;
 
   // Every copy as the tab shows it: with your plan's facts in it, repaired
   // where a value no longer fits them (your age moved past its stop age,
@@ -722,18 +803,26 @@ export default function PlanTab({
     for (const row of plansState.list) {
       if (row.id === plansState.main || row.plan === null) continue;
       const r = basePlanOf(withFacts(row.plan, facts));
-      const other = holdsAmounts(row.plan) && row.currency !== null && planCurrency !== null && row.currency !== planCurrency ? row.currency : null;
-      m.set(row.id, { row, plan: r.plan, fixed: r.fixed, other, figures: other ? null : planFigures(r.plan, measured, { count }) });
+      const other = entryHoldsAmounts(row.plan, row.tax) && row.currency !== null && planCurrency !== null && row.currency !== planCurrency ? row.currency : null;
+      const answer = other ? null : figuresFor(`copy:${row.id}`, r.plan, row.tax);
+      m.set(row.id, { row, plan: r.plan, fixed: r.fixed, other, figures: answer?.figures ?? null, working: answer?.working ?? false, failed: answer?.failed ?? false });
     }
     return m;
-    // measuredKey stands for measured, a new object each render.
+    // measuredKey stands for measured, a new object each render; detailKey for what
+    // a detailed plan's years rest on, and searchVersion for a job's answer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planLoaded, plansState.list, plansState.main, basePlan, planCurrency, measuredKey, count]);
+  }, [planLoaded, plansState.list, plansState.main, basePlan, planCurrency, measuredKey, count, detailedOn, detailKey, searchVersion]);
   const openView = entry ? (views.get(entry.id) ?? null) : null;
   const other = openView?.other ?? null;
   const copyFixing = !!openView && openView.fixed.length > 0;
   const openFigures = openView?.figures ?? null;
   const shown: PlanFigures | null = entry ? (openFigures && !('refused' in openFigures) ? openFigures : null) : baseFigures;
+  // A job is out for the plan shown, or it couldn't be run: dimmed, or said.
+  const shownWorking = entry ? (openView?.working ?? false) : baseAnswer.working;
+  const shownFailed = entry ? (openView?.failed ?? false) : baseAnswer.failed;
+  // The stress test waits for a detailed plan's years, so it never runs twice, and
+  // doesn't run on a date that couldn't be worked out.
+  const holdSim = detailHeld || (detailedOn && taxInDollars && (shownWorking || shownFailed));
   const problem = openFigures && 'refused' in openFigures ? REFUSED_TEXT : null;
   const baseRefused = !entry && baseFigures === null;
   /** The plan the forms edit: the copy open, or your plan. */
@@ -744,7 +833,11 @@ export default function PlanTab({
   // line, and where it can't go on, which the At age row says. Every plan's
   // ages are parsed (each is repaired), so it is never longer than a plan
   // can be.
-  const path = useMemo(() => (shown ? planPath(shown) : null), [shown]);
+  // Until a detailed plan's years are in, what follows the stop would be flat, and then move.
+  const path = useMemo(() => {
+    const p = shown ? planPath(shown) : null;
+    return p && detailHeld ? { ...p, after: null } : p;
+  }, [shown, detailHeld]);
   const stopShort = path?.short ?? null;
   const stopWalked = path?.fromWalk ?? false;
   const engine: EnginePlan | { missing: Missing } = shown?.engine ?? { missing: 'spending' };
@@ -795,7 +888,7 @@ export default function PlanTab({
   simRef.current = sim;
   const methodRef = useRef(plan.method);
   methodRef.current = plan.method;
-  const simRunKey = simKey ? `${attempt}:${simKey}` : null;
+  const simRunKey = simKey && !holdSim ? `${attempt}:${simKey}` : null;
   const [main, setMain] = useState<{ key: string; outcome: Outcome } | null>(null);
   useEffect(() => {
     const s = simRef.current;
@@ -826,7 +919,7 @@ export default function PlanTab({
     // render, and the attempt.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [simRunKey]);
-  const pending = !!simRunKey && main?.key !== simRunKey;
+  const pending = (holdSim && !!simKey) || (!!simRunKey && main?.key !== simRunKey);
   // While a new answer is worked out the last result stays, dimmed; an old
   // failure doesn't.
   const outcome = main && !(pending && 'error' in main.outcome) ? main.outcome : null;
@@ -839,7 +932,7 @@ export default function PlanTab({
     [vpw, ownRate]
   );
   const gridYears = useMemo(() => withOwn(GRID_YEARS, sim?.years ?? 30), [sim?.years]);
-  const gridKey = sim ? JSON.stringify([attempt, simKey, gridRates, gridYears]) : null;
+  const gridKey = sim && !holdSim ? JSON.stringify([attempt, simKey, gridRates, gridYears]) : null;
   const [grid, setGrid] = useState<{ key: string; cells: GridCell[]; failed: FailedCell[]; unavailable: boolean } | null>(null);
   useEffect(() => {
     const s = simRef.current;
@@ -888,6 +981,8 @@ export default function PlanTab({
   const [sheetFor, setSheetFor] = useState<string | null>(null);
   // The drawer's level past a figure's sheet (components/PlanBuckets.tsx).
   const [figureLevel, setFigureLevel] = useState<FigureLevel | null>(null);
+  // A stage's year, by its place in Year by year's years, drawn over the stage.
+  const [yearLevel, setYearLevel] = useState<number | null>(null);
   const [opened, setOpened] = useState(0);
   const shownSheet = useLast(sheet);
   // The figure's row a sheet was opened from (InputsCard), by its kind, set
@@ -920,12 +1015,9 @@ export default function PlanTab({
     setSheetFor(shownForRef.current);
     setSheet(s);
     setFigureLevel(null);
+    setYearLevel(null);
   };
   const close = () => setSheet(null);
-  // The other accounts' last year, asked for when a sheet that reads them opens,
-  // on top of the shared copy (lib/plan-inputs-store.ts fill): Home and the Plan
-  // ask for workplace plans alone.
-  const yearRows = useMemo(() => planAccountsOf(institutions).map(planId), [institutions]);
   const typedBasis = useMemo(() => new Map(shared.taxFacts.basis.map((b) => [b.account_id, b.amount])), [shared.taxFacts.basis]);
   useEffect(() => {
     if (sheet?.kind === 'figure' && sheet.figure !== 'spending') planInputs.fill(yearRows);
@@ -960,6 +1052,9 @@ export default function PlanTab({
     // The Timeline's goes once the age is saved: then to its Add
     // (components/PlanTimeline.tsx).
     if (openedFrom.current === 'ask-timeline' && !row?.isConnected) row = inputRows.current.get('timeline-first') ?? null;
+    // Work it out goes once it is chosen: then to Year by year, or the rows under it
+    // while its years are worked out.
+    if (openedFrom.current === 'opt-in' && !row?.isConnected) row = inputRows.current.get('years') ?? inputRows.current.get('stress-assumptions') ?? null;
     if (!closed || !row?.isConnected) return;
     let lost = !document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected;
     for (let n: Element | null = document.activeElement; n && !lost; n = n.parentElement) lost = n.getAttribute('role') === 'dialog';
@@ -988,7 +1083,7 @@ export default function PlanTab({
   };
   // The currency the plan shown is saved with: a copy's own once it holds an
   // amount, else your plan's.
-  const shownCurrency = entry?.plan && holdsAmounts(entry.plan) ? entry.currency : sendCurrency.current;
+  const shownCurrency = entry?.plan && entryHoldsAmounts(entry.plan, entry.tax) ? entry.currency : sendCurrency.current;
   // Every other plan the same change can go to (Also change it in): each
   // that reads and needs no repair with your plan's facts in it, holding its
   // amounts in the currency of the plan shown, or none. In the list's order,
@@ -1002,7 +1097,7 @@ export default function PlanTab({
           const v = mine ? null : views.get(row.id);
           const p = mine ? (repairing ? null : basePlan) : v && v.fixed.length === 0 ? v.plan : null;
           if (!p) return [];
-          const currency = !holdsAmounts(p) ? null : mine ? sendCurrency.current : row.currency;
+          const currency = !entryHoldsAmounts(p, row.tax) ? null : mine ? sendCurrency.current : row.currency;
           return currency === null || currency === shownCurrency ? [{ row, plan: p, currency }] : [];
         });
   // As offered (components/plan-diff.ts figureChoices, itemChoices): your
@@ -1013,16 +1108,17 @@ export default function PlanTab({
    *  it in, all together through /api/plans, each with the same change made
    *  in it (components/plan-diff.ts sameChange) from `before`, the plan the
    *  form was opened on. */
-  const saveShown = async (next: FirePlanV2, also: readonly string[] = [], before: FirePlanV2 = shownPlan): Promise<boolean | string> => {
+  const saveShown = async (next: FirePlanV2, also: readonly string[] = [], before: FirePlanV2 = shownPlan, tax?: TaxChoices): Promise<boolean | string> => {
     if (!entry && also.length === 0) return savePlanIn(next);
     if (other && planCurrency) return currencyText(other, planCurrency, currencyKnown);
-    const wait = entry ? null : firstAmountWait(next);
+    const wait = entry ? null : firstAmountWait(next, tax);
     if (wait) return wait;
-    if (entry && shownCurrency === null && holdsAmounts(next)) return NO_COPY_CURRENCY;
+    if (entry && shownCurrency === null && entryHoldsAmounts(next, tax ?? entry.tax)) return NO_COPY_CURRENCY;
+    const taxTo = tax ? { tax } : {};
     const saves: PlanSave[] = [
       entry
-        ? { id: entry.id, plan: next, currency: shownCurrency, based_on: entry.updated_at }
-        : { id: plansState.main, plan: next, currency: shownCurrency, based_on: stampRef.current },
+        ? { id: entry.id, plan: next, currency: shownCurrency, based_on: entry.updated_at, ...taxTo }
+        : { id: plansState.main, plan: next, currency: shownCurrency, based_on: stampRef.current, ...taxTo },
     ];
     const facts = factsOf(next);
     for (const id of also) {
@@ -1037,8 +1133,19 @@ export default function PlanTab({
     }
     return savePlans(saves);
   };
+  /** The plan shown with what it says beside the plan, in one request: a copy holds its
+   *  own choices, and your plan's save carries the household too. */
+  const saveMore: SaveMore = async (next, more, also = []) => {
+    if (entry || also.length > 0) return saveShown(next, also, shownPlan, more.tax);
+    sendMore.current = { ...(more.tax ? { tax: more.tax } : {}), ...(more.household ? { household: more.household, household_were: householdOf(shared.taxFacts) } : {}) };
+    try {
+      return await savePlanIn(next, more.tax);
+    } finally {
+      sendMore.current = null;
+    }
+  };
   // Every save the tab makes, from one place (components/plan-savers.ts).
-  const savers = planSavers({ copy: entry ? saveShown : null, savePlan: saveShown, repaired: repairing ? repair.plan : null });
+  const savers = planSavers({ copy: entry ? saveShown : null, savePlan: saveShown, repaired: repairing ? repair.plan : null, more: saveMore });
   const formPlan = shownPlan;
   const saversRef = useRef(savers);
   saversRef.current = savers;
@@ -1048,6 +1155,10 @@ export default function PlanTab({
     (target: string | null): Save =>
     async (next, also) =>
       target === shownForRef.current ? saversRef.current.form(next, also) : 'This form was opened for another plan than the one shown now, so nothing was saved.';
+  const moreFor =
+    (target: string | null): SaveMore =>
+    async (next, more, also) =>
+      target === shownForRef.current ? saversRef.current.more(next, more, also) : 'This form was opened for another plan than the one shown now, so nothing was saved.';
   const replaced = sheet !== null && !state.saving && state.status === 'ready' && storedKey !== openedOn.current;
   const formEditable = editable && !other && !copyFixing && sheetFor === shownFor && !replaced;
   // The figures' rows open their sheets whatever the state: while saving is
@@ -1115,13 +1226,13 @@ export default function PlanTab({
   // plan's one-offs and income moved, on the Plan's answer and Progress's
   // line, until Got it (one for both).
   const movedNew = planInWalk && !movedSeen && stillNew(newUntil, todayUtc);
-  const offFigures = movedNew && entry === null && baseFigures ? planFigures(basePlan, measured, { count: { planInWalk: false } }) : null;
+  const offFigures = movedNew && entry === null && baseFigures ? figuresFor('moved', basePlan, yourChoices, measured, { planInWalk: false }).figures : null;
   const movedText = offFigures && baseFigures && !('refused' in offFigures) ? fiMovedText(offFigures, baseFigures) : null;
   // D7's the same way, with its own Got it: the plan's figures with a child's
   // accounts counted again, on the Plan's answer alone, since a saved plan's
   // Progress line leaves them out at both its ends.
   const childMovedNew = childOut && !childMovedSeen && entry === null && stillNew(childNewUntil, todayUtc) && (assets.childAccounts?.length ?? 0) > 0;
-  const childOffFigures = childMovedNew && baseFigures ? planFigures(basePlan, measuredInputs({ ...inputs, assets: investedAssets(institutions, basePlan.includeCash, balanceFx, Date.now(), ownCurrency) }), { count }) : null;
+  const childOffFigures = childMovedNew && baseFigures ? figuresFor('child-moved', basePlan, yourChoices, measuredInputs({ ...inputs, assets: investedAssets(institutions, basePlan.includeCash, balanceFx, Date.now(), ownCurrency) })).figures : null;
   const childMoved = childOffFigures && baseFigures && !('refused' in childOffFigures) ? childMovedText(childOffFigures, baseFigures) : null;
   const overlay = useMemo(
     () =>
@@ -1164,6 +1275,7 @@ export default function PlanTab({
     if (kind === 'spending') return undefined;
     const rows = shared.copy.rows;
     return {
+      detail: shownInput ? { rmdAges: shownInput.rmdAges, cautions: rothCautions } : null,
       bucketsFor,
       asOf: balancesAsOf ? fmtAsOf(balancesAsOf) : null,
       reading: yearRows.some((id) => !rows[id] || rows[id].pending),
@@ -1192,9 +1304,13 @@ export default function PlanTab({
   const mixFor = (kind: FigureKind) => {
     const startsAt = shown && 'sim' in shown.engine ? shown.engine.startAge : null;
     if (kind !== 'assets' || !shown || startsAt === null || plan.age === null || view.assets.value === null) return null;
+    // A detailed plan's is where Year by year starts.
+    const drawn = shown.detail && !('failed' in shown.detail) ? shown.detail : null;
+    const first = drawn?.start.years[0];
+    if (drawn && first) return mixLine(drawn.startAge, balanceShares(first.start));
     const today = bucketsFor(plan.includeCash);
     const split = savingsSplit(today, view.savings.value);
-    const projected = projectMix(mixToday(today, view.assets.value), { savings: view.savings.value ?? 0, split: split.shares, realReturn: plan.realReturn, inflation: DEFAULT_INFLATION, walk: shown.walk, years: Math.max(0, startsAt - plan.age) });
+    const projected = projectMix(mixToday(today, view.assets.value), { savings: view.savings.value ?? 0, split: split.shares, realReturn: plan.realReturn, inflation: detailedOn ? ((entry ? entry.tax : yourChoices)?.inflation ?? DEFAULT_INFLATION) : DEFAULT_INFLATION, walk: shown.walk, years: Math.max(0, startsAt - plan.age) });
     return projected && mixLine(startsAt, mixShares(projected));
   };
   const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, copy: copyName, paused, planInWalk, childOut };
@@ -1221,12 +1337,92 @@ export default function PlanTab({
     money,
     savingsRate: figures.savingsRate,
     shareRates: inputs.rates ?? null,
-    taxOnHold: shared.taxFacts.model === 'detailed',
+    // Said detailed, and not worked out that way now.
+    taxOnHold: shared.taxFacts.model === 'detailed' && !(planTax && taxInDollars),
   };
-  const figureTexts = figureNotes(figureArgs);
+  const shownNow = figureNotes(figureArgs);
+  // A detailed plan's own: what it says of its household and rates, and each gap in
+  // what it rests on, on the row it is about and on Drawdown's notice.
+  const shownChoices = entry ? entry.tax : yourChoices;
+  const detailShown = detailedOn && taxInDollars;
+  const lawNow = lawFor(calendarYear).law;
+  const paidChoices: PaidChoice[] = useMemo(() => {
+    if (!detailedOn) return [];
+    const names = [...new Set((txns ?? []).flatMap((t) => t.category_name ?? t.category ?? []))].sort((a, b) => a.localeCompare(b));
+    return [...names.map((name): PaidChoice => ({ kind: 'category', name, label: name })), ...tags.map((t): PaidChoice => ({ kind: 'tag', name: t.id, label: `Tag: ${t.name}` }))];
+  }, [detailedOn, txns, tags]);
+  const unansweredPaid = useMemo(() => {
+    if (!detailedOn || shared.taxFacts.paidToday || view.spending.source !== 'measured') return null;
+    const named = paidChoices.find((c) => c.kind === 'category' && namesCoverage(c.name));
+    const amount = named ? inputs.paidFor(named) : 0;
+    return named && amount >= 0.5 ? { name: named.label, amount } : null;
+    // flows stands for what paidFor reads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailedOn, shared.taxFacts.paidToday, view.spending.source, paidChoices, flows]);
+  const detailChoices = (entry ? (entry.tax ?? yourChoices) : yourChoices) ?? DEFAULT_TAX_CHOICES;
+  const honesty = shown?.detail && !('failed' in shown.detail) ? honestyNotes({ today: detailBuckets, choices: detailChoices, items: shownPlan.items, law: shown.detail.law, unansweredPaid, money }) : [];
+  const healthRow: (FigureText & { value: string | null }) | null = !detailShown
+    ? null
+    : {
+        sub: healthSub(detailChoices),
+        line: null,
+        why: null,
+        value: detailChoices.health.beforeMedicare === null ? null : shown?.detail && !('failed' in shown.detail) ? `About ${money(shown.detail.start.h)} a year` : '--',
+        notes: honesty.filter((n) => n.kind === 'health not set' || n.kind === 'coverage counted twice').map((n) => (n.kind === 'health not set' ? { ...n, text: HEALTH_NOT_SET } : n)),
+      };
+  const figureTexts: typeof shownNow = !detailShown
+    ? shownNow
+    : {
+        ...shownNow,
+        ages: { ...shownNow.ages, sub: `${shownNow.ages.sub} · ${householdLine(shared.taxFacts, detailChoices)}` },
+        assumptions: { ...shownNow.assumptions, sub: `${shownNow.assumptions.sub} · ${assumptionsLine(detailChoices, detailChoices.health.growth ?? HEALTH_GROWTH.overPrices)}` },
+      };
   const stressNotes = stressNotice(figureArgs, engine, shown?.startsWith ?? null);
   // Design-system rule 3: a badge on each card the notice is about.
   const stressBadge = stressNotes.length === 0 ? null : stressNotes.length === 1 ? 'An input may be low' : 'Inputs may be low';
+
+  // A detailed plan's years, and what the sheets over them are worked out with.
+  const drawn = shown?.detail && !('failed' in shown.detail) ? shown.detail : null;
+  const detailStuck = !!shown?.detail && 'failed' in shown.detail;
+  const shownInput = drawn ? inputOf(shownPlan, shownChoices) : null;
+  const yearContext: YearContext | null =
+    drawn && shownInput
+      ? {
+          money,
+          realReturn: plan.realReturn,
+          healthGrowth: shownInput.health.growth,
+          acaLaw: shownInput.health.acaLaw,
+          lawYear: drawn.law.year,
+          state: shownInput.state,
+          stateTaxes: shownInput.state ? shownInput.law.stateIncomeTax[shownInput.state] : null,
+          rmdAge: shownInput.rmdAges.you,
+        }
+      : null;
+  // Taxes don't move a saved plan's assets before the stop, so a year your plan draws
+  // leaves its line above Your path.
+  const firstTax = baseFigures?.walk.taxes?.[0] ?? null;
+  const baseTax = baseFigures?.detail && !('failed' in baseFigures.detail) ? baseFigures.detail.walkTax : 0;
+  const progressFlatLine =
+    firstTax && baseTax >= 0.5 && basePlan.age !== null
+      ? `Your saved plan’s line takes no tax out before you stop, so from ${basePlan.age + firstTax.year} it runs ${money(baseTax)} above Your path.`
+      : null;
+  // What isn't known about a Roth, on the sheets it is about.
+  const rothCautions = honesty.filter((n) => n.kind.includes('Roth put-in')).map((n) => n.text);
+  // What the forms of a detailed plan read and save with. The shared parts lock in a copy.
+  const detailForm: DetailForm | null = detailShown
+    ? { choices: detailChoices, facts: shared.taxFacts, factsLocked: !savers.taxFacts, stateTaxes: lawNow.stateIncomeTax, statute: lawNow.statute, calendarYear, save: moreFor(sheetFor) }
+    : null;
+  const sheetStage = shownSheet?.kind === 'stage' ? (drawn?.start.stages[shownSheet.at] ?? null) : null;
+  const sheetYear = sheetStage && yearLevel !== null ? (drawn?.start.years[yearLevel] ?? null) : null;
+  // The way in, while a plan in dollars is flat, once the facts have been read.
+  const offerDetail = planTax && shared.factsKnown && shared.taxFacts.model === 'flat' && taxInDollars;
+  /** A choice of model moves every plan's stamp, so all of them are read again, however
+   *  it went: a later save names what is stored now. */
+  const chooseModel = async (op: TaxFactOp): Promise<true | string> => {
+    const r = await heldBy(saveTaxFact(planInputs, op));
+    await Promise.all([store.load(), plansClient.load()]);
+    return r;
+  };
 
   // The bar, its heading and its Plans button, the copy's card (with
   // the Timeline that fixes it, when it is refused) and the panel shown:
@@ -1385,7 +1581,7 @@ export default function PlanTab({
     if (state.status !== 'ready') return READING_AGAIN;
     const source = from === plansState.main ? { plan: basePlan, currency: sendCurrency.current } : views.get(from);
     if (!source) return 'That plan changed since this opened, so nothing was made: open it again.';
-    const currency = 'row' in source ? (holdsAmounts(source.plan) ? source.row.currency : sendCurrency.current) : source.currency;
+    const currency = 'row' in source ? (entryHoldsAmounts(source.plan, source.row.tax) ? source.row.currency : sendCurrency.current) : source.currency;
     const r = await plansClient.create({ from, name, plan: whole ?? source.plan, currency });
     if ('error' in r) return r.error;
     if (stampRef.current === null) void store.load();
@@ -1441,20 +1637,18 @@ export default function PlanTab({
     const r = await plansClient.relabel(entry.id, planCurrency, entry.updated_at);
     return 'error' in r ? r.error : true;
   };
+  const outcomeOf = (f: PlanFigures | FiguresRefused | null, a: Pick<DetailedAnswer, 'working' | 'failed'>): PlanOutcome =>
+    !f || 'refused' in f ? { kind: 'not-run', reason: REFUSED_TEXT } : a.failed ? { kind: 'not-run', reason: JOB_FAILED_TEXT } : { kind: 'figures', figures: f, working: a.working, held: detailHeld };
   // Every plan that reads, as the sheet lists it: yours first, then the
   // copies, each with its figures (the sheet words how each differs).
   const sheetPlans: SheetPlan[] =
     !planLoaded || plansState.status !== 'ready'
       ? []
       : plansState.list.flatMap((row): SheetPlan[] => {
-          if (row.id === plansState.main) return [{ id: row.id, name: row.name, isMain: true, updatedAt: row.updated_at, plan: basePlan, outcome: baseFigures ? { kind: 'figures', figures: baseFigures } : { kind: 'not-run', reason: REFUSED_TEXT } }];
+          if (row.id === plansState.main) return [{ id: row.id, name: row.name, isMain: true, updatedAt: row.updated_at, plan: basePlan, outcome: outcomeOf(baseRun, baseAnswer) }];
           const v = views.get(row.id);
           if (!v) return [];
-          const outcome: PlanOutcome = v.other
-            ? { kind: 'not-run', reason: currencyText(v.other, planCurrency ?? v.other, currencyKnown) }
-            : v.figures && !('refused' in v.figures)
-              ? { kind: 'figures', figures: v.figures }
-              : { kind: 'not-run', reason: REFUSED_TEXT };
+          const outcome: PlanOutcome = v.other ? { kind: 'not-run', reason: currencyText(v.other, planCurrency ?? v.other, currencyKnown) } : outcomeOf(v.figures, v);
           return [{ id: row.id, name: row.name, isMain: false, updatedAt: row.updated_at, plan: v.plan, outcome }];
         });
   // Mounted always, closed or open, from its first render: the plans picked
@@ -1496,7 +1690,8 @@ export default function PlanTab({
   const refused = !!openFigures && 'refused' in openFigures;
   const copyCard = entry && openView && (
     <CopyCard
-      parts={copyDiffParts(basePlan, openView.plan, money)}
+      parts={[...copyDiffParts(basePlan, openView.plan, money), ...(detailShown && entry.tax !== null && JSON.stringify(entry.tax) !== JSON.stringify(yourChoices) ? ['Other settings differ'] : [])]}
+      taxLine={detailShown && entry.tax === null ? 'It takes your plan’s tax settings.' : null}
       other={other}
       currencyLine={other && planCurrency ? currencyText(other, planCurrency, currencyKnown) : null}
       confirmWhyNot={confirmWhyNot}
@@ -1562,6 +1757,9 @@ export default function PlanTab({
       refused={refused || baseRefused}
       measured={measured}
       count={count}
+      figuresFor={(slot, p) => figuresFor(slot, p, entry ? entry.tax : yourChoices)}
+      figuresVersion={`${searchVersion}:${detailKey}`}
+      firedFor={!planTax ? null : ({ sim: run, trigger, offset }, signal) => runner().run({ kind: 'fired', method: plan.method, plan: run, trigger, offset }, signal).then((r) => (r.ok && r.kind === 'fired' ? r.fired : null))}
       copyName={copyName}
       version={shownFor ?? storedKey}
       editable={timelineEditable}
@@ -1682,6 +1880,7 @@ export default function PlanTab({
               path={path}
               range={range}
               onRange={chooseRange}
+              ticks={drawn?.whole && yearContext ? drawdownMarks(drawn.whole.years, yearContext.rmdAge) : null}
               recorded={overlay}
               currency={displayCurrency}
               onAskAges={() => open({ kind: 'about' }, 'ask-about')}
@@ -1689,6 +1888,9 @@ export default function PlanTab({
               onFiNumber={() => open({ kind: 'fi-number' }, 'fi-how')}
               fiNumberRef={(el) => inputRowRef('fi-how', el)}
               held={reloading}
+              working={shownWorking}
+              failed={shownFailed}
+              onRetryDetail={search.retry}
               plan={plan}
               view={view}
               unread={unread}
@@ -1707,8 +1909,9 @@ export default function PlanTab({
               money={money}
               copyName={copyName}
               held={reloading}
-              onOpen={(kind) => open(kind === 'about' || kind === 'assumptions' || kind === 'fi-number' ? { kind } : { kind: 'figure', figure: kind }, kind)}
+              onOpen={(kind) => open(kind === 'about' || kind === 'assumptions' || kind === 'fi-number' || kind === 'health' ? { kind } : { kind: 'figure', figure: kind }, kind)}
               rowRef={inputRowRef}
+              health={healthRow}
               currency={currencyInFigures ? currencyCard : null}
             />
 
@@ -1737,6 +1940,7 @@ export default function PlanTab({
             moved={movedNew}
             onMovedSeen={onMovedSeen}
             childOut={childOut}
+            flatLine={progressFlatLine}
           />
         )}
         </>
@@ -1747,7 +1951,7 @@ export default function PlanTab({
         <>
           {/* What may leave the inputs the simulation uses low, once, above
               the cards it is about, each of which has its badge. */}
-          {worked && <FigureCaveats notes={stressNotes} />}
+          {worked && <FigureCaveats notes={[...stressNotes, ...honesty]} />}
 
           {worked && (
             <SimulationCard
@@ -1761,14 +1965,49 @@ export default function PlanTab({
               engine={engine}
               outcome={outcome}
               pending={pending}
+              failed={shownFailed}
+              detail={drawn ? { t: drawn.start.t, lawYear: drawn.law.year } : null}
+              setupHeld={detailHeld}
               money={money}
               currency={displayCurrency}
               badge={stressBadge}
               onRetry={retry}
+              onRetryDetail={search.retry}
+              startAtStop={planTax && (editable || state.saving || plansState.saving) && !other && !copyFixing && formPlan.start !== 'at-stop' && view.stopAge !== null ? () => savers.form({ ...formPlan, start: 'at-stop' }) : null}
+              startBusy={state.saving || plansState.saving}
             />
           )}
 
-          {worked && 'sim' in engine && (
+          {/* A detailed plan's years at a steady growth; a flat plan's way to them. */}
+          {worked && detailStuck && <Notice level="caution">Tax couldn’t be worked out for this plan, so it uses the flat rate.</Notice>}
+          {worked && drawn && yearContext && !shownFailed && (
+            <>
+              <DrawdownCard
+                detail={drawn}
+                realReturn={plan.realReturn}
+                money={money}
+                rmdAge={yearContext.rmdAge}
+                joint={shared.taxFacts.filing === 'joint' && plan.partnerAge !== null}
+                held={reloading}
+                working={shownWorking}
+                onStage={(at) => open({ kind: 'stage', at }, `stage-${at}`)}
+                stageRef={(at, el) => inputRowRef(`stage-${at}`, el)}
+                titleRef={(el) => inputRowRef('years', el)}
+              />
+              <DrawdownMore onGoPath={() => switchSegment('path')} />
+            </>
+          )}
+          {worked && offerDetail && (
+            <OptInRow
+              copy={entry !== null}
+              noAge={plan.age === null}
+              held={reloading}
+              onOpen={() => (plan.age === null ? open({ kind: 'about' }, 'opt-in') : open({ kind: 'opt-in' }, 'opt-in'))}
+              rowRef={(el) => inputRowRef('opt-in', el)}
+            />
+          )}
+
+          {worked && 'sim' in engine && !shownFailed && (
             <GridCard
               copyName={copyName}
               plan={plan}
@@ -1815,7 +2054,7 @@ export default function PlanTab({
 
       <Sheet
         open={!!sheet}
-        title={shownSheet ? (shownSheet.kind === 'figure' ? (figureLevel?.title ?? FIGURE_TITLES[shownSheet.figure]) : SHEET_TITLES[shownSheet.kind]) : ''}
+        title={shownSheet ? (shownSheet.kind === 'figure' ? (figureLevel?.title ?? FIGURE_TITLES[shownSheet.figure]) : shownSheet.kind === 'stage' ? (sheetYear ? yearTitle(sheetYear) : sheetStage ? stageTitle(sheetStage) : 'Year by year') : SHEET_TITLES[shownSheet.kind]) : ''}
         onClose={() => {
           if (levelSaves === 0) close();
         }}
@@ -1824,14 +2063,31 @@ export default function PlanTab({
             ? () => {
                 if (levelSaves === 0) setFigureLevel(figureLevel.kind === 'bucket' ? { kind: 'account', account_id: figureLevel.account_id, title: figureLevel.back } : null);
               }
-            : undefined
+            : sheetYear
+              ? () => setYearLevel(null)
+              : undefined
         }
-        level={figureLevel ? `${figureLevel.kind}:${figureLevel.title}` : undefined}
+        level={figureLevel ? `${figureLevel.kind}:${figureLevel.title}` : sheetYear ? `year:${sheetYear.age}` : undefined}
       >
         {/* Atop every sheet that edits the copy open, so one isn't taken for
             your plan. */}
-        {shownSheet && shownSheet.kind !== 'numbers' && <CopyTag name={copyName} />}
-        {shownSheet?.kind === 'about' && <AboutForm key={opened} {...formProps} />}
+        {shownSheet && shownSheet.kind !== 'numbers' && shownSheet.kind !== 'stage' && <CopyTag name={copyName} />}
+        {shownSheet?.kind === 'about' && <AboutForm key={opened} {...formProps} detail={detailForm} />}
+        {shownSheet?.kind === 'health' && detailForm && (
+          <PlanHealthForm
+            key={opened}
+            {...formProps}
+            detail={detailForm}
+            stateName={detailChoices.state ? STATE_NAMES[detailChoices.state] : null}
+            medicaid={detailChoices.state === null ? null : lawNow.medicaidStates[detailChoices.state]}
+            defaultGrowth={HEALTH_GROWTH.overPrices * 100}
+            partner={plan.partnerAge !== null}
+            paidChoices={paidChoices}
+            paidAmount={inputs.paidFor}
+            stages={drawn ? stageHealthLines(drawn.start.stages, drawn.start.years, money) : []}
+            money={money}
+          />
+        )}
         {shownSheet?.kind === 'fi-number' && <FiNumberForm key={opened} {...formProps} view={view} retirementSpending={shown?.retirement?.spending ?? null} leftOut={path?.after?.leftOut ?? null} money={money} />}
         {shownSheet?.kind === 'assumptions' && (
           <AssumptionsForm
@@ -1844,9 +2100,27 @@ export default function PlanTab({
             allocationMix={shownSheet.mix ?? mixToOffer(allocation)}
             at={shownSheet.at ?? null}
             taxOnHold={figureArgs.taxOnHold}
+            detail={detailForm}
+            drawnRate={drawn?.start.rate ?? null}
+            onFlatRate={entry ? null : () => chooseModel({ kind: 'model', model: 'flat' })}
+            planTax={planTax}
+            defaultGrowth={HEALTH_GROWTH.overPrices * 100}
+            measuredYield={detailBuckets ? measuredYield(detailBuckets) : null}
           />
         )}
-        {shownSheet?.kind === 'numbers' && <AboutNumbers />}
+        {shownSheet?.kind === 'numbers' && <AboutNumbers detailed={detailShown} />}
+        {shownSheet?.kind === 'opt-in' && (
+          <OptInSheet
+            key={opened}
+            moves={!!shown && drawdownMovesFi(plan, shown.walk, view.savings.value ?? 0, view.stopAge)}
+            lawYear={lawFor(calendarYear).law.year}
+            paused={formEditable ? null : (paused ?? 'This can’t be saved yet.')}
+            onConfirm={() => chooseModel({ kind: 'opt-in' })}
+            onDone={closeFor(opened)}
+          />
+        )}
+        {sheetStage && drawn && yearContext && !sheetYear && <StageLevel stage={sheetStage} years={drawn.start.years} money={money} rmdAge={yearContext.rmdAge} cautions={sheetStage.key === 'before-60' ? rothCautions : []} onYear={setYearLevel} />}
+        {sheetYear && yearContext && <YearLevel year={sheetYear} context={yearContext} />}
         {shownSheet?.kind === 'figure' && (
           <FigureForm
             key={opened}
@@ -1862,6 +2136,7 @@ export default function PlanTab({
             buckets={bucketSheet(shownSheet.figure)}
             split={splitFor(shownSheet.figure)}
             mix={mixFor(shownSheet.figure)}
+            detail={detailForm}
           />
         )}
       </Sheet>
@@ -1969,6 +2244,9 @@ function Row({ label, value, note, action }: { label: string; value: React.React
   );
 }
 
+/** A detailed plan's search couldn't be run in a worker or on the page. */
+const DETAIL_FAILED = 'Tax on this plan couldn’t be worked out on this page. It needs a connection the first time it runs after an update.';
+
 /** The FI card: the FI number and how it is worked out, with what may leave
  *  it short said on it, and what follows from it (years to FI, Coast and
  *  Barista FI, the balance at the target age). The figures it rests on are
@@ -1991,6 +2269,7 @@ export function FiCard({
   stopShort = null,
   stopWalked = false,
   path = null,
+  ticks = null,
   range,
   onRange,
   recorded = null,
@@ -1998,6 +2277,9 @@ export function FiCard({
   onAskAges,
   askRef,
   held = false,
+  working = false,
+  failed = false,
+  onRetryDetail,
   plan,
   view,
   unread,
@@ -2024,7 +2306,7 @@ export function FiCard({
   walkedSavings?: number | null;
   /** What moved the walk (lib/fire/plan-figures.ts walkFrom), for its words;
    *  left out, the plan's items. */
-  walkFrom?: { items: boolean; events: boolean };
+  walkFrom?: { items: boolean; events: boolean; tax?: boolean };
   /** D15's line while new (components/plan-moved.ts fiMovedText), under the
    *  answer's lines with Got it, which hides it for the session. */
   moved?: string | null;
@@ -2040,6 +2322,8 @@ export function FiCard({
   stopWalked?: boolean;
   /** The plan's path from today (lib/fire/path.ts), drawn under the answer. */
   path?: PlanPath | null;
+  /** The ages a detailed plan's rules change at, on Whole path. */
+  ticks?: readonly DrawdownMark[] | null;
   /** The chart's range, and the switch between them (PlanPathChart); left
    *  out, the chart runs to the stop with no switch. */
   range?: PathRange;
@@ -2055,6 +2339,11 @@ export function FiCard({
   askRef?: (el: HTMLElement | null) => void;
   /** The plan is being read again: the ask does nothing meanwhile. */
   held?: boolean;
+  /** A detailed plan's answer is still being worked out: this one is dimmed. */
+  working?: boolean;
+  /** It couldn't be, so this says so in its place, with Try again. */
+  failed?: boolean;
+  onRetryDetail?: () => void;
   plan: PlanCore;
   view: FiView;
   /** Institutions whose transactions couldn't all be read. */
@@ -2087,6 +2376,7 @@ export function FiCard({
   const need = view.yearsToFi === null && !fiShort ? figuresNeed(view, takes) : null;
   // What moved the walk, in its words (never none where the walk counts).
   const words = walkWords(walkFrom) ?? EVENTS_WORDS;
+  const inTheirYears = walkFrom.items || walkFrom.events ? ' in their years' : '';
   let howLine = '';
   if (fiShort) {
     howLine = fiShort;
@@ -2094,12 +2384,12 @@ export function FiCard({
     howLine =
       words === EVENTS_WORDS
         ? `Growing a steady ${pct(plan.realReturn)} a year after inflation, with this plan’s items changing what is saved in their years.`
-        : `Growing a steady ${pct(plan.realReturn)} a year after inflation, with ${words} in their years.`;
+        : `Growing a steady ${pct(plan.realReturn)} a year after inflation, with ${words}${inTheirYears}.`;
   } else if (walked && view.yearsToFi === Infinity) {
     howLine =
       words === EVENTS_WORDS
         ? `With this plan’s items you’d save ${money(walkedSavings ?? 0)} a year after its last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`
-        : `With ${words} in their years you’d save ${money(walkedSavings ?? 0)} a year after the last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`;
+        : `With ${words}${inTheirYears} you’d save ${money(walkedSavings ?? 0)} a year after the last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`;
   } else if (view.yearsToFi === Infinity) {
     howLine = `Saving ${money(savings.value ?? 0)} a year, growing ${pct(plan.realReturn)} a year after inflation, never reaches it.`;
   } else if (view.yearsToFi !== null && view.yearsToFi > 0) {
@@ -2132,13 +2422,35 @@ export function FiCard({
   caveat('caution', 'currency', currencyNote);
   caveat('info', 'converted', convertedNote);
   const asks = !!head.ask && !!onAskAges;
+  if (failed) {
+    return (
+      <Hero id="plan-fi-title" level={3} label="Financial independence" className="plan-hero" top={copyName ? <CopyTag name={copyName} /> : undefined} figure="Not worked out" figureClass="plan-answer" line={<p className="helper">{DETAIL_FAILED}</p>}>
+        <div>
+          <button type="button" className="btn secondary" onClick={onRetryDetail}>
+            Try again
+          </button>
+        </div>
+      </Hero>
+    );
+  }
   return (
     <Hero
       id="plan-fi-title"
       level={3}
       label="Financial independence"
-      className="plan-hero"
-      top={copyName ? <CopyTag name={copyName} /> : undefined}
+      className={working ? 'plan-hero plan-answer-pending' : 'plan-hero'}
+      top={
+        copyName || working ? (
+          <>
+            {copyName && <CopyTag name={copyName} />}
+            {working && (
+              <p className="plan-working-line" role="status">
+                Working it out
+              </p>
+            )}
+          </>
+        ) : undefined
+      }
       // Words, not amounts, but from the figures: through Masked, as every
       // line read from them is (test/amount-sources.ts).
       figure={<Masked>{head.headline}</Masked>}
@@ -2268,6 +2580,7 @@ export function FiCard({
           after={path.after}
           range={range}
           onRange={onRange}
+          ticks={ticks}
         />
       )}
 
@@ -2318,11 +2631,11 @@ function FigureCaveats({ notes }: { notes: readonly FigureNote[] }) {
 }
 
 /** Which sheet a figure's row opens. */
-export type InputKind = 'fi-number' | 'spending' | 'savings' | 'assets' | 'about' | 'assumptions';
+export type InputKind = 'fi-number' | 'spending' | 'savings' | 'assets' | 'about' | 'assumptions' | 'health';
 
 /** Every row a sheet opens from, which focus goes back to as it closes:
  *  Your figures', Drawdown's, and Portfolio's "Use my allocation". */
-type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix' | 'ask-about' | 'ask-timeline' | 'timeline-first' | 'fi-how';
+type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix' | 'ask-about' | 'ask-timeline' | 'timeline-first' | 'fi-how' | 'opt-in' | 'years' | `stage-${number}`;
 
 /** A rule's name in a few words, for the Assumptions row. */
 const RULE_SHORT: Record<FirePlan['rule'], string> = {
@@ -2384,7 +2697,7 @@ export function StressRows({
 /** About these numbers: what every result is, the data and what it can't
  *  say, once (each result keeps its short label). The words are the card's
  *  before 6d. */
-export function AboutNumbers() {
+export function AboutNumbers({ detailed = false }: { detailed?: boolean }) {
   return (
     <div className="stack">
       <p className="helper">{HYPOTHETICAL}</p>
@@ -2393,11 +2706,29 @@ export function AboutNumbers() {
         returns, each from one month to the next, run from January 1871 to May 2023). Everything is in today&apos;s dollars: returns are after
         inflation, so a constant withdrawal keeps its buying power.
       </p>
-      <p className="helper">
-        What this can&apos;t tell you: other countries&apos; markets, taxes beyond one flat rate (no brackets, account types or required
-        withdrawals), or what is inside your funds (the mix is what you set). Spending from bank data misses anything paid outside the
-        accounts you have connected.
-      </p>
+      {detailed ? (
+        <>
+          <p className="helper">
+            What this can&apos;t tell you: other countries&apos; markets, or what is inside your funds (the mix is what you set). Spending from bank data misses anything paid outside the accounts you have
+            connected.
+          </p>
+          <h3 className="section-label">How tax is worked out</h3>
+          <p className="helper">{ABOUT_DETAIL.how}</p>
+          <h3 className="section-label">What stands in for what</h3>
+          {ABOUT_DETAIL.standIns.map((line) => (
+            <p key={line} className="helper">
+              {line}
+            </p>
+          ))}
+          <p className="helper">{ABOUT_DETAIL.notModeled}</p>
+        </>
+      ) : (
+        <p className="helper">
+          What this can&apos;t tell you: other countries&apos; markets, taxes beyond one flat rate (no brackets, account types or required
+          withdrawals), or what is inside your funds (the mix is what you set). Spending from bank data misses anything paid outside the
+          accounts you have connected.
+        </p>
+      )}
     </div>
   );
 }
@@ -2423,9 +2754,12 @@ export function InputsCard({
   onOpen,
   rowRef,
   currency = null,
+  health = null,
 }: {
   /** What each row says (components/plan-figure-notes.ts figureNotes). */
   figures: FigureNotes;
+  /** A detailed plan's Health coverage row. */
+  health?: (FigureText & { value: string | null }) | null;
   /** The figures themselves, as the plan shown has them. */
   view: FiView;
   /** The plan shown, for its FI number's row. */
@@ -2462,6 +2796,7 @@ export function InputsCard({
         <InputRow title="Annual spending" said={figures.spending} value={figure(view.spending.value)} {...row('spending')} />
         <InputRow title="Invested assets" said={figures.assets} value={figure(view.assets.value)} {...row('assets')} />
         <InputRow title="Annual savings" said={figures.savings} value={figure(view.savings.value)} {...row('savings')} />
+        {health && <InputRow title="Health coverage" said={health} value={health.value} {...row('health')} />}
         <InputRow title="Household" said={figures.ages} {...row('about')} />
         <InputRow title="Assumptions" said={figures.assumptions} {...row('assumptions')} />
       </ul>
@@ -2566,6 +2901,34 @@ const MISSING_FIGURE: Record<Missing, string> = {
  *  worst starts and its ending balances. Its settings are the Assumptions
  *  row's, under the cards (rollout 6d): the line's "historical starts" or
  *  "Monte Carlo runs" names the method, which is set there. */
+/** The start line's way to what the plan would have at the stop. Its failure is said
+ *  here, where the person pressed it. */
+function StartAtStop({ stopAge, busy, onStart }: { stopAge: number; busy: boolean; onStart: () => Promise<boolean | string> }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const press = async () => {
+    setError(null);
+    setSaving(true);
+    const saved = await onStart();
+    setSaving(false);
+    if (saved !== true) setError(typeof saved === 'string' ? saved : 'It was not saved. Try again in a moment.');
+  };
+  return (
+    <>
+      <div>
+        <button type="button" className="btn ghost" disabled={saving || busy} onClick={() => void press()}>
+          Start from what you&apos;d have at {stopAge}
+        </button>
+      </div>
+      {error && (
+        <p className="plan-warning" role="alert">
+          {error}
+        </p>
+      )}
+    </>
+  );
+}
+
 export function SimulationCard({
   copyName = null,
   startsWith = null,
@@ -2577,10 +2940,16 @@ export function SimulationCard({
   engine,
   outcome,
   pending,
+  failed = false,
+  detail = null,
+  setupHeld = false,
   money,
   currency,
   badge = null,
   onRetry,
+  onRetryDetail,
+  startAtStop = null,
+  startBusy = false,
 }: {
   /** The open copy's name, said at the top; null with your plan open. */
   copyName?: string | null;
@@ -2602,12 +2971,24 @@ export function SimulationCard({
   outcome: Outcome | null;
   /** A new answer is being worked out: the last one is held hidden. */
   pending: boolean;
+  /** A detailed plan's date couldn't be worked out, so nothing was run on it. */
+  failed?: boolean;
+  /** A detailed plan's share of tax and its law: withdrawals pay health coverage and
+   *  that tax, not just your spending. */
+  detail?: { t: number; lawYear: number } | null;
   money: (n: number) => string;
   currency: string | null;
   /** Drawdown's notice is about this answer's inputs: its badge. */
   badge?: string | null;
   /** Runs it again, when it couldn't be run at all. */
   onRetry: () => void;
+  onRetryDetail?: () => void;
+  /** Saves the plan starting from what it would have at the stop; null: it does, or can't be saved here. */
+  startAtStop?: (() => Promise<boolean | string>) | null;
+  /** A save is under way: the link waits, and stays, so a save that fails can say so. */
+  startBusy?: boolean;
+  /** A detailed plan's years aren't in, so the setup would say what's about to change. */
+  setupHeld?: boolean;
 }) {
   // Over the label: an open copy's tag, and the badge.
   const top =
@@ -2635,18 +3016,33 @@ export function SimulationCard({
   // starts drawing: with more, the caution it always had (it reads safer
   // than it is); with less, or from today's assets, a note.
   const startLine = startsWith && !startsWith.more ? startLineText(startsWith, money, { age: plan.age, stopAge: view.stopAge, atStop: view.atTargetAge }) : null;
+  const startLink = startAtStop && view.stopAge !== null ? <StartAtStop stopAge={view.stopAge} busy={startBusy} onStart={startAtStop} /> : null;
   const startNote = startsWith?.more ? (
     <Notice level="caution">
       <Masked>{`It starts with ${startsWithText(startsWith, money, 'on Your path').replace(/\.$/, '')}: it starts with money it wouldn’t have then, so it reads safer than it is.`}</Masked>
+      {startLink}
     </Notice>
   ) : startLine ? (
     <Notice level="info">
       <Masked>{startLine}</Masked>
+      {startLink}
     </Notice>
   ) : null;
 
   if ('missing' in engine) {
     return hero(MISSING_FIGURE[engine.missing], 'plan-answer', <p className="helper">{missingText(engine.missing, view)}</p>, null);
+  }
+  if (failed) {
+    return hero(
+      'Not worked out',
+      'plan-answer',
+      <p className="helper">{DETAIL_FAILED}</p>,
+      <div>
+        <button type="button" className="btn secondary" onClick={onRetryDetail}>
+          Try again
+        </button>
+      </div>
+    );
   }
   const { sim, startAge, rate, rateFrom } = engine;
   // Placed by the compile (lib/fire/compile.ts): not one left out for want
@@ -2667,6 +3063,13 @@ export function SimulationCard({
   let setup: React.ReactNode;
   if (vpw) {
     setup = `Stop working ${when} with ${money(sim.startBalance)} (${startLabel}), for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. VPW sets each year's spending from the balance and the years left.`;
+  } else if (detail) {
+    setup = (
+      <>
+        Stop working {when} with <Masked>{money(sim.startBalance)}</Masked> ({startLabel}), withdrawing <strong>{pct(rate, 1)}</strong> of it a year, your spending and health coverage with their tax, for {sim.years} years{startAge !== null ? ` (to age ${startAge + sim.years})` : ''}
+        {rate > plan.withdrawalRate * 1.001 ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}.
+      </>
+    );
   } else if (rateFrom === 'spending') {
     setup = (
       <>
@@ -2678,7 +3081,7 @@ export function SimulationCard({
   } else {
     setup = `Stop working ${when} with ${money(sim.startBalance)} (${startLabel}), withdrawing ${pct(rate)} of it, ${money(spendingNow ?? 0)} a year after tax, your spending now, for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}.`;
   }
-  const setupNote = <p className="panel-note">{typeof setup === 'string' ? <Masked>{setup}</Masked> : setup}</p>;
+  const setupNote = setupHeld ? null : <p className="panel-note">{typeof setup === 'string' ? <Masked>{setup}</Masked> : setup}</p>;
 
   if (!outcome) {
     return hero(
@@ -2736,8 +3139,10 @@ export function SimulationCard({
       <p className="plan-definition">
         {successDefinition(sim.years)}
         {flexible ? ' This rule lasts by cutting spending when markets fall; Lowest year, below, says how far.' : ''}
+        {detail ? ` ${taxLine(detail.t)}` : ''}
       </p>
       <p className="plan-definition">{HYPOTHETICAL_LABEL}</p>
+      {detail && <p className="plan-definition">{lawLabel(detail.lawYear)}</p>}
     </div>,
     <>
       {startNote}
@@ -2754,7 +3159,7 @@ export function SimulationCard({
         )}
         {vpw && spendingNow !== null && (
           <p className="panel-note">
-            Its first year spends <Masked>{money(r.firstYearSpending)}</Masked> after tax, against the <Masked>{money(spendingNow)}</Masked> you spend now.
+            Its first year spends <Masked>{money(r.firstYearSpending)}</Masked> after tax{detail ? ', health coverage included' : ''}, against the <Masked>{money(spendingNow)}</Masked> you spend now{detail ? ' before coverage' : ''}.
           </p>
         )}
 
@@ -2784,7 +3189,11 @@ export function SimulationCard({
         </div>
 
         {canRunOut(plan.rule) === false && r.successRate === 1 && (
-          <p className="panel-note">This rule only ever withdraws a share of what is there, so it cannot run out; how far spending falls is the risk to watch.</p>
+          <p className="panel-note">
+            {detail
+              ? 'This rule withdraws a share of what is there, with health coverage on top, and it lasted every start; how far spending falls is the risk to watch.'
+              : 'This rule only ever withdraws a share of what is there, so it cannot run out; how far spending falls is the risk to watch.'}
+          </p>
         )}
 
         {/* How far a flexible rule cut spending: a row at the hero's foot,
@@ -2797,7 +3206,7 @@ export function SimulationCard({
               note={
                 lowShare === null
                   ? `No ${r.method === 'historical' ? 'start' : 'run'} lasted, so there is no spending to compare.`
-                  : `of the first year's spending in the lowest year, in the worst ${r.method === 'historical' ? 'start' : 'run'} that lasted${r.lowestSpending?.start ? ` (${monthName(r.lowestSpending.start)})` : ''}: ${money(r.lowestSpending!.amount)} against ${money(r.firstYearSpending)}`
+                  : `of the first year's spending in the lowest year, in the worst ${r.method === 'historical' ? 'start' : 'run'} that lasted${r.lowestSpending?.start ? ` (${monthName(r.lowestSpending.start)})` : ''}: ${money(r.lowestSpending!.amount)} against ${money(r.firstYearSpending)}${detail ? ', health coverage included' : ''}`
               }
             />
           </div>
