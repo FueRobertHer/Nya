@@ -8,6 +8,7 @@ import { followAccountCurrency } from '@/lib/import/commit';
 import { relabelCount, relabelTypedRows, type RelabelResult } from '@/lib/manual-relabel';
 import { StoredDataUnreadableError } from '@/lib/stored-json';
 import { loggable } from '@/lib/log-safe';
+import { storeFailure } from '@/lib/store-failure';
 
 // CRUD for manually-tracked accounts, deliberately ONE ACCOUNT PER REQUEST.
 //
@@ -210,9 +211,6 @@ export async function DELETE(req: Request) {
     await invalidate(ctx, true);
     return NextResponse.json({ success: true });
   } catch (err) {
-    const unavailable = containerUnavailable(err);
-    if (unavailable) return unavailable;
-    console.error(loggable(err));
-    return NextResponse.json({ error: 'Failed to remove manual account' }, { status: 500 });
+    return storeFailure(err, 'Failed to remove manual account');
   }
 }

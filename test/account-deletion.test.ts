@@ -185,6 +185,15 @@ describe('deleting my account', () => {
     expect(String(await fake.hget(ownersKey(), 'user_owner'))).toBe(TEST_CONTAINER);
   });
 
+  test('takes the tax facts with it', async () => {
+    const { planFactsStore } = await import('@/lib/plan-copies');
+    const { factsAbout } = await import('./facts-about');
+    await planFactsStore.set(partner, factsAbout('acct_partner'));
+    expect(keysOf(partner.container)).toContain(`test:c:${partner.container}:plan-facts`);
+    expect((await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(200);
+    expect(keysOf(partner.container)).toEqual([]);
+  });
+
   test('takes keys nothing names any more with it: the Plan’s from before copies, left by an older version', async () => {
     for (const name of ['fire-plan', 'fire-plan-currency']) await fake.set(`test:c:${partner.container}:${name}`, 'left-by-an-older-version');
     await fake.hset(`test:c:${partner.container}:plan-scenarios`, { sc1: 'left-by-an-older-version' });

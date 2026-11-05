@@ -33,7 +33,7 @@ import { stampAfter } from './edit-stamp';
 import { FIRST_PLAN, entryOf, firePlansStore, mainAnswer, noPlanAnswer, planFactsStore, readMain, rowOf, type MainPlan, type PlanRow } from './plan-copies';
 import { MAIN_ID, MAX_FIRE_PLANS, factsOf, holdsAmounts, isPlanFacts, mainOf, sameFacts, withFacts, type Facts, type PlanEntry, type PlanFacts } from './fire/copies';
 import { DEFAULT_PLAN_V2, type StoredPlan } from './fire/plan-v2';
-import { DEFAULT_TAX_FACTS, MAX_FACT_ACCOUNTS, applyTaxFactOp, tooManyFactAccounts, type TaxFactOp } from './fire/tax-facts';
+import { DEFAULT_TAX_FACTS, MAX_FACT_ACCOUNTS, applyTaxFactOp, tooManyFactAccounts, withoutAccounts, type TaxFactOp } from './fire/tax-facts';
 import { sameAmounts, typedAmounts, type TypedAmounts } from './fire/plan-currency';
 import { nameTaken } from './fire/plan-list';
 import { MANY_AT_ONCE, UnreadableValueError } from './repo';
@@ -472,6 +472,32 @@ export async function saveTaxFacts(ctx: Ctx, op: TaxFactOp) {
     facts = await planFactsStore.update(ctx, change);
   }
   return main ? mainAnswer({ ...main, facts }) : noPlanAnswer(facts);
+}
+
+/**
+ * Takes accounts gone for good out of the tax facts, since no screen is left to
+ * change what was said about them: forgetting an earlier account, deleting a
+ * manual one, and a connector's account removed rather than kept. Never for a
+ * disconnect, which a reconnect can undo, keeping what was typed.
+ *
+ * Writes only when the facts name one, so it never makes `plan-facts` or turns
+ * version 1 into 2. Bytes nobody can read hold nothing to take out, so they don't
+ * hold a forget back. Facts this version doesn't recognise are intact and may name
+ * the account, so they stop it (UnreadableValueError): each caller runs this
+ * before the account goes, so the person can try again.
+ */
+export async function forgetAccountFacts(ctx: Ctx, account_ids: readonly string[]): Promise<void> {
+  if (account_ids.length === 0) return;
+  const gone = new Set(account_ids);
+  try {
+    await planFactsStore.update(ctx, (cur) => {
+      if (cur?.version !== 2) return cur;
+      const tax = withoutAccounts(cur.tax, gone);
+      return tax === cur.tax ? cur : { ...cur, tax };
+    });
+  } catch (err) {
+    if (!(err instanceof UnreadableValueError) || err.unrecognised) throw err;
+  }
 }
 
 /** Records your plan's currency (POST /api/fire-plan): { currency, amounts },

@@ -24,9 +24,10 @@
 //                         about a row but what the token said, no row is split
 //                         or grouped, and the account isn't hidden, marked
 //                         closed, tracked by a goal, linked, named by a rule,
-//                         a note on the timeline, an allocation setting or a
-//                         recurring series marked not recurring, or shared on
-//                         a connection: every check under the links lock,
+//                         a note on the timeline, an allocation setting, the
+//                         tax facts or a recurring series marked not
+//                         recurring, or shared on a connection: every check
+//                         under the links lock,
 //                         just before the first write. Then its
 //                         rows and the account go (the app's own delete), and
 //                         its balance on every day recorded since, folded out
@@ -60,6 +61,8 @@ import type { ResourceAnswer, ResourceInput } from './api-writes';
 import { getManualAccount, type ManualAccount } from './manual';
 import { AccountEditRefused, invalidate, saveAccountEdit, setAccountBalance } from './manual-account-writes';
 import { deleteManualAccount } from './manual-account-delete';
+import { planFactsStore } from './plan-copies';
+import { withoutAccounts } from './fire/tax-facts';
 import { addManualTxn, findManualTxn, manualRowForDisplay, manualTxnStore, type ManualTxn } from './manual-txns';
 import { ACCOUNT_WENT, changeManualTransaction, removeManualTransaction } from './manual-txn-writes';
 import { restoreAnnotation, txnAnnotationStore, type TxnAnnotation } from './txn-annotations';
@@ -244,6 +247,8 @@ async function checkUntouched(ctx: Ctx, c: Change, cur: ManualAccount): Promise<
   if ([...(await timelineNotesStore.getAll(ctx)).values()].some((n) => n.account_id === id)) refuse(NOT_REMOVED('A note on the timeline is about the account'));
   const allocation = await allocationSettingsStore.get(ctx);
   if (allocation && [...allocation.buckets, ...allocation.accounts].some((s) => s.account_id === id)) refuse(NOT_REMOVED('A tax bucket or split on the Plan tab is set for the account'));
+  const facts = await planFactsStore.get(ctx);
+  if (facts?.version === 2 && withoutAccounts(facts.tax, new Set([id])) !== facts.tax) refuse(NOT_REMOVED('What you told the Plan tab about the account is still set'));
   if (await ownerSharesAccount(ctx, id)) refuse(NOT_REMOVED('The account is shared with someone you’re connected with'));
 
   // Every row: made by this token, as its last change of it left it, row and

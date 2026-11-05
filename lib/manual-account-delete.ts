@@ -5,8 +5,9 @@
 // another app does for an account that import made (lib/migration/commit.ts),
 // in one place so the two never differ.
 //
-// THE ORDER MATTERS. Its imports' records and settings first, while its rows
-// can still say which imports were its (lib/import/commit.ts); then its rows,
+// THE ORDER MATTERS. What the tax facts say about it first, the one step that
+// can stop for what is stored; its imports' records and settings next, while its
+// rows can still say which imports were its (lib/import/commit.ts); then its rows,
 // with what was said about them, their splits and places in groups; then the
 // account. If it stops part way, the account is still there to delete again,
 // rather than gone with its rows left behind where nothing shows them. Then
@@ -23,11 +24,13 @@ import { forgetAccountImports } from './import/commit';
 import { forgetAnnotations } from './txn-annotations';
 import { forgetSplitsAndGroups } from './split-gone';
 import { pruneHidden } from './hidden';
+import { forgetAccountFacts } from './plan-writes';
 import { loggable } from './log-safe';
 
 /** Deletes the account and its transactions (see the header). The caller
  *  clears the caches and the backfill flag. */
 export async function deleteManualAccount(ctx: Ctx, account_id: string): Promise<void> {
+  await forgetAccountFacts(ctx, [account_id]);
   await forgetAccountImports(ctx, account_id);
   const rows = await removeAccountTxns(ctx, account_id);
   await forgetAnnotations(ctx, rows).catch((err) => console.warn('manual account delete: exclusions were left behind', loggable(err)));

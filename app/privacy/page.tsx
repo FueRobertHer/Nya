@@ -254,7 +254,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: A
     : []),
   [
     'A bank you disconnect',
-    'Its transactions are deleted at once, except that for each one you recategorized, its date, amount and bank description are kept, encrypted, so the category carries across a reconnection. Its accounts’ balance history, names and the categories you set stay too, until you Forget them (Settings, Connections, Earlier accounts) or delete your account.',
+    'Its transactions are deleted at once, except that for each one you recategorized, its date, amount and bank description are kept, encrypted, so the category carries across a reconnection. Its accounts’ balance history, names, the categories you set and what you told your plan about them for tax stay too, until you Forget them (Settings, Connections, Earlier accounts) or delete your account.',
   ],
   [
     'A download you brought back',
@@ -316,7 +316,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: A
   ],
   [
     'What you tell your plan about tax',
-    'Whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count: until you change them, or delete your account. You can’t change what you said about an account once it is gone, even if you Forget it, or what you put into a Roth while you have no Roth account, so those stay until you delete your account. Encrypted, and in your download. None of these are shown to anyone you share with, sent to a program with an API token, or put in an email. The buckets you choose for your accounts are a separate setting, and what you share of your holdings is split by them.',
+    'Whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count: until you change them, or delete your account. What you said about an account goes once you Forget it or remove it. Disconnecting its bank alone keeps it. Encrypted, and in your download. None of these are shown to anyone you share with, sent to a program with an API token, or put in an email. The buckets you choose for your accounts are a separate setting, and what you share of your holdings is split by them.',
   ],
   [
     'Feature switches and their changes',
