@@ -141,12 +141,17 @@ describe('removing one', () => {
     expect(plaid.removed).toEqual(['tok_theirs']);
   });
 
-  test('what the tax facts say about its accounts stays, as for any disconnect', async () => {
+  test('what the tax facts say about its accounts goes, as for any disconnect, and only that', async () => {
     const { planFactsStore } = await import('@/lib/plan-copies');
+    const { recordDirectory } = await import('@/lib/links');
     await flagOthers();
-    await planFactsStore.set(OTHER, factsAbout('acct_theirs'));
+    await recordDirectory(OTHER, [
+      { item_id: 'theirs', institution_name: 'Bank theirs', error: null, accounts: [{ account_id: 'acct_theirs' }] },
+      { item_id: 'keep', institution_name: 'Bank keep', error: null, accounts: [{ account_id: 'acct_keep' }] },
+    ]);
+    await planFactsStore.set(OTHER, factsAbout('acct_theirs', 'acct_keep'));
     expect(await removeFlagged(OTHER.container, 'theirs')).toEqual({ ok: true });
-    expect(await planFactsStore.get(OTHER)).toEqual(factsAbout('acct_theirs'));
+    expect(await planFactsStore.get(OTHER)).toEqual(factsAbout('acct_keep'));
   });
 
   test('rechecks only the connection being removed, not the whole account', async () => {

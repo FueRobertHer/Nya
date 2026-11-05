@@ -13,7 +13,9 @@ import { clearInvestmentStore } from './invstore';
 import { retireOverrides, pruneOrphanOverrides } from './overrides';
 import { pruneOrphanAnnotations, retireAnnotations } from './txn-annotations';
 import { pruneSplitsAndGroups } from './split-gone';
-import { forgetItem } from './last-known';
+import { forgetItem, rememberedIdsForItem } from './last-known';
+import { directoryIdsForItem } from './links';
+import { forgetAccountFacts } from './plan-writes';
 import { forgetVanished } from './vanished';
 import { clearNewAccounts } from './new-accounts';
 import { forgetConnection } from './connection-health';
@@ -94,6 +96,19 @@ export async function disconnectItem(
   } catch (err) {
     console.error('disconnect: could not record which receipts wait for a re-link', err instanceof Error ? err.name : err);
     await (await import('./attachments')).markForCheck(ctx);
+  }
+
+  // And what the tax facts say about its accounts goes, while its remembered
+  // record is still here to name them: Plaid usually gives a re-added account a
+  // new id, and nothing carries the facts across a link, so they would sit unused
+  // under the old one. Best effort too: facts this version doesn't recognise
+  // (lib/plan-writes.ts) cost this, never the disconnect, and Forget on Earlier
+  // accounts takes them later.
+  try {
+    const [known, remembered] = await Promise.all([directoryIdsForItem(ctx, item_id), rememberedIdsForItem(ctx, item_id)]);
+    await forgetAccountFacts(ctx, [...known, ...remembered]);
+  } catch (err) {
+    console.error('disconnect: could not clear what the tax facts say about its accounts', err instanceof Error ? err.name : typeof err);
   }
 
   await removeItem(ctx, item_id);
