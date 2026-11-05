@@ -4,7 +4,7 @@ import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { PlanEntry, PlanFacts } from './fixtures/release-before/fire/copies';
 import type { PlanItem } from '@/lib/fire/items';
 
-// The release before (the last merge before this one, 8a3bcd2b, TF's, whose readers
+// The release before (the last merge before this one, c6579849, T2 and its Forget fix, whose readers
 // of the plans as copies are in test/fixtures/release-before/fire/copies.ts byte
 // for byte, pinned by test/release-before.test.ts) reading what this release
 // writes, so a rollback to it loses no plan. Every write this release makes
