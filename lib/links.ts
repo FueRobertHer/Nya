@@ -131,6 +131,17 @@ export async function directoryIds(ctx: Ctx): Promise<Set<string>> {
   return new Set((await redis().hkeys(directoryKey(ctx))) ?? []);
 }
 
+/** The accounts the directory holds under one connection, for what goes with
+ *  it on a disconnect (lib/disconnect-item.ts). An entry that can't be read
+ *  says nothing about whose it is, so it is left out. Storage out of reach
+ *  throws. */
+export async function directoryIdsForItem(ctx: Ctx, item_id: string): Promise<string[]> {
+  const { entries } = await readDirectory(ctx);
+  return Object.entries(entries)
+    .filter(([, e]) => e?.item_id === item_id)
+    .map(([account_id]) => account_id);
+}
+
 /** The whole directory, for the download of my data (lib/user-export.ts).
  *  Strict: throws when it can't be read or any entry can't be, rather than
  *  leaving an account's name out. */

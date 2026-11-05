@@ -3286,7 +3286,8 @@ export default function Dashboard({
             )}
             <p className="panel-note" style={endedOffer === shownDisconnectTarget.item_id ? undefined : { marginTop: 0 }}>
               This removes {shownDisconnectTarget.institution_name} and its accounts from Nya, and ends the
-              connection at Plaid. You can reconnect it later. Type{' '}
+              connection at Plaid. What you told your plan about those accounts for tax goes too. You can
+              reconnect it later. Type{' '}
               <strong>{shownDisconnectTarget.institution_name}</strong> below to confirm.
             </p>
             {/* What adding it back doesn't bring back (#39). */}

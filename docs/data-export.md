@@ -830,7 +830,7 @@ What every plan in [`fire-plans`](#fire-plans) shares, and which of them is your
 | `countAnyway[]` | The accounts for a child you count in your plan. |
 | `paidToday` | `kind` (`category` or `tag`) and `name`. Not asked yet. |
 
-An account can be left out of these lists, which is the same as the default (yours, the basis from its holdings, left out if it is for a child). An account is taken out of them when it is gone for good: forgotten, or a manual or connected account removed. A file that brings plans back without `plan-facts` leaves the account none.
+An account can be left out of these lists, which is the same as the default (yours, the basis from its holdings, left out if it is for a child). An account is taken out of them when it leaves Nya: forgotten, a manual or connected account removed, or its Plaid connection disconnected. A file that brings plans back without `plan-facts` leaves the account none.
 
 #### `planned-items`
 
