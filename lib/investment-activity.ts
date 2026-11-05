@@ -19,6 +19,11 @@ import type { InvSync } from './invstore';
 
 const RECENT_LIMIT = 25;
 
+/** Income an account paid in cash: a dividend or interest, not a capital gain
+ *  or a distribution, which are other things to the tax model. */
+const INCOME_SUBTYPES = new Set(['dividend', 'qualified dividend', 'non-qualified dividend', 'interest']);
+const isAccountIncome = (t: { type: string; subtype: string }) => t.type.toLowerCase() === 'cash' && INCOME_SUBTYPES.has((t.subtype || '').toLowerCase());
+
 /** The account's activity from its item's sync. */
 export function activityFromSync(sync: InvSync, account_id: string) {
   // Newest first, explicitly: the store has no order of its own.
@@ -88,6 +93,14 @@ export function activityFromSync(sync: InvSync, account_id: string) {
   // either way. Same UTC days as the rest.
   const contributions_12m_activity_from = flowsKnown && oldest! > yearAgo ? oldest : null;
 
+  // The same year's dividends and interest, for the Plan's tax buckets
+  // (lib/fire/buckets-today.ts): what the rows say arrived as cash. A dividend an
+  // institution reports only as a reinvested buy isn't here, which the sheet
+  // says. Plaid writes money in as a negative amount.
+  const dividends_12m = contributions_12m_from
+    ? mine.filter((t) => t.date >= contributions_12m_from && isAccountIncome(t)).reduce((total, t) => total - t.amount, 0)
+    : null;
+
   // Said in full here so the client can print it as is. A fetch failure
   // serves what is stored (and says so only if there is any); a storage
   // problem serves what was just fetched. Both can happen at once.
@@ -108,6 +121,7 @@ export function activityFromSync(sync: InvSync, account_id: string) {
     contributions_12m_partial,
     contributions_12m_rows,
     contributions_12m_activity_from,
+    dividends_12m,
     note,
   };
 }

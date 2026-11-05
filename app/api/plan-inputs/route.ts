@@ -45,14 +45,15 @@ import { loggable } from '@/lib/log-safe';
 /** At most this many plans in one request. */
 const MAX_PLANS = 100;
 
-/** The contribution fields of an account's activity, as the Plan reads them
- *  (components/plan-inputs.ts contributionsFrom). */
+/** The fields of an account's activity the Plan reads (components/plan-inputs.ts
+ *  contributionsFrom and yearFrom). */
 const PLAN_FIELDS = [
   'contributions_12m',
   'contributions_12m_from',
   'contributions_12m_partial',
   'contributions_12m_rows',
   'contributions_12m_activity_from',
+  'dividends_12m',
   'note',
 ] as const;
 

@@ -437,3 +437,85 @@ describe('contributionsFrom: each plan’s row as its own request gave it', () =
     expect(contributionsFrom({ key: null, plan: null, rows: {}, asked: 0 }, [])).toBeNull();
   });
 });
+
+// A sheet's other accounts (components/PlanTab.tsx): their rows sit on the copy
+// without being part of its key, so Home's cost and the copy's freshness don't
+// change.
+describe('rows beyond the copy’s plans', () => {
+  const OTHER = 'i1:brk';
+  const FILL_URL = '/api/plan-inputs?sync=1&plan=i1%3Abrk';
+  /** A store holding a copy of IDS, with every request after it held. */
+  async function loaded() {
+    let auto = true;
+    const held = server();
+    const s = server(() => ok());
+    const store = createPlanInputsStore({ fetch: (u) => (auto ? s.fetch(u) : held.fetch(u)), now: () => clock });
+    await store.load(IDS);
+    auto = false;
+    return { store, held };
+  }
+
+  test('one missing goes pending and is asked for once; the copy keeps its key and stays fresh', async () => {
+    const { store, held } = await loaded();
+    const key = store.get().key;
+    store.fill([OTHER]);
+    expect(store.get().rows[OTHER]).toEqual({ id: OTHER, pending: true });
+    store.fill([OTHER]);
+    expect(held.urls()).toEqual([FILL_URL]);
+    held.sent[0].answer([200, { plans: [row(OTHER, 7)] }]);
+    await settle();
+    expect(store.get().rows[OTHER]).toEqual(row(OTHER, 7));
+    expect(store.get().key).toBe(key);
+    await store.load(IDS);
+    expect(held.urls()).toEqual([FILL_URL]); // taken as it is
+  });
+
+  test('a row come within five minutes is left alone; one older keeps showing while it refreshes', async () => {
+    const { store, held } = await loaded();
+    store.fill([OTHER]);
+    held.sent[0].answer([200, { plans: [row(OTHER, 7)] }]);
+    await settle();
+    clock += FRESH_MS - 1;
+    store.fill([OTHER]);
+    expect(held.urls()).toEqual([FILL_URL]);
+    clock += 1;
+    store.fill([OTHER]);
+    expect(store.get().rows[OTHER]).toEqual({ ...row(OTHER, 7), refreshing: true });
+    expect(held.urls()).toEqual([FILL_URL, FILL_URL]);
+    held.sent[1].answer([200, { plans: [row(OTHER, 9)] }]);
+    await settle();
+    expect(store.get().rows[OTHER]).toEqual(row(OTHER, 9));
+  });
+
+  test('one that failed is asked for again when a sheet opens, and not before', async () => {
+    const { store, held } = await loaded();
+    store.fill([OTHER]);
+    held.sent[0].answer('throw');
+    await settle();
+    expect(store.get().rows[OTHER]).toEqual({ id: OTHER, failed: true });
+    expect(held.urls()).toEqual([FILL_URL]);
+    store.fill([OTHER]);
+    expect(store.get().rows[OTHER]).toEqual({ id: OTHER, pending: true });
+    expect(held.urls()).toEqual([FILL_URL, FILL_URL]);
+  });
+
+  test('a later load of the copy’s own plans keeps them, and its age isn’t theirs', async () => {
+    const { store, held } = await loaded();
+    store.fill([OTHER]);
+    held.sent[0].answer([200, { plans: [row(OTHER, 7)] }]);
+    await settle();
+    const later = store.load(IDS, { force: true });
+    held.sent[1].answer(ok());
+    await later;
+    await settle();
+    expect(store.get().rows[OTHER]).toEqual(row(OTHER, 7));
+  });
+
+  test('a plan of the copy’s own, already held, asks for nothing', async () => {
+    const { store, held } = await loaded();
+    clock += 1;
+    store.fill(IDS);
+    // No row of the copy says when it came but those a request brought.
+    expect(held.urls()).toEqual([]);
+  });
+});

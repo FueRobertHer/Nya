@@ -82,6 +82,11 @@ export type PlanInputsStore = {
   /** What the copy rests on changed (a refresh, a link, a restore): it goes
    *  stale, still shown, and every screen showing it loads once. */
   invalidate(): void;
+  /** Rows for accounts beyond the copy's plans, asked for when a sheet opens:
+   *  one missing or failed comes, one older than FRESH_MS refreshes. On top of
+   *  the copy, never its key, so Home's cost and the copy's freshness don't
+   *  change, and a later load keeps them. */
+  fill(ids: readonly string[]): void;
 };
 
 type Fetcher = (input: string) => Promise<Response>;
@@ -135,6 +140,8 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
    *  tick its sync answered at. */
   let tick = 0;
   const filled = new Map<string, number>();
+  /** When each row came, for fill(). */
+  const cameAt = new Map<string, number>();
   let saves = 0;
   /** Two saves were under way at once. */
   let overlapped = false;
@@ -173,6 +180,7 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
         filled.set(id, at);
         const row = given?.get(id);
         rows[id] = row && !row.pending ? row : { id, failed: true };
+        cameAt.set(id, now());
       }
       set({ rows });
     })();
@@ -218,8 +226,10 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
           // it did: its row stays, and isn't synced again.
           if ((filled.get(id) ?? 0) > mine.tick) continue;
           const row = given?.get(id);
-          if (row && !row.pending) rows[id] = row;
-          else {
+          if (row && !row.pending) {
+            rows[id] = row;
+            cameAt.set(id, now());
+          } else {
             const old = rows[id];
             rows[id] = old && !old.pending && !old.failed ? { ...old, refreshing: true } : { id, pending: true };
           }
@@ -280,6 +290,23 @@ export function createPlanInputsStore(opts: { fetch?: Fetcher; now?: () => numbe
       gen++;
       stale = true;
       set({ asked: copy.asked + 1 });
+    },
+    fill(ids) {
+      const rows = { ...copy.rows };
+      let changed = false;
+      for (const id of ids) {
+        const row = rows[id];
+        if (syncing.has(id) || row?.pending || row?.refreshing) continue;
+        if (!row || row.failed) {
+          rows[id] = { id, pending: true };
+          changed = true;
+        } else if (now() - (cameAt.get(id) ?? 0) >= FRESH_MS) {
+          rows[id] = { ...row, refreshing: true };
+          changed = true;
+        }
+      }
+      if (changed) set({ rows });
+      sync(ids);
     },
   };
 }
