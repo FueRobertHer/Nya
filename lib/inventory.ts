@@ -775,7 +775,7 @@ const STORES: Readonly<Record<string, Entry>> = {
   'fire-plans': {
     group: 'plans',
     name: 'Your plans',
-    about: 'Your plan and each copy of it you made on the Plan tab: its name, its assumptions, the currency its amounts are in and when it was made and changed, never a figure. Kept only once a newer version of Nya has made your plans copies.',
+    about: 'Your plan and each copy of it you made on the Plan tab: its name, its assumptions, the tax choices you made for it (your state and its rate, your health coverage and what it costs, the inflation and yield it uses), the currency its amounts are in and when it was made and changed, never a figure. Kept only once a newer version of Nya has made your plans copies.',
     unit: ['plan', 'plans'],
     kept: 'Your data',
     plain: 'The id main and random ids, as field names.',
@@ -914,7 +914,7 @@ const STORES: Readonly<Record<string, Entry>> = {
   'plan-facts': {
     group: 'plans',
     name: 'The facts every plan shares',
-    about: 'Which of your plans is yours, and what every plan takes from it: your age and your partner’s, whether cash counts, which accounts fund the plan and how its figures are worked out; and for tax, whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count.',
+    about: 'Which of your plans is yours, and what every plan takes from it: your age and your partner’s, whether cash counts, which accounts fund the plan and how its figures are worked out; and for tax, whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count, whether Nya works tax out from your accounts, how you file, your birth years, how long each dependent counts and which category or tag already pays for coverage.',
     unit: VALUE,
     kept: 'Your data',
   },

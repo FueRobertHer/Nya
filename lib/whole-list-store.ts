@@ -191,7 +191,8 @@ export function createWholeListStore<T>(opts: {
       });
       ok = res.ok;
       if (opts.adoptSaved || opts.showRefusal || opts.onAnswer || opts.saveHooks) answer = await res.json().catch(() => null);
-      const refused = res.status === 400 || (res.status === 409 && !answer?.unreadable);
+      // 403: a feature turned off since the page loaded, said in words.
+      const refused = res.status === 400 || res.status === 403 || (res.status === 409 && !answer?.unreadable);
       if (!ok && opts.showRefusal && refused && typeof answer?.error === 'string') refusal = answer.error;
     } catch {
       ok = false;

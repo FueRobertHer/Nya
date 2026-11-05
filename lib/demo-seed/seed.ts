@@ -151,7 +151,7 @@ export async function seedDemoAccount(ctx: Ctx, userId: string, profile: DemoPro
  *  account: its entry, then the facts. The sandbox accounts are in USD, so
  *  that is the currency of any amount it types (Sam's income). */
 async function seedPlan(ctx: Ctx, plan: FirePlanV2): Promise<void> {
-  await saveMain(ctx, plan, holdsAmounts(plan) ? 'USD' : null, factsOf(DEFAULT_PLAN), null);
+  await saveMain(ctx, plan, holdsAmounts(plan) ? 'USD' : null, factsOf(DEFAULT_PLAN), null, { gated: false });
 }
 
 /** Refuses, changing nothing, what emptyAccount would refuse once the banks
