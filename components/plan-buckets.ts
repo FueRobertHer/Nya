@@ -83,6 +83,10 @@ export function splitNote(from: SavingsSplit['from']): string {
 
 export const STILL_READING = 'Still reading contributions.';
 
+/** Over an amount held with no Roth account counted: lib/fire/tax/mix.ts reads it
+ *  only against a Roth account's money. */
+export const ROTH_HELD_NOTE = 'No Roth account is counted, so your plan doesn’t use this for now. Open it to change or clear it.';
+
 /** Said under the cost basis field: where the figure comes from. */
 export function basisNote(a: Pick<BucketAccount, 'basisFrom'>): string {
   if (a.basisFrom === 'typed') return 'Your own figure. Leave it empty to use what its positions say.';

@@ -27,7 +27,7 @@ import { normalizedAmountText } from '@/lib/manual-txn-input';
 import type { BucketAccount, BucketsToday } from '@/lib/fire/buckets-today';
 import type { ChildAccount } from '@/lib/fire/inputs';
 import { byBucket, type SavingsSplit } from '@/lib/fire/savings-split';
-import { STILL_READING, UNCLASSIFIED_NOTE, accountSub, basisNote, bucketsWhy, leftOutLine, namesOf, rowTitle, splitNote, yieldWords } from './plan-buckets';
+import { ROTH_HELD_NOTE, STILL_READING, UNCLASSIFIED_NOTE, accountSub, basisNote, bucketsWhy, leftOutLine, namesOf, rowTitle, splitNote, yieldWords } from './plan-buckets';
 
 /** The drawer's level past the figure: an account, its bucket, or a person's Roth
  *  contributions. The title goes with it, for the drawer's head. */
@@ -87,10 +87,35 @@ function AccountRow({ title, sub, value, onOpen }: { title: string; sub: string;
   );
 }
 
+/** What a person has put into a Roth, opening its level. */
+function RothRow({ row, sheet, money }: { row: BucketsToday['roth'][number]; sheet: BucketSheet; money: Money }) {
+  return (
+    <li>
+      <button type="button" className="list-row" onClick={() => sheet.onLevel({ kind: 'roth', owner: row.owner, title: rothTitle(row.owner) })}>
+        <span className="list-row-text">
+          <span className="list-row-title">{rothTitle(row.owner)}</span>
+          <span className="list-row-sub">
+            {row.amount === null ? (
+              <span className="badge">Put in not set</span>
+            ) : (
+              <>
+                Put in <Masked>{money(row.amount)}</Masked>
+              </>
+            )}
+          </span>
+        </span>
+      </button>
+    </li>
+  );
+}
+
 /** Invested assets' accounts by bucket. */
 export function BucketGroups({ today, sheet, mix, money }: { today: BucketsToday; sheet: BucketSheet; mix: string | null; money: Money }) {
   const names = namesOf(today);
   const openAccount = (a: { account_id: string; name: string; institution: string }) => sheet.onLevel({ kind: 'account', account_id: a.account_id, title: rowTitle(a, names) });
+  // No Roth group to sit in, and the amounts typed still need a way to be changed
+  // or cleared. Only those: with no Roth account, nothing asks for a partner's.
+  const heldWithoutRoth = today.groups.some((g) => g.bucket === 'roth') ? [] : today.roth.filter((r) => r.amount !== null);
   return (
     <div className="stack loose">
       {today.groups.map((g) => (
@@ -107,28 +132,21 @@ export function BucketGroups({ today, sheet, mix, money }: { today: BucketsToday
             {g.accounts.map((a) => (
               <AccountRow key={a.account_id} title={rowTitle(a, names)} sub={accountSub(a, money, sheet.partner)} value={money(a.value)} onOpen={() => openAccount(a)} />
             ))}
-            {g.bucket === 'roth' &&
-              today.roth.map((r) => (
-                <li key={r.owner}>
-                  <button type="button" className="list-row" onClick={() => sheet.onLevel({ kind: 'roth', owner: r.owner, title: rothTitle(r.owner) })}>
-                    <span className="list-row-text">
-                      <span className="list-row-title">{rothTitle(r.owner)}</span>
-                      <span className="list-row-sub">
-                        {r.amount === null ? (
-                          <span className="badge">Put in not set</span>
-                        ) : (
-                          <>
-                            Put in <Masked>{money(r.amount)}</Masked>
-                          </>
-                        )}
-                      </span>
-                    </span>
-                  </button>
-                </li>
-              ))}
+            {g.bucket === 'roth' && today.roth.map((r) => <RothRow key={r.owner} row={r} sheet={sheet} money={money} />)}
           </ul>
         </section>
       ))}
+      {heldWithoutRoth.length > 0 && (
+        <section className="stack tight">
+          <h3 className="section-label">Roth contributions</h3>
+          <p className="helper">{ROTH_HELD_NOTE}</p>
+          <ul className="list-rows">
+            {heldWithoutRoth.map((r) => (
+              <RothRow key={r.owner} row={r} sheet={sheet} money={money} />
+            ))}
+          </ul>
+        </section>
+      )}
       {today.leftOut.accounts.length > 0 && (
         <section className="stack tight">
           <h3 className="section-label">Left out: a child&rsquo;s education</h3>
@@ -363,6 +381,7 @@ function RothLevel({ owner, sheet, onBack }: { owner: Owner; sheet: BucketSheet;
           <input inputMode="decimal" placeholder={NO_EXAMPLE} value={text} onChange={(e) => setText(e.target.value)} disabled={saving || !!locked} aria-invalid={wrong ? true : undefined} aria-describedby={wrong ? errorId : undefined} />
         </label>
         {wrong && <FieldError id={errorId}>{wrong}</FieldError>}
+        {held !== null && !locked && <p className="helper">Empty it and save to clear it.</p>}
       </div>
       {locked && <p className="helper">{locked}</p>}
       {error && (

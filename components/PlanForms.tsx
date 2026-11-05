@@ -565,9 +565,9 @@ export function FigureForm(
             Count checking and savings accounts too
           </label>
           {props.copy && <p className="panel-note">Counting cash is how your figures are measured: {SAME_IN_EVERY_PLAN}</p>}
-          {today && sheet && (today.groups.length > 0 || today.leftOut.accounts.length > 0) && (
+          {today && sheet && (today.groups.length > 0 || today.leftOut.accounts.length > 0 || today.roth.length > 0) && (
             <>
-              {mode === 'typed' && <p className="panel-note">Your own figure is shared out as these accounts are.</p>}
+              {mode === 'typed' && (today.groups.length > 0 || today.leftOut.accounts.length > 0) && <p className="panel-note">Your own figure is shared out as these accounts are.</p>}
               <BucketGroups today={today} sheet={sheet} mix={props.mix ?? null} money={money} />
             </>
           )}

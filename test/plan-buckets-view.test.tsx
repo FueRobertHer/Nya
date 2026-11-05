@@ -558,6 +558,106 @@ describe('Roth contributions', () => {
     expect(part(rowIn(tab.dialog()!, 'Your Roth contributions')!, 'list-row-sub')!.textContent).toBe('Put in $45,000');
     await tab.unmount();
   });
+
+  describe('held with no Roth account counted', () => {
+    const NO_ROTH: AssetInstitution[] = [{ ...INSTITUTIONS[0], accounts: INSTITUTIONS[0].accounts.filter((a) => a.account_id !== 'r') }];
+    const HELD = { ...DEFAULT_TAX_FACTS, rothContributions: [{ owner: 'you' as const, amount: 45_000 }] };
+    const NOTE = 'No Roth account is counted, so your plan doesn’t use this for now. Open it to change or clear it.';
+
+    test('its own section under the buckets says so, with no Roth bucket drawn', async () => {
+      serve({ tax: HELD });
+      const tab = await mount({ institutions: NO_ROTH });
+      await openAssets(tab);
+      const d = tab.dialog()!;
+      expect(d.findAll((e) => has(e, 'bucket-head')).map((h) => h.textContent)).toEqual(['Taxable$140,000', 'Tax-deferred$260,000', 'HSA$25,000', 'Unclassified$10,000']);
+      expect(tab.shown()).toContain(NOTE);
+      expect(part(rowIn(d, 'Your Roth contributions')!, 'list-row-sub')!.textContent).toBe('Put in $45,000');
+      await tab.unmount();
+    });
+
+    test('nothing held: no section and no row', async () => {
+      serve();
+      const tab = await mount({ institutions: NO_ROTH });
+      await openAssets(tab);
+      expect(tab.shown()).not.toContain(NOTE);
+      expect(rowIn(tab.dialog()!, 'Your Roth contributions')).toBeNull();
+      await tab.unmount();
+    });
+
+    test('the amount can be changed', async () => {
+      const server = serve({ tax: HELD });
+      const tab = await mount({ institutions: NO_ROTH });
+      await openAssets(tab);
+      await openRow(tab, 'Your Roth contributions');
+      expect(tab.title()).toBe('Your Roth contributions');
+      expect(field(tab.dialog()!, 'Put in so far')!.value).toBe('45000');
+      await act(async () => type(field(tab.dialog()!, 'Put in so far')!, '50000'));
+      await press(button(tab.dialog()!, 'Save'));
+      expect(server.facts()[0].body).toEqual({ kind: 'roth', owner: 'you', amount: 50_000 });
+      expect(part(rowIn(tab.dialog()!, 'Your Roth contributions')!, 'list-row-sub')!.textContent).toBe('Put in $50,000');
+      await tab.unmount();
+    });
+
+    test('emptied and saved, it is cleared, and the section goes', async () => {
+      const server = serve({ tax: HELD });
+      const tab = await mount({ institutions: NO_ROTH });
+      await openAssets(tab);
+      await openRow(tab, 'Your Roth contributions');
+      expect(tab.shown()).toContain('Empty it and save to clear it.');
+      await act(async () => type(field(tab.dialog()!, 'Put in so far')!, ''));
+      await press(button(tab.dialog()!, 'Save'));
+      expect(server.facts()[0].body).toEqual({ kind: 'roth', owner: 'you', amount: null });
+      expect(server.state.tax.rothContributions).toEqual([]);
+      expect(tab.shown()).not.toContain(NOTE);
+      expect(rowIn(tab.dialog()!, 'Your Roth contributions')).toBeNull();
+      await tab.unmount();
+    });
+
+    test('a partner’s row only when theirs is held, a partner since removed included', async () => {
+      serve({ tax: HELD, plan: { ...PLAN, partnerAge: 40 } });
+      const partnerSet = await mount({ institutions: NO_ROTH });
+      await openAssets(partnerSet);
+      expect(rowIn(partnerSet.dialog()!, 'Your Roth contributions')).not.toBeNull();
+      expect(rowIn(partnerSet.dialog()!, 'Your partner’s Roth contributions')).toBeNull();
+      await partnerSet.unmount();
+
+      serve({ tax: { ...DEFAULT_TAX_FACTS, rothContributions: [{ owner: 'partner', amount: 9_000 }] } });
+      const noPartner = await mount({ institutions: NO_ROTH });
+      await openAssets(noPartner);
+      expect(rowIn(noPartner.dialog()!, 'Your Roth contributions')).toBeNull();
+      expect(part(rowIn(noPartner.dialog()!, 'Your partner’s Roth contributions')!, 'list-row-sub')!.textContent).toBe('Put in $9,000');
+      await noPartner.unmount();
+    });
+
+    test('with no account counted at all it can still be reached, and your own figure isn’t said to be shared out', async () => {
+      const server = serve({ tax: HELD, plan: { ...PLAN, assets: 200_000 } });
+      const tab = await mount({ institutions: [] });
+      await openAssets(tab);
+      expect(tab.shown()).toContain(NOTE);
+      expect(tab.shown()).not.toContain('Your own figure is shared out as these accounts are.');
+      await openRow(tab, 'Your Roth contributions');
+      await act(async () => type(field(tab.dialog()!, 'Put in so far')!, ''));
+      await press(button(tab.dialog()!, 'Save'));
+      expect(server.state.tax.rothContributions).toEqual([]);
+      expect(tab.shown()).not.toContain(NOTE);
+      await tab.unmount();
+    });
+
+    test('hide amounts masks it', async () => {
+      serve({ tax: HELD });
+      const { setAmountsHidden } = await import('@/lib/format');
+      setAmountsHidden(true);
+      try {
+        const tab = await mount({ institutions: NO_ROTH });
+        await openAssets(tab);
+        expect(tab.shown()).toContain(NOTE);
+        expect(tab.shown()).not.toContain('45,000');
+        await tab.unmount();
+      } finally {
+        setAmountsHidden(false);
+      }
+    });
+  });
 });
 
 describe('before the facts are known', () => {
@@ -668,6 +768,22 @@ describe('with a copy open', () => {
     expect(button(tab.dialog()!, 'Save')!.disabled).toBe(true);
     await press(button(tab.dialog()!, 'Cancel'));
     await openRow(tab, 'Your Roth contributions');
+    expect(field(tab.dialog()!, 'Put in so far')!.disabled).toBe(true);
+    expect(button(tab.dialog()!, 'Save')!.disabled).toBe(true);
+    expect(server.facts()).toEqual([]);
+    await tab.unmount();
+  });
+
+  test('an amount held with no Roth account is off too, with the reason', async () => {
+    const server = serve({ copies: true, tax: { ...DEFAULT_TAX_FACTS, rothContributions: [{ owner: 'you', amount: 45_000 }] } });
+    const tab = await mount({ institutions: [{ ...INSTITUTIONS[0], accounts: INSTITUTIONS[0].accounts.filter((a) => a.account_id !== 'r') }] });
+    await press(part(tab.container, 'plan-bar')!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.startsWith('Plans'))[0]);
+    await press(rowIn(tab.dialog()!, 'Stop at 52'));
+    await press(rowIn(tab.dialog()!, 'Open it'));
+    await openAssets(tab);
+    await openRow(tab, 'Your Roth contributions');
+    expect(tab.shown()).toContain('What is said about an account is the same in every plan: change it on your plan.');
+    expect(tab.shown()).not.toContain('Empty it and save to clear it.');
     expect(field(tab.dialog()!, 'Put in so far')!.disabled).toBe(true);
     expect(button(tab.dialog()!, 'Save')!.disabled).toBe(true);
     expect(server.facts()).toEqual([]);
