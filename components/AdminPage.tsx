@@ -126,11 +126,18 @@ export function TaxLaw({ law }: { law: LawCard }) {
       <Header id="admin-law-title">Tax law</Header>
       <ul className="list-rows">
         {law.years.map((y) => {
-          const badge = y.badge && <span className={y.badge.caution ? 'badge warn' : 'badge'}>{y.badge.text}</span>;
           const text = (
             <span className="list-row-text">
               <span className="list-row-title">{y.title}</span>
-              <span className="list-row-sub">{y.sub}</span>
+              <span className="list-row-sub">
+                {y.sub}
+                {y.badge && (
+                  <>
+                    {' '}
+                    <span className={y.badge.caution ? 'badge warn' : 'badge'}>{y.badge.text}</span>
+                  </>
+                )}
+              </span>
             </span>
           );
           return (
@@ -146,14 +153,10 @@ export function TaxLaw({ law }: { law: LawCard }) {
                   }}
                 >
                   {text}
-                  {badge}
                   {chevron(RIGHT)}
                 </button>
               ) : (
-                <div className="list-row">
-                  {text}
-                  {badge}
-                </div>
+                <div className="list-row">{text}</div>
               )}
             </li>
           );
