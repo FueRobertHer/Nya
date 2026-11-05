@@ -396,6 +396,31 @@ describe('Your figures', () => {
     await tab.unmount();
   }, 60_000);
 
+  test('Health coverage is said to be in your FI number', async () => {
+    const tab = await onAca();
+    await pick(tab.container, 'Your path');
+    expect(subOf(tab.row('Health coverage'))).toBe('ACA before 65, then Medicare · in your FI number');
+    await tab.unmount();
+  }, 30_000);
+
+  test('beside your own number, Health coverage isn’t said to be in it', async () => {
+    const tab = await onAca({ ...PLAN, fiNumber: 1_500_000 });
+    await pick(tab.container, 'Your path');
+    expect(subOf(tab.row('Health coverage'))).toBe('ACA before 65, then Medicare');
+    await tab.unmount();
+  }, 30_000);
+
+  test('from today, a lasting change before the stop is in the FI number’s lines, and not left out', async () => {
+    const change = { id: 'c', label: 'A bigger place', kind: 'spending', from: { anchor: { at: 'age', age: 45 }, offset: 0 }, until: null, once: null, yearly: 12_000, replaces: null, every: null, times: null, inflationAdjusted: true, owner: null, beforeTax: false };
+    const tab = await detailed({ ...PLAN, start: 'assets', items: [change] } as typeof PLAN);
+    await pick(tab.container, 'Your path');
+    await press(tab.row('FI number'));
+    const sheet = tab.dialog()!;
+    expect(sheet.textContent).toContain('Spending in retirement$52,000 a year');
+    expect(sheet.textContent).not.toContain('this plan’s items after you stop');
+    await tab.unmount();
+  }, 30_000);
+
   test('Assumptions, going to your FI number: what it withdraws holds health coverage and tax', async () => {
     const tab = await detailed({ ...PLAN, start: 'assets' } as typeof PLAN);
     await pick(tab.container, 'Your path');
