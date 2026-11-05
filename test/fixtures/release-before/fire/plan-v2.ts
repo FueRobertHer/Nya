@@ -5,14 +5,12 @@
 // ("Stop when I reach FI", beside `targetAge`) and `fiNumber` (your own; null
 // is worked out). Every other field is version 1's, with its ranges.
 //
-// WHAT IS STORED STAYS AS IT WAS. The store (lib/fire-plan.ts) reads either
-// version and its upgrade (upgradeStoredPlan) never changes one into the
-// other, since the seam checks a value and its upgrade alike on every write
-// and downloads the upgraded value. The page works on version 2 in memory
-// (planOf, basePlanOf) and sends back the version it read (toStored). No
-// release writes version 2 to the legacy plan until the copies do (C2), so
-// this release writes version 1 only: the save routes and restore refuse
-// version 2.
+// WHAT IS STORED STAYS AS IT WAS. The store (an entry's plan in `fire-plans`,
+// lib/plan-copies.ts) reads either version and its upgrade (upgradeStoredPlan)
+// never changes one into the other, since the seam checks a value and its
+// upgrade alike on every write and downloads the upgraded value. The page
+// works on version 2 in memory (planOf, basePlanOf) and sends back the
+// version it read (toStored).
 //
 // Today's names keep version 1's meaning (lib/fire/plan.ts: FirePlan,
 // DEFAULT_PLAN, parsePlan, isFirePlan, repairPlan, upgradePlan), so every
@@ -150,7 +148,7 @@ export function isStoredPlan(v: unknown): v is StoredPlan {
   return isFirePlan(v) || isFirePlanV2(v);
 }
 
-/** The store's upgrade (lib/fire-plan.ts), by version, never changing it:
+/** The store's upgrade (lib/fire/copies.ts upgradePlanEntry), by version, never changing it:
  *  version 1's as today (upgradePlan), version 2's missing fields from
  *  DEFAULT_PLAN_V2. Anything else as it is, for the check to refuse. */
 export function upgradeStoredPlan(stored: unknown): unknown {

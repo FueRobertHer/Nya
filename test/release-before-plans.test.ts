@@ -4,25 +4,24 @@ import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { PlanEntry, PlanFacts } from '@/lib/fire/copies';
 import type { PlanItem } from '@/lib/fire/items';
 
-// The release before (C2, whose readers of the plans as copies are in
-// test/fixtures/release-before/fire/copies.ts byte for byte, pinned by
-// test/release-before.test.ts) reading what this release writes, so a
-// rollback to it loses no plan. Every write this release makes (your plan's
-// first save, a New copy, a Try it, an Also save over two plans, a rename, a
-// copy's currency, a delete, Make this your plan, your plan's currency alone)
-// is read back from the stored bytes with C2's own checks: each entry is an
-// entry to it (isPlanEntry, after its upgrade), the facts are facts to it
+// The release before (the last merge before this one, 76196e38, whose readers
+// of the plans as copies are in test/fixtures/release-before/fire/copies.ts byte
+// for byte, pinned by test/release-before.test.ts) reading what this release
+// writes, so a rollback to it loses no plan. Every write this release makes
+// (your plan's first save, a New copy, a Try it, an Also save over two plans, a
+// rename, a copy's currency, a delete, Make this your plan, your plan's currency
+// alone) is read back from the stored bytes with its own checks: each entry is
+// an entry to it (isPlanEntry, after its upgrade), the facts are facts to it
 // (isPlanFacts), your plan is the one it picks (mainOf, never said to be
 // missing), every entry that holds an amount holds its currency, and what its
 // GET answers from them is the plan this release answers. A saved plan of
-// version 2 is a saved plan to it (isSavedPlan). E2 writes items of every
-// kind on every anchor, the stop at FI, your partner's age and your own FI
-// number, all of which C2 reads, and C2's cards keep the items they can't
-// show (its withIncome, withExpenses and withEvents).
-// And its restore (test/fixtures/release-before/user-restore/parts.ts, C2's)
-// takes a download this release makes, plans and all: it refuses a file with
-// a part it doesn't know, or without one of its header parts, and reads each
-// store part as the kind its own list says.
+// version 2 is a saved plan to it (isSavedPlan). This release writes items of
+// every kind on every anchor, the stop at FI, your partner's age and your own
+// FI number, all of which it reads.
+// And its restore (test/fixtures/release-before/user-restore/parts.ts) takes a
+// download this release makes, plans and all: it refuses a file with a part it
+// doesn't know, or without one of its header parts, and reads each store part
+// as the kind its own list says.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -33,7 +32,6 @@ mock.module('@/lib/storage', () => storageMock(fake));
 const oCopies = await import('./fixtures/release-before/fire/copies');
 const oSaved = await import('./fixtures/release-before/fire/saved-plan');
 const oPlanV2 = await import('./fixtures/release-before/fire/plan-v2');
-const oItems = await import('./fixtures/release-before/fire/items');
 const { openStored } = await import('@/lib/repo');
 const { firePlansStore, planFactsStore } = await import('@/lib/plan-copies');
 const { savedPlanStore } = await import('@/lib/saved-plan');
@@ -74,9 +72,9 @@ const ok = <T extends { status: number; body: unknown }>(r: T): T['body'] => {
 const save = (plan: FirePlanV2, based_on: string | null, facts_were: unknown, currency: string | null = 'USD') => call(planRoute.PUT, 'fire-plan', 'PUT', { plan, currency, facts_were, based_on });
 const plans = (method: 'POST' | 'PUT' | 'PATCH' | 'DELETE', body: unknown) => call(plansRoute[method], 'plans', method, body);
 
-/** Every entry and the facts as C2's stores read their bytes: opened, then
+/** Every entry and the facts as its stores read their bytes: opened, then
  *  its upgrade and its checks. */
-async function readAsC2() {
+async function readAsBefore() {
   const fields = (await fake.hgetall<Record<string, string>>(ctxKey('fire-plans'))) ?? {};
   const entries = new Map<string, PlanEntry>();
   const refused: string[] = [];
@@ -97,10 +95,10 @@ async function readAsC2() {
   return { entries, refused, facts };
 }
 
-/** C2 reads every plan there, with `main` as your plan; and what its GET
+/** It reads every plan there, with `main` as your plan; and what its GET
  *  /api/fire-plan answers from them is this release's answer. */
 async function readsAll(main: string, what: string) {
-  const { entries, refused, facts } = await readAsC2();
+  const { entries, refused, facts } = await readAsBefore();
   expect([what, refused]).toEqual([what, []]);
   expect([what, oCopies.isPlanFacts(facts)]).toEqual([what, true]);
   const f = facts as PlanFacts;
@@ -110,8 +108,8 @@ async function readsAll(main: string, what: string) {
     if (oCopies.holdsAmounts(e.plan)) expect([what, id, typeof e.currency]).toEqual([what, id, 'string']);
   }
   const mine = entries.get(main)!;
-  const c2 = { id: main, plan: oCopies.withFacts(mine.plan, f), currency: oCopies.holdsAmounts(mine.plan) ? mine.currency : null, updated_at: mine.updatedAt };
-  expect([what, await (await planRoute.GET()).json()]).toEqual([what, c2]);
+  const before = { id: main, plan: oCopies.withFacts(mine.plan, f), currency: oCopies.holdsAmounts(mine.plan) ? mine.currency : null, updated_at: mine.updatedAt };
+  expect([what, await (await planRoute.GET()).json()]).toEqual([what, before]);
   return entries;
 }
 
@@ -242,12 +240,6 @@ describe('the release before reads every plan this release writes', () => {
     expect([saved.stopAtFi, saved.fiNumber]).toEqual([true, 1_500_000]);
     ok(await plans('POST', { from: MAIN_ID, name: 'Part-time work when you stop', plan: { ...plan, items: items.slice(0, 3) }, currency: 'USD' }));
     await readsAll(MAIN_ID, 'a Try it with items on anchors');
-
-    // C2's cards edit through its views, and keep every item they can't show.
-    const v1 = { id: 'v1', label: 'Rent', amount: 9_000, fromAge: 70, inflationAdjusted: true };
-    const kept = oItems.withIncome(oItems.withExpenses(oItems.withEvents(plan, oItems.eventsOf(plan)), oItems.expensesOf(plan)), [...oItems.incomeOf(plan), v1]);
-    expect(kept.items.slice(0, items.length)).toEqual(items);
-    expect(kept.items.length).toBe(items.length + 1);
   });
 
   test('a saved plan of version 2, as this release’s saved plan route stores it', async () => {

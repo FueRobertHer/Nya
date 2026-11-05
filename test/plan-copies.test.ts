@@ -4,6 +4,7 @@ import { planOf, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { itemFromIncome } from '@/lib/fire/items';
 import { hasTypedAmounts } from '@/lib/fire/plan-currency';
 import { MAIN_ID, factsOf, holdsAmounts, isPlanEntry, isPlanFacts, mainOf, sameFacts, upgradePlanEntry, withFacts, type PlanEntry } from '@/lib/fire/copies';
+import { DEFAULT_TAX_FACTS } from '@/lib/fire/tax-facts';
 
 // Plans as copies, the shapes in memory (lib/fire/copies.ts): what reads,
 // and which entry is yours.
@@ -53,8 +54,24 @@ describe('the facts', () => {
     expect(isPlanFacts({ ...facts, age: 41, partnerAge: 39, includeCash: true, planFunding: [{ account_id: 'acc_1', paidFrom: 'payroll' }], method: 'monte-carlo' })).toBe(true);
   });
 
-  test('of another version, or any other shape, don’t', () => {
+  test('of version 2 read whole, with the tax facts; without them, or with others, don’t', () => {
+    const v2Facts = { ...facts, version: 2 as const, tax: { ...DEFAULT_TAX_FACTS, model: 'detailed' as const, countAnyway: ['acc_529'] } };
+    expect(isPlanFacts(v2Facts)).toBe(true);
+    // Not by a path that drops them.
+    expect(JSON.parse(JSON.stringify(v2Facts))).toEqual(v2Facts);
     expect(isPlanFacts({ ...facts, version: 2 })).toBe(false);
+    expect(isPlanFacts({ ...facts, tax: DEFAULT_TAX_FACTS })).toBe(false);
+    expect(isPlanFacts({ ...v2Facts, tax: { ...DEFAULT_TAX_FACTS, model: 'guess' } })).toBe(false);
+    expect(isPlanFacts({ ...v2Facts, tax: null })).toBe(false);
+    expect(isPlanFacts({ ...v2Facts, filing: 'single' })).toBe(false);
+    expect(isPlanFacts({ ...v2Facts, main: 'has space' })).toBe(false);
+    expect(isPlanFacts({ ...v2Facts, age: 'forty' })).toBe(false);
+  });
+
+  test('of another version, or any other shape, don’t', () => {
+    expect(isPlanFacts({ ...facts, version: 3 })).toBe(false);
+    expect(isPlanFacts({ ...facts, version: 3, tax: DEFAULT_TAX_FACTS })).toBe(false);
+    expect(isPlanFacts({ ...facts, version: 0 })).toBe(false);
     expect(isPlanFacts({ ...facts, filing: 'single' })).toBe(false);
     expect(isPlanFacts({ ...facts, main: 'has space' })).toBe(false);
     expect(isPlanFacts({ ...facts, main: '__proto__' })).toBe(false);

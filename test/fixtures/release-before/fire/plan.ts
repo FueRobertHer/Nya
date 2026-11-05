@@ -1,7 +1,7 @@
 // lib/fire/plan.ts
 //
-// The person's plan assumptions, as stored (lib/fire-plan.ts, one encrypted
-// value per container) and as the Plan tab edits them, and how they turn into
+// The person's plan assumptions, as stored (each plan's entry in `fire-plans`,
+// lib/plan-copies.ts, encrypted) and as the Plan tab edits them, and how they turn into
 // the deterministic FI view and an engine plan.
 //
 // The stored value holds only what the person chose or typed. Anything Nya
@@ -13,7 +13,7 @@
 // runs every PUT through it, and the forms run every edit through it. Every
 // field must be present, of its type and in today's range, the rules between
 // fields must hold, and nothing else may be there. isFirePlan is what a
-// stored plan must be to read back (lib/fire-plan.ts): the same shape and
+// stored plan must be to read back (lib/plan-copies.ts): the same shape and
 // types, but none of the ranges or rules, which a later release may change; a
 // plan saved under one release must never become unreadable under the next.
 // upgradePlan fills in a field added since a plan was saved. Imports no data
@@ -122,11 +122,11 @@ export const DEFAULT_PLAN: FirePlan = {
  *  everything but its version and its lists (lib/fire/compile.ts places a
  *  plan's items), with version 2's stop at FI and own FI number when it has
  *  them. */
-export type PlanCore = Omit<FirePlan, 'version' | 'income' | 'expenses'> & { stopAtFi?: boolean; fiNumber?: number | null };
+export type PlanCore = Omit<FirePlan, 'version' | 'income' | 'expenses'> & { stopAtFi?: boolean; fiNumber?: number | null; partnerAge?: number | null };
 
 /** The age the plan stops working at: the one typed, or under "stop when I
  *  reach FI" the search's answer (lib/fire/steady.ts), null when there is
- *  none or it hasn't run. Every read of the stop outside the Ages sheet and
+ *  none or it hasn't run. Every read of the stop outside the Household sheet and
  *  the readers goes through this or a view's stopAge
  *  (test/plan-stop-source.test.ts). */
 export function stopOf(plan: Pick<PlanCore, 'targetAge' | 'stopAtFi'>, found: number | null = null): number | null {
@@ -134,9 +134,7 @@ export function stopOf(plan: Pick<PlanCore, 'targetAge' | 'stopAtFi'>, found: nu
 }
 
 /** How the Plan's forms (components/PlanForms.tsx) hold a value as text: a
- *  number as it is, a share as a percent to four places. Exported so that a
- *  scenario recording a form's save (lib/fire/scenarios.ts) tells a change
- *  from a value the form only wrote back, at the form's own precision. */
+ *  number as it is, a share as a percent to four places. */
 export const asText = (v: number | null) => (v === null ? '' : String(v));
 export const pctText = (v: number) => String(Number((v * 100).toFixed(4)));
 
@@ -403,7 +401,7 @@ export function isFirePlan(v: unknown): v is FirePlan {
 }
 
 /**
- * A stored plan in the current shape, for the store's reads (lib/fire-plan.ts).
+ * A stored plan in the current shape, for the store's reads (lib/plan-copies.ts).
  * Fills in any field the plan was saved without, from DEFAULT_PLAN: a field
  * added since it was saved. Anything else, a later version's plan among them
  * (a release rolled back reading what a newer one saved), is returned as it
