@@ -22,6 +22,8 @@
 //   h = pv(health) / pv(1)
 // One-offs are in t's denominator because the stress test grosses them up at `t`
 // too, so the two come out the same on a steady market (test/drawdown-bridge).
+// t stops at the first year that can't pay: after it the money is gone, and what
+// income still pays, at little tax, would thin it.
 //
 // A SHORT YEAR is recorded and the years run on from empty balances, so later
 // health coverage is still known. A rule that only takes a share of what is there
@@ -181,7 +183,8 @@ export type Drawdown = {
   /** Taxable at its value, Roth as it is, tax-deferred and an HSA after tax at
    *  the last year's top rate. */
   leftAtEnd: number;
-  /** All the years' tax and health coverage, in today's dollars. */
+  /** What the years paid of tax and health coverage, in today's dollars. A year that
+   *  can't pay all it asks gives up living and one-offs first. */
   taxAndHealth: number;
   /** Your age in the first year it couldn't pay; null when it lasts. */
   runsOutAt: number | null;
@@ -423,18 +426,23 @@ function runYears(inp: DrawdownInput, rule: RuleSpec, t: number, h: number): Run
 }
 
 /** Tax's share of what the years paid, and the level yearly health cost, by when
- *  each dollar is paid. What a year couldn't pay is no part of the share: it has no
- *  tax on it, and would thin the tax of the years that did pay. From the rows, so a
- *  test can work them out again. */
-export function taxShares(rows: readonly Pick<DrawdownYear, 'living' | 'oneOffs' | 'health' | 'tax' | 'shortfall'>[], realReturn: number): { t: number; h: number } {
+ *  each dollar is paid. What a year couldn't pay is no part of the share, and nor is
+ *  any year after the first that couldn't: the money is gone by then, and what income
+ *  still pays, at little tax, would thin the tax of the years that drew on it. From
+ *  the rows, so a test can work them out again. */
+export function taxShares(rows: readonly Pick<DrawdownYear, 'living' | 'oneOffs' | 'health' | 'tax' | 'short' | 'shortfall'>[], realReturn: number): { t: number; h: number } {
   let pvTax = 0;
   let pvCost = 0;
   let pvHealth = 0;
   let pvOne = 0;
   let d = 1;
+  let paying = true;
   for (const r of rows) {
-    pvTax += r.tax * d;
-    pvCost += Math.max(0, r.living + r.oneOffs + r.health + r.tax - r.shortfall) * d;
+    if (paying) {
+      pvTax += r.tax * d;
+      pvCost += Math.max(0, r.living + r.oneOffs + r.health + r.tax - r.shortfall) * d;
+    }
+    paying &&= !r.short;
     pvHealth += r.health * d;
     pvOne += d;
     d /= 1 + realReturn;
@@ -524,7 +532,7 @@ export function runDrawdown(inp: DrawdownInput): Drawdown | { failed: string } {
       rounds,
       settled,
       leftAtEnd: left,
-      taxAndHealth: rows.reduce((sum, r) => (r.short ? sum : sum + r.tax + r.health), 0),
+      taxAndHealth: rows.reduce((sum, r) => sum + Math.max(0, r.tax + r.health - Math.max(0, r.shortfall - r.living - r.oneOffs)), 0),
       runsOutAt: firstShort ? firstShort.age : null,
       stages: stagesOf(rows, inp.rmdAges.you),
       notes,

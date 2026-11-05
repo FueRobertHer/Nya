@@ -139,13 +139,17 @@ describe('t and h', () => {
 
   test('nothing spent is no share, never a division by nothing', () => {
     expect(taxShares([], 0.05)).toEqual({ t: 0, h: 0 });
-    expect(taxShares([{ living: 0, oneOffs: 0, health: 0, tax: 0, shortfall: 0 }], 0.05)).toEqual({ t: 0, h: 0 });
+    expect(taxShares([{ living: 0, oneOffs: 0, health: 0, tax: 0, short: false, shortfall: 0 }], 0.05)).toEqual({ t: 0, h: 0 });
   });
 
   test('held short of one even when all that is spent is tax', () => {
-    expect(taxShares([{ living: 0, oneOffs: 0, health: 0, tax: 100, shortfall: 0 }], 0.05).t).toBeLessThan(1);
+    expect(taxShares([{ living: 0, oneOffs: 0, health: 0, tax: 100, short: false, shortfall: 0 }], 0.05).t).toBeLessThan(1);
+    const paid = { living: 80, oneOffs: 0, health: 10, tax: 10, short: false, shortfall: 0 };
     // A year that couldn't pay has no tax on what it didn't pay.
-    expect(taxShares([{ living: 80, oneOffs: 0, health: 10, tax: 10, shortfall: 0 }, { living: 80, oneOffs: 0, health: 10, tax: 0, shortfall: 90 }], 0).t).toBeCloseTo(0.1, 12);
+    expect(taxShares([paid, { living: 80, oneOffs: 0, health: 10, tax: 0, short: true, shortfall: 90 }], 0).t).toBeCloseTo(0.1, 12);
+    // And what income pays after it, at no tax, doesn't thin the share.
+    const after = { living: 80, oneOffs: 0, health: 10, tax: 0, short: true, shortfall: 50 };
+    expect(taxShares([paid, { ...after, shortfall: 90 }, after, after], 0)).toEqual({ t: taxShares([paid], 0).t, h: 10 });
   });
 });
 
@@ -285,7 +289,7 @@ describe('law by year', () => {
     const d = run();
     const last = d.years[44];
     expect(d.leftAtEnd).toBeCloseTo(last.end.taxable + last.end.roth + (last.end.deferred + last.end.hsa) * (1 - last.law.topRate), 6);
-    expect(d.taxAndHealth).toBeCloseTo(d.years.reduce((s, y) => (y.short ? s : s + y.tax + y.health), 0), 6);
+    expect(d.taxAndHealth).toBeCloseTo(d.years.reduce((s, y) => s + y.tax + y.health, 0), 6);
   });
 
   test('a state’s rate reaches the year', () => {

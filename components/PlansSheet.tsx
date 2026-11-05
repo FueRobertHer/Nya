@@ -378,7 +378,6 @@ export function PlansSheet({
     const f = plan.outcome.figures;
     if (plan.outcome.working) return { ...column, outcome: { kind: 'figures', figures: f, result: 'pending', working: true } };
     if (!('sim' in f.engine)) return { ...column, outcome: { kind: 'figures', figures: f, result: { missing: f.engine.missing } } };
-    if (plan.outcome.held) return { ...column, outcome: { kind: 'figures', figures: f, result: 'pending' } };
     return { ...column, outcome: { kind: 'figures', figures: f, result: answers.get(jobKey(method, f.engine.sim)) ?? 'pending' } };
   });
   const failed = compared.some((c) => c.outcome.kind === 'figures' && typeof c.outcome.result === 'object' && 'error' in c.outcome.result);

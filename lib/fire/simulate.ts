@@ -340,6 +340,7 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
   const tax = plan.taxRate;
   const bridged = plan.bridged !== undefined;
   const healthIn = plan.bridged && !canRunOut(plan.rule.kind) ? plan.bridged.h : null;
+  const atLeast = plan.bridged ? plan.bridged.h : 0;
   const afterFee = 1 - plan.fee;
   const w = plan.allocation;
   const drift = plan.rebalance === 'none';
@@ -410,7 +411,7 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
       const planned = Number.isFinite(raw) && raw > 0 ? raw : 0;
       if (y === 0) initial = planned;
       previous = planned;
-      const spend = planned * (1 - tax);
+      const spend = Math.max(planned * (1 - tax), atLeast);
       if (y === 0 && p === 0) out.firstYearSpending = spend;
 
       let income = 0;

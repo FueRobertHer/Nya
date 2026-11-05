@@ -18,13 +18,15 @@
 //   - A rule that can't run out gives up living spending before a year comes up
 //     short (`bridged` again), as the drawdown's year does: VPW's last year takes
 //     all there is, and health over `h` comes on top of it.
+//   - Spending under `h` holds at `h` (`bridged` again), as the drawdown holds living
+//     at zero: a year still owes its health coverage once the rule's share comes to
+//     nothing.
 //   - A lower cost comes off living spending and one-offs, never off health, but the
 //     engine's cost holds `h`: what a year's lower costs had nothing left to lower
 //     goes back on.
 //
 // On a steady market at the drawdown's own inflation this ends where the drawdown
-// ends, to the dollar (test/drawdown-bridge.test.ts). `spend < h` inside a run
-// waits for T5, and About these numbers says so.
+// ends, to the dollar (test/drawdown-bridge.test.ts).
 //
 // Arithmetic only: the Plan tab runs this in the browser.
 

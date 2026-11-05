@@ -5,6 +5,7 @@
 import { describe, expect, test } from 'bun:test';
 import { bridgedEngine } from '@/lib/fire/bridge';
 import type { BucketsToday } from '@/lib/fire/buckets-today';
+import { taxShares } from '@/lib/fire/drawdown';
 import type { PlanItem } from '@/lib/fire/items';
 import { makeMarket, type Market } from '@/lib/fire/market';
 import { steadyRun } from '@/lib/fire/path';
@@ -129,6 +130,35 @@ describe('a rule that can’t run out', () => {
     expect(steadyRun(engineOf(f).sim, 0.05).failedYear).toBe(30);
   });
 
+  describe('once a cost has taken all there is', () => {
+    const emptied = (rule: 'percent' | 'vpw', age: number, cost: number, at: number) => {
+      const assets = 1_000_000;
+      const p = plan({ rule, age, targetAge: age, spending: 40_000, savings: 0, assets, realReturn: 0.03, items: [item({ kind: 'one-off', from: when(at), once: cost })] });
+      return figures(p, { buckets: buckets(0, 0, assets, assets), savingsSplit: null, health: { ...input.health, coverage: { kind: 'other', yearly: 30_000 } } });
+    };
+    test.each([
+      ['percent', 60, 740_770, 68, 69],
+      ['percent', 66, 935_000, 68, 69],
+      ['vpw', 60, 518_937, 75, 88],
+    ] as const)('%s from %d, $%d at %d: health runs it out later, in both', (rule, age, cost, at, out) => {
+      const f = emptied(rule, age, cost, at);
+      expect(detailOf(f).start.runsOutAt).toBe(out);
+      expect(age + (steadyRun(engineOf(f).sim, 0.03).failedYear as number)).toBe(out);
+    });
+  });
+
+  test('spending under health coverage holds at it, in both', () => {
+    const f = figures(plan({ rule: 'percent', age: 50, targetAge: 50, spending: 20_000, savings: 0, assets: 500_000, realReturn: 0.03 }), {
+      buckets: buckets(0, 0, 500_000, 500_000),
+      savingsSplit: null,
+      health: { ...input.health, coverage: { kind: 'other', yearly: 60_000 } },
+    });
+    const d = detailOf(f).start;
+    expect(d.notes).toContain('held-at-zero');
+    expect(d.runsOutAt).not.toBeNull();
+    expect(50 + (steadyRun(engineOf(f).sim, 0.03).failedYear as number)).toBe(d.runsOutAt as number);
+  });
+
   test('a rule that can run out isn’t let off', () => {
     const f = figures(plan({ spending: 200_000 }), other);
     expect(detailOf(f).start.runsOutAt).not.toBeNull();
@@ -155,10 +185,40 @@ describe('a plan that runs out', () => {
     }
   });
 
-  test('tax and health in all are of the years that paid', () => {
+  test('what income pays once the money is gone doesn’t thin its tax share', () => {
+    const ss = (yearly: number) => item({ kind: 'social-security', from: when(67), yearly, beforeTax: true });
+    const f = figures(plan({ age: 55, targetAge: 55, spending: 80_000, savings: 0, assets: 1_000_000, realReturn: 0.04, items: [ss(36_000)] }), { buckets: buckets(200_000, 700_000, 100_000, 50_000), savingsSplit: null });
+    const d = detailOf(f).start;
+    expect(d.runsOutAt).toBe(67);
+    expect(55 + (steadyRun(engineOf(f).sim, 0.04).failedYear as number)).toBe(67);
+    expect(d.t).toBeCloseTo(taxShares(d.years.slice(0, 67 - 55 + 1), 0.04).t, 9);
+    expect(d.t).toBeGreaterThan(taxShares(d.years, 0.04).t * 0.999);
+    // And across plans: the constant rule runs out when the drawdown does.
+    let out = 0;
+    for (const age of [45, 50, 55])
+      for (const assets of [800_000, 1_100_000, 1_500_000])
+        for (const spending of [70_000, 85_000, 110_000])
+          for (const yearly of [0, 30_000, 40_000])
+            for (const realReturn of [0.03, 0.05]) {
+              const g = figures(plan({ age, targetAge: age, spending, savings: 0, assets, realReturn, items: yearly ? [ss(yearly)] : [] }), { buckets: buckets(assets * 0.2, assets * 0.7, assets * 0.1, assets * 0.05), savingsSplit: null });
+              const at = detailOf(g).start.runsOutAt;
+              if (at === null) continue;
+              out++;
+              expect(age + (steadyRun(engineOf(g).sim, realReturn).failedYear as number)).toBe(at);
+            }
+    expect(out).toBeGreaterThan(40);
+  });
+
+  test('tax and health in all are what the years paid', () => {
     const d = detailOf(short(120_000, 1_100_000)).start;
-    expect(d.taxAndHealth).toBeCloseTo(d.years.filter((y) => !y.short).reduce((s, y) => s + y.tax + y.health, 0), 6);
+    const paidYears = d.years.filter((y) => !y.short).reduce((s, y) => s + y.tax + y.health, 0);
+    expect(d.taxAndHealth).toBeGreaterThanOrEqual(paidYears);
     expect(d.taxAndHealth).toBeLessThan(d.years.reduce((s, y) => s + y.tax + y.health, 0));
+    // Income pays for health after the money is gone, and that was paid.
+    const f = figures(plan({ age: 50, targetAge: 50, spending: 75_000, savings: 0, assets: 1_100_000, realReturn: 0.04, items: [item({ kind: 'social-security', from: when(67), yearly: 30_000, beforeTax: true })] }), { buckets: buckets(220_000, 770_000, 110_000, 55_000), savingsSplit: null });
+    const withIncome = detailOf(f).start;
+    expect(withIncome.runsOutAt).not.toBeNull();
+    expect(withIncome.taxAndHealth).toBeGreaterThan(withIncome.years.filter((y) => !y.short).reduce((s, y) => s + y.tax + y.health, 0) + 50_000);
   });
 });
 
