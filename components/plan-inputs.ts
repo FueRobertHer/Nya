@@ -15,7 +15,7 @@
 
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import type { LeaveOut } from '@/lib/fire/child-accounts';
-import { DEFAULT_TAX_FACTS, isTaxFacts, type TaxFacts } from '@/lib/fire/tax-facts';
+import { DEFAULT_TAX_FACTS, isTaxFacts, type TaxFactOp, type TaxFacts } from '@/lib/fire/tax-facts';
 import type { Txn } from './MonthBreakdown';
 import { localDate } from '@/lib/local-date';
 import {
@@ -41,7 +41,9 @@ import type { FxTable } from '@/lib/fx/rates';
 import type { PageFx } from '@/lib/fx/view';
 import { useCurrencySettings } from './currency-state';
 import { historyCount } from '@/lib/spending';
-import type { PlanInputsCopy, PlanInputsStore } from '@/lib/plan-inputs-store';
+import type { PlanInputsCopy, PlanInputsStore, PlanRow } from '@/lib/plan-inputs-store';
+import type { AccountYear } from '@/lib/fire/buckets-today';
+import { isInvestmentType } from '@/lib/balance';
 
 /** The workplace plans whose contributions are measured: linked (not manual)
  *  and not hidden. */
@@ -53,6 +55,46 @@ export function workplacePlansOf(institutions: AssetInstitution[]) {
           .map((a) => ({ item_id: i.item_id as string, account_id: a.account_id, name: a.name, institution: i.name }))
       : []
   );
+}
+
+/** The investment accounts whose last year the buckets' sheets ask for when they
+ *  open (lib/plan-inputs-store.ts fill): linked, not hidden, with a subtype, since
+ *  a connector's or SimpleFIN's account has none and no activity to read. At most
+ *  what one request may ask for. */
+export function planAccountsOf(institutions: AssetInstitution[]) {
+  return institutions
+    .flatMap((i) => (i.item_id ? i.accounts.filter((a) => !a.hidden && isInvestmentType(a.type) && !!a.subtype).map((a) => ({ item_id: i.item_id as string, account_id: a.account_id })) : []))
+    .slice(0, MAX_FILLED);
+}
+const MAX_FILLED = 100;
+
+/** An account's last year from its row: what isn't known yet (the row is still
+ *  coming, failed, or was cached before the field) is null. */
+export function yearFrom(row: PlanRow | undefined): AccountYear {
+  const known = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  if (!row || row.pending || row.failed) return { income: null, contributions: null };
+  return { income: known(row.dividends_12m), contributions: known(row.contributions_12m) };
+}
+
+/** Saves one tax fact. Through the shared copy, so a load waits for it and Home
+ *  and the Plan move together: true once the server has it, or why it wasn't. */
+export async function saveTaxFact(store: PlanInputsStore, op: TaxFactOp): Promise<true | string> {
+  const notSaved = 'It was not saved. Try again in a moment.';
+  const end = store.beginSave();
+  try {
+    const res = await fetch('/api/plan-facts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(op) });
+    const body: unknown = await res.json().catch(() => null);
+    const answer = typeof body === 'object' && body !== null && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
+    if (res.ok && answer) {
+      store.adopt(answer);
+      return true;
+    }
+    return typeof answer?.error === 'string' ? answer.error : notSaved;
+  } catch {
+    return notSaved;
+  } finally {
+    end();
+  }
 }
 
 /** A workplace plan's id in the Plan's inputs (lib/plan-inputs-store.ts):

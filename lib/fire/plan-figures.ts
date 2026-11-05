@@ -66,6 +66,9 @@ export type PlanFigures = {
   events: CompiledEvents | null;
   /** The plan's items' notes, by position. */
   itemNotes: ItemNote[];
+  /** The walk's changes by year, which the projected mix follows
+   *  (lib/fire/tax/mix.ts). */
+  walk: WalkChanges;
   /** What moved the walk: the plan's one-offs and income (`items`), its items
    *  of the other kinds (`events`). */
   walkFrom: { items: boolean; events: boolean };
@@ -196,6 +199,7 @@ function assemble(plan: FirePlanV2, b: Built, resolution: Resolution): PlanFigur
     short: b.short,
     walked: b.walked,
     walkedSavings: b.walkedSavings,
+    walk: b.walk,
     startsWith: startsWith(plan, b.core, b.engine, b.walk),
   };
 }

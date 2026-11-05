@@ -224,9 +224,12 @@ export type AllocationCardProps = {
   /** Every institution, for naming accounts missing from a recorded day. */
   institutions: AllocInstitution[];
   balancesAsOf: string | null;
+  /** A cost basis the person typed, by account (the tax facts), which wins over
+   *  what the positions say. */
+  typedBasis?: ReadonlyMap<string, number>;
 };
 
-export default function AllocationCard({ allocation, plan, onUseMix, settingsLocked = false, copyName = null, planKey = 'plan', institutions, balancesAsOf }: AllocationCardProps) {
+export default function AllocationCard({ allocation, plan, onUseMix, settingsLocked = false, copyName = null, planKey = 'plan', institutions, balancesAsOf, typedBasis = NO_BASIS }: AllocationCardProps) {
   const { alloc, mix, settings, withSettings } = allocation;
   const [view, setView] = useState<'class' | 'bucket'>('class');
   const [sheet, setSheet] = useState<SheetState | null>(null);
@@ -327,7 +330,7 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
             {view === 'class' ? (
               <ClassView alloc={alloc} money={money} editable={editable} settings={current} open={open} />
             ) : (
-              <BucketView alloc={alloc} money={money} editable={editable} open={open} />
+              <BucketView alloc={alloc} money={money} editable={editable} open={open} typedBasis={typedBasis} />
             )}
           </div>
           <AllocationNotes alloc={alloc} money={money} />
@@ -633,7 +636,16 @@ export function ClassView({
   );
 }
 
-export function BucketView({ alloc, money, editable, open }: { alloc: Allocation; money: (n: number) => string; editable: boolean; open: (s: SheetState) => void }) {
+const NO_BASIS: ReadonlyMap<string, number> = new Map();
+
+/** A taxable account's gain or loss, in words; empty when its basis isn't known. */
+export function gainNote(amount: number | null, basis: number | null, money: (n: number) => string): string {
+  if (amount === null || basis === null) return '';
+  const gain = amount - basis;
+  return gain < 0 ? `, loss ${money(-gain)}` : `, gain ${money(gain)}`;
+}
+
+export function BucketView({ alloc, money, editable, open, typedBasis = NO_BASIS }: { alloc: Allocation; money: (n: number) => string; editable: boolean; open: (s: SheetState) => void; typedBasis?: ReadonlyMap<string, number> }) {
   return (
     <>
       <ShareTable totals={alloc.buckets} order={BUCKET_SLOTS} colors={BUCKET_COLORS} label={(b) => BUCKET_NAMES[b]} money={money} />
@@ -658,7 +670,7 @@ export function BucketView({ alloc, money, editable, open }: { alloc: Allocation
               key={a.account_id}
               label={`${a.name} · ${a.institution}`}
               value={BUCKET_NAMES[b.bucket]}
-              note={`${a.amount !== null ? `${money(a.amount)}${a.staleAsOf ? `, its balance on ${fmtDay(a.staleAsOf, a.staleAsOfAt)} (${a.institution} couldn't be reached since)` : ''}, ` : a.otherCurrency ? `in ${a.otherCurrency}, left out, ` : ''}${note}.`}
+              note={`${a.amount !== null ? `${money(a.amount)}${a.staleAsOf ? `, its balance on ${fmtDay(a.staleAsOf, a.staleAsOfAt)} (${a.institution} couldn't be reached since)` : ''}, ` : a.otherCurrency ? `in ${a.otherCurrency}, left out, ` : ''}${note}${b.bucket === 'taxable' ? gainNote(a.amount, typedBasis.get(a.account_id) ?? a.basis, money) : ''}.`}
               action={
                 <ActionButton onClick={() => open({ kind: 'bucket', account_id: a.account_id, label: a.name, bucket: b })} disabled={!editable} label={`Change the bucket of ${a.name}`}>
                   Change

@@ -31,6 +31,9 @@ import FieldError from './FieldError';
 import { Notice } from './TotalCaveats';
 import AlsoChange, { type AlsoChoice } from './AlsoChange';
 import { itemRuleText } from './plan-items';
+import { BucketGroups, BucketLevel, SavingsSplitLines, type BucketSheet } from './PlanBuckets';
+import { headLine } from './plan-buckets';
+import type { SavingsSplit } from '@/lib/fire/savings-split';
 import type { PlanMix } from '@/lib/allocation/allocation';
 
 type SaveProps = {
@@ -455,6 +458,12 @@ export function FigureForm(
     /** Savings: the workplace plans whose contributions are measured, each
      *  with how it is paid into. */
     workplacePlans?: { account_id: string; label: string }[];
+    /** Invested assets by tax bucket. */
+    buckets?: BucketSheet;
+    /** Where a year of savings goes. */
+    split?: SavingsSplit | null;
+    /** The mix at the start age, in a line; null when it can't be worked out. */
+    mix?: string | null;
   }
 ) {
   const { plan, kind } = props;
@@ -484,8 +493,16 @@ export function FigureForm(
   // cash box says otherwise.
   const why = props.why && (kind !== 'assets' || includeCash === plan.includeCash) ? props.why : null;
   const range = kind === 'savings' ? [-LIMITS.money, LIMITS.money] : kind === 'assets' ? [0, LIMITS.balance] : [0, LIMITS.money];
+  const sheet = props.buckets ?? null;
+  const today = kind === 'assets' && sheet ? sheet.bucketsFor(includeCash) : null;
+  const level = (kind === 'assets' && sheet?.level) || null;
+  const money = (n: number) => wholeMoney(n, props.currency);
   return (
     <>
+      {/* A level of the drawer over the form, which stays, so what was typed in
+          it is there on the way back. */}
+      {level && sheet && today && <BucketLevel level={level} today={today} sheet={sheet} money={money} />}
+      <div hidden={!!level}>
       <p className="panel-note" style={{ marginTop: 0 }}>
         {t.note}
         {kind === 'assets' && props.childOut ? CHILD_ACCOUNTS_NOTE : ''}
@@ -504,6 +521,10 @@ export function FigureForm(
           <p className="panel-note">
             {measured === null ? (
               'Nya has nothing to measure this from yet, so the plan leaves it out until you type your own.'
+            ) : today && sheet ? (
+              <>
+                <Masked>{headLine(measured, today.groups.reduce((n, g) => n + g.accounts.length, 0), sheet.asOf, money)}</Masked> Each account&rsquo;s bucket comes from its type; change one that is in another.
+              </>
             ) : (
               <>
                 <strong>
@@ -543,7 +564,13 @@ export function FigureForm(
             Count checking and savings accounts too
           </label>
           {props.copy && <p className="panel-note">Counting cash is how your figures are measured: {SAME_IN_EVERY_PLAN}</p>}
-          {live && live.accounts.length > 0 && mode === 'measured' && (
+          {today && sheet && (today.groups.length > 0 || today.leftOut.accounts.length > 0) && (
+            <>
+              {mode === 'typed' && <p className="panel-note">Your own figure is shared out as these accounts are.</p>}
+              <BucketGroups today={today} sheet={sheet} mix={props.mix ?? null} money={money} />
+            </>
+          )}
+          {!today && live && live.accounts.length > 0 && mode === 'measured' && (
             <ul className="plan-accounts">
               {live.accounts.map((a) => (
                 <li key={a.account_id}>
@@ -592,6 +619,7 @@ export function FigureForm(
           ))}
         </>
       )}
+      {kind === 'savings' && sheet && props.split && <SavingsSplitLines split={props.split} reading={sheet.reading} />}
       {s.error && (
         <Notice level="critical" role="alert">
           {s.error}
@@ -615,6 +643,7 @@ export function FigureForm(
           }))
         }
       />
+      </div>
     </>
   );
 }

@@ -48,6 +48,7 @@ import { isInvestmentType } from '@/lib/balance';
 import { convert } from '@/lib/fx/rates';
 import { tableOf, type PageFx } from '@/lib/fx/view';
 import { accountBucket, BUCKET_SLOTS, type AccountBucket, type BucketSlot } from './buckets';
+import { positionsBasis } from '@/lib/fire/buckets-today';
 import {
   ASSET_CLASSES,
   classify,
@@ -113,6 +114,8 @@ export type AllocHolding = {
   security_type?: string | null;
   is_cash_equivalent?: boolean | null;
   value?: number | null;
+  /** What was paid for it, in its own currency; null or absent when not known. */
+  cost_basis?: number | null;
   /** The position's own currency. Absent on payloads cached before it was
    *  sent: the account's is used then. */
   currency?: string | null;
@@ -192,6 +195,9 @@ export type AccountRow = {
   staleAsOfAt: string | null;
   /** An account the person tracks by hand. */
   manual: boolean;
+  /** What its positions cost, in the allocation's currency (a position with
+   *  none counts as all gain); null when none says. */
+  basis: number | null;
 };
 
 /** Why the allocation may be short. */
@@ -290,9 +296,11 @@ export function allocate(input: {
         staleAsOf: inst.error ? inst.staleAsOf : null,
         staleAsOfAt: inst.error ? (inst.staleAsOfAt ?? null) : null,
         manual: inst.item_id === null,
+        basis: null,
       };
       accounts.push(row);
       const positions = held.get(a.account_id) ?? [];
+      row.basis = positionsBasis(a, positions).basis;
       if (!inCurrency(a.currency)) {
         // In another currency, positions and all: left out, and named.
         const priced = positions.filter((h) => finite(h.value));
@@ -657,7 +665,9 @@ export function inputsIn(
     if (h.account_id && was && converted.get(h.account_id) === was && was !== into) return h.currency ? h : { ...h, currency: was };
     if (!currency || currency === into || typeof h.value !== 'number' || !Number.isFinite(h.value)) return currency && !h.currency ? { ...h, currency } : h;
     const value = to(h.value, currency);
-    return value === null ? { ...h, currency } : { ...h, value, currency: into };
+    if (value === null) return { ...h, currency };
+    const basis = typeof h.cost_basis === 'number' && Number.isFinite(h.cost_basis) ? to(h.cost_basis, currency) : h.cost_basis;
+    return { ...h, value, cost_basis: basis, currency: into };
   });
   return {
     institutions: outInstitutions,

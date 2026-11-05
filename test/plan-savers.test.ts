@@ -34,6 +34,7 @@ describe('with a copy open', () => {
     expect(await s.form({ ...shown, stocksPct: 60 }, ['main'])).toBe(true);
     expect(s.repair).toBeNull();
     expect(s.allocationSettings).toBe(false);
+    expect(s.taxFacts).toBe(false);
     expect(r.toPlan).toEqual([]);
     expect(r.toCopy.map(([p, also]) => [p.withdrawalRate, p.stocksPct, also])).toEqual([
       [0.035, 75, []],
@@ -68,6 +69,7 @@ describe('with your plan open', () => {
 
   test('with no repair waiting there is none to save', () => {
     expect(planSavers({ copy: null, savePlan: async () => true, repaired: null }).repair).toBeNull();
+    expect(planSavers({ copy: null, savePlan: async () => true, repaired: null }).taxFacts).toBe(true);
   });
 });
 

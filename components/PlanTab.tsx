@@ -93,13 +93,20 @@ import { Hero } from './Hero';
 import { createWholeListStore, initialListState, type ListState, type ListStatus } from '@/lib/whole-list-store';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { leftOutOf } from '@/lib/fire/child-accounts';
+import { bucketsToday, type AccountYear } from '@/lib/fire/buckets-today';
+import { savingsSplit } from '@/lib/fire/savings-split';
+import { mixShares, mixToday, projectMix } from '@/lib/fire/tax/mix';
+import { mixLine } from './plan-buckets';
+import type { BucketSheet, FigureLevel } from './PlanBuckets';
+import { fmtAsOf } from './accounts-format';
+import { EMPTY_SETTINGS, overridesOf, withBucket } from '@/lib/allocation/settings';
 import { investedAssets, type AssetInstitution, type InvestedAssets, type TrailingFlows, type UnreadTransactions, type WorkplaceSavings } from '@/lib/fire/inputs';
 import { fiFigures, measuredInputs, notMeasuredWhat, notWorkedOutText, unmeasuredNeed, type ShareRates } from '@/lib/fire/progress';
 import { historyCount } from '@/lib/spending';
 import { figureNotes, inputFlags, names, stressNotice, windowText, type FigureArgs, type FigureNote, type FigureNotes, type FigureText } from './plan-figure-notes';
 import TotalCaveats, { Notice } from './TotalCaveats';
 import { chevron, RIGHT } from './ActivityBar';
-import { planId, usePlanInputs, useSharedPlanInputs, workplacePlansOf } from './plan-inputs';
+import { planAccountsOf, planId, saveTaxFact, usePlanInputs, useSharedPlanInputs, workplacePlansOf, yearFrom } from './plan-inputs';
 import { createPlanInputsStore, type PlanInputsStore } from '@/lib/plan-inputs-store';
 import AllocationCard, { mixToOffer, useAllocation } from './AllocationCard';
 import type { AllocHolding, PlanMix } from '@/lib/allocation/allocation';
@@ -130,6 +137,7 @@ import { TimelineCard } from './PlanTimeline';
 import { itemRuleText, itemSentence, reachesStart } from './plan-items';
 import { copiesOf, createPlansClient, INITIAL_PLANS, plansCount, type PlanRow, type PlanSave, type PlansState } from './plan-list';
 import { planSavers, type Save } from './plan-savers';
+import { DEFAULT_INFLATION } from '@/lib/fire/saved-plan';
 import { copyDiffParts, figureChoices, itemChoices, sameChange, type AlsoTarget } from './plan-diff';
 import { currencyText, laterText, retirementText, shortText, startLineText, startsWithText } from './plan-scenario-text';
 import { planFigures, resolveSaved, type FiguresRefused, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
@@ -878,6 +886,8 @@ export default function PlanTab({
   shownForRef.current = shownFor;
   const [sheet, setSheet] = useState<SheetState | null>(null);
   const [sheetFor, setSheetFor] = useState<string | null>(null);
+  // The drawer's level past a figure's sheet (components/PlanBuckets.tsx).
+  const [figureLevel, setFigureLevel] = useState<FigureLevel | null>(null);
   const [opened, setOpened] = useState(0);
   const shownSheet = useLast(sheet);
   // The figure's row a sheet was opened from (InputsCard), by its kind, set
@@ -909,8 +919,17 @@ export default function PlanTab({
     setOpened(openedNow.current);
     setSheetFor(shownForRef.current);
     setSheet(s);
+    setFigureLevel(null);
   };
   const close = () => setSheet(null);
+  // The other accounts' last year, asked for when a sheet that reads them opens,
+  // on top of the shared copy (lib/plan-inputs-store.ts fill): Home and the Plan
+  // ask for workplace plans alone.
+  const yearRows = useMemo(() => planAccountsOf(institutions).map(planId), [institutions]);
+  const typedBasis = useMemo(() => new Map(shared.taxFacts.basis.map((b) => [b.account_id, b.amount])), [shared.taxFacts.basis]);
+  useEffect(() => {
+    if (sheet?.kind === 'figure' && sheet.figure !== 'spending') planInputs.fill(yearRows);
+  }, [opened, planInputs, yearRows]); // eslint-disable-line react-hooks/exhaustive-deps
   const closeFor = (n: number) => () => {
     if (openedNow.current === n) setSheet(null);
   };
@@ -1123,6 +1142,51 @@ export default function PlanTab({
               ? "Some of your transactions haven't loaded or couldn't be read, so Nya's savings figure may be off: save once they have, or type your savings in Your figures."
               : null;
   const copyName = entry?.name ?? null;
+  // Invested assets and Annual savings by tax bucket, worked out while one of
+  // them is open.
+  const bucketsFor = (includeCash: boolean) =>
+    bucketsToday({
+      assets: investedAssets(institutions, includeCash, balanceFx, Date.now(), ownCurrency, leaveOut),
+      holdings,
+      tax: shared.taxFacts,
+      overrides: overridesOf(allocation.settings.value ?? null).buckets,
+      yearOf: (a): AccountYear => (a.item_id ? yearFrom(shared.copy.rows[planId({ item_id: a.item_id, account_id: a.account_id })]) : { income: null, contributions: null }),
+      partner: plan.partnerAge !== null,
+    });
+  const bucketSheet = (kind: FigureKind): BucketSheet | undefined => {
+    if (kind === 'spending') return undefined;
+    const rows = shared.copy.rows;
+    return {
+      bucketsFor,
+      asOf: balancesAsOf ? fmtAsOf(balancesAsOf) : null,
+      reading: yearRows.some((id) => !rows[id] || rows[id].pending),
+      partner: plan.partnerAge !== null,
+      childOut,
+      tax: shared.taxFacts,
+      chosen: overridesOf(allocation.settings.value ?? null).buckets,
+      level: figureLevel,
+      onLevel: setFigureLevel,
+      saveFact: (op) => saveTaxFact(planInputs, op),
+      factsLocked: savers.taxFacts ? null : 'What is said about an account is the same in every plan: change it on your plan.',
+      saveBucket: (account_id, bucket) => allocation.save(withBucket(allocation.settings.value ?? EMPTY_SETTINGS, account_id, bucket)),
+      bucketsEditable: savers.allocationSettings && allocation.withSettings && !allocation.settings.saving,
+    };
+  };
+  // Where a year of savings goes, and the mix by the start age of what the plan
+  // shown counts: apart from the sheet, since these rest on the plan's figures.
+  const splitFor = (kind: FigureKind) => {
+    if (kind !== 'savings') return null;
+    const split = savingsSplit(bucketsFor(plan.includeCash), view.savings.value);
+    return split.from === 'none' ? null : split;
+  };
+  const mixFor = (kind: FigureKind) => {
+    const startsAt = shown && 'sim' in shown.engine ? shown.engine.startAge : null;
+    if (kind !== 'assets' || !shown || startsAt === null || plan.age === null || view.assets.value === null) return null;
+    const today = bucketsFor(plan.includeCash);
+    const split = savingsSplit(today, view.savings.value);
+    const projected = projectMix(mixToday(today, view.assets.value), { savings: view.savings.value ?? 0, split: split.shares, realReturn: plan.realReturn, inflation: DEFAULT_INFLATION, walk: shown.walk, years: Math.max(0, startsAt - plan.age) });
+    return projected && mixLine(startsAt, mixShares(projected));
+  };
   const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, copy: copyName, paused, planInWalk, childOut };
 
   // What each figure the plan shown rests on says, worked out once for the
@@ -1730,6 +1794,7 @@ export default function PlanTab({
             planKey={shownFor ?? 'plan'}
             institutions={institutions}
             balancesAsOf={balancesAsOf}
+            typedBasis={typedBasis}
           />
         )
       )}
@@ -1737,7 +1802,13 @@ export default function PlanTab({
           skeleton in none of them, of no segment's words. */}
       {segment === null && <PlanPanelSkeleton segment={null} />}
 
-      <Sheet open={!!sheet} title={shownSheet ? (shownSheet.kind === 'figure' ? FIGURE_TITLES[shownSheet.figure] : SHEET_TITLES[shownSheet.kind]) : ''} onClose={close}>
+      <Sheet
+        open={!!sheet}
+        title={shownSheet ? (shownSheet.kind === 'figure' ? (figureLevel?.title ?? FIGURE_TITLES[shownSheet.figure]) : SHEET_TITLES[shownSheet.kind]) : ''}
+        onClose={close}
+        onBack={figureLevel ? () => setFigureLevel(figureLevel.kind === 'bucket' ? { kind: 'account', account_id: figureLevel.account_id, title: figureLevel.back } : null) : undefined}
+        level={figureLevel ? `${figureLevel.kind}:${figureLevel.title}` : undefined}
+      >
         {/* Atop every sheet that edits the copy open, so one isn't taken for
             your plan. */}
         {shownSheet && shownSheet.kind !== 'numbers' && <CopyTag name={copyName} />}
@@ -1768,6 +1839,9 @@ export default function PlanTab({
             assetsFor={(includeCash) => investedAssets(institutions, includeCash, balanceFx, Date.now(), ownCurrency, leaveOut)}
             workplacePlans={workplacePlansOf(institutions).map((p) => ({ account_id: p.account_id, label: `${p.institution} ${p.name}` }))}
             also={figureChoices(alsoTargets, shownSheet.figure, money)}
+            buckets={bucketSheet(shownSheet.figure)}
+            split={splitFor(shownSheet.figure)}
+            mix={mixFor(shownSheet.figure)}
           />
         )}
       </Sheet>

@@ -666,7 +666,8 @@ describe('the notes under each row', () => {
 describe('Why? in a figure’s sheet', () => {
   /** The sheet's Why?: its words and what it opens to, or null. */
   const whyOf = (sheet: FakeElement) => {
-    const why = sheet.findAll((e) => e.tagName === 'DETAILS' && has(e, 'why'))[0];
+    // A figure's own: the buckets' is another (test/plan-buckets-view.test.tsx).
+    const why = sheet.findAll((e) => e.tagName === 'DETAILS' && has(e, 'why') && kids(e)[0].textContent === 'Why?')[0];
     return why ? [kids(why)[0].textContent, part(why, 'why-body')?.textContent] : null;
   };
   /** The year measured, as the sheet's measured line names it. */
@@ -691,7 +692,7 @@ describe('Why? in a figure’s sheet', () => {
     await settle(400);
     await press(tab.row('Invested assets'));
     sheet = tab.dialog()!;
-    expect(sheet.textContent).toContain('$300,000 from 1 account');
+    expect(sheet.textContent).toContain('$300,000 in 1 account');
     expect(whyOf(sheet)).toBeNull();
     const box = sheet.findAll((e) => e.tagName === 'INPUT' && e.getAttribute('type') === 'checkbox')[0];
     await act(async () => {
