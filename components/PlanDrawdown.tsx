@@ -24,12 +24,12 @@ const CHEVRON = (
 /** The chart's marks, for your own ages: the rest are in the stages and the table. */
 export function drawdownMarks(years: readonly DrawdownYear[], rmdAge: number): DrawdownMark[] {
   const marks: DrawdownMark[] = [
-    { age: 59.5, label: '59½' },
-    { age: 65, label: '65' },
+    { age: 59.5, label: '59½', short: '59½' },
+    { age: 65, label: '65', short: '65' },
   ];
   const paid = years.find((y) => y.income.socialSecurity >= 0.5);
-  if (paid) marks.push({ age: paid.age, label: `Social Security ${paid.age}` });
-  marks.push({ age: rmdAge, label: `RMD age ${rmdAge}` });
+  if (paid) marks.push({ age: paid.age, label: `Social Security ${paid.age}`, short: `${paid.age}` });
+  marks.push({ age: rmdAge, label: `RMD age ${rmdAge}`, short: `${rmdAge}` });
   return marks.sort((a, b) => a.age - b.age);
 }
 

@@ -14,6 +14,7 @@ import type { ItemAges } from '@/lib/fire/compile';
 import { INCOME_KINDS, ITEM_LIMITS, ONCE_KINDS, type Anchor, type ItemKind, type PlanItem, type When } from '@/lib/fire/items';
 import { PLAN_TO_AGE } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
+import type { FiredResult, SimPlan } from '@/lib/fire/simulate';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import { nameTaken, SCENARIO_NAME_MAX } from '@/lib/fire/plan-list';
 import type { Unplaced } from '@/lib/fire/steady';
@@ -611,7 +612,32 @@ export type PreviewInput = {
   savings: number | null;
   /** The age the steady path with the draft runs out at, if it does. */
   runsOutAt: number | null;
+  /** Where it falls across the runs, for a start that waits on a run's own balance. */
+  across?: AcrossAnswer | null;
 };
+
+/** Across history, while it is worked out and once it has been. */
+export type AcrossAnswer = { working: true } | { fired: FiredResult; startAge: number };
+
+/** The item's start when it waits on a run's own balance: what to run, to say where it
+ *  falls across the runs. Only when Will it last? starts from what you'd have at the
+ *  stop, and the steady path hasn't fired it by then. */
+export function waitingStart(f: PlanFigures, id: string): { sim: SimPlan; trigger: number; offset: number; startAge: number } | null {
+  if (f.plan.start !== 'at-stop' || !('sim' in f.engine) || !f.engine.sim.conditional || f.engine.startAge === null) return null;
+  const edge = f.resolution.perRun?.edges[f.plan.items.findIndex((y) => y.id === id)]?.start;
+  if (edge === undefined || typeof edge === 'number') return null;
+  return { sim: f.engine.sim, trigger: edge.trigger, offset: edge.offset, startAge: f.engine.startAge };
+}
+
+/** "It starts in 74% of runs, by 62 in half of those; in 26% of runs it never does." */
+export function acrossText({ fired, startAge }: { fired: FiredResult; startAge: number }): string {
+  if (fired.fired === 0 || fired.byHalf === null) return 'It never starts, in any run';
+  const by = startAge + fired.byHalf;
+  if (fired.fired === fired.runs) return `It starts in every run, by ${by} in half of them`;
+  // Some and not all stay so, whatever the rounding says.
+  const share = Math.min(99, Math.max(1, Math.round((fired.fired / fired.runs) * 100)));
+  return `It starts in ${share}% of runs, by ${by} in half of those; in ${100 - share}% of runs it never does`;
+}
 
 export type PreviewLines = {
   /** The steady path's start and end, the FI date, and for pay what you'd
@@ -678,6 +704,8 @@ export function previewLines(p: PreviewInput): PreviewLines {
     const text = unplacedText(x, why, f.plan);
     if (text) rows.push({ key: 'On your steady path', value: text.replace(/\.$/, '') });
   }
+
+  if (p.across) rows.push({ key: f.plan.method === 'historical' ? 'Across history' : 'Across simulated runs', value: 'working' in p.across ? 'Working it out' : acrossText(p.across) });
 
   // The FI date, before and with it.
   if (after.kind === 'age' && before.kind === 'age') {

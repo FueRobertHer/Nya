@@ -34,6 +34,7 @@ import {
   itemsFull,
   onSteadyPath,
   previewLines,
+  waitingStart,
   rowSub,
   templateOf,
   timelinePoints,
@@ -48,6 +49,7 @@ import { stopOf, type Measured } from '@/lib/fire/plan';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
 import type { DetailedAnswer } from './plan-detailed';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
+import type { FiredResult, SimPlan } from '@/lib/fire/simulate';
 
 type Money = (n: number) => string;
 
@@ -76,6 +78,7 @@ export function TimelineCard({
   count,
   figuresFor = null,
   searchVersion = 0,
+  firedFor = null,
   copyName,
   version,
   editable,
@@ -105,6 +108,9 @@ export function TimelineCard({
   figuresFor?: ((slot: string, plan: FirePlanV2) => DetailedAnswer) | null;
   /** Moves as a job's answer arrives, so the preview takes it. */
   searchVersion?: number;
+  /** Runs a start that waits on a run's own balance through the runs, in the Plan's
+   *  worker; null when it couldn't be run. */
+  firedFor?: ((ask: { sim: SimPlan; trigger: number; offset: number }, signal: AbortSignal) => Promise<FiredResult | null>) | null;
   /** The open copy's name; null on your plan. */
   copyName: string | null;
   /** The plan's version: the sheet closes when it changes, and never saves
@@ -257,6 +263,26 @@ export function TimelineCard({
     // checkedKey stands for checked; measured is a new object each render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkedKey, plan, count, open, searchVersion]);
+
+  // Across history, once the steady path's answer for this draft is in.
+  const [across, setAcross] = useState<{ key: string; fired: FiredResult | null } | null>(null);
+  const waiting = worked?.key === checkedKey && worked.f !== 'refused' && checked && 'ok' in checked ? waitingStart(worked.f, checked.ok.id) : null;
+  useEffect(() => {
+    if (!open || !firedFor || !waiting) return;
+    let live = true;
+    const stop = new AbortController();
+    const key = checkedKey;
+    void firedFor(waiting, stop.signal).then((fired) => {
+      if (live) setAcross({ key, fired });
+    });
+    return () => {
+      live = false;
+      stop.abort();
+    };
+    // `worked` stands for what is run: it is new each time this draft is worked out.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [worked, open]);
+  const acrossNow = !waiting || !firedFor ? null : across?.key !== checkedKey ? { working: true as const } : across.fired ? { fired: across.fired, startAge: waiting.startAge } : null;
 
   /** Saves on the version the sheet opened on, while saves can go. */
   const guarded = async (run: () => Promise<boolean | string>): Promise<boolean> => {
@@ -556,6 +582,7 @@ export function TimelineCard({
           points: worked?.key === checkedKey ? worked.points : [],
           savings,
           runsOutAt: worked?.key === checkedKey ? worked.runsOutAt : null,
+          across: acrossNow,
         })
       : null;
   const changed = !!(editing && checked && 'ok' in checked && JSON.stringify(checked.ok) !== JSON.stringify(editing));

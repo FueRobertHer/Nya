@@ -124,7 +124,7 @@ import {
   type PlanCore,
   type Repair,
 } from '@/lib/fire/plan';
-import { basePlanOf, isStoredPlan, parsePlanV2, planOf, type FirePlanV2, type StoredPlan } from '@/lib/fire/plan-v2';
+import { basePlanOf, DEFAULT_PLAN_V2, isStoredPlan, NEW_PLAN_START, parsePlanV2, planOf, type FirePlanV2, type StoredPlan } from '@/lib/fire/plan-v2';
 import { MAX_FIRE_PLANS, entryHoldsAmounts, factsOf, withFacts, type Facts } from '@/lib/fire/copies';
 import type { TaxChoices } from '@/lib/fire/tax-choices';
 import { withItem, type PlanItem } from '@/lib/fire/items';
@@ -145,7 +145,8 @@ import { planSavers, type Save, type SaveMore } from './plan-savers';
 import { DEFAULT_INFLATION } from '@/lib/fire/saved-plan';
 import { copyDiffParts, figureChoices, itemChoices, sameChange, type AlsoTarget } from './plan-diff';
 import { currencyText, laterText, retirementText, shortText, startLineText, startsWithText } from './plan-scenario-text';
-import { DrawdownCard, DrawdownMore, StageLevel, YearLevel } from './PlanDrawdown';
+import { DrawdownCard, drawdownMarks, DrawdownMore, StageLevel, YearLevel } from './PlanDrawdown';
+import type { DrawdownMark } from './DrawdownChart';
 import PlanHealthForm, { type PaidChoice } from './PlanHealthForm';
 import { OptInRow, OptInSheet, OPT_IN_TITLE } from './PlanOptIn';
 import { assumptionsLine, HEALTH_NOT_SET, healthSub, honestyNotes, householdLine, lawLabel, namesCoverage, stageHealthLines, stageTitle, STATE_NAMES, taxLine, yearTitle, type YearContext } from './plan-drawdown';
@@ -207,6 +208,9 @@ function useLast<T>(value: T | null): T | null {
 type PlanView = { row: PlanRow; plan: FirePlanV2; fixed: Repair[]; other: string | null; figures: PlanFigures | FiguresRefused | null; working: boolean; failed: boolean };
 
 /** Said for a save with nowhere to record its amounts' currency. */
+/** A plan never saved, behind `plan-tax`: it starts from what it would have then. */
+const NEW_PLAN: FirePlanV2 = { ...DEFAULT_PLAN_V2, start: NEW_PLAN_START };
+
 const NO_COPY_CURRENCY = 'Your plan has no currency yet, so this copy can’t hold amounts: say which currency your plan’s figures are in first (above), then save again.';
 
 /** A save's answer as a button on a card shows it: done, or why not. */
@@ -460,7 +464,7 @@ export default function PlanTab({
   // computes with a value outside what the formulas take.
   // A version 1 plan is repaired by today's repair and held as version 2
   // (lib/fire/plan-v2.ts basePlanOf), which each save sends.
-  const stored: StoredPlan = state.value ?? DEFAULT_PLAN;
+  const stored: StoredPlan = state.value ?? (planTax ? NEW_PLAN : DEFAULT_PLAN);
   const repair = useMemo(() => basePlanOf(stored), [stored]);
   /** The Plan as the tab shows it: the repaired one while a repair waits. */
   const basePlan = repair.plan;
@@ -1734,6 +1738,7 @@ export default function PlanTab({
       count={count}
       figuresFor={(slot, p) => figuresFor(slot, p, entry ? entry.tax : yourChoices)}
       searchVersion={searchVersion}
+      firedFor={({ sim: run, trigger, offset }, signal) => runner().run({ kind: 'fired', method: plan.method, plan: run, trigger, offset }, signal).then((r) => (r.ok && r.kind === 'fired' ? r.fired : null))}
       copyName={copyName}
       version={shownFor ?? storedKey}
       editable={timelineEditable}
@@ -1854,6 +1859,7 @@ export default function PlanTab({
               path={path}
               range={range}
               onRange={chooseRange}
+              ticks={drawn?.whole && yearContext ? drawdownMarks(drawn.whole.years, yearContext.rmdAge) : null}
               recorded={overlay}
               currency={displayCurrency}
               onAskAges={() => open({ kind: 'about' }, 'ask-about')}
@@ -1944,6 +1950,7 @@ export default function PlanTab({
               badge={stressBadge}
               onRetry={retry}
               onRetryDetail={search.retry}
+              startAtStop={planTax && formEditable && formPlan.start !== 'at-stop' && view.stopAge !== null ? () => savers.form({ ...formPlan, start: 'at-stop' }) : null}
             />
           )}
 
@@ -2236,6 +2243,7 @@ export function FiCard({
   stopShort = null,
   stopWalked = false,
   path = null,
+  ticks = null,
   range,
   onRange,
   recorded = null,
@@ -2288,6 +2296,8 @@ export function FiCard({
   stopWalked?: boolean;
   /** The plan's path from today (lib/fire/path.ts), drawn under the answer. */
   path?: PlanPath | null;
+  /** The ages a detailed plan's rules change at, on Whole path. */
+  ticks?: readonly DrawdownMark[] | null;
   /** The chart's range, and the switch between them (PlanPathChart); left
    *  out, the chart runs to the stop with no switch. */
   range?: PathRange;
@@ -2543,6 +2553,7 @@ export function FiCard({
           after={path.after}
           range={range}
           onRange={onRange}
+          ticks={ticks}
         />
       )}
 
@@ -2845,6 +2856,34 @@ const MISSING_FIGURE: Record<Missing, string> = {
  *  worst starts and its ending balances. Its settings are the Assumptions
  *  row's, under the cards (rollout 6d): the line's "historical starts" or
  *  "Monte Carlo runs" names the method, which is set there. */
+/** The start line's way to what the plan would have at the stop. Its failure is said
+ *  here, where the person pressed it. */
+function StartAtStop({ stopAge, onStart }: { stopAge: number; onStart: () => Promise<boolean | string> }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const press = async () => {
+    setError(null);
+    setSaving(true);
+    const saved = await onStart();
+    setSaving(false);
+    if (saved !== true) setError(typeof saved === 'string' ? saved : 'It was not saved. Try again in a moment.');
+  };
+  return (
+    <>
+      <div>
+        <button type="button" className="btn ghost" disabled={saving} onClick={() => void press()}>
+          Start from what you&apos;d have at {stopAge}
+        </button>
+      </div>
+      {error && (
+        <p className="plan-warning" role="alert">
+          {error}
+        </p>
+      )}
+    </>
+  );
+}
+
 export function SimulationCard({
   copyName = null,
   startsWith = null,
@@ -2863,6 +2902,7 @@ export function SimulationCard({
   badge = null,
   onRetry,
   onRetryDetail,
+  startAtStop = null,
 }: {
   /** The open copy's name, said at the top; null with your plan open. */
   copyName?: string | null;
@@ -2896,6 +2936,8 @@ export function SimulationCard({
   /** Runs it again, when it couldn't be run at all. */
   onRetry: () => void;
   onRetryDetail?: () => void;
+  /** Saves the plan starting from what it would have at the stop; null: it does, or can't be saved here. */
+  startAtStop?: (() => Promise<boolean | string>) | null;
 }) {
   // Over the label: an open copy's tag, and the badge.
   const top =
@@ -2923,13 +2965,16 @@ export function SimulationCard({
   // starts drawing: with more, the caution it always had (it reads safer
   // than it is); with less, or from today's assets, a note.
   const startLine = startsWith && !startsWith.more ? startLineText(startsWith, money, { age: plan.age, stopAge: view.stopAge, atStop: view.atTargetAge }) : null;
+  const startLink = startAtStop && view.stopAge !== null ? <StartAtStop stopAge={view.stopAge} onStart={startAtStop} /> : null;
   const startNote = startsWith?.more ? (
     <Notice level="caution">
       <Masked>{`It starts with ${startsWithText(startsWith, money, 'on Your path').replace(/\.$/, '')}: it starts with money it wouldn’t have then, so it reads safer than it is.`}</Masked>
+      {startLink}
     </Notice>
   ) : startLine ? (
     <Notice level="info">
       <Masked>{startLine}</Masked>
+      {startLink}
     </Notice>
   ) : null;
 

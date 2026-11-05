@@ -225,6 +225,40 @@ describe('Assumptions', () => {
     await tab.unmount();
   }, 30_000);
 
+  test('the start line takes you to what you would have at the stop, only with the flag', async () => {
+    const typed = { ...PLAN, start: 'custom' as const, startBalance: 500_000, targetAge: 60 };
+    await seedPlan(typed);
+    const off = await render();
+    await pick(off.container, 'Drawdown');
+    expect(off.text()).toContain('Starting from the balance you typed');
+    expect(off.text()).not.toContain('Start from what you');
+    await off.unmount();
+    await flagged();
+    const on = await render({ planTax: true });
+    await pick(on.container, 'Drawdown');
+    const link = button(on.container, 'Start from what you\'d have at 60');
+    expect(link!.parentElement?.parentElement?.textContent).toContain('Starting from the balance you typed');
+    await press(link);
+    await settle(200);
+    expect(lastSave().plan.start).toBe('at-stop');
+    expect((await read()).plan.start).toBe('at-stop');
+    expect(on.text()).not.toContain('Start from what you');
+    await on.unmount();
+  }, 30_000);
+
+  test('a plan never saved starts from what it would have at the stop, only with the flag', async () => {
+    const off = await render();
+    await pick(off.container, 'Your path');
+    const WITH_THEN = 'with what you’d have then';
+    expect((await sheet(off, 'Assumptions')).textContent).not.toContain(WITH_THEN);
+    await off.unmount();
+    await flagged();
+    const on = await render({ planTax: true });
+    await pick(on.container, 'Your path');
+    expect((await sheet(on, 'Assumptions')).textContent).toContain(WITH_THEN);
+    await on.unmount();
+  }, 30_000);
+
   test('flat, it reads as it always has, and the fourth start only with the flag', async () => {
     await seedPlan();
     const off = await render();

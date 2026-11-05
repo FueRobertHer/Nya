@@ -324,11 +324,13 @@ type RunOutput = {
   lowestSpending: Float64Array;
   endBalance: Float64Array;
   firstYearSpending: number;
+  /** The year the watched trigger fired in each path, -1 where it never did. */
+  firedYear: Int32Array | null;
 };
 
 const EPS = 1e-9;
 
-function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boolean): RunOutput {
+function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boolean, watch: number | null = null): RunOutput {
   checkPlan(plan);
   const years = plan.years;
   const count = source.count;
@@ -355,6 +357,7 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
     lowestSpending: new Float64Array(count),
     endBalance: new Float64Array(count),
     firstYearSpending: 0,
+    firedYear: watch === null ? null : new Int32Array(count).fill(-1),
   };
   // The price level at the start of each year, relative to the start of the
   // plan, for income that does not keep up with inflation.
@@ -485,6 +488,7 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
     out.lowestSpending[p] = lowest === Infinity ? 0 : lowest;
     // A plan that ran out holds 0 from then on; the arrays start at 0.
     out.endBalance[p] = failed >= 0 ? 0 : bal;
+    if (out.firedYear && firedIn) out.firedYear[p] = firedIn[watch as number];
     if (out.balances && failed < 0) out.balances[p * (years + 1) + years] = bal;
   }
   return out;
@@ -675,6 +679,25 @@ export function monteCarlo(plan: SimPlan, market: Market, opts: MonteCarloOption
 /** Either method by name. */
 export function simulate(method: Method, plan: SimPlan, market: Market, opts: MonteCarloOptions = {}): SimResult {
   return method === 'historical' ? historicalCycles(plan, market) : monteCarlo(plan, market, opts);
+}
+
+/** How an item that waits on a run's own balance falls across the runs. */
+export type FiredResult = {
+  /** Paths run. */
+  runs: number;
+  /** Those where it starts before the plan ends. */
+  fired: number;
+  /** The year by which half of those have it, from the plan's start; null with none. */
+  byHalf: number | null;
+};
+
+/** Where trigger `trigger`, `offset` years on, falls across the plan's own runs. */
+export function firedAcross(method: Method, plan: SimPlan, market: Market, trigger: number, offset: number, opts: MonteCarloOptions = {}): FiredResult {
+  if (!plan.conditional || trigger < 0 || trigger >= plan.conditional.triggers.length) fail('no such trigger');
+  const source = method === 'historical' ? historicalSource(market, plan.years) : monteCarloSource(market, opts);
+  const years = (runPaths(plan, market, source, false, trigger).firedYear as Int32Array).filter((y) => y >= 0 && y + offset < plan.years).map((y) => y + offset);
+  years.sort();
+  return { runs: source.count, fired: years.length, byHalf: years.length > 0 ? years[Math.ceil(years.length / 2) - 1] : null };
 }
 
 export type GridCell = {

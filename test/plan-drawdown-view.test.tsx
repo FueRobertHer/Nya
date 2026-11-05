@@ -28,6 +28,32 @@ async function detailed(plan = PLAN) {
   return tab;
 }
 
+describe('marks on Whole path', () => {
+  const summary = (tab: Tab) => tab.container.findAll((e) => e.getAttribute('role') === 'img' && (e.getAttribute('aria-label') ?? '').includes('Invested assets'))[0]?.getAttribute('aria-label') ?? '';
+  const ticks = (tab: Tab) => tab.container.findAll((e) => e.tagName === 'text' || e.tagName === 'TEXT').map((e) => e.textContent);
+
+  test('a detailed plan marks the ages its rules change at, and none on To the stop', async () => {
+    const tab = await detailed({ ...PLAN, age: 40, targetAge: 50 });
+    await pick(tab.container, 'Your path');
+    await pick(tab.container, 'To 50');
+    expect(summary(tab)).not.toContain('Marks at');
+    await pick(tab.container, 'Whole path');
+    expect(summary(tab)).toContain('Marks at 59½, 65 and RMD age');
+    expect(ticks(tab)).toContain('59½');
+    await tab.unmount();
+  }, 30_000);
+
+  test('a flat plan has none', async () => {
+    await seedPlan({ ...PLAN, age: 40, targetAge: 50 });
+    const tab = await render();
+    await pick(tab.container, 'Your path');
+    await pick(tab.container, 'Whole path');
+    expect(summary(tab)).not.toContain('Marks at');
+    expect(ticks(tab)).not.toContain('59½');
+    await tab.unmount();
+  }, 30_000);
+});
+
 describe('the way in', () => {
   test('nothing with the flag off', async () => {
     await seedPlan();
