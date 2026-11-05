@@ -414,6 +414,7 @@ describe('the notes’ kinds and keys', () => {
     } as WorkplaceSavings;
     const kinds = new Set(
       [
+        at({ taxOnHold: true }),
         at({ flows: gapped }),
         at({ flows: gapped, plan: { savings: 1 } }),
         at({ plan: { savings: 1 } }),

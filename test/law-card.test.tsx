@@ -139,7 +139,7 @@ describe('what the upkeep issue lists', () => {
     const a = lawDue('2026-12-01', YEARS);
     const b = lawDue('2026-12-08', YEARS);
     expect(b).toEqual(a);
-    for (const d of a) expect(`${d.name} ${d.about}`).not.toMatch(/[–—]/);
+    for (const d of a) expect(`${d.name} ${d.about}`).not.toMatch(/[\u2013\u2014]/);
   });
 });
 

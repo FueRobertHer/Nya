@@ -635,7 +635,7 @@ Your [plans](features.md#plans-and-compare-mode) (`lib/fire/copies.ts`, `lib/pla
 | --- | --- |
 | `name` | Its name. |
 | `plan` | The whole plan ([its fields below](#a-plans-fields)), version 2 (`lib/fire/plan-v2.ts`). An entry saved before may hold version 1 (`lib/fire/plan.ts`). Once [`plan-facts`](#plan-facts) is there, the facts every plan shares are read from it, not from here, and every save keeps them the same here too. |
-| `tax` | The plan's own tax choices: `null`. |
+| `tax` | The plan's own tax choices (`lib/fire/tax-choices.ts`), or `null`. Nothing writes them yet (the tax plan's T3); a restore takes them only whole. |
 | `currency` | The currency its amounts are in, or `null` for a plan that holds none. |
 | `createdAt`, `updatedAt` | When it was made, and last changed: a page names the `updatedAt` a change was made on, so one made from a version changed since is refused. Every save gives the entries it writes an `updatedAt` no other entry holds. |
 
@@ -807,14 +807,30 @@ What every plan in [`fire-plans`](#fire-plans) shares, and which of them is your
 
 | Field | Meaning |
 | --- | --- |
-| `version` | The shape's version: 1. |
+| `version` | The shape's version: 1, or 2 once you have saved a tax fact, with `tax`. |
 | `main` | The id of your plan in `fire-plans`. |
 | `age`, `partnerAge` | Your age and your partner's, or `null`. |
 | `includeCash` | Whether checking and savings count as invested. |
 | `planFunding[]` | How each workplace plan is paid into, as in [a plan's fields](#a-plans-fields). |
 | `method` | The simulation's method: `historical` or `monte-carlo`. |
+| `tax` | Version 2 only: your tax facts, below. |
 
-A file that brings plans back without it leaves the account none.
+`tax` holds (`lib/fire/tax-facts.ts`):
+
+| Field | Meaning |
+| --- | --- |
+| `version` | Its shape's version: 1. |
+| `model` | `flat` or `detailed`. Only `flat` is written yet. |
+| `filing` | `single`, `joint`, or `null`. Not asked yet. |
+| `birthYears[]` | `owner` (`you` or `partner`) and `year`. Not asked yet. |
+| `dependents[]` | `id` and `untilAge`. Not asked yet. |
+| `rothContributions[]` | `owner` and `amount`: what that person has put into a Roth. |
+| `owners[]` | `account_id` and `owner`, for an account that isn't yours alone. |
+| `basis[]` | `account_id` and `amount`: a cost basis you typed. |
+| `countAnyway[]` | The accounts for a child you count in your plan. |
+| `paidToday` | `kind` (`category` or `tag`) and `name`. Not asked yet. |
+
+An account can be left out of these lists, which is the same as the default (yours, the basis from its holdings, left out if it is for a child). A file that brings plans back without `plan-facts` leaves the account none.
 
 #### `planned-items`
 

@@ -166,6 +166,10 @@ The workhorse. Leading logo or icon (optional), title, one subtitle line, traili
 
 Replaces `.acct-row` and `.txn-main` (both gone since phase 6a3, with Recurring's and Planned's tables), `.txn-text`, `.peer-row`, `.peer-item`, `.cat-manage-row`, `.timeline-note-row`, `.budget-summary` (Budgets > Month since phase 6a2; Goals' rows keep it until they are redrawn), and the table-based account and transaction lists.
 
+### Group head
+
+A group of rows with a total of its own (since the tax plan's T2), `.bucket-head`, in a `.stack.tight` with its rows: a 10px swatch in the group's color, as Portfolio's buckets draw it, an `h3` at `--fs-3` and the total at the end, on one baseline. Invested assets' buckets are the only use today. It adds no token.
+
 ### Radio rows
 
 One of a few options, two to five, each needing a sentence to choose between them: a feature switch's audience or mode on the admin page. A fieldset whose legend (`.section-label`) says what is chosen, then one row per option: a native radio in `--accent`, the option's name (`--fs-3`, 600) and its sentence under it (`--fs-2`, `--text-2`), hairlines (`--border-subtle`) between rows. Each row's whole label is the radio's target, at least `--tap` (44px) tall.

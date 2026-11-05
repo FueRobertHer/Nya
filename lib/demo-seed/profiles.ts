@@ -72,6 +72,14 @@ export type DemoProfile = {
   goals: SeedGoal[];
   /** What the Plan tab starts from, over its defaults. */
   plan: Partial<FirePlan>;
+  /** What every plan shares about the accounts (lib/fire/tax-facts.ts), each
+   *  account by the mask it ends in, and a partner's age so it can be asked
+   *  whose an account is. Left out, nothing is saved. */
+  tax?: {
+    partnerAge: number;
+    accounts: { mask: string; owner: 'you' | 'partner'; basis: number | null }[];
+    roth: { owner: 'you' | 'partner'; amount: number }[];
+  };
 };
 
 // Plaid's sandbox institutions without OAuth, which keep every field of a
@@ -522,6 +530,19 @@ function sam(today: string): DemoProfile {
       stocksPct: 80,
       bondsPct: 20,
       income: [{ id: 'social-security', label: 'Social Security (both)', amount: 42_000, fromAge: 67, inflationAdjusted: true }],
+    },
+    // The College fund's 529 stays out of these, to show the group it leaves
+    // invested assets for.
+    tax: {
+      partnerAge: 37,
+      accounts: [
+        { mask: '7742', owner: 'partner', basis: null },
+        { mask: '9013', owner: 'you', basis: 88_000 },
+      ],
+      roth: [
+        { owner: 'you', amount: 42_000 },
+        { owner: 'partner', amount: 31_000 },
+      ],
     },
   };
 }

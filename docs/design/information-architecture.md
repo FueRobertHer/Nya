@@ -158,18 +158,19 @@ The tab bar is hidden, so this state keeps its own entry points, as today: the A
 
 `/admin` (`components/AdminPage.tsx`, since the tax plan's F2), for the deployment's admin only: anyone else gets the 404 any missing path gets. Its subtitle names the environment and says only the admin sees the page. Everything about the deployment rather than an account, one card each, in this order:
 
-1. **Needs attention**, only when something does: the rows of Home's Admin card (a nightly job that failed, the ops routes left on), each going where it is done.
+1. **Needs attention**, only when something does: the rows of Home's Admin card (a nightly job that failed, the ops routes left on, a tax law year due), each going where it is done.
 2. **Feature switches**: a row per switch, by its short name, with what it does under it and its value as a badge at its end, opening its sheet (FlagSheet), where it is set: who it is on for, the accounts named besides, who may sign in, and its last changes.
 3. **Jobs and storage**: Nightly jobs (`/admin/jobs`) and Storage across accounts (`/admin/storage`), each a row with its state in one line.
 4. **Unused connections** (AdminUnusedItems), as Settings > Connections had it.
 5. **Demo accounts**, never in Production: whether each is set up, and how it is reset.
-6. **Environment**, read only: the deployment's settings as the app reads them (Plaid, sign-in, the limits), whether a secret is set but never its value, and how to change them.
-7. **Operations**, read only: what is done by hand, each a link to its part of the operations guide, with the ops route or script it uses under its name. Nothing runs from the page.
-8. **Changes**: the record of changes to the switches, latest first, the latest 25 until **Show all**: each switch by name, with the change, when, and who under it (who only when it was not the admin).
+6. **Tax law** (`TaxLaw`, since the tax plan's T2): the year in use and those on their way, each a row with where it stands in one line, a badge for the coming year (neutral, then a caution from December 1), opening a sheet of its parts: each one's source and date, or when it is expected, those to come first.
+7. **Environment**, read only: the deployment's settings as the app reads them (Plaid, sign-in, the limits), whether a secret is set but never its value, and how to change them.
+8. **Operations**, read only: what is done by hand, each a link to its part of the operations guide, with the ops route or script it uses under its name. Nothing runs from the page.
+9. **Changes**: the record of changes to the switches, latest first, the latest 25 until **Show all**: each switch by name, with the change, when, and who under it (who only when it was not the admin).
 
 A last line says what is not on the page: any account's financial data, or running an operation.
 
-The Tax law card (the tax plan's T2) goes between Demo accounts and Environment. A setting of the deployment, not of an account, goes here as a card of its own; an account's own settings stay in Settings.
+A setting of the deployment, not of an account, goes here as a card of its own; an account's own settings stay in Settings.
 
 ## Needs attention
 
@@ -191,6 +192,7 @@ The only list on Home that asks the person to act (`components/NeedsAttention.ts
 | A bank a restore brought back isn't connected; what a restore brought back can't be read | Critical; Caution | Settings > Your data |
 | Plaid's warnings (Caution), or your own sync's connections (Critical), couldn't be read on this load: one that needs you may be missing from the list | As the Accounts tab's notice | The Accounts tab, focus on its notice |
 | The nightly backup or receipt clean-up failed (admin only): "Nightly backup failed" over "Last saved Oct 20 · timeout · Check the backup cron in Vercel." | Caution | The Admin card under Needs attention, and the admin page's Needs attention; each row goes to the Nightly jobs page (`/admin/jobs`) |
+| A tax law year is due (admin only): "2027 tax law is due by January 1" over "Still to come: brackets and Medicare. Worked-out tax stays on 2026's until every part is in." ("2027 tax law isn't all in" once the year has begun) | Caution | The Admin card under Needs attention, and the admin page's Needs attention; the row goes to the admin page's Tax law |
 | The ops routes are on (admin only): "The ops routes are on" over "Turn them off once the operation is done." ("OPS_ENABLED is set: remove it once the operation is done." while its variable opened them) | Caution | The Admin card under Needs attention, and the admin page's Needs attention; goes to the Feature switches card on the admin page (`/admin#feature-switches`) |
 
 When a backup or clean-up fails, everyone sees it as an amber line on the Net worth card ("The nightly backup failed; the last one saved was Oct 20"); only the admin gets the instruction. A balance that couldn't refresh but needs nothing from you (it usually clears itself) is not listed here: it shows on its card and in the caveat under the total, and turns the Accounts pill amber. An unfinished restore keeps its banner on every tab, Home's too, rather than a row. What a budget row's month may be missing follows the budget rows, in the words Activity and Budgets use. A low balance is a row in This month (decided in 4c): it has no fix to go to and no way to set it aside.
@@ -271,6 +273,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | DeleteAccount, DeletionReceipt, ForgetDevice | Clerk profile window; header (password mode) | Settings > Account |
 | AdminStorage | `/admin-view` | `/admin-view/storage` (asked for as `/admin/storage`, the admin only), linked from the admin page's Jobs and storage card; its header goes back to the admin page |
 | AdminJobs | New | `/admin-view/jobs` (asked for as `/admin/jobs`, the admin only): the nightly backup and clean-up, their last runs and **Run now**; linked from the admin page's Jobs and storage card and from the Admin card's rows on Home; its header goes back to the admin page |
+| AdminPage (TaxLaw) | New (tax plan T2) | The admin page's Tax law, between Demo accounts and Environment, read from `lib/law-card.ts` by the server; a law year due also adds a row to the Admin card on Home, from `app/page.tsx` |
 | FeatureSwitchesCard, FlagSheet | New (tax plan F1, F2) | The admin page's Feature switches (`/admin`, F2): a row per switch (`lib/flags.ts`) by its short name, with what it does under it, badges after that for a value that can't be read, a variable that still decides it and a release switch's removal date, and its value as a badge at the row's end (accent while on for some but not everyone, warn while the ops routes are open), opening its sheet (FlagSheet): what it does, then its environment, default, key and variable as key and value lines (`.txn-detail`), who it is on for (RadioRows, Off's note saying what off does, saved with **Save** beside **Cancel** in the footer, Save quiet until the choice changes), the accounts named besides (each with Remove, and **Add an account** at a second level), who may sign in (each with a confirmed Remove, and an add field), its last changes, and a fresh sign-in in Production. Also `/dev/flags`, local development only (`bun run dev`, on this machine; missing on Vercel and on any prefix but `dev:`), for anyone signed in, demo accounts included: the same rows and sheets with the choices alone, the accounts and people counted, never named, and set on the admin page. Linked from nowhere |
 | AdminPage | New (tax plan F2) | `/admin-view` (asked for as `/admin`, the admin only): the admin page ([above](#the-admin-page)); opened from Settings > Admin and from Home's Admin card |
 | AdminEntry | New (tax plan F2) | Settings > Admin, for the admin only: one row to the admin page |

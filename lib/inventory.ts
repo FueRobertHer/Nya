@@ -914,7 +914,7 @@ const STORES: Readonly<Record<string, Entry>> = {
   'plan-facts': {
     group: 'plans',
     name: 'The facts every plan shares',
-    about: 'Which of your plans is yours, and what every plan takes from it: your age and your partner’s, whether cash counts, which accounts fund the plan and how its figures are worked out.',
+    about: 'Which of your plans is yours, and what every plan takes from it: your age and your partner’s, whether cash counts, which accounts fund the plan and how its figures are worked out; and for tax, whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count.',
     unit: VALUE,
     kept: 'Your data',
   },

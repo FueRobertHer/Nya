@@ -50,7 +50,7 @@ import { setGoals } from '../goals';
 import { DEFAULT_PLAN, parsePlan } from '../fire/plan';
 import { planOf, type FirePlanV2 } from '../fire/plan-v2';
 import { factsOf, holdsAmounts } from '../fire/copies';
-import { saveMain } from '../plan-writes';
+import { saveMain, saveTaxFacts } from '../plan-writes';
 import type { Ctx } from '../containers';
 import { customUserConfig, txnCount, type DemoProfile, type SeedInstitution } from './profiles';
 
@@ -123,7 +123,13 @@ export async function seedDemoAccount(ctx: Ctx, userId: string, profile: DemoPro
 
   const plan = parsePlan({ ...DEFAULT_PLAN, ...profile.plan });
   if ('error' in plan) throw new Error(`The profile's plan is refused: ${plan.error}`);
-  await seedPlan(ctx, planOf(plan.plan));
+  await seedPlan(ctx, { ...planOf(plan.plan), partnerAge: profile.tax?.partnerAge ?? null });
+  for (const a of profile.tax?.accounts ?? []) {
+    const account_id = accountIds.get(a.mask);
+    if (!account_id) throw new Error(`No account ending ${a.mask} for its tax facts`);
+    await saveTaxFacts(ctx, { kind: 'account', account_id, owner: a.owner, basis: a.basis, count: false });
+  }
+  for (const r of profile.tax?.roth ?? []) await saveTaxFacts(ctx, { kind: 'roth', owner: r.owner, amount: r.amount });
 
   // 4. Wait. Then the balance history, the caches and the estimated history
   //    are cleared, so nothing a visitor's page load built from part of the
