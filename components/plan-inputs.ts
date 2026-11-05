@@ -16,6 +16,7 @@
 import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import type { LeaveOut } from '@/lib/fire/child-accounts';
 import { DEFAULT_TAX_FACTS, isTaxFacts, type TaxFactOp, type TaxFacts } from '@/lib/fire/tax-facts';
+import { isTaxChoices, type TaxChoices } from '@/lib/fire/tax-choices';
 import type { Txn } from './MonthBreakdown';
 import { localDate } from '@/lib/local-date';
 import {
@@ -147,7 +148,7 @@ export function taxFactsFrom(body: { tax_facts?: unknown } | null | undefined): 
  *  when its plans change and when the copy is invalidated, and at no other
  *  time: a copy that stays stale costs a request a screen, never a loop. A copy
  *  for the same plans is shown while a newer one loads. */
-export function useSharedPlanInputs(store: PlanInputsStore, institutions: AssetInstitution[]): { copy: PlanInputsCopy; contributions: PlanContributions[] | null; taxFacts: TaxFacts; factsKnown: boolean } {
+export function useSharedPlanInputs(store: PlanInputsStore, institutions: AssetInstitution[]): { copy: PlanInputsCopy; contributions: PlanContributions[] | null; taxFacts: TaxFacts; factsKnown: boolean; choices: TaxChoices | null } {
   const copy = useSyncExternalStore(store.subscribe, store.get, store.get);
   const plans = useMemo(() => workplacePlansOf(institutions), [institutions]);
   const key = plans.map(planId).join(',');
@@ -162,7 +163,9 @@ export function useSharedPlanInputs(store: PlanInputsStore, institutions: AssetI
   // page can't read (a newer release's), there is no knowing.
   const body = copy.lastPlan;
   const taxFacts = useMemo(() => taxFactsFrom(body), [body]);
-  return { copy, contributions, taxFacts, factsKnown: !!body && (body.tax_facts === null || isTaxFacts(body.tax_facts)) };
+  // Your plan's tax choices: a copy with none takes these.
+  const choices = body && isTaxChoices(body.tax) ? body.tax : null;
+  return { copy, contributions, taxFacts, factsKnown: !!body && (body.tax_facts === null || isTaxFacts(body.tax_facts)), choices };
 }
 
 export type PlanInputs = FiInputs & {
@@ -201,6 +204,7 @@ export function usePlanInputs({
   currency = null,
   contributions,
   leaveOut = null,
+  paid = null,
 }: {
   txns: Txn[] | null;
   txnNotes: string[];
@@ -225,6 +229,8 @@ export function usePlanInputs({
   /** Accounts for a child's education out of invested assets (D7,
    *  lib/fire/child-accounts.ts); null counts them, as before. */
   leaveOut?: LeaveOut | null;
+  /** The category or tag already paying for coverage, in the detailed tax model. */
+  paid?: TaxFacts['paidToday'];
 }): PlanInputs {
   // "Today" is the viewer's calendar day.
   const today = localDate();
@@ -238,8 +244,8 @@ export function usePlanInputs({
   const assets = useMemo(() => investedAssets(institutions, includeCash, balanceFx, Date.now(), currency, leaveOut), [institutions, includeCash, balanceFx, currency, leaveOut]);
   const into = assets.currency;
   const flows = useMemo(
-    () => (txns ? trailingFlows(txns, today, { cashAccounts, fx, into, ...(currency ? { currency } : {}) }) : null),
-    [txns, today, cashAccounts, fx, into, currency]
+    () => (txns ? trailingFlows(txns, today, { cashAccounts, fx, into, ...(currency ? { currency } : {}), ...(paid ? { paid } : {}) }) : null),
+    [txns, today, cashAccounts, fx, into, currency, paid]
   );
   const accountNames = useMemo(() => new Map(institutions.flatMap((i) => i.accounts.map((a) => [a.account_id, a.name] as const))), [institutions]);
   const cashOn = useMemo(() => (flows?.cashEnteredOn ?? []).map((id) => accountNames.get(id) ?? 'a cash account'), [flows, accountNames]);

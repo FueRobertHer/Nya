@@ -44,6 +44,7 @@ const row = (id: string, name: string, over: Partial<PlanRow> = {}): PlanRow => 
   currency: 'USD',
   created_at: '2026-10-01T00:00:00.000Z',
   updated_at: `u-${id}`,
+  tax: null,
   ...over,
 });
 const noop = async () => true as const;

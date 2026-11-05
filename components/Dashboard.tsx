@@ -2527,6 +2527,8 @@ export default function Dashboard({
                         planInputs={planInputs}
                         planInWalk={flags['plan-items-in-fi']}
                         childOut={flags['plan-child-accounts']}
+                        planTax={flags['plan-tax']}
+                        holdings={planHoldings}
                         onOpenPlan={() => {
                           window.scrollTo(0, 0);
                           setPlanSegment('path');
@@ -2894,6 +2896,7 @@ export default function Dashboard({
                   childNewUntil={childNewUntil}
                   childMovedSeen={childMovedSeen}
                   onChildMovedSeen={() => setChildMovedSeen(true)}
+                  planTax={flags['plan-tax']}
                 />
               )}
             </>

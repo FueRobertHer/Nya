@@ -177,6 +177,9 @@ export function planFlow(t: Txn): PlanFlow {
 export type TrailingFlows = {
   /** A year's spending: spending, loan payments and cash, less refunds. */
   spending: number;
+  /** What a year's spending holds of the category or tag asked about; absent when
+   *  none was. */
+  paid?: number;
   /** A year's income. */
   income: number;
   /** income - spending, from bank data alone. */
@@ -281,12 +284,20 @@ const counts = (flow: PlanFlow) => flow !== 'transfer' && flow !== 'card-payment
  * counted rows are in. `currency`, the Plan's own (lib/fire/plan-currency.ts),
  * is what the figures are in whatever most rows are in: converted into it
  * with a home currency, and without one only the rows in it count, the rest
- * left out and named.
+ * left out and named. `paid` adds up one category or tag of it along the way.
  */
 export function trailingFlows(
   txns: Txn[],
   today: string,
-  opts: { cashAccounts?: ReadonlySet<string>; fx?: FxTable | null; into?: string | null; currency?: string | null } = {}
+  opts: {
+    cashAccounts?: ReadonlySet<string>;
+    fx?: FxTable | null;
+    into?: string | null;
+    currency?: string | null;
+    /** The category or tag already paying for coverage (D12): what the year holds
+     *  of it comes back as `paid`. */
+    paid?: { kind: 'category' | 'tag'; name: string } | null;
+  } = {}
 ): TrailingFlows | null {
   const end = dayNumber(today);
   const start = end - (TRAILING_DAYS - 1);
@@ -303,6 +314,7 @@ export function trailingFlows(
   // Transactions, not rows: a split one's parts are one, a group as many as
   // it holds (lib/spending.ts transactionCounter).
   const leftOutBy = new Map<string, ReturnType<typeof transactionCounter>>();
+  let paid = 0;
   let cashEntered = 0;
   let cashIous = 0;
   let unclearElsewhere = 0;
@@ -379,6 +391,7 @@ export function trailingFlows(
       continue;
     }
     sums[flow] += t.amount;
+    if (opts.paid && (flow === 'spending' || flow === 'refund') && (opts.paid.kind === 'category' ? (t.category_name ?? t.category) === opts.paid.name : t.tags?.includes(opts.paid.name))) paid += t.amount;
     if (flow === 'unclear-loan' && t.source) unclearElsewhere += t.amount;
     if (isConnectorKind(t.source) && t.category === null && (flow === 'spending' || flow === 'income')) uncategorized++;
     // A row on the cash account, typed or imported (any source but a bank's,
@@ -448,6 +461,7 @@ export function trailingFlows(
     conversion: counting.conversion,
     uncategorized,
     ...(before.count > 0 ? { iousBefore: before } : {}),
+    ...(opts.paid ? { paid: Math.max(0, paid) * scale } : {}),
   };
 }
 

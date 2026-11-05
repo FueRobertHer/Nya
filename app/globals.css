@@ -4651,6 +4651,13 @@ button.plan-edit:disabled {
   visibility: hidden;
 }
 
+/* A detailed plan's answer while its search is out (the tax plan's T3): what it
+   said keeps its place, dimmed, under the one line that says so, since it is close
+   and the forms still act on it. Also Home's FI row. */
+.plan-answer-pending > :not(.plan-working-line) {
+  opacity: 0.6;
+}
+
 /* The rate's place while the first answer is worked out: about as wide as
    "95.1%" at the hero size. */
 .drawdown-skeleton-figure {

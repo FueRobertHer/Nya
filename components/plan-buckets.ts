@@ -69,6 +69,22 @@ export function mixLine(age: number, shares: readonly { bucket: TaxBucket; pct: 
   return `At ${Math.round(age)}, about ${shares.map((s) => `${s.pct}% ${bucketWord(s.bucket)}`).join(', ')}.`;
 }
 
+/** A year's opening balances as the mix's shares, largest first. */
+export function balanceShares(b: { taxable: number; deferred: number; roth: number; hsa: number }): { bucket: TaxBucket; pct: number }[] {
+  const total = b.taxable + b.deferred + b.roth + b.hsa;
+  if (total <= 0) return [];
+  const parts: [TaxBucket, number][] = [
+    ['taxable', b.taxable],
+    ['tax-deferred', b.deferred],
+    ['roth', b.roth],
+    ['hsa', b.hsa],
+  ];
+  return parts
+    .map(([bucket, value]) => ({ bucket, pct: Math.round((value / total) * 100) }))
+    .filter((s) => s.pct > 0)
+    .sort((x, y) => y.pct - x.pct);
+}
+
 /** Why the buckets matter, behind the disclosure. */
 export function bucketsWhy(partner: boolean): string {
   return `Each is taxed differently when you draw it: only the gain when you sell from taxable, all of it from tax-deferred, none from Roth. Before 59½ only some of it can be reached without a penalty${partner ? ', and each of you has your own 59½' : ''}. With a flat tax rate these don’t change your plan’s figures.`;

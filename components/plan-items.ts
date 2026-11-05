@@ -591,6 +591,10 @@ export type PreviewInput = {
   before: PlanFigures | null;
   /** The plan with the draft in it; null while it can't be worked out. */
   after: PlanFigures | 'refused' | null;
+  /** A detailed plan's search for it is under way. */
+  working?: boolean;
+  /** It couldn't be run. */
+  failed?: boolean;
   /** The plan without the item, for an item on FI ("without it, FI would
    *  be around 53"). */
   without: PlanFigures | null;
@@ -635,6 +639,9 @@ export function previewLines(p: PreviewInput): PreviewLines {
     return { rows: [], lines: [p.draft.missing ? `Fill in the figures to see how it moves ${whose} FI age.` : `Once the figures are in range, this says how they move ${whose} FI age.`], cautions: [], warnings: [] };
   }
   if (p.after === 'refused') return { rows: [], lines: ['With this item, the figures can’t be worked out: its lasting change takes your spending in retirement below zero.'], cautions: [], warnings: [] };
+  // A detailed plan's search takes a moment, and what it finds replaces this.
+  if (p.working) return { rows: [], lines: ['Working it out'], cautions: [], warnings: [] };
+  if (p.failed) return { rows: [], lines: [`Tax on this plan couldn’t be worked out on this page, so this can’t say how it moves ${whose} FI age.`], cautions: [], warnings: [] };
   if (!p.after) return { rows: [], lines: [], cautions: [], warnings: [] };
   const x = p.draft.ok;
   const f = p.after;

@@ -58,7 +58,7 @@
 // your plan unasked. The repair and the allocation settings are your plan's
 // own, so a copy has no saver for them.
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { Txn } from './MonthBreakdown';
 import { Sheet, focusInsteadOf } from './Sheet';
 import PlanFanChart from './PlanFanChart';
@@ -66,6 +66,8 @@ import PlanGrid, { type FailedCell } from './PlanGrid';
 import { AboutForm, AssumptionsForm, FiNumberForm, FigureForm, type AssumptionsAt, type FigureKind } from './PlanForms';
 import { Why } from './Why';
 import { createPlanRunner, type PlanRunner, type WorkerLike } from './plan-runner';
+import { planSearch } from './plan-search';
+import { createDetailedFigures, detailedInput, pageBuckets, type DetailedAnswer } from './plan-detailed';
 import {
   DATA_BONDS,
   DATA_STOCKS,
@@ -96,7 +98,7 @@ import { leftOutOf } from '@/lib/fire/child-accounts';
 import { bucketsToday, type AccountYear } from '@/lib/fire/buckets-today';
 import { savingsSplit } from '@/lib/fire/savings-split';
 import { mixShares, mixToday, projectMix } from '@/lib/fire/tax/mix';
-import { mixLine } from './plan-buckets';
+import { balanceShares, mixLine } from './plan-buckets';
 import type { BucketSheet, FigureLevel } from './PlanBuckets';
 import { fmtAsOf } from './accounts-format';
 import { EMPTY_SETTINGS, overridesOf, withBucket } from '@/lib/allocation/settings';
@@ -116,12 +118,14 @@ import {
   type EnginePlan,
   type FirePlan,
   type FiView,
+  type Measured,
   type Missing,
   type PlanCore,
   type Repair,
 } from '@/lib/fire/plan';
 import { basePlanOf, isStoredPlan, parsePlanV2, planOf, type FirePlanV2, type StoredPlan } from '@/lib/fire/plan-v2';
-import { MAX_FIRE_PLANS, factsOf, holdsAmounts, withFacts, type Facts } from '@/lib/fire/copies';
+import { MAX_FIRE_PLANS, entryHoldsAmounts, factsOf, withFacts, type Facts } from '@/lib/fire/copies';
+import type { TaxChoices } from '@/lib/fire/tax-choices';
 import { withItem, type PlanItem } from '@/lib/fire/items';
 import type { Count, ItemAges, ItemNote } from '@/lib/fire/compile';
 import type { GridCell, SimResult } from '@/lib/fire/simulate';
@@ -192,7 +196,7 @@ function useLast<T>(value: T | null): T | null {
  *  a value no longer fits them (and what had to change), the currency its
  *  amounts were typed in when it isn't your plan's now, and its figures
  *  (none then). */
-type PlanView = { row: PlanRow; plan: FirePlanV2; fixed: Repair[]; other: string | null; figures: PlanFigures | FiguresRefused | null };
+type PlanView = { row: PlanRow; plan: FirePlanV2; fixed: Repair[]; other: string | null; figures: PlanFigures | FiguresRefused | null; working: boolean; failed: boolean };
 
 /** Said for a save with nowhere to record its amounts' currency. */
 const NO_COPY_CURRENCY = 'Your plan has no currency yet, so this copy can’t hold amounts: say which currency your plan’s figures are in first (above), then save again.';
@@ -300,6 +304,8 @@ export type PlanTabProps = {
   childNewUntil?: string | null;
   childMovedSeen?: boolean;
   onChildMovedSeen?: () => void;
+  /** The flag 'plan-tax': the detailed tax model may be offered and run. */
+  planTax?: boolean;
 };
 
 /** Said by New copy, Duplicate and a rename of your plan while your plan
@@ -334,6 +340,7 @@ export default function PlanTab({
   childNewUntil = null,
   childMovedSeen = false,
   onChildMovedSeen,
+  planTax = false,
 }: PlanTabProps) {
   const count: Count = useMemo(() => ({ planInWalk }), [planInWalk]);
   const [state, setState] = useState<ListState<StoredPlan | null>>(initialListState<StoredPlan | null>(null));
@@ -506,6 +513,8 @@ export default function PlanTab({
   // shared copy.
   const shared = useSharedPlanInputs(planInputs, institutions);
   const leaveOut = useMemo(() => leftOutOf(childOut, shared.taxFacts.countAnyway), [childOut, shared.taxFacts.countAnyway]);
+  // The detailed tax model (lib/fire/plan-detail.ts): said on, and allowed now.
+  const detailedOn = planTax && shared.factsKnown && shared.taxFacts.model === 'detailed';
   const inputs = usePlanInputs({
     txns,
     txnNotes,
@@ -518,6 +527,7 @@ export default function PlanTab({
     currency: ownCurrency,
     contributions: shared.contributions,
     leaveOut,
+    paid: detailedOn ? shared.taxFacts.paidToday : null,
   });
   const { flows, unread, assets, contributions, workplace, cashOn, cashUnmarked } = inputs;
   const figures = fiFigures(basePlan, inputs, currency);
@@ -627,7 +637,7 @@ export default function PlanTab({
             kept: keptText(currencyState.currency, inputs, !!(txnFx || balanceFx)),
             relabelTo: relabelOffer(currencyState.currency, inputs),
             previous,
-            copiesIn: copiesOf(plansState).filter((r) => r.plan !== null && holdsAmounts(r.plan) && r.currency === currencyState.currency).length,
+            copiesIn: copiesOf(plansState).filter((r) => r.plan !== null && entryHoldsAmounts(r.plan, r.tax) && r.currency === currencyState.currency).length,
             offer,
           }
         : // Nothing typed yet: asked only when the accounts can't tell it.
@@ -669,7 +679,7 @@ export default function PlanTab({
   /** Why a save must wait: it gives your plan its first typed amount, with
    *  no currency yet to record it in. */
   const firstAmountWait = (p: FirePlanV2): string | null =>
-    sendCurrency.current === null && currencyState.kind === 'follows' && holdsAmounts(p)
+    sendCurrency.current === null && currencyState.kind === 'follows' && entryHoldsAmounts(p, shared.choices)
       ? waitingOnAccounts
         ? 'Your accounts are still loading, and the currency your plan’s figures are in is taken from them: save again in a moment.'
         : 'Say which currency you type your plan’s figures in first (above the figures), then save again: nothing was saved.'
@@ -685,13 +695,6 @@ export default function PlanTab({
   };
 
   const measured = measuredInputs(inputs);
-  // The Plan's figures by the same function a copy's come from
-  // (lib/fire/plan-figures.ts).
-  // Null when your plan isn't worked out: its lasting changes take its
-  // spending in retirement below zero (measured spending can fall with no
-  // save at all), and Your path says so, with its Timeline to fix them.
-  const baseRun = planFigures(basePlan, measured, { count });
-  const baseFigures: PlanFigures | null = 'refused' in baseRun ? null : baseRun;
   // Plan amounts are in the Plan's own currency, the one its figures were
   // typed in, once recorded; otherwise the accounts' own, or the
   // transactions' (lib/fire/plan-currency.ts).
@@ -706,6 +709,47 @@ export default function PlanTab({
   const convertedNote = figures.convertedNote;
   // In the plan's currency, so its mix is of what the plan counts.
   const allocation = useAllocation({ institutions, holdings, currency: displayCurrency, includeCash: basePlan.includeCash, fx: balanceFx, leaveOut });
+  // The other accounts' last year, on top of the shared copy (lib/plan-inputs-store.ts
+  // fill): Home and the Plan ask for workplace plans alone. Asked for at load in the
+  // detailed model, and when a sheet that reads them opens in the flat one.
+  const yearRows = useMemo(() => planAccountsOf(institutions).map(planId), [institutions]);
+  useEffect(() => {
+    if (detailedOn) planInputs.fill(yearRows);
+  }, [detailedOn, planInputs, yearRows]);
+  // What a detailed plan's years rest on. They wait for all of it to settle, a failed
+  // part counting as settled with its stand-ins and their words, so the stress test
+  // below never runs on a guess and then again. The law is in dollars.
+  const taxInDollars = displayCurrency === 'USD';
+  const rowsSettled = !detailedOn || yearRows.every((id) => shared.copy.rows[id] && !shared.copy.rows[id].pending);
+  const detailReady = detailedOn && taxInDollars && rowsSettled && allocation.settings.status !== 'loading';
+  const detailBuckets = useMemo(
+    () => (detailReady ? pageBuckets({ assets, holdings, facts: shared.taxFacts, settings: allocation.settings.value ?? null, rows: shared.copy.rows, partner: basePlan.partnerAge !== null }) : null),
+    [detailReady, assets, holdings, shared.taxFacts, allocation.settings.value, shared.copy.rows, basePlan.partnerAge]
+  );
+  const calendarYear = Number(inputs.today.slice(0, 4));
+  const paidToday = flows?.paid ?? 0;
+  const yourChoices = shared.choices;
+  const inputOf = (p: FirePlanV2, tax: TaxChoices | null) => (detailBuckets && p.age !== null ? detailedInput({ plan: p, tax: tax ?? yourChoices, facts: shared.taxFacts, today: detailBuckets, paid: paidToday, calendarYear }) : null);
+  const detailKey = detailBuckets ? JSON.stringify([detailBuckets, shared.taxFacts, paidToday, calendarYear, yourChoices]) : null;
+  // The page's searches (components/plan-search.ts): an answer draws the tab again.
+  const search = planSearch();
+  const searchVersion = useSyncExternalStore(search.subscribe, search.version, search.version);
+  const detailedRun = useMemo(() => createDetailedFigures(search), [search]);
+  /** Every plan's figures, by one flow (components/plan-detailed.ts), so a preview
+   *  agrees with the answer it would save. A flat plan costs what it always did. */
+  const figuresFor = (slot: string, p: FirePlanV2, tax: TaxChoices | null, m: Measured = measured, c: Count = count): DetailedAnswer => {
+    const flat = planFigures(p, m, { count: c });
+    const input = inputOf(p, tax);
+    return input ? detailedRun(slot, p, m, c, input, flat) : { figures: flat, working: false, failed: false };
+  };
+  // The Plan's figures by the same function a copy's come from
+  // (lib/fire/plan-figures.ts).
+  // Null when your plan isn't worked out: its lasting changes take its
+  // spending in retirement below zero (measured spending can fall with no
+  // save at all), and Your path says so, with its Timeline to fix them.
+  const baseAnswer = figuresFor('plan', basePlan, yourChoices);
+  const baseRun = baseAnswer.figures;
+  const baseFigures: PlanFigures | null = 'refused' in baseRun ? null : baseRun;
 
   // Every copy as the tab shows it: with your plan's facts in it, repaired
   // where a value no longer fits them (your age moved past its stop age,
@@ -722,18 +766,26 @@ export default function PlanTab({
     for (const row of plansState.list) {
       if (row.id === plansState.main || row.plan === null) continue;
       const r = basePlanOf(withFacts(row.plan, facts));
-      const other = holdsAmounts(row.plan) && row.currency !== null && planCurrency !== null && row.currency !== planCurrency ? row.currency : null;
-      m.set(row.id, { row, plan: r.plan, fixed: r.fixed, other, figures: other ? null : planFigures(r.plan, measured, { count }) });
+      const other = entryHoldsAmounts(row.plan, row.tax) && row.currency !== null && planCurrency !== null && row.currency !== planCurrency ? row.currency : null;
+      const answer = other ? null : figuresFor(`copy:${row.id}`, r.plan, row.tax);
+      m.set(row.id, { row, plan: r.plan, fixed: r.fixed, other, figures: answer?.figures ?? null, working: answer?.working ?? false, failed: answer?.failed ?? false });
     }
     return m;
-    // measuredKey stands for measured, a new object each render.
+    // measuredKey stands for measured, a new object each render; detailKey for what
+    // a detailed plan's years rest on, and searchVersion for a job's answer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planLoaded, plansState.list, plansState.main, basePlan, planCurrency, measuredKey, count]);
+  }, [planLoaded, plansState.list, plansState.main, basePlan, planCurrency, measuredKey, count, detailKey, searchVersion]);
   const openView = entry ? (views.get(entry.id) ?? null) : null;
   const other = openView?.other ?? null;
   const copyFixing = !!openView && openView.fixed.length > 0;
   const openFigures = openView?.figures ?? null;
   const shown: PlanFigures | null = entry ? (openFigures && !('refused' in openFigures) ? openFigures : null) : baseFigures;
+  // A job is out for the plan shown, or it couldn't be run: dimmed, or said.
+  const shownWorking = entry ? (openView?.working ?? false) : baseAnswer.working;
+  const shownFailed = entry ? (openView?.failed ?? false) : baseAnswer.failed;
+  // The stress test waits for a detailed plan's years, so it never runs twice, and
+  // doesn't run on a date that couldn't be worked out.
+  const holdSim = detailedOn && taxInDollars && (!detailReady || shownWorking || shownFailed);
   const problem = openFigures && 'refused' in openFigures ? REFUSED_TEXT : null;
   const baseRefused = !entry && baseFigures === null;
   /** The plan the forms edit: the copy open, or your plan. */
@@ -795,7 +847,7 @@ export default function PlanTab({
   simRef.current = sim;
   const methodRef = useRef(plan.method);
   methodRef.current = plan.method;
-  const simRunKey = simKey ? `${attempt}:${simKey}` : null;
+  const simRunKey = simKey && !holdSim ? `${attempt}:${simKey}` : null;
   const [main, setMain] = useState<{ key: string; outcome: Outcome } | null>(null);
   useEffect(() => {
     const s = simRef.current;
@@ -826,7 +878,7 @@ export default function PlanTab({
     // render, and the attempt.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [simRunKey]);
-  const pending = !!simRunKey && main?.key !== simRunKey;
+  const pending = (holdSim && !!simKey) || (!!simRunKey && main?.key !== simRunKey);
   // While a new answer is worked out the last result stays, dimmed; an old
   // failure doesn't.
   const outcome = main && !(pending && 'error' in main.outcome) ? main.outcome : null;
@@ -839,7 +891,7 @@ export default function PlanTab({
     [vpw, ownRate]
   );
   const gridYears = useMemo(() => withOwn(GRID_YEARS, sim?.years ?? 30), [sim?.years]);
-  const gridKey = sim ? JSON.stringify([attempt, simKey, gridRates, gridYears]) : null;
+  const gridKey = sim && !holdSim ? JSON.stringify([attempt, simKey, gridRates, gridYears]) : null;
   const [grid, setGrid] = useState<{ key: string; cells: GridCell[]; failed: FailedCell[]; unavailable: boolean } | null>(null);
   useEffect(() => {
     const s = simRef.current;
@@ -922,10 +974,6 @@ export default function PlanTab({
     setFigureLevel(null);
   };
   const close = () => setSheet(null);
-  // The other accounts' last year, asked for when a sheet that reads them opens,
-  // on top of the shared copy (lib/plan-inputs-store.ts fill): Home and the Plan
-  // ask for workplace plans alone.
-  const yearRows = useMemo(() => planAccountsOf(institutions).map(planId), [institutions]);
   const typedBasis = useMemo(() => new Map(shared.taxFacts.basis.map((b) => [b.account_id, b.amount])), [shared.taxFacts.basis]);
   useEffect(() => {
     if (sheet?.kind === 'figure' && sheet.figure !== 'spending') planInputs.fill(yearRows);
@@ -988,7 +1036,7 @@ export default function PlanTab({
   };
   // The currency the plan shown is saved with: a copy's own once it holds an
   // amount, else your plan's.
-  const shownCurrency = entry?.plan && holdsAmounts(entry.plan) ? entry.currency : sendCurrency.current;
+  const shownCurrency = entry?.plan && entryHoldsAmounts(entry.plan, entry.tax) ? entry.currency : sendCurrency.current;
   // Every other plan the same change can go to (Also change it in): each
   // that reads and needs no repair with your plan's facts in it, holding its
   // amounts in the currency of the plan shown, or none. In the list's order,
@@ -1002,7 +1050,7 @@ export default function PlanTab({
           const v = mine ? null : views.get(row.id);
           const p = mine ? (repairing ? null : basePlan) : v && v.fixed.length === 0 ? v.plan : null;
           if (!p) return [];
-          const currency = !holdsAmounts(p) ? null : mine ? sendCurrency.current : row.currency;
+          const currency = !entryHoldsAmounts(p, row.tax) ? null : mine ? sendCurrency.current : row.currency;
           return currency === null || currency === shownCurrency ? [{ row, plan: p, currency }] : [];
         });
   // As offered (components/plan-diff.ts figureChoices, itemChoices): your
@@ -1018,7 +1066,7 @@ export default function PlanTab({
     if (other && planCurrency) return currencyText(other, planCurrency, currencyKnown);
     const wait = entry ? null : firstAmountWait(next);
     if (wait) return wait;
-    if (entry && shownCurrency === null && holdsAmounts(next)) return NO_COPY_CURRENCY;
+    if (entry && shownCurrency === null && entryHoldsAmounts(next, entry.tax)) return NO_COPY_CURRENCY;
     const saves: PlanSave[] = [
       entry
         ? { id: entry.id, plan: next, currency: shownCurrency, based_on: entry.updated_at }
@@ -1115,13 +1163,13 @@ export default function PlanTab({
   // plan's one-offs and income moved, on the Plan's answer and Progress's
   // line, until Got it (one for both).
   const movedNew = planInWalk && !movedSeen && stillNew(newUntil, todayUtc);
-  const offFigures = movedNew && entry === null && baseFigures ? planFigures(basePlan, measured, { count: { planInWalk: false } }) : null;
+  const offFigures = movedNew && entry === null && baseFigures ? figuresFor('moved', basePlan, yourChoices, measured, { planInWalk: false }).figures : null;
   const movedText = offFigures && baseFigures && !('refused' in offFigures) ? fiMovedText(offFigures, baseFigures) : null;
   // D7's the same way, with its own Got it: the plan's figures with a child's
   // accounts counted again, on the Plan's answer alone, since a saved plan's
   // Progress line leaves them out at both its ends.
   const childMovedNew = childOut && !childMovedSeen && entry === null && stillNew(childNewUntil, todayUtc) && (assets.childAccounts?.length ?? 0) > 0;
-  const childOffFigures = childMovedNew && baseFigures ? planFigures(basePlan, measuredInputs({ ...inputs, assets: investedAssets(institutions, basePlan.includeCash, balanceFx, Date.now(), ownCurrency) }), { count }) : null;
+  const childOffFigures = childMovedNew && baseFigures ? figuresFor('child-moved', basePlan, yourChoices, measuredInputs({ ...inputs, assets: investedAssets(institutions, basePlan.includeCash, balanceFx, Date.now(), ownCurrency) })).figures : null;
   const childMoved = childOffFigures && baseFigures && !('refused' in childOffFigures) ? childMovedText(childOffFigures, baseFigures) : null;
   const overlay = useMemo(
     () =>
@@ -1192,9 +1240,13 @@ export default function PlanTab({
   const mixFor = (kind: FigureKind) => {
     const startsAt = shown && 'sim' in shown.engine ? shown.engine.startAge : null;
     if (kind !== 'assets' || !shown || startsAt === null || plan.age === null || view.assets.value === null) return null;
+    // A detailed plan's is where Year by year starts.
+    const drawn = shown.detail && !('failed' in shown.detail) ? shown.detail : null;
+    const first = drawn?.start.years[0];
+    if (drawn && first) return mixLine(drawn.startAge, balanceShares(first.start));
     const today = bucketsFor(plan.includeCash);
     const split = savingsSplit(today, view.savings.value);
-    const projected = projectMix(mixToday(today, view.assets.value), { savings: view.savings.value ?? 0, split: split.shares, realReturn: plan.realReturn, inflation: DEFAULT_INFLATION, walk: shown.walk, years: Math.max(0, startsAt - plan.age) });
+    const projected = projectMix(mixToday(today, view.assets.value), { savings: view.savings.value ?? 0, split: split.shares, realReturn: plan.realReturn, inflation: detailedOn ? ((entry ? entry.tax : yourChoices)?.inflation ?? DEFAULT_INFLATION) : DEFAULT_INFLATION, walk: shown.walk, years: Math.max(0, startsAt - plan.age) });
     return projected && mixLine(startsAt, mixShares(projected));
   };
   const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, copy: copyName, paused, planInWalk, childOut };
@@ -1221,7 +1273,8 @@ export default function PlanTab({
     money,
     savingsRate: figures.savingsRate,
     shareRates: inputs.rates ?? null,
-    taxOnHold: shared.taxFacts.model === 'detailed',
+    // Said detailed, and not worked out that way now.
+    taxOnHold: shared.taxFacts.model === 'detailed' && !(planTax && taxInDollars),
   };
   const figureTexts = figureNotes(figureArgs);
   const stressNotes = stressNotice(figureArgs, engine, shown?.startsWith ?? null);
@@ -1385,7 +1438,7 @@ export default function PlanTab({
     if (state.status !== 'ready') return READING_AGAIN;
     const source = from === plansState.main ? { plan: basePlan, currency: sendCurrency.current } : views.get(from);
     if (!source) return 'That plan changed since this opened, so nothing was made: open it again.';
-    const currency = 'row' in source ? (holdsAmounts(source.plan) ? source.row.currency : sendCurrency.current) : source.currency;
+    const currency = 'row' in source ? (entryHoldsAmounts(source.plan, source.row.tax) ? source.row.currency : sendCurrency.current) : source.currency;
     const r = await plansClient.create({ from, name, plan: whole ?? source.plan, currency });
     if ('error' in r) return r.error;
     if (stampRef.current === null) void store.load();
@@ -1562,6 +1615,8 @@ export default function PlanTab({
       refused={refused || baseRefused}
       measured={measured}
       count={count}
+      figuresFor={(slot, p) => figuresFor(slot, p, entry ? entry.tax : yourChoices)}
+      searchVersion={searchVersion}
       copyName={copyName}
       version={shownFor ?? storedKey}
       editable={timelineEditable}
@@ -1689,6 +1744,9 @@ export default function PlanTab({
               onFiNumber={() => open({ kind: 'fi-number' }, 'fi-how')}
               fiNumberRef={(el) => inputRowRef('fi-how', el)}
               held={reloading}
+              working={shownWorking}
+              failed={shownFailed}
+              onRetryDetail={search.retry}
               plan={plan}
               view={view}
               unread={unread}
@@ -1761,14 +1819,16 @@ export default function PlanTab({
               engine={engine}
               outcome={outcome}
               pending={pending}
+              failed={shownFailed}
               money={money}
               currency={displayCurrency}
               badge={stressBadge}
               onRetry={retry}
+              onRetryDetail={search.retry}
             />
           )}
 
-          {worked && 'sim' in engine && (
+          {worked && 'sim' in engine && !shownFailed && (
             <GridCard
               copyName={copyName}
               plan={plan}
@@ -1969,6 +2029,9 @@ function Row({ label, value, note, action }: { label: string; value: React.React
   );
 }
 
+/** A detailed plan's search couldn't be run in a worker or on the page. */
+const DETAIL_FAILED = 'Tax on this plan couldn’t be worked out on this page. It needs a connection the first time it runs after an update.';
+
 /** The FI card: the FI number and how it is worked out, with what may leave
  *  it short said on it, and what follows from it (years to FI, Coast and
  *  Barista FI, the balance at the target age). The figures it rests on are
@@ -1998,6 +2061,9 @@ export function FiCard({
   onAskAges,
   askRef,
   held = false,
+  working = false,
+  failed = false,
+  onRetryDetail,
   plan,
   view,
   unread,
@@ -2055,6 +2121,11 @@ export function FiCard({
   askRef?: (el: HTMLElement | null) => void;
   /** The plan is being read again: the ask does nothing meanwhile. */
   held?: boolean;
+  /** A detailed plan's answer is still being worked out: this one is dimmed. */
+  working?: boolean;
+  /** It couldn't be, so this says so in its place, with Try again. */
+  failed?: boolean;
+  onRetryDetail?: () => void;
   plan: PlanCore;
   view: FiView;
   /** Institutions whose transactions couldn't all be read. */
@@ -2132,13 +2203,35 @@ export function FiCard({
   caveat('caution', 'currency', currencyNote);
   caveat('info', 'converted', convertedNote);
   const asks = !!head.ask && !!onAskAges;
+  if (failed) {
+    return (
+      <Hero id="plan-fi-title" level={3} label="Financial independence" className="plan-hero" top={copyName ? <CopyTag name={copyName} /> : undefined} figure="Not worked out" figureClass="plan-answer" line={<p className="helper">{DETAIL_FAILED}</p>}>
+        <div>
+          <button type="button" className="btn secondary" onClick={onRetryDetail}>
+            Try again
+          </button>
+        </div>
+      </Hero>
+    );
+  }
   return (
     <Hero
       id="plan-fi-title"
       level={3}
       label="Financial independence"
-      className="plan-hero"
-      top={copyName ? <CopyTag name={copyName} /> : undefined}
+      className={working ? 'plan-hero plan-answer-pending' : 'plan-hero'}
+      top={
+        copyName || working ? (
+          <>
+            {copyName && <CopyTag name={copyName} />}
+            {working && (
+              <p className="plan-working-line" role="status">
+                Working it out
+              </p>
+            )}
+          </>
+        ) : undefined
+      }
       // Words, not amounts, but from the figures: through Masked, as every
       // line read from them is (test/amount-sources.ts).
       figure={<Masked>{head.headline}</Masked>}
@@ -2577,10 +2670,12 @@ export function SimulationCard({
   engine,
   outcome,
   pending,
+  failed = false,
   money,
   currency,
   badge = null,
   onRetry,
+  onRetryDetail,
 }: {
   /** The open copy's name, said at the top; null with your plan open. */
   copyName?: string | null;
@@ -2602,12 +2697,15 @@ export function SimulationCard({
   outcome: Outcome | null;
   /** A new answer is being worked out: the last one is held hidden. */
   pending: boolean;
+  /** A detailed plan's date couldn't be worked out, so nothing was run on it. */
+  failed?: boolean;
   money: (n: number) => string;
   currency: string | null;
   /** Drawdown's notice is about this answer's inputs: its badge. */
   badge?: string | null;
   /** Runs it again, when it couldn't be run at all. */
   onRetry: () => void;
+  onRetryDetail?: () => void;
 }) {
   // Over the label: an open copy's tag, and the badge.
   const top =
@@ -2647,6 +2745,18 @@ export function SimulationCard({
 
   if ('missing' in engine) {
     return hero(MISSING_FIGURE[engine.missing], 'plan-answer', <p className="helper">{missingText(engine.missing, view)}</p>, null);
+  }
+  if (failed) {
+    return hero(
+      'Not worked out',
+      'plan-answer',
+      <p className="helper">{DETAIL_FAILED}</p>,
+      <div>
+        <button type="button" className="btn secondary" onClick={onRetryDetail}>
+          Try again
+        </button>
+      </div>
+    );
   }
   const { sim, startAge, rate, rateFrom } = engine;
   // Placed by the compile (lib/fire/compile.ts): not one left out for want
