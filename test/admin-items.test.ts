@@ -1,5 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, testKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { factsAbout } from './facts-about';
 
 // The admin's view of unused connections across every account
 // (lib/admin-items.ts and /api/admin/unused): who may see it, and that removal
@@ -138,6 +139,14 @@ describe('removing one', () => {
     expect(await removeFlagged(OTHER.container, 'theirs')).toEqual({ ok: true });
     expect(await ids(OTHER)).toEqual(['keep']);
     expect(plaid.removed).toEqual(['tok_theirs']);
+  });
+
+  test('what the tax facts say about its accounts stays, as for any disconnect', async () => {
+    const { planFactsStore } = await import('@/lib/plan-copies');
+    await flagOthers();
+    await planFactsStore.set(OTHER, factsAbout('acct_theirs'));
+    expect(await removeFlagged(OTHER.container, 'theirs')).toEqual({ ok: true });
+    expect(await planFactsStore.get(OTHER)).toEqual(factsAbout('acct_theirs'));
   });
 
   test('rechecks only the connection being removed, not the whole account', async () => {

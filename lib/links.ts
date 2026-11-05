@@ -48,6 +48,7 @@ import { forgetImportedHistory } from './history-import/commit';
 import { forgetRestoredAccount, restoredForgetRefusal } from './user-restore/forget';
 import type { Unlisted } from './earlier-names';
 import { pendingJob, pendingWords } from './sign-repair-store';
+import { forgetAccountFacts } from './plan-writes';
 
 // Keys are functions of the container.
 const directoryKey = (ctx: Ctx) => kc(ctx, 'accounts:directory');
@@ -737,8 +738,8 @@ export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<
  * directory entry (name, mask, institution), the categories recorded to carry
  * across a re-link, the transactions imported into it from files, the bank
  * rows a restore brought back for it and what was said about them, dismissed
- * offers that name it, leftover remembered records naming it, and its hidden
- * entry. The past net-worth totals stay as they were
+ * offers that name it, leftover remembered records naming it, what the tax facts
+ * say about it, and its hidden entry. The past net-worth totals stay as they were
  * (they were the user's net worth on those dates); a hidden account is folded
  * out of them first, so the chart shows them as it did while it was hidden
  * (lib/history.ts foldHiddenAccount).
@@ -757,8 +758,10 @@ export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<
  * `unreadableDates` are days of balances too damaged for anyone to read, and
  * `holdingsDamaged` says holdings records that could hold the account are
  * (lib/holdings-history.ts forgetAccountHoldings): left as they are. Holdings
- * records this version does not recognise stop the forget before anything is
- * changed, for an account that could be in them (UnreadableEntriesError).
+ * records this version does not recognise stop the forget before anything but
+ * its tax facts is changed, for an account that could be in them
+ * (UnreadableEntriesError), and tax facts it doesn't recognise stop it before
+ * anything is (UnreadableValueError).
  * What a restore brought back for it in a form this version doesn't know
  * stops it the same way, as a refusal (lib/user-restore/forget.ts
  * restoredForgetRefusal).
@@ -811,10 +814,15 @@ export async function forgetEarlierAccount(
   const unknown = await restoredForgetRefusal(ctx, id);
   if (unknown) throw new ForgetRefused(unknown);
 
-  // What it held, from every month of holdings history. First, as the one
+  // What the tax facts say about it. First, since facts this version does not
+  // recognise stop the forget (lib/plan-writes.ts), so one they stop has changed
+  // nothing, and a retry finds nothing left to do here.
+  await forgetAccountFacts(ctx, [id]);
+
+  // What it held, from every month of holdings history. Next, as the other
   // step that stops for what is stored (a record this version does not
   // recognise that may hold the account), so a forget it stops has changed
-  // nothing. An account known not to be an investment account never had
+  // nothing else. An account known not to be an investment account never had
   // positions: holdings records are not read for it at all, so nothing in
   // them, not even a record no one can read, holds its forget back.
   const type = inputs.directory[id]?.type ?? hidden.get(id)?.type ?? null;

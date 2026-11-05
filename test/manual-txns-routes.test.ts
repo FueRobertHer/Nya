@@ -1,5 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { factsAbout } from './facts-about';
 
 // The routes behind manual transactions and exclusions, called as the app
 // calls them: app/api/manual-transactions, app/api/transaction-annotations,
@@ -52,6 +53,7 @@ const annotations = await import('@/app/api/transaction-annotations/route');
 const transactions = await import('@/app/api/transactions/route');
 const recategorize = await import('@/app/api/recategorize/route');
 const manualAccounts = await import('@/app/api/manual-accounts/route');
+const { planFactsStore } = await import('@/lib/plan-copies');
 type ManualAccount = import('@/lib/manual').ManualAccount;
 
 const ctx = TEST_CTX;
@@ -536,6 +538,26 @@ describe('editing and deleting a transaction', () => {
       body: { error: 'That account no longer exists' },
     });
     expect(await manualTxnStore.count(ctx)).toBe(0);
+  });
+
+  test('deleting an account takes what the tax facts say about it, and leaves another’s', async () => {
+    await planFactsStore.set(ctx, factsAbout(WALLET.account_id, CARD.account_id));
+    expect((await call(manualAccounts.DELETE, 'DELETE', { account_id: WALLET.account_id })).status).toBe(200);
+    expect(await planFactsStore.get(ctx)).toEqual(factsAbout(CARD.account_id));
+  });
+
+  test('an id that isn’t a manual account’s touches nothing the tax facts say', async () => {
+    await planFactsStore.set(ctx, factsAbout('acct_plaid'));
+    expect((await call(manualAccounts.DELETE, 'DELETE', { account_id: 'acct_plaid' })).status).toBe(400);
+    expect(await planFactsStore.get(ctx)).toEqual(factsAbout('acct_plaid'));
+  });
+
+  test('facts this version doesn’t recognise stop the delete, with the account still there to delete again', async () => {
+    const newer = await encrypt(ctx, '{"version":3}');
+    await fake.set(ctxKey('plan-facts'), newer);
+    expect((await quietly(() => call(manualAccounts.DELETE, 'DELETE', { account_id: WALLET.account_id }))).status).toBe(500);
+    expect(await getManualAccount(ctx, WALLET.account_id)).not.toBeNull();
+    expect(await fake.get<string>(ctxKey('plan-facts'))).toBe(newer);
   });
 
   test('a delete removes the row and the exclusion on it; deleting it again is no error', async () => {

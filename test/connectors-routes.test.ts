@@ -3,6 +3,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { FakeSimplefin, fakeAccount, type FakeTxn } from './simplefin-fake';
+import { factsAbout } from './facts-about';
 
 // The connector routes (app/api/connectors) as the app calls them, against a
 // local fake SimpleFIN server, and what SimpleFIN's accounts are everywhere
@@ -44,6 +45,7 @@ const transactions = await import('@/app/api/transactions/route');
 const manualTxns = await import('@/app/api/manual-transactions/route');
 const recategorize = await import('@/app/api/recategorize/route');
 const netWorth = await import('@/app/api/net-worth/route');
+const { planFactsStore } = await import('@/lib/plan-copies');
 
 const ctx = TEST_CTX;
 const DAY = 86_400_000;
@@ -167,6 +169,66 @@ describe('connecting through the routes', () => {
     expect([gone.status, gone.body.kept]).toEqual([200, 1]);
     ({ body } = await list());
     expect(body.connections).toEqual([]);
+  });
+
+  describe('what the tax facts say about an account let go', () => {
+    const idsOf = async () => {
+      const accounts = (await list()).body.connections[0].accounts;
+      return { checking: accounts.find((a: any) => a.name === 'Checking').account_id as string, visa: accounts.find((a: any) => a.name === 'Visa').account_id as string };
+    };
+
+    test('removed, it goes; another account’s stays', async () => {
+      const id = await connectAndTrack();
+      const { checking, visa } = await idsOf();
+      await planFactsStore.set(ctx, factsAbout(checking, visa));
+      expect((await call(accountsRoute.PUT, 'PUT', { connection_id: id, stop: { account_ids: [visa], keep: false } })).status).toBe(200);
+      expect(await planFactsStore.get(ctx)).toEqual(factsAbout(checking));
+    });
+
+    test('kept as a manual account under the same id, it stays', async () => {
+      const id = await connectAndTrack();
+      const { checking, visa } = await idsOf();
+      await planFactsStore.set(ctx, factsAbout(checking, visa));
+      expect((await call(accountsRoute.PUT, 'PUT', { connection_id: id, stop: { account_ids: [checking], keep: true } })).body.kept).toBe(1);
+      expect(await planFactsStore.get(ctx)).toEqual(factsAbout(checking, visa));
+    });
+
+    test('kept with no balance to keep, the account goes and it goes too', async () => {
+      const id = await connectAndTrack();
+      const { checking, visa } = await idsOf();
+      const was = (await connectorAccountsStore.get(ctx, checking))!;
+      await connectorAccountsStore.set(ctx, checking, { ...was, reported_balance: null });
+      await planFactsStore.set(ctx, factsAbout(checking, visa));
+      expect((await call(accountsRoute.PUT, 'PUT', { connection_id: id, stop: { account_ids: [checking], keep: true } })).body.nothing_to_keep).toEqual(['Checking']);
+      expect(await planFactsStore.get(ctx)).toEqual(factsAbout(visa));
+    });
+
+    test('keeping refused leaves it', async () => {
+      // A card reported as money held: whether it is owed has to be said first.
+      server.accounts[1] = fakeAccount({ id: 'CARD', name: 'Visa', balance: '432.10', 'balance-date': ago(1) });
+      const id = await connectAndTrack();
+      const { checking, visa } = await idsOf();
+      await planFactsStore.set(ctx, factsAbout(checking, visa));
+      const stop = await call(accountsRoute.PUT, 'PUT', { connection_id: id, stop: { account_ids: [visa], keep: true } });
+      expect(stop.status).toBe(409);
+      expect(await planFactsStore.get(ctx)).toEqual(factsAbout(checking, visa));
+    });
+
+    test('the whole connection disconnected, removing them: all its accounts’ go, and another’s stays', async () => {
+      const id = await connectAndTrack();
+      const { checking, visa } = await idsOf();
+      await planFactsStore.set(ctx, factsAbout(checking, visa, 'acct_elsewhere'));
+      expect((await call(connectors.DELETE, 'DELETE', { connection_id: id, keep: false })).body.removed).toBe(2);
+      expect(await planFactsStore.get(ctx)).toEqual(factsAbout('acct_elsewhere'));
+    });
+
+    test('the whole connection disconnected, keeping them: all stay', async () => {
+      const id = await connectAndTrack();
+      const { checking, visa } = await idsOf();
+      await planFactsStore.set(ctx, factsAbout(checking, visa));
+      expect((await call(connectors.DELETE, 'DELETE', { connection_id: id })).body.kept).toBe(2);
+      expect(await planFactsStore.get(ctx)).toEqual(factsAbout(checking, visa));
+    });
   });
 
   test('refuses accounts that are not this connection’s, and malformed requests', async () => {

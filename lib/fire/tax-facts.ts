@@ -139,5 +139,16 @@ export function applyTaxFactOp(tax: TaxFacts, op: TaxFactOp): TaxFacts {
   };
 }
 
+/** The facts without what is said about these accounts, gone for good: the same
+ *  object when they say nothing about any. Who put what into a Roth stays, as it
+ *  is said of a person and not of an account. */
+export function withoutAccounts(tax: TaxFacts, gone: ReadonlySet<string>): TaxFacts {
+  const owners = tax.owners.filter((x) => !gone.has(x.account_id));
+  const basis = tax.basis.filter((x) => !gone.has(x.account_id));
+  const countAnyway = tax.countAnyway.filter((id) => !gone.has(id));
+  if (owners.length === tax.owners.length && basis.length === tax.basis.length && countAnyway.length === tax.countAnyway.length) return tax;
+  return { ...tax, owners, basis, countAnyway };
+}
+
 /** Whether the facts hold more accounts than a write may leave there. */
 export const tooManyFactAccounts = (tax: TaxFacts): boolean => Math.max(tax.owners.length, tax.basis.length, tax.countAnyway.length) > MAX_FACT_ACCOUNTS;

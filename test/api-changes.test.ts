@@ -1,6 +1,7 @@
 import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime, spyOn } from 'bun:test';
 import './clerk-mock';
 import { FakeRedis, storageMock, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { factsAbout } from './facts-about';
 
 // The record of changes made with API tokens (lib/api-changes.ts) and undo
 // (lib/api-undo.ts): each write recorded, a token reading its own alone, the
@@ -32,6 +33,8 @@ const { snapshotData } = await import('@/lib/snapshot-job');
 const { PENDING_MS } = await import('@/lib/api-writes');
 const { allocationSettingsStore } = await import('@/lib/allocation-settings');
 const { plannedStore } = await import('@/lib/planned-store');
+const { planFactsStore } = await import('@/lib/plan-copies');
+const { saveTaxFacts } = await import('@/lib/plan-writes');
 const txnWrites = await import('@/lib/manual-txn-writes');
 
 const NOW = Date.parse('2026-10-20T12:00:00.000Z');
@@ -633,6 +636,7 @@ describe('undo of an account a token made, taken out only as the token left it',
         'A rule names the account',
       ],
       ['a note', (id) => timelineNotesStore.set(ctx, 'n1', { date: daysAgo(0, NOW), text: 'Opened the jar', kind: 'user', account_id: id, created_at: new Date(NOW).toISOString() }), 'A note on the timeline is about the account'],
+      ['a tax fact', (id) => planFactsStore.set(ctx, factsAbout(id)), 'What you told the Plan tab about the account for tax is still set'],
       ['a tax bucket', (id) => allocationSettingsStore.set(ctx, { v: 1, buckets: [{ account_id: id, bucket: 'roth' }], funds: [], accounts: [], target: null }), 'A tax bucket or split on the Plan tab is set for the account'],
       ['a split', (id) => allocationSettingsStore.set(ctx, { v: 1, buckets: [], funds: [], accounts: [{ account_id: id, split: { 'us-stocks': 60, bonds: 40 } }], target: null }), 'A tax bucket or split on the Plan tab is set for the account'],
       ['a share', (id) => shareOf({ accounts: { [id]: 'balance' }, updated_at: new Date(NOW).toISOString() }), 'The account is shared with someone you’re connected with'],
@@ -652,6 +656,17 @@ describe('undo of an account a token made, taken out only as the token left it',
       expect([what, (await quietly(() => undo(a.change))).body.error?.message?.includes(words)]).toEqual([what, true]);
       expect(await getManualAccount(ctx, a.id)).not.toBeNull();
     }
+  });
+
+  test('what you said about it for tax holds its undo until you take it back; about another account, or of a person, it doesn’t', async () => {
+    const a = await made();
+    await planFactsStore.set(ctx, factsAbout(a.id, 'acc_other'));
+    expect((await quietly(() => undo(a.change))).status).toBe(409);
+    expect(await planFactsStore.get(ctx)).toEqual(factsAbout(a.id, 'acc_other'));
+    await saveTaxFacts(ctx, { kind: 'account', account_id: a.id, owner: 'you', basis: null, count: false });
+    expect((await undo(a.change)).status).toBe(200);
+    expect(await getManualAccount(ctx, a.id)).toBeNull();
+    expect(await planFactsStore.get(ctx)).toEqual(factsAbout('acc_other'));
   });
 
   test('what the token itself did since is its own: a row it changed, a balance it set, a name it gave', async () => {

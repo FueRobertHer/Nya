@@ -3,6 +3,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { FakeSimplefin, fakeAccount, type FakeTxn } from './simplefin-fake';
+import { factsAbout } from './facts-about';
 
 // Reports (lib/report/) with the accounts a SimpleFIN connection keeps up to
 // date: their rows count in a report's totals exactly as on the Activity tab
@@ -37,7 +38,7 @@ mock.module('@/lib/storage', () => storageMock(fake));
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 
 const { setTransportForTests } = await import('@/lib/connectors/http');
-const { connect, trackAccounts, disconnect } = await import('@/lib/connectors/manage');
+const { connect, trackAccounts, disconnect, releaseAccounts } = await import('@/lib/connectors/manage');
 const { connectionsStore, connectorAccountsStore, endedAccountsStore } = await import('@/lib/connectors/store');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { readReport } = await import('@/lib/report/read');
@@ -311,6 +312,18 @@ describe('where a report’s data comes from', () => {
     r = await report(dayOf(NOW - 30 * DAY));
     expect(r.gaps).toEqual([]);
     expect(r.removed).toEqual([]);
+  });
+
+  test('forgetting the record of an account kept leaves what the tax facts say about it: only the record goes, and the account carries on by hand', async () => {
+    const { planFactsStore } = await import('@/lib/plan-copies');
+    await trackOn();
+    const accounts = [...(await connectorAccountsStore.getAll(ctx)).values()];
+    const checking = accounts.find((a) => a.name === 'Checking')!.account_id;
+    await planFactsStore.set(ctx, factsAbout(checking));
+    expect((await releaseAccounts(ctx, [checking], true, NOW)).kept).toEqual([checking]);
+    const forgot = await endedRoute.DELETE(new Request('http://localhost/api/connectors/ended', { method: 'DELETE', body: JSON.stringify({ account_id: checking }) }));
+    expect(await forgot.json()).toEqual({ forgotten: true });
+    expect(await planFactsStore.get(ctx)).toEqual(factsAbout(checking));
   });
 
   test('a removed account its history still mentions is SimpleFIN’s in the download, and forgetting its record takes it out of reports', async () => {

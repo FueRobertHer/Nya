@@ -1,6 +1,7 @@
 import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { startRedis, type RealRedis } from './real-redis';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { factsAbout } from './facts-about';
 
 // Disconnecting an institution and adding it back (#46), end to end through
 // the routes: what the user set on the old accounts (hidden, categories)
@@ -48,6 +49,7 @@ const links = await import('@/lib/links');
 const { rememberAccounts } = await import('@/lib/last-known');
 const { setAccountHidden } = await import('@/lib/hidden');
 const overrides = await import('@/lib/overrides');
+const { planFactsStore } = await import('@/lib/plan-copies');
 
 const account = (id: string) => ({
   account_id: id,
@@ -442,6 +444,43 @@ describe('forgetting an earlier account', () => {
     await fake.hset(ctxKey('history:net-worth'), { '2026-01-01': await encrypt(TEST_CTX, '105') });
     await links.dismissPair(ctx, 'acct_old', 'acct_other');
   };
+
+  describe('what the tax facts say about it', () => {
+    test('a disconnect alone leaves them, so a bank reconnected under the same id has them still', async () => {
+      await planFactsStore.set(ctx, factsAbout('acct_old', 'acct_other'));
+      await setup();
+      expect(await planFactsStore.get(ctx)).toEqual(factsAbout('acct_old', 'acct_other'));
+      await addItem('item_back', 'acct_old', []);
+      expect(await planFactsStore.get(ctx)).toEqual(factsAbout('acct_old', 'acct_other'));
+    });
+
+    test('Forget takes them, and leaves another account’s', async () => {
+      await setup();
+      await planFactsStore.set(ctx, factsAbout('acct_old', 'acct_other'));
+      expect((await forget('acct_old')).body).toEqual({ forgotten: true, unreadable_days: 0 });
+      expect(await planFactsStore.get(ctx)).toEqual(factsAbout('acct_other'));
+    });
+
+    test('a forget refused leaves them', async () => {
+      await setup();
+      await planFactsStore.set(ctx, factsAbout('acct_old', 'acct_other'));
+      expect((await forget('acct_other')).status).toBe(409);
+      expect(await planFactsStore.get(ctx)).toEqual(factsAbout('acct_old', 'acct_other'));
+    });
+
+    test('facts this version doesn’t recognise stop the forget, saying why, with the account still listed to try again', async () => {
+      await setup();
+      const newer = await encrypt(TEST_CTX, '{"version":3}');
+      await fake.set(ctxKey('plan-facts'), newer);
+      const stopped = await forget('acct_old');
+      expect(stopped.status).toBe(409);
+      expect(stopped.body.unreadable).toBe(true);
+      expect(await fake.get<string>(ctxKey('plan-facts'))).toBe(newer);
+      expect((await route('account-links', 'GET')).body.earlier.map((e: any) => e.id)).toEqual(['acct_old']);
+      await planFactsStore.remove(ctx);
+      expect((await forget('acct_old')).status).toBe(200);
+    });
+  });
 
   test('deletes its balances, name, carried categories, dismissals and stale records, and leaves the totals', async () => {
     await setup();
