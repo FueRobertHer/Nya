@@ -77,6 +77,7 @@ import {
   METHOD_NAMES,
   monthName,
   pct,
+  saidAbove,
   saidRate,
   progressText,
   successDefinition,
@@ -3267,7 +3268,7 @@ export function SimulationCard({
     setup = (
       <>
         Stop working {when} with <Masked>{money(sim.startBalance)}</Masked> ({startLabel}), withdrawing <strong>{pct(saidRate(rate, plan.withdrawalRate))}</strong> of it a year, your spending and health coverage with their tax, for {sim.years} years{startAge !== null ? ` (to age ${startAge + sim.years})` : ''}
-        {rate > plan.withdrawalRate * 1.001 ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}.
+        {saidAbove(rate, plan.withdrawalRate) ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}.
       </>
     );
   } else if (rateFrom === 'spending') {
@@ -3275,7 +3276,7 @@ export function SimulationCard({
       <>
         Stop working {when} with <Masked>{money(sim.startBalance)}</Masked> ({startLabel}), spending what you spend now,{' '}
         <Masked>{money(spendingNow ?? 0)}</Masked> a year after tax, for {sim.years} years{startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. That is a{' '}
-        <strong>{pct(saidRate(rate, plan.withdrawalRate))}</strong> withdrawal rate{rate > plan.withdrawalRate * 1.001 ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}.
+        <strong>{pct(saidRate(rate, plan.withdrawalRate))}</strong> withdrawal rate{saidAbove(rate, plan.withdrawalRate) ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}.
       </>
     );
   } else {

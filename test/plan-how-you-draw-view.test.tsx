@@ -501,6 +501,70 @@ describe('Your figures', () => {
     await tab.unmount();
   }, 30_000);
 
+  test('a rate that reads as the one you set is not said to be above it, on Will it last? and in Assumptions', async () => {
+    // Just over 4%, read to a tenth as 4%.
+    const tab = await detailed({ ...PLAN, start: 'custom', startBalance: 1_065_000 } as typeof PLAN);
+    await pick(tab.container, 'Your path');
+    expect(tab.text()).toContain('withdrawing 4% of it a year');
+    expect(tab.text()).not.toContain('above the 4%');
+    await press(tab.row('Assumptions'));
+    expect(tab.dialog()!.textContent).toContain('withdrawing 4% of it a year');
+    expect(tab.dialog()!.textContent).not.toContain('Your FI number assumes');
+    await tab.unmount();
+  }, 30_000);
+
+  test('a rate that reads above the one you set says so', async () => {
+    const tab = await detailed({ ...PLAN, start: 'custom', startBalance: 1_040_000 } as typeof PLAN);
+    await pick(tab.container, 'Your path');
+    expect(tab.text()).toContain('withdrawing 4.1% of it a year');
+    expect(tab.text()).toContain('above the 4% your FI number assumes');
+    await press(tab.row('Assumptions'));
+    expect(tab.dialog()!.textContent).toContain('withdrawing 4.1% of it a year');
+    expect(tab.dialog()!.textContent).toContain('Your FI number assumes 4%');
+    await tab.unmount();
+  }, 30_000);
+
+  test('on a flat plan, the same: not above it when it reads as the one you set', async () => {
+    await seedPlan({ ...PLAN, start: 'custom', startBalance: 995_000 } as typeof PLAN);
+    const tab = await render();
+    await pick(tab.container, 'Your path');
+    expect(tab.text()).toContain('That is a 4% withdrawal rate.');
+    await press(tab.row('Assumptions'));
+    expect(tab.dialog()!.textContent).toContain('a 4% withdrawal rate.');
+    expect(tab.dialog()!.textContent).not.toContain('above the 4%');
+    await tab.unmount();
+  }, 30_000);
+
+  test('a rate below the one you set is not said to be above it, though it rounds up past it', async () => {
+    // 3.26% of the balance, against 3.28% set: it reads 3.3%.
+    await seedPlan({ ...PLAN, withdrawalRate: 0.0328, start: 'custom', startBalance: 1_226_994 } as typeof PLAN);
+    const tab = await render();
+    await pick(tab.container, 'Your path');
+    expect(tab.text()).toContain('That is a 3.3% withdrawal rate.');
+    await press(tab.row('Assumptions'));
+    expect(tab.dialog()!.textContent).toContain('a 3.3% withdrawal rate.');
+    await tab.unmount();
+  }, 30_000);
+
+  test('a rate set to more than two decimals, which reads as the one worked out, is not said to be under it', async () => {
+    // 4.02% of the balance, against 3.996% set, read as 4%.
+    await seedPlan({ ...PLAN, withdrawalRate: 0.03996, start: 'custom', startBalance: 995_000 } as typeof PLAN);
+    const tab = await render();
+    await pick(tab.container, 'Your path');
+    expect(tab.text()).toContain('That is a 4% withdrawal rate.');
+    await tab.unmount();
+  }, 30_000);
+
+  test('on a flat plan, the same: above it when it reads above', async () => {
+    await seedPlan({ ...PLAN, start: 'custom', startBalance: 975_000 } as typeof PLAN);
+    const tab = await render();
+    await pick(tab.container, 'Your path');
+    expect(tab.text()).toContain('That is a 4.1% withdrawal rate, above the 4% your FI number assumes.');
+    await press(tab.row('Assumptions'));
+    expect(tab.dialog()!.textContent).toContain('a 4.1% withdrawal rate, above the 4% your FI number assumes');
+    await tab.unmount();
+  }, 30_000);
+
   test('on a flat plan too, a balance that comes to the rate you set says it as you set it', async () => {
     await seedPlan({ ...PLAN, withdrawalRate: 0.0325, start: 'custom', startBalance: 1_230_769 } as typeof PLAN);
     const tab = await render();
