@@ -250,13 +250,24 @@ describe('Compare conversions', () => {
     const tab = await detailed();
     const before = ruleNames(compareTable(tab));
     expect(heading(compareTable(tab), 'Tax and health').getAttribute('aria-sort')).toBe('none');
+    // Each says it can be sorted, before anything is, and which way once it is.
+    const icon = (th: Node) => th.findAll((e) => e.tagName.toLowerCase() === 'path').map((p) => p.getAttribute('d'));
+    const EITHER = 'm7 15 5 5 5-5M7 9l5-5 5 5';
+    const ONE_WAY = 'm6 9 6 6 6-6';
+    const opened = (th: Node) => th.findAll((e) => classOf(e).includes('section-chevron') && classOf(e).includes('open')).length;
+    expect(icon(heading(compareTable(tab), 'Tax and health'))).toEqual([EITHER]);
+    expect(icon(heading(compareTable(tab), 'Left at'))).toEqual([EITHER]);
     const money = (r: Node) => Number((r.findAll((c) => c.tagName === 'TD')[1].textContent ?? '').replace(/[^\d]/g, ''));
     await press(sortButton(heading(compareTable(tab), 'Tax and health')));
     expect(heading(compareTable(tab), 'Tax and health').getAttribute('aria-sort')).toBe('descending');
+    expect(icon(heading(compareTable(tab), 'Tax and health'))).toEqual([ONE_WAY]);
+    expect(opened(heading(compareTable(tab), 'Tax and health'))).toBe(0);
+    expect(icon(heading(compareTable(tab), 'Left at'))).toEqual([EITHER]);
     const high = bodyRows(compareTable(tab)).map(money);
     expect(high).toEqual([...high].sort((a, b) => b - a));
     await press(sortButton(heading(compareTable(tab), 'Tax and health')));
     expect(heading(compareTable(tab), 'Tax and health').getAttribute('aria-sort')).toBe('ascending');
+    expect(opened(heading(compareTable(tab), 'Tax and health'))).toBe(1);
     const low = bodyRows(compareTable(tab)).map(money);
     expect(low).toEqual([...low].sort((a, b) => a - b));
     expect(heading(compareTable(tab), 'Left at').getAttribute('aria-sort')).toBe('none');
@@ -266,6 +277,9 @@ describe('Compare conversions', () => {
 
   test('a rule’s sheet: its figures, stage by stage, and Try it makes a copy with that rule', async () => {
     const tab = await detailed();
+    const copyTag = (id: string) => tab.container.findAll((e) => e.getAttribute('aria-labelledby') === id)[0].findAll((e) => classOf(e).includes('plan-copy-tag'))[0]?.textContent;
+    const CARDS = ['plan-years-title', 'plan-how-you-draw', 'plan-compare-rules'];
+    for (const id of CARDS) expect(copyTag(id)).toBeUndefined();
     const row = bodyRows(compareTable(tab)).find((r) => ruleOf(r).textContent === 'Fill 12%')!;
     await press(ruleOf(row));
     const sheet = tab.dialog()!;
@@ -281,8 +295,9 @@ describe('Compare conversions', () => {
     expect(made.tax.strategy.conversions).toEqual({ kind: 'bracket', top: 0.12 });
     const { byName } = await stored();
     expect(byName['Fill 12%']).toBeTruthy();
-    // It opens where it was tried, on Drawdown, with its rule.
+    // It opens where it was tried, on Drawdown, with its rule, and each card says whose.
     expect(tab.text()).toContain('Year by year');
+    for (const id of CARDS) expect(copyTag(id)).toBe('Copy: Fill 12%');
     expect(subOf(tab.row('Roth conversions'))).toMatch(/^Fill the 12% bracket, until \d+$/);
     expect(tab.text()).toMatch(/Roth conversions: Fill the 12% bracket, until \d+ \(your plan: None\)/);
     // The rule in use is this copy's: your plan's is another.
@@ -435,6 +450,9 @@ describe('Your figures', () => {
     const sheet = tab.dialog()!;
     expect(sheet.textContent).toContain('Spending in retirement$62,000 a year');
     expect(sheet.textContent).not.toContain('this plan’s items after you stop');
+    // Its lines hold their labels on one row, as Tax after you stop's do.
+    const how = sheet.findAll((e) => e.getAttribute('aria-labelledby') === 'fi-number-how')[0];
+    expect(classOf(how.findAll((e) => e.tagName === 'DL')[0])).toContain('txn-detail-wide');
     await tab.unmount();
   }, 30_000);
 
@@ -444,6 +462,117 @@ describe('Your figures', () => {
     await pick(tab.container, 'Your path');
     await press(tab.row('FI number'));
     expect(tab.dialog()!.textContent).toContain('Spending in retirement$52,000 a year');
+    await tab.unmount();
+  }, 30_000);
+
+  test('Assumptions says one rate worked out from a balance: where it starts and the rule, to a tenth', async () => {
+    const rule = (text: string) => text.match(/The first year withdraws ([\d.]+)%/)?.[1];
+    const plan = { ...PLAN, start: 'custom', startBalance: 777_000 } as typeof PLAN;
+    const tab = await detailed(plan);
+    await pick(tab.container, 'Your path');
+    await press(tab.row('Assumptions'));
+    const worked = tab.dialog()!.textContent ?? '';
+    const start = worked.match(/withdrawing ([\d.]+)% of it a year/)?.[1];
+    expect(start).toMatch(/^\d+\.\d$/);
+    expect(rule(worked)).toBe(start);
+    await tab.unmount();
+  }, 30_000);
+
+  test('Assumptions on a flat plan says one rate as well', async () => {
+    await seedPlan({ ...PLAN, start: 'custom', startBalance: 777_000 } as typeof PLAN);
+    const tab = await render();
+    await pick(tab.container, 'Your path');
+    await press(tab.row('Assumptions'));
+    const text = tab.dialog()!.textContent ?? '';
+    expect(text).toContain('a 5.1% withdrawal rate');
+    expect(text).toContain('The first year withdraws 5.1%');
+    await tab.unmount();
+  }, 30_000);
+
+  test('a rate you set is said as you set it, saved or just typed, on Will it last? and in Assumptions', async () => {
+    const tab = await detailed({ ...PLAN, withdrawalRate: 0.0325 }, WITH_ACCOUNTS);
+    await pick(tab.container, 'Your path');
+    expect(tab.text()).toContain('withdrawing 3.25% of it a year, your spending and health coverage');
+    await press(tab.row('Assumptions'));
+    expect(tab.dialog()!.textContent).toContain('The first year withdraws 3.25%');
+    expect(tab.dialog()!.textContent).toContain('withdrawing 3.25% of it a year');
+    await fill(tab.dialog()!, 'Withdrawal rate', '3.75');
+    expect(tab.dialog()!.textContent).toContain('The first year withdraws 3.75%');
+    await tab.unmount();
+  }, 30_000);
+
+  test('a rate that reads as the one you set is not said to be above it, on Will it last? and in Assumptions', async () => {
+    // Just over 4%, read to a tenth as 4%.
+    const tab = await detailed({ ...PLAN, start: 'custom', startBalance: 1_065_000 } as typeof PLAN);
+    await pick(tab.container, 'Your path');
+    expect(tab.text()).toContain('withdrawing 4% of it a year');
+    expect(tab.text()).not.toContain('above the 4%');
+    await press(tab.row('Assumptions'));
+    expect(tab.dialog()!.textContent).toContain('withdrawing 4% of it a year');
+    expect(tab.dialog()!.textContent).not.toContain('Your FI number assumes');
+    await tab.unmount();
+  }, 30_000);
+
+  test('a rate that reads above the one you set says so', async () => {
+    const tab = await detailed({ ...PLAN, start: 'custom', startBalance: 1_040_000 } as typeof PLAN);
+    await pick(tab.container, 'Your path');
+    expect(tab.text()).toContain('withdrawing 4.1% of it a year');
+    expect(tab.text()).toContain('above the 4% your FI number assumes');
+    await press(tab.row('Assumptions'));
+    expect(tab.dialog()!.textContent).toContain('withdrawing 4.1% of it a year');
+    expect(tab.dialog()!.textContent).toContain('Your FI number assumes 4%');
+    await tab.unmount();
+  }, 30_000);
+
+  test('on a flat plan, the same: not above it when it reads as the one you set', async () => {
+    await seedPlan({ ...PLAN, start: 'custom', startBalance: 995_000 } as typeof PLAN);
+    const tab = await render();
+    await pick(tab.container, 'Your path');
+    expect(tab.text()).toContain('That is a 4% withdrawal rate.');
+    await press(tab.row('Assumptions'));
+    expect(tab.dialog()!.textContent).toContain('a 4% withdrawal rate.');
+    expect(tab.dialog()!.textContent).not.toContain('above the 4%');
+    await tab.unmount();
+  }, 30_000);
+
+  test('a rate below the one you set is not said to be above it, though it rounds up past it', async () => {
+    // 3.26% of the balance, against 3.28% set: it reads 3.3%.
+    await seedPlan({ ...PLAN, withdrawalRate: 0.0328, start: 'custom', startBalance: 1_226_994 } as typeof PLAN);
+    const tab = await render();
+    await pick(tab.container, 'Your path');
+    expect(tab.text()).toContain('That is a 3.3% withdrawal rate.');
+    await press(tab.row('Assumptions'));
+    expect(tab.dialog()!.textContent).toContain('a 3.3% withdrawal rate.');
+    await tab.unmount();
+  }, 30_000);
+
+  test('a rate set to more than two decimals, which reads as the one worked out, is not said to be under it', async () => {
+    // 4.02% of the balance, against 3.996% set, read as 4%.
+    await seedPlan({ ...PLAN, withdrawalRate: 0.03996, start: 'custom', startBalance: 995_000 } as typeof PLAN);
+    const tab = await render();
+    await pick(tab.container, 'Your path');
+    expect(tab.text()).toContain('That is a 4% withdrawal rate.');
+    await tab.unmount();
+  }, 30_000);
+
+  test('on a flat plan, the same: above it when it reads above', async () => {
+    await seedPlan({ ...PLAN, start: 'custom', startBalance: 975_000 } as typeof PLAN);
+    const tab = await render();
+    await pick(tab.container, 'Your path');
+    expect(tab.text()).toContain('That is a 4.1% withdrawal rate, above the 4% your FI number assumes.');
+    await press(tab.row('Assumptions'));
+    expect(tab.dialog()!.textContent).toContain('a 4.1% withdrawal rate, above the 4% your FI number assumes');
+    await tab.unmount();
+  }, 30_000);
+
+  test('on a flat plan too, a balance that comes to the rate you set says it as you set it', async () => {
+    await seedPlan({ ...PLAN, withdrawalRate: 0.0325, start: 'custom', startBalance: 1_230_769 } as typeof PLAN);
+    const tab = await render();
+    await pick(tab.container, 'Your path');
+    expect(tab.text()).toContain('That is a 3.25% withdrawal rate.');
+    await press(tab.row('Assumptions'));
+    expect(tab.dialog()!.textContent).toContain('a 3.25% withdrawal rate.');
+    expect(tab.dialog()!.textContent).toContain('The first year withdraws 3.25%');
     await tab.unmount();
   }, 30_000);
 

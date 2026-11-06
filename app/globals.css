@@ -8439,15 +8439,13 @@ button.review-keys-toggle {
 }
 
 .th-sort .section-chevron {
+  width: 16px;
+  height: 16px;
   margin-left: 0;
 }
 
 tbody .th-sort {
   color: var(--accent);
-}
-
-.plan-rules-table {
-  min-width: 480px;
 }
 
 .plan-rules-table th {
@@ -8457,6 +8455,16 @@ tbody .th-sort {
 
 .plan-rules-table td {
   padding-block: 16px;
+  text-align: right;
+}
+
+.plan-rules-table thead th:not(:first-child) {
+  text-align: right;
+}
+
+.plan-rules-table thead th:not(:first-child) .th-sort {
+  justify-content: flex-end;
+  text-align: right;
 }
 
 .plan-rules-table th .badge {

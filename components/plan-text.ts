@@ -29,6 +29,21 @@ export function pct(f: number, maxDigits = 2): string {
   return `${Number((f * 100).toFixed(maxDigits))}%`;
 }
 
+/** The rate to say of one worked out from a balance: a tenth of a percent, so every
+ *  sentence says one rate. At the rate set (as near as "above what your FI number
+ *  assumes" allows), that one, as set. */
+export function saidRate(worked: number, set: number): number {
+  return Math.abs(worked - set) <= set * 0.001 ? set : Number((worked * 100).toFixed(1)) / 100;
+}
+
+/** Whether to say a rate worked out from a balance is above the one set: it is, and the
+ *  rate said reads above it too, so a sentence never reads "a 4% withdrawal rate, above
+ *  the 4%", nor warns of a rate that only rounded up past the one set. */
+export function saidAbove(worked: number, set: number): boolean {
+  const reads = (f: number) => Number((f * 100).toFixed(2));
+  return worked > set * 1.001 && reads(saidRate(worked, set)) > reads(set);
+}
+
 /**
  * A success rate as a percent that never rounds into a claim: "100%" only when
  * every start lasted, "0%" only when none did. 0.996 is ">99%" at whole

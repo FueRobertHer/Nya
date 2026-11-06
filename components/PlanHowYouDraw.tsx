@@ -5,6 +5,7 @@
 // Conversions default to none, and nothing here is said to be best (D4). Words in
 // components/plan-conversions.ts; the rows in lib/fire/compare-conversions.ts.
 
+import { CopyTag } from './CopyTag';
 import { useMemo, useState } from 'react';
 import type { CompareRow } from '@/lib/fire/compare-conversions';
 import type { Drawdown } from '@/lib/fire/drawdown';
@@ -30,6 +31,7 @@ const CHEVRON = (
 
 /** The card's two rows, each opening its sheet. */
 export function HowYouDrawCard({
+  copyName = null,
   strategy,
   defaultUntil,
   money,
@@ -39,6 +41,7 @@ export function HowYouDrawCard({
   orderRef,
   conversionsRef,
 }: {
+  copyName?: string | null;
   strategy: Strategy;
   defaultUntil: number;
   money: Money;
@@ -70,6 +73,7 @@ export function HowYouDrawCard({
   );
   return (
     <section className="card" aria-labelledby="plan-how-you-draw">
+      <CopyTag name={copyName} />
       <div className="card-header">
         <h3 id="plan-how-you-draw">How you draw</h3>
       </div>
@@ -298,7 +302,7 @@ export function CompareCard({
   realReturn,
   lawYear,
   healthGrowth,
-  copyOpen,
+  copyName = null,
   held = false,
   working = false,
   onRule,
@@ -311,7 +315,7 @@ export function CompareCard({
   /** Fractions of a point, as the years have it. */
   healthGrowth: number;
   /** A copy is shown: its rule is this copy's, not your plan's. */
-  copyOpen: boolean;
+  copyName?: string | null;
   held?: boolean;
   /** A job is working out this plan's date: these rows are the last found. */
   working?: boolean;
@@ -327,17 +331,16 @@ export function CompareCard({
       <th scope="col" aria-sort={on ? sort.dir : 'none'}>
         <button type="button" className="th-sort" onClick={() => setSort({ column, dir: on && sort.dir === 'descending' ? 'ascending' : 'descending' })}>
           {label}
-          {on && (
-            <svg className={`section-chevron${sort.dir === 'ascending' ? ' open' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="m6 9 6 6 6-6" />
-            </svg>
-          )}
+          <svg className={`section-chevron${on && sort.dir === 'ascending' ? ' open' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d={on ? 'm6 9 6 6 6-6' : 'm7 15 5 5 5-5M7 9l5-5 5 5'} />
+          </svg>
         </button>
       </th>
     );
   };
   return (
     <section className={working ? 'card plan-answer-pending' : 'card'} aria-labelledby="plan-compare-rules" aria-busy={working || undefined}>
+      <CopyTag name={copyName} />
       <div className="card-header">
         <h3 id="plan-compare-rules">Compare conversions</h3>
       </div>
@@ -368,7 +371,7 @@ export function CompareCard({
                   >
                     <Masked>{ruleName(r.strategy.conversions, money, r.strategy.convertUntil)}</Masked>
                   </button>
-                  {r.mine && <span className="badge accent">{copyOpen ? 'This copy' : 'Your plan'}</span>}
+                  {r.mine && <span className="badge accent">{copyName ? 'This copy' : 'Your plan'}</span>}
                 </th>
                 <td className="money">
                   <Masked>{endWords(r.drawn, money)}</Masked>
