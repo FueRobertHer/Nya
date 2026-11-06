@@ -3,6 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import InstitutionCard, { type InstitutionCardProps } from '@/components/InstitutionCard';
 import { liabilitySummary, type Account, type Institution } from '@/components/accounts-format';
 import { CAUSES, type Cause, type ConnectionHealth } from '@/lib/connection-state';
+import { holdDay } from './held-day';
+
+holdDay();
 
 // One institution's card on the Accounts tab (rollout phase 3). Its notices
 // are what Nya says about a number that is short, dated or held, so each

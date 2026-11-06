@@ -1,4 +1,8 @@
 import { describe, expect, test, mock, afterEach } from 'bun:test';
+import { holdDay } from './held-day';
+
+holdDay();
+
 mock.module('@clerk/nextjs', () => ({
   useClerk: () => ({ signOut: async () => {} }),
   useReverification: (fetcher: unknown) => fetcher,

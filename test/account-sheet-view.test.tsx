@@ -1,5 +1,8 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { installDom, trackRoots, click, type FakeElement } from './mini-dom';
+import { holdDay } from './held-day';
+
+holdDay();
 
 // One account's sheet (rollout phase 3), which replaced the row that expanded
 // in place and the buttons inside it: what it shows for each kind of account,

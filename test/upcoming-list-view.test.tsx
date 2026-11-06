@@ -8,6 +8,9 @@ import { CAR, KINDS, REFUND, RENT_AND_PAY, TODAY, chase, txn } from './upcoming-
 import { ecbTable } from './fx-fixture';
 import { MASK, setAmountsHidden } from '@/lib/format';
 import type { ForecastInstitution } from '@/lib/forecast';
+import { holdDay } from './held-day';
+
+holdDay();
 
 // Budgets > Upcoming's list and its calendar (rollout phase 6a3,
 // docs/design/information-architecture.md#budgets): the list's day bars and

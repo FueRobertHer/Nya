@@ -1,5 +1,8 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test';
 import { installDom, trackRoots, click, type FakeElement } from './mini-dom';
+import { holdDay } from './held-day';
+
+holdDay();
 
 // The admin's Nightly jobs page (/admin/jobs, components/AdminJobs.tsx): each
 // job, how it last went, and Run now (/api/admin/jobs). Rendered and used as

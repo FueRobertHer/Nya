@@ -6,6 +6,9 @@ import { paymentAlerts } from '@/components/Insights';
 import { NOTHING } from './home-attention';
 import { CurrencyOfferSheet } from '@/components/CurrencyNotes';
 import { MASK, setAmountsHidden } from '@/lib/format';
+import { holdDay } from './held-day';
+
+holdDay();
 
 // Home's Needs attention card (rollout phase 4b): only when something asks
 // the person to act; each row a button with its level as an icon and a word,

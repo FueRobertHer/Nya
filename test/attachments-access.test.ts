@@ -1,9 +1,10 @@
-import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, afterAll, setSystemTime } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { clerk } from './clerk-mock';
 import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, testKey, unscopedDataKeys } from './fake-redis';
 import { FakeObjects, jpeg, sha, partShas, MASTER } from './attachment-fixture';
+import { HELD_DAY } from './held-day';
 
 // Who reaches receipts and documents (#47), through the routes as signed in
 // with Clerk: the person whose files they are, and no one else. Another
@@ -158,6 +159,10 @@ describe('another account’s session', () => {
 });
 
 describe('the Activity list', () => {
+  // It reads a window back from today, and these rows are dated.
+  beforeEach(() => setSystemTime(HELD_DAY));
+  afterEach(() => setSystemTime());
+
   test('marks the person’s own rows that have one, and says whether adding is on', async () => {
     await as('user_owner', async () => {
       let body = await load();

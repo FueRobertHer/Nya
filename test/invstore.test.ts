@@ -1,5 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, registerTestContainer, TEST_CONTAINER, unscopedDataKeys } from './fake-redis';
+import { HELD_DAY } from './held-day';
 
 const ctx = TEST_CTX;
 
@@ -521,12 +522,18 @@ describe('/api/investment-activity', () => {
   });
 
   test('the flows run from the later of coverage and the oldest row, to the end of coverage', async () => {
-    plaid.rows = [row('a', '2026-03-01'), row('b', '2026-09-01')];
-    const body = await get();
-    const today = new Date().toISOString().slice(0, 10);
-    expect(body.flows_from).toBe('2026-03-01');
-    expect(body.flows_to).toBe(today);
-    expect(body.txns.map((t: any) => t.investment_transaction_id)).toEqual(['b', 'a']); // newest first
+    // Coverage reads back from today, and these rows are dated.
+    setSystemTime(HELD_DAY);
+    try {
+      plaid.rows = [row('a', '2026-03-01'), row('b', '2026-09-01')];
+      const body = await get();
+      const today = new Date().toISOString().slice(0, 10);
+      expect(body.flows_from).toBe('2026-03-01');
+      expect(body.flows_to).toBe(today);
+      expect(body.txns.map((t: any) => t.investment_transaction_id)).toEqual(['b', 'a']); // newest first
+    } finally {
+      setSystemTime();
+    }
   });
 
   // The Plan tab's savings (lib/fire/inputs.ts): new money into the account

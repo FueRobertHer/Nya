@@ -16,6 +16,9 @@ import { localDate } from '@/lib/local-date';
 import { EMPTY_BUDGETS } from '@/lib/budget-set';
 import { NO_CONNECTIONS_WITHOUT } from '@/lib/no-transactions';
 import { DrawnWidth } from '@/components/drawn-width';
+import { holdDay } from './held-day';
+
+holdDay();
 
 // The forecast, the calendar, the recurring list and the planned items as the
 // Budgets tab renders them, and Home's upcoming bills: what each says, and

@@ -4,6 +4,9 @@ import DebtPayoff, { NO_INPUTS, PayoffPanel, monthLabel, type PayoffInputs } fro
 import { comparePlans, debtAccounts, planRows, type DebtInstitutionInput } from '@/lib/payoff';
 import { formatMoney } from '@/lib/format';
 import { toInstitutions } from '@/lib/manual';
+import { holdDay } from './held-day';
+
+holdDay();
 
 const START = '2026-10';
 const noop = () => {};

@@ -1,8 +1,9 @@
-import { describe, expect, test, mock, beforeEach, afterEach, beforeAll, afterAll } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, beforeAll, afterAll, setSystemTime } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FakeRedis, storageMock, testKey, ctxKey, TEST_CTX, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { parseCsv } from './csv-parse';
+import { HELD_DAY } from './held-day';
 
 // Real AES-256-GCM: the point is that everything comes out decrypted.
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
@@ -10,6 +11,7 @@ process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 // Deserializing like Upstash: what production reads back.
 const fake = new FakeRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
+afterEach(() => setSystemTime());
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt } = await import('@/lib/crypto');
@@ -530,6 +532,8 @@ describe('everything stored, decrypted, and nothing else', () => {
   });
 
   test('with a home currency, a carry counts spending in another currency converted, as the Budgets tab does, and the file says so', async () => {
+    // A month's currency is the one most of the last year's rows are in, and these rows are dated.
+    setSystemTime(HELD_DAY);
     const { loadBudgets } = await import('@/lib/budget-store');
     const { budgetMonthsStore, incomeCarryoverStore } = await import('@/lib/budget-months-store');
     const { startMonths, setRollover, addMonths } = await import('@/lib/rollover');
