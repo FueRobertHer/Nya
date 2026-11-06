@@ -41,7 +41,8 @@ const { readReport } = await import('@/lib/report/read');
 const { resolvePeriod } = await import('@/lib/report/period');
 const { joinedAt, pairable } = await import('@/lib/user-restore/restored');
 const routes = await import('@/app/api/history-import/route');
-const { EXPORTED, downloadText, restoreAll, activity, rowsOf, connectAgain } = await import('./restore-run');
+const { EXPORTED, holdClockAfterExport, downloadText, restoreAll, activity, rowsOf, connectAgain } = await import('./restore-run');
+holdClockAfterExport();
 
 const ctx = TEST_CTX;
 

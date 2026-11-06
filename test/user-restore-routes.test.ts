@@ -38,7 +38,8 @@ const lifecycleRoute = await import('@/app/api/account-lifecycle/route');
 const linksRoute = await import('@/app/api/account-links/route');
 const { earlierNames } = await import('@/lib/earlier-names');
 const { unreadableNotes, canUndo } = await import('@/components/restore-state');
-const { EXPORTED, sent, fetcher, call, downloadText, sourceOf, planned, restoreAll, activity, rowsOf, hold, connectAgain } = await import('./restore-run');
+const { EXPORTED, holdClockAfterExport, sent, fetcher, call, downloadText, sourceOf, planned, restoreAll, activity, rowsOf, hold, connectAgain } = await import('./restore-run');
+holdClockAfterExport();
 type Source = import('./restore-run').Source;
 
 const ctx = TEST_CTX;
