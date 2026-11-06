@@ -216,8 +216,9 @@ describe('the points', () => {
 
 describe('where it counts', () => {
   test('by D15’s switch', () => {
-    expect(whereItCountsText(50, true)).toBe('In your FI date: costs, windfalls, changes in pay, work that starts before you stop, and other money in, until you reach it. In Will it last?: costs, windfalls and income, from 50, where it starts.');
-    expect(whereItCountsText(null, false)).toContain('a cost and income don’t count there yet');
+    expect(whereItCountsText(50, true)).toEqual(['Your FI date counts costs, windfalls, changes in pay, work that starts before you stop and other money in, until you reach it.', 'Will it last? counts costs, windfalls and income, from 50, where it starts.']);
+    expect(whereItCountsText(null, false)[0]).toContain('Other costs and income don’t count there yet.');
+    expect(whereItCountsText(null, false)[1]).toBe('Will it last? counts costs, windfalls and income, from where it starts.');
   });
 
   test('part-time before Will it last? starts, by what it replaces and the start', () => {

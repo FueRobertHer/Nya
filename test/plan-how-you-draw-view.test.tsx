@@ -15,7 +15,7 @@ async function flagged() {
   const { flagsStore } = await import('@/lib/flag-store');
   await flagsStore.update('plan-tax', async () => ({ on: 'nobody', containers: [TEST_CONTAINER], updatedAt: new Date().toISOString() }) as never, TEST_CONTAINER);
 }
-const WAY_IN = 'Work it out from your accounts';
+const WAY_IN = 'Work out tax from your accounts';
 
 async function detailed(plan = PLAN, props: Parameters<typeof render>[0] = {}) {
   await flagged();
@@ -97,12 +97,13 @@ describe('How you draw', () => {
   test('Roth conversions: a rule, its preview, a Save, and the row, Compare and your plan moving with it', async () => {
     const tab = await detailed(PLAN, WITH_ACCOUNTS);
     await press(tab.row('Roth conversions'));
-    expect(tab.dialog()!.textContent).not.toContain('With this rule');
+    expect(tab.dialog()!.textContent).not.toContain('What it comes to');
     // Nothing moved until Save: the ACA rule isn't offered with no one on the ACA.
     expect(tab.dialog()!.textContent).not.toContain('Up to the ACA limit');
     await choose(tab, 'Fill a bracket');
     expect(tab.dialog()!.textContent).toContain('Nya starts with none');
-    expect(tab.dialog()!.textContent).toMatch(/With this rule: about \$[\d,]+ converted by \d+, tax and health costs \$[\d,]+ in all, and .*With none: \$[\d,]+/);
+    expect(tab.dialog()!.textContent).toMatch(/What it comes to.*This ruleNoneConvertedAbout \$[\d,]+, by \d+\$0Tax and health, in all\$[\d,]+\$[\d,]+/);
+    expect(tab.dialog()!.textContent).toContain('Hypothetical, 2026 tax law. Not tax advice.');
     await press(button(tab.dialog(), 'Save'));
     await settle(300);
     expect(tab.dialog()).toBeNull();
@@ -112,7 +113,7 @@ describe('How you draw', () => {
     const table = compareTable(tab);
     const mine = bodyRows(table).filter((r) => (r.textContent ?? '').includes('Your plan'));
     expect(mine.length).toBe(1);
-    expect(ruleOf(mine[0]).textContent).toBe('Fill 12%');
+    expect(ruleOf(mine[0]).textContent).toBe('Fill the 12% bracket');
     await tab.unmount();
   }, 30_000);
 
@@ -141,7 +142,7 @@ describe('How you draw', () => {
     // Its own row in Compare, as no rule there is that one, and a sheet whose title holds no amount.
     const mine = bodyRows(compareTable(tab)).find((r) => (r.textContent ?? '').includes('Your plan'))!;
     expect(ruleOf(mine).textContent).toBe('$40,000 a year, until 60');
-    expect(ruleNames(compareTable(tab)).slice(0, 4)).toEqual(['None', 'Fill 10%', 'Fill 12%', 'Fill 22%']);
+    expect(ruleNames(compareTable(tab)).slice(0, 4)).toEqual(['None', 'Fill the 10% bracket', 'Fill the 12% bracket', 'Fill the 22% bracket']);
     await press(ruleOf(mine));
     expect(tab.dialog()!.getAttribute('aria-label')).toBe('A fixed amount, until 60');
     await tab.unmount();
@@ -151,7 +152,7 @@ describe('How you draw', () => {
     const tab = await detailed();
     await press(tab.row('Roth conversions'));
     await choose(tab, 'Fill a bracket');
-    expect(tab.dialog()!.textContent).toContain('The year before your RMDs start at 75.');
+    expect(tab.dialog()!.textContent).toContain('Empty stops the year before your required withdrawals (RMDs) start at 75.');
     await tab.unmount();
   }, 30_000);
 
@@ -165,7 +166,7 @@ describe('How you draw', () => {
     await pick(tab.container, 'Drawdown');
     await press(tab.row('Roth conversions'));
     await choose(tab, 'Fill a bracket');
-    expect(tab.dialog()!.textContent).toContain('The year before the first RMDs, when you’re 65.');
+    expect(tab.dialog()!.textContent).toContain('Empty stops the year before the first required withdrawals (RMDs), when you’re 65.');
     await tab.unmount();
   }, 30_000);
 
@@ -173,7 +174,7 @@ describe('How you draw', () => {
     const tab = await detailed({ ...PLAN, partnerAge: 50 });
     await press(tab.row('Roth conversions'));
     await choose(tab, 'Fill a bracket');
-    expect(tab.dialog()!.textContent).toContain('The year before your RMDs start at 75.');
+    expect(tab.dialog()!.textContent).toContain('Empty stops the year before your required withdrawals (RMDs) start at 75.');
     await tab.unmount();
   }, 30_000);
 
@@ -201,11 +202,11 @@ describe('How you draw', () => {
     await fill(tab.dialog()!, 'Until age', '60');
     await press(button(tab.dialog(), 'Save'));
     await settle(300);
-    expect(ruleNames(compareTable(tab))).toContain('Fill 12%');
+    expect(ruleNames(compareTable(tab))).toContain('Fill the 12% bracket');
     const mine = bodyRows(compareTable(tab)).find((r) => (r.textContent ?? '').includes('Your plan'))!;
-    expect(ruleOf(mine).textContent).toBe('Fill 12%, until 60');
+    expect(ruleOf(mine).textContent).toBe('Fill the 12% bracket, until 60');
     await press(ruleOf(mine));
-    expect(tab.dialog()!.getAttribute('aria-label')).toBe('Fill 12%, until 60');
+    expect(tab.dialog()!.getAttribute('aria-label')).toBe('Fill the 12% bracket, until 60');
     await tab.unmount();
   }, 30_000);
 });
@@ -214,7 +215,7 @@ describe('Compare conversions', () => {
   test('the rules, none marked best', async () => {
     const tab = await detailed();
     const table = compareTable(tab);
-    expect(ruleNames(table)).toEqual(['None', 'Fill 10%', 'Fill 12%', 'Fill 22%']);
+    expect(ruleNames(table)).toEqual(['None', 'Fill the 10% bracket', 'Fill the 12% bracket', 'Fill the 22% bracket']);
     expect(table.textContent).not.toContain('Years with an ACA credit');
     expect(tab.text()).not.toMatch(/\bbest\b/i);
     await tab.unmount();
@@ -223,13 +224,15 @@ describe('Compare conversions', () => {
   test('the ACA rule and its column, only for someone on the ACA', async () => {
     const tab = await onAca();
     const withAca = compareTable(tab);
-    expect(ruleNames(withAca)).toEqual(['None', 'Fill 10%', 'Fill 12%', 'Fill 22%', 'ACA limit, then 12%']);
+    expect(ruleNames(withAca)).toEqual(['None', 'Fill the 10% bracket', 'Fill the 12% bracket', 'Fill the 22% bracket', 'ACA limit, then the 12% bracket']);
     expect(withAca.textContent).toContain('Years with an ACA credit');
     expect(bodyRows(withAca)[0].textContent).toContain('Your plan');
     // For one person, it says so.
     await press(tab.row('Roth conversions'));
-    expect(tab.dialog()!.textContent).toContain('Under the limit while you’re on the ACA, then a bracket.');
+    expect(tab.dialog()!.textContent).toContain('While you’re on the ACA, it keeps income under 400% of the poverty line if it can, then fills a bracket.');
     expect(tab.dialog()!.textContent).not.toContain('no cliff');
+    await choose(tab, 'Up to the ACA limit, then a bracket');
+    expect(tab.dialog()!.textContent).toContain('Past the age you set, while you’re on ACA coverage, it still converts what it takes to keep coverage from counting at full price, if there’s money to convert.');
     await tab.unmount();
   }, 30_000);
 
@@ -280,10 +283,10 @@ describe('Compare conversions', () => {
     const copyTag = (id: string) => tab.container.findAll((e) => e.getAttribute('aria-labelledby') === id)[0].findAll((e) => classOf(e).includes('plan-copy-tag'))[0]?.textContent;
     const CARDS = ['plan-years-title', 'plan-how-you-draw', 'plan-compare-rules'];
     for (const id of CARDS) expect(copyTag(id)).toBeUndefined();
-    const row = bodyRows(compareTable(tab)).find((r) => ruleOf(r).textContent === 'Fill 12%')!;
+    const row = bodyRows(compareTable(tab)).find((r) => ruleOf(r).textContent === 'Fill the 12% bracket')!;
     await press(ruleOf(row));
     const sheet = tab.dialog()!;
-    expect(sheet.getAttribute('aria-label')).toBe('Fill 12%');
+    expect(sheet.getAttribute('aria-label')).toBe('Fill the 12% bracket');
     expect(sheet.textContent).toContain('Tax and health costs, in all');
     expect(sheet.textContent).toContain('Stage by stage');
     expect(sheet.textContent).toContain('2026 tax law. Not tax advice.');
@@ -291,18 +294,18 @@ describe('Compare conversions', () => {
     await settle(300);
     expect(tab.dialog()).toBeNull();
     const made = calls().filter((c) => c.method === 'POST' && c.path === '/api/plans').at(-1)!.body;
-    expect(made.name).toBe('Fill 12%');
+    expect(made.name).toBe('Fill the 12% bracket');
     expect(made.tax.strategy.conversions).toEqual({ kind: 'bracket', top: 0.12 });
     const { byName } = await stored();
-    expect(byName['Fill 12%']).toBeTruthy();
+    expect(byName['Fill the 12% bracket']).toBeTruthy();
     // It opens where it was tried, on Drawdown, with its rule, and each card says whose.
     expect(tab.text()).toContain('Year by year');
-    for (const id of CARDS) expect(copyTag(id)).toBe('Copy: Fill 12%');
+    for (const id of CARDS) expect(copyTag(id)).toBe('Copy: Fill the 12% bracket');
     expect(subOf(tab.row('Roth conversions'))).toMatch(/^Fill the 12% bracket, until \d+$/);
     expect(tab.text()).toMatch(/Roth conversions: Fill the 12% bracket, until \d+ \(your plan: None\)/);
     // The rule in use is this copy's: your plan's is another.
     const tagged = bodyRows(compareTable(tab)).filter((r) => (r.textContent ?? '').includes('This copy'));
-    expect(tagged.map((r) => ruleOf(r).textContent)).toEqual(['Fill 12%']);
+    expect(tagged.map((r) => ruleOf(r).textContent)).toEqual(['Fill the 12% bracket']);
     expect(compareTable(tab).textContent).not.toContain('Your plan');
     // And in the Plans sheet, with the sheet's own words for how it differs.
     await press(tab.plans());
@@ -312,14 +315,14 @@ describe('Compare conversions', () => {
 
   test('Try it takes a number where another plan has its name, in any case', async () => {
     await (await detailed()).unmount();
-    await seedCopy('fill 12%', { targetAge: 52 });
+    await seedCopy('fill the 12% bracket', { targetAge: 52 });
     const tab = await render({ planTax: true });
     await pick(tab.container, 'Drawdown');
-    await press(ruleOf(bodyRows(compareTable(tab)).find((r) => ruleOf(r).textContent === 'Fill 12%')!));
+    await press(ruleOf(bodyRows(compareTable(tab)).find((r) => ruleOf(r).textContent === 'Fill the 12% bracket')!));
     await press(button(tab.dialog(), 'Try it in a copy'));
     await settle(300);
     expect(tab.dialog()).toBeNull();
-    expect(calls().filter((c) => c.method === 'POST' && c.path === '/api/plans').at(-1)!.body.name).toBe('Fill 12% 2');
+    expect(calls().filter((c) => c.method === 'POST' && c.path === '/api/plans').at(-1)!.body.name).toBe('Fill the 12% bracket 2');
     await tab.unmount();
   }, 30_000);
 
@@ -337,12 +340,12 @@ describe('Your figures', () => {
     const tab = await detailed();
     await pick(tab.container, 'Your path');
     const row = tab.row('Tax after you stop')!;
-    expect(subOf(row)).toMatch(/^Of what your years after \d+ cost, from your FI number · your accounts and 2026 law$/);
-    expect(subOf(tab.row('FI number'))).toBe('Worked out from spending, health coverage and tax, at 4%');
+    expect(subOf(row)).toMatch(/^Share of your costs after \d+ · from your accounts and 2026 law$/);
+    expect(subOf(tab.row('FI number'))).toBe('Spending, health coverage and tax, at a 4% withdrawal rate');
     await press(row);
     const sheet = tab.dialog()!;
     expect(sheet.getAttribute('aria-label')).toBe('Tax after you stop');
-    expect(sheet.textContent).toContain('By stage');
+    expect(sheet.textContent).toContain('Tax’s share, by stage');
     expect(sheet.textContent).toMatch(/· before 59½[\d.]+%/);
     expect(sheet.textContent).toContain('In your FI number');
     expect(sheet.textContent).toContain('Health coverage, on average');
@@ -371,13 +374,29 @@ describe('Your figures', () => {
     await tab.unmount();
   }, 30_000);
 
+  test('Tax after you stop, beside your own number and with a rule: it says whose number and that conversions are in it', async () => {
+    const tab = await detailed({ ...PLAN, fiNumber: 1_500_000 }, WITH_ACCOUNTS);
+    await press(tab.row('Roth conversions'));
+    await choose(tab, 'Fill a bracket');
+    await press(button(tab.dialog(), 'Save'));
+    await settle(300);
+    await pick(tab.container, 'Your path');
+    await press(tab.row('Tax after you stop'));
+    const text = tab.dialog()!.textContent ?? '';
+    expect(text).toContain('In the worked-out number');
+    expect(text).not.toContain('In your FI number');
+    expect(text).toContain('Conversions pay tax and can raise health costs early');
+    await tab.unmount();
+  }, 30_000);
+
   test('the FI number’s sheet has its lines, from its own run', async () => {
     const tab = await detailed(PLAN, WITH_ACCOUNTS);
     await pick(tab.container, 'Your path');
     await press(tab.row('FI number'));
     const sheet = tab.dialog()!;
-    expect(sheet.textContent).toContain('+ Health coverage');
-    expect(sheet.textContent).toContain('÷ (1 − tax)');
+    expect(sheet.textContent).toContain('Health coverage, on average');
+    expect(sheet.textContent).toMatch(/Tax, [\d.]+% of what you draw/);
+    expect(sheet.textContent).toContain('What you’d draw each year');
     expect(sheet.textContent).toContain('FI number');
     expect(sheet.textContent).not.toContain('Your spending, health and tax');
     await tab.unmount();
@@ -439,6 +458,24 @@ describe('Your figures', () => {
     await tab.unmount();
   }, 30_000);
 
+  describe('with items on the plan, it says what Coast counts', () => {
+    const change = { id: 'c', label: 'A bigger place', kind: 'spending', from: { anchor: { at: 'age', age: 45 }, offset: 0 }, until: null, once: null, yearly: 12_000, replaces: null, every: null, times: null, inflationAdjusted: true, owner: null, beforeTax: false };
+
+    test('alone', async () => {
+      const tab = await detailed({ ...PLAN, items: [change] } as typeof PLAN);
+      await pick(tab.container, 'Your path');
+      expect(tab.container.textContent).toContain('Coast FI counts only lasting changes in spending, not your plan’s other items.');
+      await tab.unmount();
+    }, 30_000);
+
+    test('and Barista with it, where part-time work is in the plan', async () => {
+      const tab = await detailed({ ...PLAN, partTimeIncome: 15_000, items: [change] } as typeof PLAN);
+      await pick(tab.container, 'Your path');
+      expect(tab.container.textContent).toContain('Coast and Barista FI count only lasting changes in spending, not your plan’s other items.');
+      await tab.unmount();
+    }, 30_000);
+  });
+
   test('from today, a lasting change before the stop is in the FI number’s lines, and not left out', async () => {
     const change = { id: 'c', label: 'A bigger place', kind: 'spending', from: { anchor: { at: 'age', age: 45 }, offset: 0 }, until: null, once: null, yearly: 12_000, replaces: null, every: null, times: null, inflationAdjusted: true, owner: null, beforeTax: false };
     const begun = { ...change, id: 'b', label: 'A car', from: { anchor: { at: 'age', age: (PLAN.age as number) - 2 }, offset: 0 }, yearly: 10_000 };
@@ -448,7 +485,7 @@ describe('Your figures', () => {
     expect(tab.container.textContent).toContain('FI number from $62,000 a year in retirement: $40,000 now, and $22,000 a year of lasting changes');
     await press(tab.row('FI number'));
     const sheet = tab.dialog()!;
-    expect(sheet.textContent).toContain('Spending in retirement$62,000 a year');
+    expect(sheet.textContent).toContain('Spending in retirement$62,000');
     expect(sheet.textContent).not.toContain('this plan’s items after you stop');
     // Its lines hold their labels on one row, as Tax after you stop's do.
     const how = sheet.findAll((e) => e.getAttribute('aria-labelledby') === 'fi-number-how')[0];
@@ -461,7 +498,7 @@ describe('Your figures', () => {
     const tab = await detailed({ ...PLAN, start: 'assets', items: [change] } as typeof PLAN);
     await pick(tab.container, 'Your path');
     await press(tab.row('FI number'));
-    expect(tab.dialog()!.textContent).toContain('Spending in retirement$52,000 a year');
+    expect(tab.dialog()!.textContent).toContain('Spending in retirement$52,000');
     await tab.unmount();
   }, 30_000);
 
@@ -492,7 +529,7 @@ describe('Your figures', () => {
   test('a rate you set is said as you set it, saved or just typed, on Will it last? and in Assumptions', async () => {
     const tab = await detailed({ ...PLAN, withdrawalRate: 0.0325 }, WITH_ACCOUNTS);
     await pick(tab.container, 'Your path');
-    expect(tab.text()).toContain('withdrawing 3.25% of it a year, your spending and health coverage');
+    expect(tab.text()).toContain('Your spending, health coverage and tax come to about 3.25% of it a year.');
     await press(tab.row('Assumptions'));
     expect(tab.dialog()!.textContent).toContain('The first year withdraws 3.25%');
     expect(tab.dialog()!.textContent).toContain('withdrawing 3.25% of it a year');
@@ -505,7 +542,7 @@ describe('Your figures', () => {
     // Just over 4%, read to a tenth as 4%.
     const tab = await detailed({ ...PLAN, start: 'custom', startBalance: 1_065_000 } as typeof PLAN);
     await pick(tab.container, 'Your path');
-    expect(tab.text()).toContain('withdrawing 4% of it a year');
+    expect(tab.text()).toContain('tax come to about 4% of it a year');
     expect(tab.text()).not.toContain('above the 4%');
     await press(tab.row('Assumptions'));
     expect(tab.dialog()!.textContent).toContain('withdrawing 4% of it a year');
@@ -516,7 +553,7 @@ describe('Your figures', () => {
   test('a rate that reads above the one you set says so', async () => {
     const tab = await detailed({ ...PLAN, start: 'custom', startBalance: 1_040_000 } as typeof PLAN);
     await pick(tab.container, 'Your path');
-    expect(tab.text()).toContain('withdrawing 4.1% of it a year');
+    expect(tab.text()).toContain('tax come to about 4.1% of it a year');
     expect(tab.text()).toContain('above the 4% your FI number assumes');
     await press(tab.row('Assumptions'));
     expect(tab.dialog()!.textContent).toContain('withdrawing 4.1% of it a year');
@@ -615,10 +652,10 @@ describe('the way in', () => {
     await press(tab.row(WAY_IN));
     await settle(200);
     const sheet = tab.dialog()!;
-    expect(sheet.textContent).toMatch(/Your FI number\$[\d,]+, then \$[\d,]+/);
-    expect(sheet.textContent).toMatch(/Tax after you stop0%, as set, then [\d.]+%/);
-    expect(sheet.textContent).toMatch(/Health coverageNone, then \$[\d,]+ a year from Medicare/);
-    expect(sheet.textContent).toContain('Coverage before 65 is yours to set next');
+    expect(sheet.textContent).toMatch(/Your FI number\$[\d,]+\$[\d,]+/);
+    expect(sheet.textContent).toMatch(/Tax after you stop0%, as set[\d.]+%/);
+    expect(sheet.textContent).toMatch(/Health coverageNot counted\$[\d,]+ a year, Medicare premiums/);
+    expect(sheet.textContent).toContain('Next, set how you’d be covered before 65, on Health coverage.');
     expect(sheet.textContent).toContain('Each account’s tax bucket, owner and cost basis');
     expect(calls().filter((c) => c.method !== 'GET' && (c.path === '/api/plan-facts' || c.path === '/api/fire-plan'))).toEqual([]);
     // The page behind it stays flat.

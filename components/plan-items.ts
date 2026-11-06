@@ -387,14 +387,14 @@ export function unplacedText(x: PlanItem, why: Unplaced | null, plan: Facts): st
   }
 }
 
-/** The line under the Timeline's heading: where its kinds count (D15's
+/** The lines under the Timeline's heading, one for each place its kinds count (D15's
  *  switch decides whether a cost and income count in your FI date). */
-export function whereItCountsText(startAge: number | null, planInWalk: boolean): string {
+export function whereItCountsText(startAge: number | null, planInWalk: boolean): readonly [string, string] {
   const from = startAge === null ? 'where it starts' : `${startAge}, where it starts`;
   const fiDate = planInWalk
-    ? 'In your FI date: costs, windfalls, changes in pay, work that starts before you stop, and other money in, until you reach it.'
-    : 'In your FI date: homes, children, cars, changes in spending and pay, windfalls and work that starts before you stop, until you reach it; a cost and income don’t count there yet.';
-  return `${fiDate} In Will it last?: costs, windfalls and income, from ${from}.`;
+    ? 'Your FI date counts costs, windfalls, changes in pay, work that starts before you stop and other money in, until you reach it.'
+    : 'Your FI date counts homes, children, cars, changes in spending and pay, windfalls and work that starts before you stop, until you reach it. Other costs and income don’t count there yet.';
+  return [fiDate, `Will it last? counts costs, windfalls and income, from ${from}.`];
 }
 
 /** Part-time work's years before Will it last? starts, in words that are

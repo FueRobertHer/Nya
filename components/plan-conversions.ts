@@ -26,15 +26,16 @@ function bareTitle(rule: Rule): string {
     case 'none':
       return 'None';
     case 'bracket':
-      return `Fill ${pct(rule.top)}`;
+      return `Fill the ${pct(rule.top)} bracket`;
     case 'aca-then-bracket':
-      return `ACA limit, then ${pct(rule.top)}`;
+      return `ACA limit, then the ${pct(rule.top)} bracket`;
     case 'fixed':
       return 'A fixed amount';
   }
 }
 
-/** A rule with no amount in it: a sheet's title, which is read out whole, and a copy's name.
+/** A rule with no amount in it: a sheet's title, which is read out whole, and a copy's name,
+ *  so with room for a number after it it has to fit a plan's name (SCENARIO_NAME_MAX).
  *  An age set is said, so the rule isn't taken for the same rule to its usual age. */
 export const ruleTitle = (rule: Rule, until: number | null = null) => `${bareTitle(rule)}${untilWords(until)}`;
 
@@ -73,14 +74,27 @@ export const convertedIn = (d: Pick<Drawdown, 'years'>) => d.years.reduce((n, y)
 /** The last age it moved anything. */
 const lastConverting = (d: Pick<Drawdown, 'years'>) => d.years.reduce<number | null>((n, y) => (y.conversion >= 0.5 ? y.age : n), null);
 
-/** The sheet's preview, as the rule is changed. */
-export function previewLine(rule: Drawdown, none: Drawdown, money: Money): string {
+/** The sheet's preview, as the rule is changed: this rule beside none. */
+export function previewRows(rule: Drawdown, none: Drawdown, money: Money): [string, string, string][] {
   const moved = convertedIn(rule);
   const last = lastConverting(rule);
-  const end = (d: Drawdown, age: number | null) => (d.runsOutAt !== null ? `it runs short at ${d.runsOutAt}` : `${money(d.leftAtEnd)} left${age === null ? '' : ` at ${age}`} after tax`);
-  const about = moved >= 0.5 && last !== null ? `about ${money(moved < 1000 ? moved : Math.round(moved / 1000) * 1000)} converted by ${last}, ` : 'nothing converted, ';
+  const about = moved >= 0.5 && last !== null ? `About ${money(moved < 1000 ? moved : Math.round(moved / 1000) * 1000)}, by ${last}` : money(0);
   const age = endAgeOf(rule);
-  return `With this rule: ${about}tax and health costs ${money(rule.taxAndHealth)} in all, and ${end(rule, age)}. With none: ${money(none.taxAndHealth)} and ${none.runsOutAt !== null ? `runs short at ${none.runsOutAt}` : money(none.leftAtEnd)}.`;
+  return [
+    ['Converted', about, money(0)],
+    ['Tax and health, in all', money(rule.taxAndHealth), money(none.taxAndHealth)],
+    [age === null ? 'Left, after tax' : `Left at ${age}, after tax`, endWords(rule, money), endWords(none, money)],
+  ];
+}
+
+export const RULES_DIFFER_LABEL = 'Why do the rules differ?';
+
+/** Why the rules come to different figures, about no rule in particular (D4): true with
+ *  or without a Medicaid line, since it says only what happens unless Medicaid covers you. */
+export function rulesDifferText(a: { onAca: boolean; acaLaw: TaxChoices['health']['acaLaw'] }): string {
+  const early = !a.onAca ? 'More income early pays more tax now' : a.acaLaw === 'enhanced' ? 'More income early can mean a smaller credit' : 'More income early can pass the ACA limit';
+  const low = a.onAca ? ' Later, drawing mostly Roth, income can fall too low for a credit, and unless Medicaid covers you then, coverage is counted at full price.' : '';
+  return `Conversions move income between years. ${early} and can empty tax-deferred money early.${low} Less income early can leave larger required withdrawals later.`;
 }
 
 /** A copy's name after its rule, with a number if that is taken. */

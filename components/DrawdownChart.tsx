@@ -27,7 +27,8 @@ const LAYERS = [
 ] as const;
 
 /** `label` names it; `short` is what fits on an axis of ages. */
-export type DrawdownMark = { age: number; label: string; short: string };
+/** `spelled`: the mark in full, where words have the room a chart's label hasn't. */
+export type DrawdownMark = { age: number; label: string; short: string; spelled?: string };
 
 /** Each mark's row, the fewest the names need. */
 export function markRows(marks: readonly { x: number; label: string }[]): number[] {

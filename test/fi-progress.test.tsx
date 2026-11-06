@@ -431,7 +431,10 @@ describe('the FI line’s title, for every case (rollout phase 4c)', () => {
   test('the Plan’s answer, against the stop age, in the Plan’s words (rollout phase 8b)', () => {
     const ages = plan({ age: 40, targetAge: 55 });
     expect(title(11.4, 0.62, ages)).toBe('FI around age 51, 4 years before you stop at 55');
-    expect(title(18, 0.4, ages)).toBe('FI around age 58, 3 years after you stop at 55');
+    expect(title(18, 0.4, ages)).toBe('FI around age 58, 3 years after you stop at 55, if you keep saving until then');
+    // With nothing being saved, there is no saving to keep up.
+    expect(fiHeadline({ yearsToFi: 18, fiAge: 58 }, { age: 40, stopAge: 55 }, { saving: false }).against).toBe('3 years after you stop at 55');
+    expect(fiHeadline({ yearsToFi: 18, fiAge: 58 }, { age: 40, stopAge: 55 }).against).toBe('3 years after you stop at 55');
     expect(title(15, 0.5, ages)).toBe('FI around age 55, right when you stop at 55');
     expect(title(11.4, 0.62, plan({ age: 40 }))).toBe('FI around age 51');
     expect(title(70, 0.01, ages)).toBe('FI not before age 100 at this savings rate');

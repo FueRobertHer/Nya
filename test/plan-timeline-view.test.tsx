@@ -93,8 +93,8 @@ describe('its points and rows', () => {
   });
 
   test('the where line follows the plan’s start', () => {
-    expect(text(card({ ...PLAN, items: [ROOF] }))).toContain('In Will it last?: costs, windfalls and income, from 55, where it starts.');
-    expect(text(card({ ...PLAN, items: [ROOF], start: 'assets' }))).toContain('In Will it last?: costs, windfalls and income, from 40, where it starts.');
+    expect(text(card({ ...PLAN, items: [ROOF] }))).toContain('Will it last? counts costs, windfalls and income, from 55, where it starts.');
+    expect(text(card({ ...PLAN, items: [ROOF], start: 'assets' }))).toContain('Will it last? counts costs, windfalls and income, from 40, where it starts.');
   });
 });
 

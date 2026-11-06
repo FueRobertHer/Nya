@@ -8,7 +8,8 @@ import { useState } from 'react';
 import { taxShares, type Drawdown } from '@/lib/fire/drawdown';
 import type { FiShares } from '@/lib/fire/plan-figures';
 import { Masked } from './HideAmounts';
-import { fiYearly, sharesNote, stageTitle } from './plan-drawdown';
+import { MoneyLines } from './PlanDrawdown';
+import { fiLines, sharesNote, stageTitle } from './plan-drawdown';
 import { pct } from './plan-text';
 import { Notice } from './TotalCaveats';
 
@@ -18,6 +19,8 @@ export function PlanTaxSheet({
   shares,
   held,
   number,
+  ownNumber = false,
+  converts = false,
   withdrawalRate,
   realReturn,
   start,
@@ -33,6 +36,10 @@ export function PlanTaxSheet({
   held: boolean;
   /** The FI number worked out, whatever is typed beside it. */
   number: number | null;
+  /** A number of your own is typed beside it. */
+  ownNumber?: boolean;
+  /** The plan has a conversion rule, which can move this share against its lifetime costs. */
+  converts?: boolean;
   withdrawalRate: number;
   realReturn: number;
   /** The years Will it last? runs, when they aren't from the FI number itself. */
@@ -53,7 +60,6 @@ export function PlanTaxSheet({
   const firstAge = shares?.drawn.years[0]?.age ?? null;
   const hasOneOffs = shares?.drawn.years.some((y) => y.oneOffs >= 0.5) ?? false;
   const differs = shares && start && startBalance !== null && pct(start.t, 1) !== pct(shares.t, 1);
-  const spending = shares ? Math.max(0, shares.spending - shares.paid) : 0;
   const notes = shares ? sharesNote(shares, money) : [];
   return (
     <div className="stack loose">
@@ -65,18 +71,19 @@ export function PlanTaxSheet({
       )}
       {shares && (
         <p className="helper">
-          {`Of everything your years after ${firstAge} cost (spending, ${hasOneOffs ? 'one-off costs, ' : ''}health coverage and tax), this share is tax, counting earlier years more, as money spent sooner would have grown longer.`}
+          {`Tax as a share of everything your years after ${firstAge} cost: spending, ${hasOneOffs ? 'one-off costs, ' : ''}health coverage and tax. Nearer years count more, since money for later years has longer to grow.`}
         </p>
       )}
       {differs && (
         <p className="helper">
-          <Masked>{`Will it last? starts from ${money(startBalance)}, not your FI number, so its tax differs: ${pct(start.t, 1)}.`}</Masked>
+          <Masked>{`This is for a plan that starts from your ${ownNumber ? 'worked-out ' : ''}FI number. Will it last? and the years on Drawdown start from ${money(startBalance)}, so their tax comes to ${pct(start.t, 1)}.`}</Masked>
         </p>
       )}
+      {shares && converts && <p className="helper">Conversions pay tax and can raise health costs early, when costs count most, so your FI number can rise even when lifetime costs fall.</p>}
       {shares && (
         <section className="stack tight" aria-labelledby="plan-tax-stages">
           <h3 className="section-label" id="plan-tax-stages">
-            By stage
+            Tax’s share, by stage
           </h3>
           <dl className="txn-detail txn-detail-wide">
             {shares.drawn.stages.map((s) => (
@@ -98,34 +105,9 @@ export function PlanTaxSheet({
       {shares && number !== null && (
         <section className="stack tight" aria-labelledby="plan-tax-number">
           <h3 className="section-label" id="plan-tax-number">
-            In your FI number
+            {ownNumber ? 'In the worked-out number' : 'In your FI number'}
           </h3>
-          <dl className="txn-detail txn-detail-wide">
-            <div className="txn-detail-row">
-              <dt>{shares.paid >= 0.5 ? 'Spending, less coverage you already pay for' : 'Spending'}</dt>
-              <dd className="money">
-                <Masked>{money(spending)}</Masked>
-              </dd>
-            </div>
-            <div className="txn-detail-row">
-              <dt>Health coverage, on average</dt>
-              <dd className="money">
-                <Masked>{money(shares.h)}</Masked>
-              </dd>
-            </div>
-            <div className="txn-detail-row">
-              <dt>{`Grossed up for ${pct(shares.t, 1)} tax`}</dt>
-              <dd className="money">
-                <Masked>{money(fiYearly(shares))}</Masked>
-              </dd>
-            </div>
-            <div className="txn-detail-row txn-detail-sum">
-              <dt>{`At a ${pct(withdrawalRate)} withdrawal rate`}</dt>
-              <dd className="money">
-                <Masked>{money(number)}</Masked>
-              </dd>
-            </div>
-          </dl>
+          <MoneyLines lines={fiLines({ spending: shares.spending, paid: shares.paid, health: shares.h, t: shares.t, tText: pct(shares.t, 1), rate: withdrawalRate, worked: number, own: ownNumber }, money)} />
         </section>
       )}
       {notes.map((n) => (

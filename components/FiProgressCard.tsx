@@ -374,7 +374,7 @@ export function FiProgressView({
   const from = walk ? null : projectFrom(plan, view);
   const runsOut = view.yearsToFi === 0 && from !== null && plan.age !== null ? projectionShort(from.assets, from.savings, plan.realReturn, from.years) : null;
   const runsOutAt = walk ? walk.runsOutAt : runsOut && plan.age !== null ? plan.age + runsOut.year : null;
-  const head = fiHeadline(view, { age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi }, { noDate: !!walk?.short, runsOutAt });
+  const head = fiHeadline(view, { age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi }, { noDate: !!walk?.short, runsOutAt, saving: (view.savings.value ?? 0) > 0 });
   const there = view.progress !== null ? progressText(view.progress) : null;
   const rate = savingsRate !== null ? `${savingsRateText(savingsRate)} savings rate, ${inputs.flows?.scaled ? `since ${dayName(inputs.flows.from)}` : 'last 12 months'}` : null;
   const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);

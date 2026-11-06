@@ -155,7 +155,7 @@ import { OptInRow, OptInSheet, OPT_IN_TITLE } from './PlanOptIn';
 import { CompareCard, ConversionsForm, HowYouDrawCard, OrderForm, RuleLevel } from './PlanHowYouDraw';
 import { PlanTaxSheet } from './PlanTaxSheet';
 import { choicesDiffParts, copyNameFor, ruleTitle } from './plan-conversions';
-import { ABOUT_DETAIL, assumptionsLine, assumptionsWorked, HEALTH_NOT_SET, healthSub, honestyNotes, householdLine, lawLabel, namesCoverage, stageHealthLines, stageTitle, STATE_NAMES, taxHypothetical, taxLine, yearTitle, type YearContext } from './plan-drawdown';
+import { ABOUT_DETAIL, assumptionsLine, assumptionsWorked, HEALTH_NOT_SET, healthSub, honestyNotes, householdLine, hypotheticalDrawdown, namesCoverage, stageHealthLines, stageTitle, STATE_NAMES, taxHypothetical, taxLine, yearTitle, type YearContext } from './plan-drawdown';
 import { planFigures, resolveSaved, type FiguresRefused, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
 import { compareRows, conversionRun, type CompareRow } from '@/lib/fire/compare-conversions';
 import { defaultUntil as untilByDefault, type Strategy } from '@/lib/fire/tax/rules';
@@ -238,7 +238,7 @@ export type SheetState =
   | { kind: 'assumptions'; at?: AssumptionsAt; mix?: PlanMix & { ok: true } }
   | { kind: 'numbers' }
   | { kind: 'fi-number' }
-  // Work it out from your accounts, and a stage of Year by year, with its
+  // Work out tax from your accounts, and a stage of Year by year, with its
   // years as a level (drawn over it, as a figure's accounts are).
   | { kind: 'opt-in' }
   | { kind: 'stage'; at: number }
@@ -1416,9 +1416,9 @@ export default function PlanTab({
     ? null
     : {
         sub: healthSub(detailChoices, shownPlan.fiNumber === null && taxWorked),
-        line: null,
+        line: shownShares && detailChoices.health.beforeMedicare !== null ? 'a year, on average' : null,
         why: null,
-        value: detailChoices.health.beforeMedicare === null ? null : shownShares ? `About ${money(shownShares.h)} a year` : '--',
+        value: detailChoices.health.beforeMedicare === null ? null : shownShares ? money(shownShares.h) : '--',
         notes: honesty.filter((n) => n.kind === 'health not set' || n.kind === 'coverage counted twice').map((n) => (n.kind === 'health not set' ? { ...n, text: HEALTH_NOT_SET } : n)),
       };
   const figureTexts: typeof shownNow = !detailShown
@@ -1432,13 +1432,13 @@ export default function PlanTab({
         },
       };
   const taxRow: (FigureText & { value: string }) | null = shownShares
-    ? { sub: `Of what your years after ${shownShares.drawn.years[0]?.age} cost, from your FI number · your accounts and ${lawNow.year} law`, line: null, why: null, notes: [], value: pct(shownShares.t, 1) }
+    ? { sub: `Share of your costs after ${shownShares.drawn.years[0]?.age} · from your accounts and ${lawNow.year} law`, line: null, why: null, notes: [], value: pct(shownShares.t, 1) }
     : fiHeld
       ? { sub: 'Working it out', line: null, why: null, notes: [], value: '--' }
       : offerDetail && !entry
         ? { sub: 'As set · work it out from your accounts', line: null, why: null, notes: [], value: pct(shownPlan.taxRate) }
         : null;
-  const fiSub = shownPlan.fiNumber !== null ? null : shownShares ? `Worked out from spending, health coverage and tax, at ${pct(shownPlan.withdrawalRate)}` : fiHeld ? 'Working it out' : null;
+  const fiSub = shownPlan.fiNumber !== null ? null : shownShares ? `Spending, health coverage and tax, at a ${pct(shownPlan.withdrawalRate)} withdrawal rate` : fiHeld ? 'Working it out' : null;
   const stressNotes = stressNotice(figureArgs, engine, shown?.startsWith ?? null);
   // Design-system rule 3: a badge on each card the notice is about.
   const stressBadge = stressNotes.length === 0 ? null : stressNotes.length === 1 ? 'An input may be low' : 'Inputs may be low';
@@ -1459,6 +1459,7 @@ export default function PlanTab({
           stateTaxes: shownInput.state ? shownInput.law.stateIncomeTax[shownInput.state] : null,
           rmdAge: shownInput.rmdAges.you,
           gainsZeroTo: shownInput.law.brackets.gains[shownInput.filing === 'joint' && shownPlan.partnerAge !== null ? 'joint' : 'single'].zeroTo,
+          medicaid: shownInput.state ? shownInput.law.medicaidStates[shownInput.state] : null,
         }
       : null;
   // The rules side by side: whole drawdowns, so only while Drawdown is shown.
@@ -1647,7 +1648,7 @@ export default function PlanTab({
     if (inNumber && shown.view.spending.value !== null) lifeNotes.push(`FI number from ${retirementText(inNumber.spending, inNumber.lasting, shown.view.spending.value, money)}.`);
     const later = laterText(shown.events?.later ?? [], money);
     if (later) lifeNotes.push(later);
-    if (shownPlan.items.length > 0) lifeNotes.push(`Coast and Barista FI leave ${entry ? 'this copy’s' : 'your plan’s'} items out, but for lasting changes in spending.`);
+    if (shownPlan.items.length > 0) lifeNotes.push(`${view.barista !== null ? 'Coast and Barista FI count' : 'Coast FI counts'} only lasting changes in spending, not ${entry ? 'this copy’s' : 'your plan’s'} other items.`);
   }
   // How many plans there are, for the bar's and the card's Plans: none said
   // until they are listed (after a failed reload the client keeps the list
@@ -2111,6 +2112,7 @@ export default function PlanTab({
                   realReturn={plan.realReturn}
                   lawYear={drawn.law.year}
                   healthGrowth={yearContext.healthGrowth}
+                  acaLaw={yearContext.acaLaw}
                   copyName={copyName}
                   held={reloading}
                   working={shownWorking}
@@ -2208,6 +2210,7 @@ export default function PlanTab({
             paidChoices={paidChoices}
             paidAmount={inputs.paidFor}
             stages={shownShares ? stageHealthLines(shownShares.drawn.stages, shownShares.drawn.years, money) : drawn ? stageHealthLines(drawn.start.stages, drawn.start.years, money) : []}
+            lawYear={lawNow.year}
             money={money}
           />
         )}
@@ -2222,6 +2225,7 @@ export default function PlanTab({
             shares={shownShares}
             held={fiHeld}
             cautions={shownShares && detailChoices.health.beforeMedicare === null ? [HEALTH_NOT_SET] : []}
+            lawYear={lawNow.year}
           />
         )}
         {shownSheet?.kind === 'tax' && (
@@ -2230,6 +2234,8 @@ export default function PlanTab({
             shares={shownShares}
             held={fiHeld}
             number={view.workedOut ?? (plan.fiNumber === null ? view.fiNumber : null)}
+            ownNumber={plan.fiNumber !== null}
+            converts={detailChoices.strategy.conversions.kind !== 'none'}
             withdrawalRate={plan.withdrawalRate}
             realReturn={plan.realReturn}
             start={drawn && (plan.start !== 'fi-number' || plan.fiNumber !== null) ? drawn.start : null}
@@ -2260,6 +2266,7 @@ export default function PlanTab({
             partner={shared.taxFacts.filing === 'joint' && plan.partnerAge !== null}
             preview={previewConversions}
             movingStart={plan.start === 'fi-number' && plan.fiNumber === null && 'sim' in engine ? engine.sim.startBalance : null}
+            lawYear={drawn?.law.year ?? lawNow.year}
             money={money}
           />
         )}
@@ -2310,7 +2317,7 @@ export default function PlanTab({
             onDone={closeFor(opened)}
           />
         )}
-        {sheetStage && drawn && yearContext && !sheetYear && <StageLevel stage={sheetStage} years={drawn.start.years} money={money} rmdAge={yearContext.rmdAge} cautions={sheetStage.key === 'before-60' ? rothCautions : []} openRuns={stageRuns} onRuns={setStageRuns} onYear={setYearLevel} />}
+        {sheetStage && drawn && yearContext && !sheetYear && <StageLevel stage={sheetStage} years={drawn.start.years} context={yearContext} cautions={sheetStage.key === 'before-60' ? rothCautions : []} openRuns={stageRuns} onRuns={setStageRuns} onYear={setYearLevel} />}
         {sheetYear && yearContext && <YearLevel year={sheetYear} context={yearContext} />}
         {shownSheet?.kind === 'figure' && (
           <FigureForm
@@ -2599,7 +2606,7 @@ export function FiCard({
   // it), it says so; a walk that never gets there says why under the answer.
   // Not worked out, the answer names what it needs, never "--".
   const runsOutAt = !fiShort && path?.short && plan.age !== null ? plan.age + path.short.year : null;
-  const head = fiHeadline(view, { age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi }, { noDate: !!fiShort, runsOutAt, need });
+  const head = fiHeadline(view, { age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi }, { noDate: !!fiShort, runsOutAt, need, saving: (view.savings.value ?? 0) > 0 });
   // What qualifies the answer, under it by the hero's rules (design-system.md
   // "Status and honesty"): one in full, two or more on one line that opens to
   // each, every note in its own words. None is critical.
@@ -3263,12 +3270,14 @@ export function SimulationCard({
   // The setup, and what the starting choice means for it.
   let setup: React.ReactNode;
   if (vpw) {
-    setup = `Stop working ${when} with ${money(sim.startBalance)} (${startLabel}), for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. VPW sets each year's spending from the balance and the years left.`;
+    setup = `Stop working ${when} with ${money(sim.startBalance)} (${startLabel}), for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. VPW sets each year's spending from the balance and the years left.${detail ? ` ${taxLine(detail.t)}` : ''}`;
   } else if (detail) {
+    const balance = <Masked>{money(sim.startBalance)}</Masked>;
+    const startsWithIt = plan.start === 'fi-number' ? <>{startLabel}, {balance}</> : plan.start === 'assets' ? <>your invested assets, {balance}</> : plan.start === 'at-stop' ? <>the {balance} you’d have then</> : <>the {balance} you typed</>;
     setup = (
       <>
-        Stop working {when} with <Masked>{money(sim.startBalance)}</Masked> ({startLabel}), withdrawing <strong>{pct(saidRate(rate, plan.withdrawalRate))}</strong> of it a year, your spending and health coverage with their tax, for {sim.years} years{startAge !== null ? ` (to age ${startAge + sim.years})` : ''}
-        {saidAbove(rate, plan.withdrawalRate) ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}.
+        Stop working {when} with {startsWithIt}, for {sim.years} years{startAge !== null ? `, to age ${startAge + sim.years}` : ''}. Your spending, health coverage and tax come to {plan.rule === 'constant' ? 'about ' : ''}
+        <strong>{pct(saidRate(rate, plan.withdrawalRate))}</strong> of it {plan.rule === 'constant' ? 'a year' : 'in the first year'}.{saidAbove(rate, plan.withdrawalRate) ? ` That’s above the ${pct(plan.withdrawalRate)} your FI number assumes.` : ''} {taxLine(detail.t)}
       </>
     );
   } else if (rateFrom === 'spending') {
@@ -3340,10 +3349,9 @@ export function SimulationCard({
       <p className="plan-definition">
         {successDefinition(sim.years)}
         {flexible ? ' This rule lasts by cutting spending when markets fall; Lowest year, below, says how far.' : ''}
-        {detail ? ` ${taxLine(detail.t)}` : ''}
+        {detail && setupHeld ? ` ${taxLine(detail.t)}` : ''}
       </p>
-      <p className="plan-definition">{HYPOTHETICAL_LABEL}</p>
-      {detail && <p className="plan-definition">{lawLabel(detail.lawYear)}</p>}
+      <p className="plan-definition">{detail ? hypotheticalDrawdown(detail.lawYear) : HYPOTHETICAL_LABEL}</p>
     </div>,
     <>
       {startNote}

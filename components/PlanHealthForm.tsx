@@ -17,7 +17,9 @@ import { normalizedAmountText } from '@/lib/manual-txn-input';
 import CheckRows from './CheckRows';
 import { Masked, NO_EXAMPLE } from './HideAmounts';
 import RadioRows from './RadioRows';
+import { MoneyLines } from './PlanDrawdown';
 import { Buttons, FieldProblem, readNumber, SAME_IN_EVERY_PLAN, useDetailSave, type DetailForm, type SaveProps } from './PlanForms';
+import { lawLabel } from './plan-drawdown';
 import { Notice } from './TotalCaveats';
 import { Why } from './Why';
 
@@ -42,9 +44,9 @@ function readMoney(text: string, what: string, optional = false): number | null 
 /** What Medicaid does in the state, by the law's own line. */
 function medicaidWords(line: MedicaidLine, state: string): string {
   const under = `Under ${Math.round(line.line * 100)}% of the poverty line ${state} covers adults through Medicaid`;
-  const noCredit = 'Without it there is no credit either, so coverage is at full price.';
+  const noCredit = 'Otherwise there is no credit at that income, so coverage is counted at full price.';
   if (line.ownRule) return `${under} if they meet its own work rule${line.through === null ? '' : `, through ${line.through}`}. ${noCredit}`;
-  return `${under}. From 2027 that needs 80 hours a month of work, school or volunteering, or an exemption, and an income of about $580 a month counts, which Nya works out. ${noCredit}`;
+  return `${under}. From 2027 that needs 80 hours a month of work, school or volunteering, or an exemption. A household income of about $580 a month also meets it, and Nya checks that. ${noCredit}`;
 }
 
 const asMoneyText = (n: number | null | undefined) => (n === null || n === undefined ? '' : String(n));
@@ -63,6 +65,8 @@ export default function PlanHealthForm(
     paidChoices: readonly PaidChoice[];
     paidAmount: (paid: Paid) => number;
     stages: readonly StageHealth[];
+    /** The tax law the by-stage figures use, for their label. */
+    lawYear?: number;
     money: (n: number) => string;
   }
 ) {
@@ -134,7 +138,7 @@ export default function PlanHealthForm(
         onChange={(v) => setCoverage(v as typeof coverage)}
         disabled={s.saving}
         options={[
-          { value: 'aca', name: 'ACA marketplace', note: 'With its credit and its limit' },
+          { value: 'aca', name: 'ACA marketplace', note: 'A plan from healthcare.gov or your state’s marketplace, with a premium tax credit if your income qualifies' },
           {
             value: 'other',
             name: 'Something else',
@@ -160,7 +164,7 @@ export default function PlanHealthForm(
               <input inputMode="decimal" value={adult} onChange={(e) => setAdult(e.target.value)} placeholder={NO_EXAMPLE} disabled={s.saving} {...s.field('The benchmark plan')} />
             </label>
             {s.under('The benchmark plan')}
-            <p className="helper">The second-lowest silver plan for one adult, from healthcare.gov. Nya rates it up with age each year, as insurers do, for each person your household holds, and works out the credit from it.</p>
+            <p className="helper">The second-lowest silver plan for one adult, from healthcare.gov or your state’s marketplace. Nya rates it up with age each year, as insurers do, for each person your household holds, and works out the credit from it.</p>
             <label className="field">
               Quoted for age
               <input type="number" inputMode="numeric" value={quotedAge} onChange={(e) => setQuotedAge(e.target.value)} disabled={s.saving} {...s.field('The age it was quoted for')} />
@@ -177,7 +181,7 @@ export default function PlanHealthForm(
             )}
           </div>
           <RadioRows
-            legend="Credits under"
+            legend="Premium tax credit"
             name="plan-aca-law"
             value={acaLaw}
             onChange={(v) => setAcaLaw(v as typeof acaLaw)}
@@ -189,18 +193,22 @@ export default function PlanHealthForm(
             ]}
           />
           {props.medicaid && (
-            <div className="stack tight">
+            <section className="stack tight" aria-labelledby="plan-health-medicaid">
+              <h3 className="section-label" id="plan-health-medicaid">
+                Medicaid
+              </h3>
+              <p className="helper">{medicaidWords(props.medicaid, props.stateName ?? 'your state')}</p>
               <CheckRows
-                legend="Who’d meet Medicaid’s work rule"
+                legend="Who’d meet the work rule"
                 checked={rule}
                 onChange={(keys) => setRule(keys as Owner[])}
                 disabled={s.saving}
                 rows={[{ key: 'you', title: 'You' }, ...(props.partner ? [{ key: 'partner', title: 'Your partner' }] : [])]}
               />
-              <p className="helper">{medicaidWords(props.medicaid, props.stateName ?? 'your state')}</p>
-              <CheckRows legend="If you’d qualify" checked={fullPrice ? ['full'] : []} onChange={(keys) => setFullPrice(keys.includes('full'))} disabled={s.saving} rows={[{ key: 'full', title: 'Count full price anyway', sub: 'For a plan that doesn’t lean on Medicaid' }]} />
-            </div>
+              <CheckRows legend="If Medicaid would cover you" checked={fullPrice ? ['full'] : []} onChange={(keys) => setFullPrice(keys.includes('full'))} disabled={s.saving} rows={[{ key: 'full', title: 'Count full price anyway', sub: 'For a plan that doesn’t lean on Medicaid' }]} />
+            </section>
           )}
+          {!props.medicaid && props.stateName && <p className="helper">{`Under 100% of the poverty line ${props.stateName} has no Medicaid for most adults and there is no credit, so coverage is counted at full price.`}</p>}
         </>
       )}
       <div className="sheet-form">
@@ -252,30 +260,20 @@ export default function PlanHealthForm(
           <input type="number" inputMode="decimal" step="0.1" value={growth} onChange={(e) => setGrowth(e.target.value)} placeholder={String(props.defaultGrowth)} data-percent disabled={s.saving} {...s.field('How fast it rises')} />
         </label>
         {s.under('How fast it rises')}
-        <p className="helper">Empty is the default, {props.defaultGrowth} points, from CMS’s projections of health spending, kept with the tax law and reviewed each year. It applies to premiums, Medicare and IRMAA; the ACA’s share of income rises with it, as the law indexes it.</p>
+        <p className="helper">Empty uses the default, {props.defaultGrowth} points, from CMS’s projections of health spending, reviewed each year. It applies to premiums, Medicare and Medicare’s income surcharge (IRMAA).{coverage === 'aca' && acaLaw === '2026' ? ' Under the 2026 law, the share of income the ACA asks you to pay moves with it too.' : ''}</p>
       </div>
       {props.stages.length > 0 && (
         <section className="stack tight" aria-label="Each part by stage">
-          <h3 className="section-label">Each part by stage, a year</h3>
+          <h3 className="section-label">Each part by stage, yearly average</h3>
           {props.stages.map((st) => (
             <div key={st.title}>
               <p className="helper">
                 <Masked>{st.title}</Masked>
               </p>
-              <dl className="txn-detail txn-detail-wide">
-                {st.lines.map((l) => (
-                  <div key={l.label} className={l.sum ? 'txn-detail-row txn-detail-sum' : 'txn-detail-row'}>
-                    <dt>
-                      <Masked>{l.label}</Masked>
-                    </dt>
-                    <dd className="money">
-                      <Masked>{l.value}</Masked>
-                    </dd>
-                  </div>
-                ))}
-              </dl>
+              <MoneyLines lines={st.lines} />
             </div>
           ))}
+          {props.lawYear !== undefined && <p className="plan-definition">{lawLabel(props.lawYear)}</p>}
         </section>
       )}
       <Why label="What isn’t counted">
