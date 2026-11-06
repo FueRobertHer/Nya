@@ -2769,6 +2769,16 @@ span.meter-fill {
   font-weight: 600;
 }
 
+/* A part of the line above it, indented so a sum doesn't read it as one more line to add. */
+.txn-detail-wide .txn-detail-part dt {
+  padding-left: var(--sp-3);
+}
+
+/* A row's second line under its label, where the label sits beside a figure. */
+.txn-detail-wide dt .list-row-sub {
+  display: block;
+}
+
 /* A year's badges under its row's sub: plan outcomes, neutral. */
 .row-badges {
   display: flex;
@@ -8469,6 +8479,23 @@ tbody .th-sort {
 
 .plan-rules-table th .badge {
   width: fit-content;
+}
+
+/* Two figures beside each other (components/PlanBeside.tsx): names at the left, as
+   long as they need, and each figure to the right under its heading. */
+.plan-beside-table th {
+  width: auto;
+  overflow-wrap: normal;
+}
+
+.plan-beside-table thead th {
+  color: var(--text-2);
+  vertical-align: bottom;
+}
+
+.plan-beside-table thead th:not(:first-child),
+.plan-beside-table td {
+  text-align: right;
 }
 
 .plan-compare-diff {

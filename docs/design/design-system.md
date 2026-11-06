@@ -321,7 +321,7 @@ The tax plan's T3, on the Plan's Drawdown and its sheets. No new tokens.
 
 - `.row-badges`: a row of neutral badges under a list row's subtitle, for what happens in a year. A plan's outcome is never a `.warn`: the words decide, and the year isn't wrong.
 - `.fpl`, with `.fpl-limit` and `.fpl-scale`: a `.meter` of income against the poverty line, the ACA's limit marked with a 2px line in `--text-1` standing out of the track, its scale in `--fs-1` under it. Only for someone on the ACA.
-- `.txn-detail-wide` on a `.txn-detail`: labels too long for the column, each taking the room its figure leaves, the figure at the line's end. `.txn-detail-sum` sets a sum's line apart with a `--border-subtle` rule.
+- `.txn-detail-wide` on a `.txn-detail`: labels too long for the column, each taking the room its figure leaves, the figure at the line's end. `.txn-detail-sum` sets a sum's line apart with a `--border-subtle` rule. `.txn-detail-part` indents a part of the line above it, so a sum doesn't read it as one more line to add.
 - `.plan-answer-pending`, under the shared `.plan-working-line`: what an answer said keeps its place, dimmed to 0.6, while a detailed plan's search is out, since it is close and the forms still act on it. Also Home's FI row.
 - `.chart-legend-wrap`: a chart legend whose names wrap, for four buckets on a phone. `.plan-table-scroll`: Show as a table, when it is wider than a phone, scrolls on its own.
 
@@ -330,6 +330,7 @@ The tax plan's T3, on the Plan's Drawdown and its sheets. No new tokens.
 The tax plan's T4, on the Plan's Drawdown and its sheets. No new tokens.
 
 - `.th-sort`: a button filling a table's heading cell at 44px, with `aria-sort` on the `th`. Its 16px `.section-chevron` points both ways until sorted, then the way it is sorted, so a heading says it sorts before anything is tapped. A row's first cell uses it too, in `--accent`, to open that row's sheet. Nothing is sorted until a heading is tapped: highest first, then lowest.
+- `.plan-beside-table` on a `.plan-compare-table`: two figures beside each other under a heading each (the way in, a rule's preview). Names at the left as long as they need, each figure right-aligned under its right-aligned heading, in `--text-2`.
 - `.plan-rules-table` on a `.plan-compare-table`: as narrow as its words let it be, so four columns fit at 390 and it scrolls in `.plan-table-scroll` only below that, its figures right-aligned under right-aligned headings, clear of the 44px name beside them. Nothing in it is marked best: `Your plan`, or `This copy`, is the only badge.
 - Years that read the same: a `.list-row` with `aria-expanded` and an open `.section-chevron`, drawing its years under it in the same list. From three up.
 

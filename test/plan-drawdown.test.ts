@@ -6,7 +6,8 @@ import type { IncomeRow } from '@/lib/fire/compile';
 import { DEFAULT_TAX_CHOICES } from '@/lib/fire/tax-choices';
 import { DEFAULT_TAX_FACTS } from '@/lib/fire/tax-facts';
 import { markRows } from '@/components/DrawdownChart';
-import { assumptionsWorked, detailLines, healthSub, honestyNotes, householdLine, householdNotes, lawLabel, onAca, stageHelper, stageSentence, stageSources, stageTitle, survivorLine, taxLine, yearBadges, yearHelper, yearSections, yearSub, yearTitle, yearValueLabel, type YearContext } from '@/components/plan-drawdown';
+import { wholeMoney } from '@/components/plan-text';
+import { assumptionsWorked, EARLY_ACCESS_WHY, healthPace, STAGE_TAX_NOTE, stagePenalties, stagePercentLine, detailLines, healthSub, honestyNotes, householdLine, householdNotes, lawLabel, onAca, fiLines, stageHelper, stageSentence, stageSources, stageTitle, survivorLine, taxLine, yearBadges, yearRuns, yearHelper, yearSections, yearSub, yearTitle, yearValueLabel, type YearContext } from '@/components/plan-drawdown';
 
 // What Year by year says, on real years: the stages, a stage's rows and a year's sheet.
 
@@ -43,7 +44,7 @@ const run = (over: Partial<DrawdownInput> = {}): Drawdown => {
 };
 
 const money = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`;
-const CONTEXT: YearContext = { money, realReturn: 0.05, healthGrowth: 0.021, acaLaw: '2026', lawYear: 2026, state: 'NV', stateTaxes: false, rmdAge: 75, gainsZeroTo: 98_900 };
+const CONTEXT: YearContext = { money, realReturn: 0.05, healthGrowth: 0.021, acaLaw: '2026', lawYear: 2026, state: 'NV', stateTaxes: false, rmdAge: 75, gainsZeroTo: 98_900, medicaid: { through: null } };
 const yearAt = (d: Drawdown, age: number): DrawdownYear => d.years.find((y) => y.age === age)!;
 const titles = (y: DrawdownYear, c = CONTEXT) => yearSections(y, c).map((s) => s.title);
 const lines = (y: DrawdownYear, title: string, c = CONTEXT) => yearSections(y, c).find((s) => s.title === title)!;
@@ -51,7 +52,7 @@ const lines = (y: DrawdownYear, title: string, c = CONTEXT) => yearSections(y, c
 describe('the stages', () => {
   test('each says its ages and what it is', () => {
     const d = run();
-    expect(d.stages.map(stageTitle)).toEqual(['50 to 59 · before 59½', '60 to 64 · before Medicare', '65 to 74 · before RMDs', '75 to 94 · RMD years']);
+    expect(d.stages.map(stageTitle)).toEqual(['50 to 59 · before 59½', '60 to 64 · before Medicare', '65 to 74 · before required withdrawals', '75 to 94 · required withdrawal years']);
   });
 
   test('a stage of one age says the one', () => {
@@ -67,7 +68,7 @@ describe('the stages', () => {
 
   test('RMD years with nothing left in tax-deferred say there is no RMD', () => {
     const d = run({ slots: [slot('you', 'roth', 2_000_000, { reachable: 2_000_000 })] });
-    expect(stageSources(d.stages.find((s) => s.key === 'rmd')!, d.years, money)).toContain('Nothing left in tax-deferred, so no RMD');
+    expect(stageSources(d.stages.find((s) => s.key === 'rmd')!, d.years, money)).toContain('Nothing left in tax-deferred, so none required');
   });
 
   test('a stage says what it is, and RMD spelled out once', () => {
@@ -145,7 +146,7 @@ describe('a year’s sheet', () => {
     const h = yearHelper(yearAt(run({ slots: [slot('you', 'taxable', 3_000_000, { basis: 2_000_000 })], taxableYield: 0.01 }), 51), CONTEXT);
     expect(h).toContain('Your partner is 50.');
     expect(h).toContain('Both on ACA coverage.');
-    expect(h).toContain('2.1 points a year faster than prices, 2026 tax law. Hypothetical, not tax advice.');
+    expect(h).toContain('Assumes steady 5% growth after inflation, health costs rising 2.1 points a year faster than prices, and 2026 tax law. Hypothetical, not tax advice.');
   });
 
   test('a state with no income tax is named as having none', () => {
@@ -165,10 +166,10 @@ describe('a year’s sheet', () => {
   test('the meter counts the family it measures, and the limit is in dollars', () => {
     const y = yearAt(run(), 51);
     const meter = lines(y, 'Income the law counts').meter!;
-    expect(meter.label).toMatch(/^\d+% of the poverty line, for 2$/);
+    expect(meter.label).toMatch(/^\d+% of the poverty line, for 2 people$/);
     expect(meter.limitLabel).toMatch(/^Limit 400%, \$[\d,]+$/);
     const withChild = yearAt(run({ dependents: [{ untilAge: 60 }] }), 51);
-    expect(lines(withChild, 'Income the law counts').meter!.label).toMatch(/, for 3$/);
+    expect(lines(withChild, 'Income the law counts').meter!.label).toMatch(/, for 3 people$/);
   });
 
   test('the benchmark says whose it is', () => {
@@ -189,7 +190,9 @@ describe('a year’s sheet', () => {
     const y = yearAt(run(), 51);
     // Ordinary income under the deduction: $1,000 of it is left for the gains.
     const gainsYear: DrawdownYear = { ...y, income: { ...y.income, qualified: 0 }, drawn: { ...y.drawn, taxable: 60_000, gain: 60_000 }, law: { ...y.law, agi: 75_000, deduction: 16_000, ordinaryTaxable: 0, gainsTax: 0, penalty: 0 } };
-    expect(lines(gainsYear, 'How the tax is worked out', { ...CONTEXT, gainsZeroTo: 49_450 }).why!.text).toContain('Taxable income up to $49,450 takes gains at 0%, and this year’s $59,000 stays under it.');
+    expect(lines(gainsYear, 'How the tax is worked out').why!.text).toContain('They’re taxed at 0% while taxable income stays under $98,900, and this year’s is $59,000.');
+    // Over that line and still untaxed (a loss carried in), it says nothing it can't explain.
+    expect(lines(gainsYear, 'How the tax is worked out', { ...CONTEXT, gainsZeroTo: 49_450 }).why).toBeUndefined();
   });
 
   test('money from a Roth conversion under five years old is named as that, and in why there is a penalty', () => {
@@ -215,7 +218,7 @@ describe('a year’s sheet', () => {
   test('its lines add up to what the year says it paid', () => {
     const y = yearAt(run(), 51);
     const parse = (v: string) => Number(v.replace(/[^\d.-]/g, ''));
-    const paid = lines(y, 'What it pays for').lines.reduce((n, l) => n + parse(l.value), 0);
+    const paid = lines(y, 'What it pays for').lines.filter((l) => !l.sum).reduce((n, l) => n + parse(l.value), 0);
     expect(Math.abs(paid - (y.living + y.oneOffs + y.health + y.tax + y.surplus))).toBeLessThan(8);
   });
 
@@ -286,14 +289,14 @@ describe('what a detailed plan says it can’t know', () => {
 
   test('the Assumptions row: its rate and growth, what prices and health do, no tax of its own', () => {
     const plan = { withdrawalRate: 0.04, realReturn: 0.05, partTimeIncome: 0 };
-    expect(assumptionsWorked(plan, { inflation: 0.03 }, 0.021, money)).toBe('4% withdrawal · 5% growth until FI · 3% inflation · health costs +2.1 points');
+    expect(assumptionsWorked(plan, { inflation: 0.03 }, 0.021, money)).toBe('4% withdrawal · 5% growth · 3% inflation · health costs 2.1 points above inflation');
     expect(assumptionsWorked({ ...plan, partTimeIncome: 12_000 }, { inflation: 0.03 }, 0.021, money)).toContain('$12,000 part-time');
     expect(assumptionsWorked(plan, { inflation: 0.03 }, 0.021, money)).not.toContain('tax');
   });
 
   test('the small lines', () => {
     expect(lawLabel(2026)).toBe('Hypothetical, 2026 tax law. Not tax advice.');
-    expect(taxLine(0.034)).toBe('Tax at 3.4%, from the years below.');
+    expect(taxLine(0.034)).toBe('Tax is one rate, 3.4%, from the steady years below.');
     expect(survivorLine(95)).toBe('Assumes you both live to 95. A survivor files single, at higher rates.');
     expect(householdLine({ filing: 'joint' }, { state: 'NV' })).toBe('joint · Nevada');
     expect(householdLine({ filing: null }, { state: null })).toBe('single · no state yet');
@@ -313,5 +316,191 @@ describe('what a detailed plan says it can’t know', () => {
 describe('the chart’s marks', () => {
   test('a name goes on the first row it clears, so none is lost', () => {
     expect(markRows([{ x: 10, label: '59½' }, { x: 16, label: '65' }, { x: 200, label: 'RMD age 75' }])).toEqual([0, 1, 0]);
+  });
+});
+
+describe('a year’s two money sections', () => {
+  const exact = (n: number) => n.toFixed(2);
+  const money2 = { ...CONTEXT, money: exact };
+  const parse = (v: string) => Number(v.replace(/[^\d.-]/g, ''));
+  const addUp = (y: DrawdownYear, title: string) => {
+    const s = lines(y, title, money2).lines;
+    return { items: s.filter((l) => !l.sum && !l.part).reduce((n, l) => n + parse(l.value), 0), total: parse(s.find((l) => l.sum)!.value) };
+  };
+  const fillBracket = { order: 'standard', conversions: { kind: 'bracket', top: 0.12 }, convertUntil: null } as const;
+  const plans: Partial<DrawdownInput>[] = [
+    {},
+    { spending: 30_000 },
+    { spending: 90_000 },
+    { spending: 160_000 },
+    { state: 'CA', stateRate: 0.05 },
+    { strategy: fillBracket },
+    { strategy: fillBracket, spending: 110_000 },
+    { filing: null },
+    { slots: [slot('you', 'roth', 2_000_000, { reachable: 2_000_000 })] },
+    { slots: [slot('you', 'tax-deferred', 3_500_000)] },
+    { slots: [slot('you', 'taxable', 1_500_000, { basis: 300_000 }), slot('you', 'tax-deferred', 1_500_000)], strategy: fillBracket },
+  ];
+
+  test('hold the same total, and their lines come to it, on every year of many plans', () => {
+    for (const over of plans) {
+      for (const y of run(over).years) {
+        const from = addUp(y, 'Where the money comes from');
+        const to = addUp(y, 'What it pays for');
+        expect(Math.abs(from.total - to.total)).toBeLessThan(0.02);
+        expect(Math.abs(from.items - from.total)).toBeLessThan(0.02);
+        expect(Math.abs(to.items - to.total)).toBeLessThan(0.02);
+      }
+    }
+  });
+
+  test('just under the 12% bracket’s top with a gain, where the return’s two worksheets part, federal tax is what’s left of the year’s', () => {
+    const inBand = plans.flatMap((over) => run(over).years).filter((y) => y.drawn.gain > 0 && y.law.ordinaryTaxable >= 98_900 && y.law.ordinaryTaxable <= 100_800);
+    expect(inBand.length).toBeGreaterThan(0);
+    for (const y of inBand) expect(Math.abs(addUp(y, 'Where the money comes from').total - addUp(y, 'What it pays for').total)).toBeLessThan(0.02);
+  });
+
+  test('a conversion funds nothing: it has its own section, and counts as income below', () => {
+    const y = yearAt(run({ strategy: fillBracket }), 51);
+    expect(y.conversion).toBeGreaterThan(0);
+    for (const t of ['Where the money comes from', 'What it pays for']) expect(lines(y, t).lines.map((l) => l.label)).not.toContain('Converted to Roth');
+    const moved = lines(y, 'Moved, not spent');
+    expect(moved.lines.map((l) => l.label)).toEqual(['Converted to Roth']);
+    expect(moved.note).toContain('None of it is spent');
+    expect(lines(y, 'Income the law counts').lines.find((l) => l.label === 'of it converted to Roth')?.part).toBe(true);
+  });
+
+  test('Roth drawn says no penalty, before 60 and after', () => {
+    const d = run({ slots: [slot('you', 'roth', 2_000_000, { reachable: 2_000_000 })] });
+    for (const age of [55, 70]) expect(lines(yearAt(d, age), 'Where the money comes from').lines.map((l) => l.label)).toContain('Drawn from Roth, no penalty');
+  });
+});
+
+describe('a year on the ACA, by what the state does', () => {
+  const y = yearAt(run(), 51);
+  const person = (status: string) => ({ ...y.care.people[0], status }) as DrawdownYear['care']['people'][0];
+  const withCare = (over: Partial<DrawdownYear['care']>, partnerAge: number | null = y.partnerAge): DrawdownYear => ({ ...y, partnerAge, care: { ...y.care, ...over } });
+  const note = (year: DrawdownYear, c = CONTEXT) => lines(year, 'Health coverage', c).note ?? '';
+
+  test('Medicaid covering someone says so, by who, and has its own badge', () => {
+    const both = withCare({ people: [person('medicaid'), person('medicaid')] });
+    expect(yearBadges(both, money)).toContain('On Medicaid');
+    expect(note(both)).toContain('Medicaid covers you both, with no premium.');
+    expect(note(withCare({ people: [person('medicaid'), person('aca')] }))).toContain('Medicaid covers you, with no premium.');
+    expect(note(withCare({ people: [person('aca'), person('medicaid')] }))).toContain('Medicaid covers your partner, with no premium.');
+    // Your partner on it, you on Medicare: not the two of you.
+    expect(note(withCare({ people: [person('medicare'), person('medicaid')] }))).toContain('Medicaid covers your partner, with no premium.');
+    expect(note(withCare({ people: [person('medicaid'), person('none')] }, null))).toContain('Medicaid covers you, with no premium.');
+  });
+
+  test('a year on Medicaid doesn’t run on with those around it', () => {
+    const aca = withCare({ people: [person('aca'), person('aca')] });
+    const covered = withCare({ people: [person('medicaid'), person('medicaid')] });
+    expect(yearRuns([aca, aca, covered, aca, aca]).length).toBe(5);
+    expect(yearRuns([aca, aca, aca]).length).toBe(1);
+  });
+
+  test('under the line, where the state has no Medicaid for adults, it never says there is a line', () => {
+    const under = withCare({ underLine: true, people: [person('under-line'), person('under-line')] });
+    const none = { ...CONTEXT, medicaid: null };
+    expect(yearBadges(under, money, null)).toContain('Under 100%, no credit');
+    expect(yearBadges(under, money, null)).not.toContain('Under the Medicaid line');
+    expect(note(under, none)).toContain('Under 100% of the poverty line there is no credit, and Nevada has no Medicaid for most adults, so coverage is counted at full price.');
+    expect(yearBadges(under, money, { through: null })).toContain('Under the Medicaid line');
+    expect(note(under)).toContain('Under the Medicaid line with no credit, so coverage is counted at full price.');
+    // A state's line that ended by this year.
+    expect(yearBadges(under, money, { through: y.calendarYear - 1 })).toContain('Under 100%, no credit');
+  });
+
+  test('only a dependent under the line, counted at full price by choice: nothing of the adults’ credit is denied', () => {
+    const kids = withCare({ underLine: true, people: [person('aca'), person('aca')], dependents: { ...y.care.dependents, status: 'under-line' } });
+    expect(yearBadges(kids, money, null)).toContain('Dependents at full price');
+    expect(yearBadges(kids, money, null)).not.toContain('Under 100%, no credit');
+    expect(yearBadges(kids, money, { through: null })).not.toContain('Under the Medicaid line');
+    expect(note(kids, { ...CONTEXT, medicaid: null })).toContain('Your dependents are under Medicaid’s line for children, and counted at full price, as you chose.');
+    expect(note(kids, { ...CONTEXT, medicaid: null })).not.toContain('Under 100% of the poverty line');
+  });
+
+  test('years either side of the end of a state’s line don’t run together', () => {
+    const under = (calendarYear: number): DrawdownYear => ({ ...withCare({ underLine: true, people: [person('under-line'), person('under-line')] }), calendarYear });
+    const rows = [2026, 2027, 2028, 2029].map(under);
+    expect(yearRuns(rows, { through: 2026 }).map((r) => [r.first, r.last])).toEqual([
+      [0, 1],
+      [1, 4],
+    ]);
+    expect(yearRuns(rows, { through: null }).length).toBe(1);
+  });
+
+  test('the income lines come to ACA income, with the Social Security the law doesn’t tax', () => {
+    const y2: DrawdownYear = { ...withCare({ people: [person('aca'), person('aca')] }), law: { ...y.law, agi: 27_000, magiAca: 47_000 } };
+    const l = lines(y2, 'Income the law counts').lines;
+    expect(l.find((x) => x.label === 'Social Security that isn’t taxed, which the ACA counts')?.value).toBe(money(20_000));
+    const onMedicare: DrawdownYear = { ...withCare({ people: [person('medicare'), person('medicare')] }), law: { ...y.law, agi: 27_000, magiAca: 47_000 } };
+    expect(lines(onMedicare, 'Income the law counts').lines.map((x) => x.label)).not.toContain('Social Security that isn’t taxed, which the ACA counts');
+  });
+
+  test('the credit is a minus, and your share is projected only where the schedule moves', () => {
+    const helped = [40_000, 50_000, 60_000].flatMap((spending) => run({ spending }).years).find((x) => x.calendarYear > 2026 && x.care.figure > 0 && x.care.people.some((p) => p.credit > 0))!;
+    const real = { ...CONTEXT, money: (n: number) => wholeMoney(n, 'USD') };
+    expect(lines(helped, 'Health coverage', real).lines.find((l) => l.label === 'Premium tax credit')?.value).toMatch(/^−\$[\d,]+$/);
+    expect(note(helped)).toContain(`, as projected to ${helped.calendarYear}.`);
+    expect(note(helped, { ...CONTEXT, acaLaw: 'enhanced' })).not.toContain('as projected');
+    expect(note({ ...helped, calendarYear: 2026 })).not.toContain('as projected');
+    const noCredit: DrawdownYear = { ...helped, care: { ...helped.care, people: helped.care.people.map((p) => ({ ...p, credit: 0 })) as DrawdownYear['care']['people'], dependents: { ...helped.care.dependents, credit: 0 } } };
+    expect(lines(noCredit, 'Health coverage').lines.map((l) => l.label)).not.toContain('Premium tax credit');
+    expect(note(noCredit)).toContain('comes to more than the benchmark plan, so there is no credit.');
+  });
+});
+
+describe('what a stage’s row and sheet say', () => {
+  const d = run();
+  const first = d.stages[0];
+
+  test('what the percent on each row is, for someone on the ACA, and the limit only where the law has one', () => {
+    expect(stagePercentLine(first, d.years, '2026')).toBe('Each row’s percent is that year’s ACA income against the poverty line. Above 400% there is no credit.');
+    expect(stagePercentLine(first, d.years, 'enhanced')).toBe('Each row’s percent is that year’s ACA income against the poverty line.');
+    const onMedicare = d.stages.find((s) => s.key === 'rmd')!;
+    expect(stagePercentLine(onMedicare, d.years, '2026')).toBeNull();
+  });
+
+  test('a stage’s penalties, added up, and how many years pay one', () => {
+    const y = yearAt(d, 51);
+    const rows = [{ ...y, law: { ...y.law, penalty: 1_000 } }, { ...y, law: { ...y.law, penalty: 0 } }, { ...y, law: { ...y.law, penalty: 2_500 } }];
+    expect(stagePenalties({ first: 0, last: 3 }, rows)).toEqual({ total: 3_500, years: 2 });
+    expect(stagePenalties({ first: 1, last: 2 }, rows)).toEqual({ total: 0, years: 0 });
+  });
+
+  test('its figure is said to be an average, and what it leaves out before 59½ is said with the law’s limits', () => {
+    expect(STAGE_TAX_NOTE).toBe('Each stage’s tax is a yearly average, with any penalty in it.');
+    expect(EARLY_ACCESS_WHY.text).toContain('in or after the year you turn 55');
+    expect(EARLY_ACCESS_WHY.text).toContain('not an IRA');
+  });
+
+  test('health costs rising slower than prices say so', () => {
+    expect(healthPace(0.021)).toBe('2.1 points a year faster than prices');
+    expect(healthPace(-0.01)).toBe('1 point a year slower than prices');
+    const plan = { withdrawalRate: 0.04, realReturn: 0.05, partTimeIncome: 0 };
+    expect(assumptionsWorked(plan, { inflation: 0.03 }, -0.01, money)).toContain('health costs 1 point below inflation');
+  });
+});
+
+describe('the FI number’s lines', () => {
+  const base = { spending: 64_000.4, paid: 0, health: 4_188.6, t: 0.137, tText: '13.7%', rate: 0.04, worked: 2_000_000, own: false };
+  const parse = (v: string) => Number(v.replace(/[^\d.-]/g, ''));
+
+  test('add up as written, to what you’d draw', () => {
+    for (const over of [{}, { paid: 12_000.3 }, { health: null }, { worked: 1_245_423 }]) {
+      const l = fiLines({ ...base, ...over }, money);
+      const draw = l.findIndex((x) => x.label === 'What you’d draw each year');
+      expect(l.slice(0, draw).reduce((n, x) => n + parse(x.value), 0)).toBe(parse(l[draw].value));
+    }
+  });
+
+  test('its last line says what it is, and no tax line where there is none', () => {
+    expect(fiLines(base, money).at(-1)!.label).toBe('At a 4% withdrawal rate');
+    expect(fiLines({ ...base, own: true }, money).at(-1)!.label).toBe('Worked out, at a 4% withdrawal rate');
+    expect(fiLines({ ...base, t: 0 }, money).map((l) => l.label).join()).not.toContain('Tax,');
+    expect(fiLines(base, money).map((l) => l.label)).toContain('Tax, 13.7% of what you draw');
+    expect(fiLines({ ...base, paid: 12_000 }, money).find((l) => l.label.startsWith('Coverage you already pay'))?.value).toBe(money(-12_000));
   });
 });

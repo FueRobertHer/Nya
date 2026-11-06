@@ -43,10 +43,10 @@ describe('its sheet', () => {
     expect(form.getAttribute('aria-label')).toBe('FI number');
     const t = form.textContent;
     expect(form.findAll((e) => classOf(e).includes('total-value'))[0].textContent).toBe('$1,176,471');
-    expect(t).toContain('Spending$40,000 a year');
-    expect(t).toContain('÷ (1 − tax)15% tax');
-    expect(t).toContain('÷ withdrawal rate4%');
-    expect(t).toContain('FI number$1,176,471');
+    expect(t).toContain('Spending$40,000');
+    expect(t).toContain('Tax, 15% of what you draw$7,059');
+    expect(t).toContain('What you’d draw each year$47,059');
+    expect(t).toContain('At a 4% withdrawal rate$1,176,471');
     expect(t).toContain('Each is a row on Your figures, or under Assumptions.');
     expect(t).toContain('Will it last? starts from this number.');
     expect(button(form, 'Use the worked-out number')).toBeNull();
@@ -75,7 +75,7 @@ describe('its sheet', () => {
     expect(tab.text()).toContain('Your own FI number $1,500,000 · worked out $1,000,000');
     await press(tab.row('FI number'));
     const form = tab.dialog()!;
-    expect(form.textContent).toContain('Worked out$1,000,000');
+    expect(form.textContent).toContain('Worked out, at a 4% withdrawal rate$1,000,000');
     expect(field(form, 'Use your own number')?.value).toBe('1500000');
     await press(button(form, 'Use the worked-out number'));
     await settle(400);

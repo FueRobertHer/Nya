@@ -7,7 +7,7 @@
 
 import { useState } from 'react';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
-import { Masked } from './HideAmounts';
+import { BesideTable } from './PlanBeside';
 import { fiWhen } from './plan-fi-when';
 import { pct } from './plan-text';
 import { Notice } from './TotalCaveats';
@@ -18,7 +18,7 @@ const CHEVRON = (
   </svg>
 );
 
-export const OPT_IN_TITLE = 'Work it out from your accounts';
+export const OPT_IN_TITLE = 'Work out tax from your accounts';
 
 export function OptInRow({
   copy,
@@ -92,8 +92,8 @@ function mostlyWords(before: PlanFigures, after: PlanFigures): string | null {
   const byTax = Math.abs(living / (1 - s.t) - living / (1 - before.plan.taxRate));
   const byHealth = s.h / (1 - s.t);
   if (byTax < 0.5 && byHealth < 0.5) return null;
-  if (byHealth >= byTax) return after.view.spending.source === 'measured' ? 'Mostly health coverage: measured spending leaves out coverage through work, and after you stop it is a cost of its own.' : 'Mostly health coverage: after you stop it is a cost of its own.';
-  return 'Mostly tax: what you draw from tax-deferred accounts, the gains you sell and Social Security all count as income.';
+  if (byHealth >= byTax) return after.view.spending.source === 'measured' ? 'Most of the change is health coverage: measured spending leaves out coverage through work, and after you stop it is a cost of its own.' : 'Most of the change is health coverage: after you stop it is a cost of its own.';
+  return 'Most of the change is tax: what you draw from tax-deferred accounts, the gains you sell and part of any Social Security all count as income.';
 }
 
 export function OptInSheet({
@@ -142,39 +142,29 @@ export function OptInSheet({
           </p>
         )}
         {before && shares && after && !working && (
-          <dl className="txn-detail txn-detail-wide">
-            <div className="txn-detail-row">
-              <dt>Your FI date</dt>
-              <dd>{`${capital(whenWords(before))}, then ${whenWords(after)}`}</dd>
-            </div>
-            <div className="txn-detail-row">
-              <dt>Your FI number</dt>
-              <dd className="money">
-                <Masked>{before.plan.fiNumber !== null ? `${money(before.plan.fiNumber)}, set by you` : `${before.view.fiNumber === null ? '--' : money(before.view.fiNumber)}, then ${after.view.fiNumber === null ? '--' : money(after.view.fiNumber)}`}</Masked>
-              </dd>
-            </div>
-            <div className="txn-detail-row">
-              <dt>Tax after you stop</dt>
-              <dd>{`${pct(before.plan.taxRate)}, as set, then ${pct(shares.t, 1)}`}</dd>
-            </div>
-            <div className="txn-detail-row">
-              <dt>Health coverage</dt>
-              <dd className="money">
-                <Masked>{`None, then ${money(shares.h)} a year${coverageSet ? '' : ' from Medicare'}`}</Masked>
-              </dd>
-            </div>
-          </dl>
+          <BesideTable
+            caption="Your plan now, beside your plan with tax worked out from your accounts"
+            heads={['Now', 'Worked out']}
+            rows={[
+              ['Your FI date', capital(whenWords(before)), capital(whenWords(after))],
+              before.plan.fiNumber !== null
+                ? ['Your FI number', `${money(before.plan.fiNumber)}, set by you`, 'Stays as you set it']
+                : ['Your FI number', before.view.fiNumber === null ? '--' : money(before.view.fiNumber), after.view.fiNumber === null ? '--' : money(after.view.fiNumber)],
+              ['Tax after you stop', `${pct(before.plan.taxRate)}, as set`, pct(shares.t, 1)],
+              ['Health coverage', 'Not counted', `${money(shares.h)} a year${coverageSet ? '' : ', Medicare premiums'}`],
+            ]}
+          />
         )}
         {!working && !shares && <p className="helper">What it comes to can’t be worked out yet. You can still turn it on, and Drawdown will say what it needs.</p>}
         {before && after && !working && mostly && <p className="helper">{mostly}</p>}
-        {shares && !working && !coverageSet && <p className="helper">Coverage before 65 is yours to set next, on Health coverage.</p>}
-        <p className="helper">Drawdown works tax and health coverage out year by year, and your FI number, Home and every copy use them.</p>
+        {shares && !working && !coverageSet && <p className="helper">Next, set how you’d be covered before 65, on Health coverage.</p>}
+        <p className="helper">Drawdown then works out tax and health coverage year by year. Your FI number, Home and every copy of your plan use them.</p>
       </div>
       <div className="stack tight">
-        <h3 className="section-label">What it reads</h3>
-        <p className="helper">Each account’s tax bucket, owner and cost basis; what you put into Roth; how you’ll be covered before 65; your household and state. Anything not set is counted the cautious way and says so.</p>
+        <h3 className="section-label">What it uses</h3>
+        <p className="helper">Each account’s tax bucket, owner and cost basis; what you put into Roth; how you’ll be covered before 65; your household and state. Anything not set uses an assumption, and Nya says which. Some, like no state, can understate costs.</p>
       </div>
-      <p className="helper">Hypothetical, {lawYear} tax law. Not tax advice. Use a flat rate instead takes you back at any time.</p>
+      <p className="helper">Hypothetical, {lawYear} tax law. Not tax advice. You can go back to a flat rate at any time, from Tax after you stop.</p>
       {error && (
         <Notice level="critical" role="alert">
           {error}

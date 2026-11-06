@@ -160,7 +160,7 @@ function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNu
     marker = fiAge <= points[0].age && points[0].balance >= fiNumber ? { x: x(points[0].age), y: y(points[0].balance) } : { x: x(Math.max(fiAge, points[0].age)), y: y(fiNumber) };
   }
   // On Whole path, inside the axis; the stop has its own line.
-  const tickXs = after ? (p.ticks ?? []).filter((t) => t.age > first && t.age < last && t.age !== stopAge).map((t) => ({ x: x(t.age), short: t.short, label: t.label })) : [];
+  const tickXs = after ? (p.ticks ?? []).filter((t) => t.age > first && t.age < last && t.age !== stopAge).map((t) => ({ x: x(t.age), short: t.short, label: t.label, spelled: t.spelled })) : [];
   const span = (t: XLabel) => {
     const w = labelWidth(t.label);
     return t.anchor === 'start' ? [t.x, t.x + w] : t.anchor === 'end' ? [t.x - w, t.x] : [t.x - w / 2, t.x + w / 2];
@@ -222,7 +222,7 @@ function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNu
   }
   // A mark whose age had no room: all of them are named under the chart, so none goes unsaid.
   const unnamed = after ? tickXs.some((t) => !labels.some((l) => l.label === t.short)) : false;
-  const named = unnamed ? tickXs.map((t) => t.label) : [];
+  const named = unnamed ? tickXs.map((t) => t.spelled ?? t.label) : [];
   return { x, y, baseY, line, area, marker, labels, named, ticks: tickXs, fiY, fiX2, fiName, stopX: stopAge > first ? x(stopAge) : null, recordedLine, plannedLine, todayX: recorded ? x(today) : null };
 }
 
@@ -233,7 +233,7 @@ function summary(p: PathChartProps, stopped: boolean, after: PathAfter | null): 
   const start = points[0];
   const end = points[points.length - 1];
   const events = p.walkWords ? ` with ${p.walkWords}` : p.withEvents || after?.withEvents ? ' with this plan’s items' : '';
-  const marks = after ? (p.ticks ?? []).filter((t) => t.age > start.age && t.age < after.endAge && t.age !== stopAge).map((t) => t.label) : [];
+  const marks = after ? (p.ticks ?? []).filter((t) => t.age > start.age && t.age < after.endAge && t.age !== stopAge).map((t) => t.spelled ?? t.label) : [];
   const marked = marks.length > 0 ? ` Marks at ${marks.slice(0, -1).join(', ')}${marks.length > 1 ? ' and ' : ''}${marks[marks.length - 1]}.` : '';
   const wrap = (path: string) => `${p.recorded ? `${recordedWords(p.recorded, currency)} ` : ''}${path}${marked}`;
   const last = after ? after.points[after.points.length - 1] : null;

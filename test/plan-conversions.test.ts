@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { choicesDiffParts, convertedIn, copyNameFor, endAgeOf, endWords, ORDER_WORDS, previewLine, ruleName, ruleSentence, ruleTitle, strategyDiffParts } from '@/components/plan-conversions';
+import { SCENARIO_NAME_MAX } from '@/lib/fire/plan-list';
+import { choicesDiffParts, convertedIn, copyNameFor, endAgeOf, endWords, ORDER_WORDS, previewRows, ruleName, rulesDifferText, ruleSentence, ruleTitle, strategyDiffParts } from '@/components/plan-conversions';
 import { fiYearly, pointsText, runSub, runTax, runTitle, sharesNote, stageFoot, stageSentence, stageSources, taxHypothetical, yearRuns } from '@/components/plan-drawdown';
 import type { Drawdown, DrawdownStage, DrawdownYear } from '@/lib/fire/drawdown';
 import { DEFAULT_TAX_CHOICES, type TaxChoices } from '@/lib/fire/tax-choices';
@@ -16,16 +17,16 @@ const fixed: Strategy = { order: 'standard', conversions: { kind: 'fixed', yearl
 describe('a rule’s words', () => {
   test('its short name, as Compare has it', () => {
     expect(ruleName(NO_STRATEGY.conversions, money)).toBe('None');
-    expect(ruleName(fill.conversions, money)).toBe('Fill 12%');
-    expect(ruleName(aca.conversions, money)).toBe('ACA limit, then 22%');
+    expect(ruleName(fill.conversions, money)).toBe('Fill the 12% bracket');
+    expect(ruleName(aca.conversions, money)).toBe('ACA limit, then the 22% bracket');
     expect(ruleName(fixed.conversions, money)).toBe('$40,000 a year');
-    expect(ruleName(fill.conversions, money, 60)).toBe('Fill 12%, until 60');
+    expect(ruleName(fill.conversions, money, 60)).toBe('Fill the 12% bracket, until 60');
     expect(ruleName(fixed.conversions, money, 60)).toBe('$40,000 a year, until 60');
   });
 
   test('a title, read out whole, and a copy’s name hold no amount', () => {
     expect(ruleTitle(fixed.conversions)).toBe('A fixed amount');
-    expect(ruleTitle(fill.conversions)).toBe('Fill 12%');
+    expect(ruleTitle(fill.conversions)).toBe('Fill the 12% bracket');
     expect(ruleTitle(fixed.conversions, 60)).toBe('A fixed amount, until 60');
     expect(copyNameFor(fixed.conversions, [])).toBe('A fixed amount');
   });
@@ -39,12 +40,12 @@ describe('a rule’s words', () => {
   });
 
   test('a copy’s name after its rule, with a number where that is taken', () => {
-    expect(copyNameFor(fill.conversions, [])).toBe('Fill 12%');
+    expect(copyNameFor(fill.conversions, [])).toBe('Fill the 12% bracket');
     const plans = (...names: string[]) => names.map((name, i) => ({ id: String(i), name }));
-    expect(copyNameFor(fill.conversions, plans('Fill 12%'))).toBe('Fill 12% 2');
-    expect(copyNameFor(fill.conversions, plans('Fill 12%', 'Fill 12% 2'))).toBe('Fill 12% 3');
+    expect(copyNameFor(fill.conversions, plans('Fill the 12% bracket'))).toBe('Fill the 12% bracket 2');
+    expect(copyNameFor(fill.conversions, plans('Fill the 12% bracket', 'Fill the 12% bracket 2'))).toBe('Fill the 12% bracket 3');
     // As the server tells names apart.
-    expect(copyNameFor(fill.conversions, plans('fill 12%'))).toBe('Fill 12% 2');
+    expect(copyNameFor(fill.conversions, plans('fill the 12% bracket'))).toBe('Fill the 12% bracket 2');
   });
 
   test('neither says one is better than another', () => {
@@ -70,12 +71,18 @@ describe('where a run ends', () => {
     expect(convertedIn(run({ years: [{ conversion: 10 }, { conversion: 5 }] as DrawdownYear[] }))).toBe(15);
   });
 
-  test('the preview: the rule, then none', () => {
+  test('the preview: the rule, beside none', () => {
     const rule = run({ years: [{ age: 60, conversion: 60_400 }, { age: 61, conversion: 0 }] as DrawdownYear[], leftAtEnd: 3_660_060, taxAndHealth: 497_310 });
     const none = run({ years: [{ age: 60, conversion: 0 }] as DrawdownYear[], leftAtEnd: 2_850_840, taxAndHealth: 707_530 });
-    expect(previewLine(rule, none, money)).toBe('With this rule: about $60,000 converted by 60, tax and health costs $497,310 in all, and $3,660,060 left at 62 after tax. With none: $707,530 and $2,850,840.');
-    expect(previewLine(run({ years: [{ age: 60, conversion: 300 }] as DrawdownYear[] }), none, money)).toContain('about $300 converted by 60');
-    expect(previewLine(run({ years: [{ age: 60, conversion: 0 }] as DrawdownYear[], runsOutAt: 88 }), { ...none, runsOutAt: 90 }, money)).toBe('With this rule: nothing converted, tax and health costs $300,000 in all, and it runs short at 88. With none: $707,530 and runs short at 90.');
+    expect(previewRows(rule, none, money)).toEqual([
+      ['Converted', 'About $60,000, by 60', '$0'],
+      ['Tax and health, in all', '$497,310', '$707,530'],
+      ['Left at 62, after tax', '$3,660,060', '$2,850,840'],
+    ]);
+    expect(previewRows(run({ years: [{ age: 60, conversion: 300 }] as DrawdownYear[] }), none, money)[0][1]).toBe('About $300, by 60');
+    const short = previewRows(run({ years: [{ age: 60, conversion: 0 }] as DrawdownYear[], runsOutAt: 88 }), { ...none, runsOutAt: 90 }, money);
+    expect(short[0]).toEqual(['Converted', '$0', '$0']);
+    expect(short[2].slice(1)).toEqual(['Runs short at 88', 'Runs short at 90']);
   });
 });
 
@@ -145,31 +152,34 @@ describe('what a stage says of its conversions', () => {
 describe('a stage’s sentence and its foot', () => {
   const drawing = (over: Record<string, number>) => ({ taxable: 0, deferred: 0, deferred457: 0, penalized: 0, roth: 0, young: 0, earnings: 0, hsaPremiums: 0, hsaTaxed: 0, hsaEarly: 0, ...over });
 
-  test('Roth contributions running out are named, with what follows', () => {
+  test('penalty-free Roth money running out is named, with what follows', () => {
     const rows = [
       year(50, { drawn: drawing({ roth: 40_000 }) }),
       year(51, { drawn: drawing({ roth: 20_000, penalized: 20_000 }), law: { penalty: 2_000 } }),
       year(52, { drawn: drawing({ penalized: 40_000 }), law: { penalty: 4_000 } }),
     ];
-    expect(stageSentence(stage(rows), rows, money)).toBe('Roth contributions run out at 51, so 2 years draw tax-deferred money early, with $6,000 in penalties.');
+    expect(stageSentence(stage(rows), rows, money)).toBe('Penalty-free Roth money runs out at 51, so 2 years draw tax-deferred money early, with $6,000 in penalties.');
   });
 
-  test('taxable money and Roth contributions together', () => {
+  test('taxable money and penalty-free Roth money together', () => {
     const rows = [
       year(50, { start: { taxable: 40_000, deferred: 100, roth: 0, hsa: 0 }, end: { taxable: 0, deferred: 100, roth: 0, hsa: 0 }, drawn: drawing({ taxable: 40_000, roth: 1 }) }),
       year(51, { drawn: drawing({ penalized: 40_000 }), law: { penalty: 4_000 } }),
     ];
-    expect(stageSentence(stage(rows), rows, money)).toBe('Taxable money runs out at 50 and Roth contributions at 50, so 1 year draws tax-deferred money early, with $4,000 in penalties.');
+    expect(stageSentence(stage(rows), rows, money)).toBe('Taxable money runs out at 50 and penalty-free Roth money at 50, so 1 year draws tax-deferred money early, with $4,000 in penalties.');
   });
 
-  test('its foot: from when income and coverage change', () => {
+  test('its foot: from when income changes, and coverage where someone is on the ACA', () => {
     const rows = [year(50), year(51, { start: { taxable: 100, deferred: 100, roth: 0, hsa: 0 }, end: { taxable: 0, deferred: 100, roth: 0, hsa: 0 } }), year(52, { law: { penalty: 1_000 } })];
-    expect(stageFoot(stage(rows), rows)).toBe('From 51 what can be reached without a penalty is going, so these years’ income, and the coverage it pays for, change.');
+    expect(stageFoot(stage(rows), rows)).toBe('From 51, the money you can reach without a penalty is running out, so income in these years changes.');
+    const onIt = { care: { ...year(50).care, people: [{ ...year(50).care.people[0], status: 'aca' }, year(50).care.people[1]] } };
+    const covered = rows.map((y) => ({ ...y, ...onIt })) as DrawdownYear[];
+    expect(stageFoot(stage(covered), covered)).toBe('From 51, the money you can reach without a penalty is running out, so income in these years changes, and so does what coverage costs.');
   });
 
   test('its foot, from the first year drawn early where that comes before taxable money is gone', () => {
     const rows = [year(50, { law: { penalty: 1_000 } }), year(51, { start: { taxable: 100, deferred: 100, roth: 0, hsa: 0 }, end: { taxable: 0, deferred: 100, roth: 0, hsa: 0 } })];
-    expect(stageFoot(stage(rows), rows)).toStartWith('From 50 ');
+    expect(stageFoot(stage(rows), rows)).toStartWith('From 50, ');
   });
 
   test('no foot where nothing is drawn early', () => {
@@ -242,5 +252,33 @@ describe('Tax after you stop', () => {
   test('points of growth, one or many', () => {
     expect(pointsText(0.021)).toBe('2.1 points');
     expect(pointsText(0.01)).toBe('1 point');
+  });
+});
+
+describe('why the rules differ, about no rule in particular', () => {
+  test('by who is on the ACA, and under which credits', () => {
+    const none = rulesDifferText({ onAca: false, acaLaw: '2026' });
+    expect(none).toContain('More income early pays more tax now');
+    expect(none).not.toContain('credit');
+    const aca = rulesDifferText({ onAca: true, acaLaw: '2026' });
+    expect(aca).toContain('More income early can pass the ACA limit');
+    expect(aca).toContain('unless Medicaid covers you then, coverage is counted at full price');
+    expect(rulesDifferText({ onAca: true, acaLaw: 'enhanced' })).toContain('More income early can mean a smaller credit');
+  });
+
+  test('neither picks a rule', () => {
+    for (const a of [{ onAca: false, acaLaw: '2026' }, { onAca: true, acaLaw: '2026' }, { onAca: true, acaLaw: 'enhanced' }] as const) {
+      expect(rulesDifferText(a)).not.toMatch(/best|better|should|recommend/i);
+    }
+  });
+});
+
+describe('a copy’s name fits what the server takes', () => {
+  test('every rule, with a number on it', () => {
+    const rules = [...([0.1, 0.12, 0.22, 0.24] as const).map((top) => ({ kind: 'bracket', top }) as const), ...([0.12, 0.22] as const).map((top) => ({ kind: 'aca-then-bracket', top }) as const), { kind: 'fixed', yearly: 40_000 } as const];
+    for (const rule of rules) {
+      const base = copyNameFor(rule, []);
+      expect(copyNameFor(rule, [{ id: '1', name: base }]).length).toBeLessThanOrEqual(SCENARIO_NAME_MAX);
+    }
   });
 });

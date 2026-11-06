@@ -25,7 +25,8 @@ import { MAX_STATE_RATE, type TaxChoices } from '@/lib/fire/tax-choices';
 import { householdOf, MAX_DEPENDENTS, sameHousehold, type Owner, type TaxFacts, type TaxHousehold } from '@/lib/fire/tax-facts';
 import { rmdAge } from '@/lib/fire/tax/rmd';
 import { STATE_CODES, type Filing, type StateCode, type Statute } from '@/lib/fire/tax/law/types';
-import { FILING_NAMES, fiYearly, householdNotes, sharesNote, STATE_NAMES } from './plan-drawdown';
+import { FILING_NAMES, fiLines, fiYearly, householdNotes, lawLabel, sharesNote, STATE_NAMES } from './plan-drawdown';
+import { MoneyLines } from './PlanDrawdown';
 import type { FiShares } from '@/lib/fire/plan-figures';
 import { METHOD_NAMES, RULE_NAMES, ruleText, pct, saidAbove, saidRate, wholeMoney } from './plan-text';
 import { BLOCK_MONTHS, DEFAULT_RUNS, DEFAULT_SEED } from '@/lib/fire/simulate';
@@ -300,7 +301,7 @@ function useHouseholdFields(d: DetailForm | null, age: string, partner: string, 
       <label className="field">
         Filing status
         <select value={filing} onChange={(e) => setFiling(e.target.value as Filing | '')} disabled={locked}>
-          <option value="">Not said (counted as single)</option>
+          <option value="">Not set (counted as single)</option>
           <option value="single">{FILING_NAMES.single}</option>
           <option value="joint">{FILING_NAMES.joint}</option>
         </select>
@@ -308,7 +309,7 @@ function useHouseholdFields(d: DetailForm | null, age: string, partner: string, 
       <label className="field">
         State
         <select value={state} onChange={(e) => setState(e.target.value as StateCode | '')} disabled={s.saving}>
-          <option value="">Not said (no state tax, no Medicaid expansion)</option>
+          <option value="">Not set (no state tax, no Medicaid expansion)</option>
           {[...STATE_CODES].sort((a, b) => STATE_NAMES[a].replace(/^the /, '').localeCompare(STATE_NAMES[b].replace(/^the /, ''))).map((c) => (
             <option key={c} value={c}>
               {STATE_NAMES[c].replace(/^the /, '')}
@@ -521,9 +522,11 @@ export function FiNumberForm(
     held?: boolean;
     /** Said under the number: what isn't set of what it rests on. */
     cautions?: readonly string[];
+    /** The law a detailed plan's number rests on, for its label. */
+    lawYear?: number | null;
   }
 ) {
-  const { plan, view, retirementSpending, leftOut, money, shares = null, held = false, cautions = [] } = props;
+  const { plan, view, retirementSpending, leftOut, money, shares = null, held = false, cautions = [], lawYear = null } = props;
   const [own, setOwn] = useState(asText(plan.fiNumber));
   const s = useSave(props);
   const spending = retirementSpending ?? view.spending.value;
@@ -553,46 +556,22 @@ export function FiNumberForm(
           <h3 className="section-label" id="fi-number-how">
             How it&apos;s worked out
           </h3>
-          <dl className="txn-detail txn-detail-wide">
-            <div className="txn-detail-row">
-              <dt>{retirementSpending !== null ? 'Spending in retirement' : 'Spending'}</dt>
-              <dd>
-                <Masked>{`${money(shares ? shares.spending : spending)} a year`}</Masked>
-              </dd>
-            </div>
-            {shares && shares.paid >= 0.5 && (
-              <div className="txn-detail-row">
-                <dt>Coverage you already pay for, taken off</dt>
-                <dd>
-                  <Masked>{`${money(Math.min(shares.paid, shares.spending))} a year`}</Masked>
-                </dd>
-              </div>
+          <MoneyLines
+            lines={fiLines(
+              {
+                spending: shares ? shares.spending : spending,
+                spendingLabel: retirementSpending !== null ? 'Spending in retirement' : 'Spending',
+                paid: shares ? shares.paid : 0,
+                health: shares ? shares.h : null,
+                t: shares ? shares.t : plan.taxRate,
+                tText: shares ? pct(shares.t, 1) : pct(plan.taxRate),
+                rate: plan.withdrawalRate,
+                worked,
+                own: plan.fiNumber !== null,
+              },
+              money
             )}
-            {shares && (
-              <div className="txn-detail-row">
-                <dt>+ Health coverage</dt>
-                <dd>
-                  <Masked>{`${money(shares.h)} a year`}</Masked>
-                </dd>
-              </div>
-            )}
-            {(shares ? shares.t : plan.taxRate) > 0 && (
-              <div className="txn-detail-row">
-                <dt>÷ (1 − tax)</dt>
-                <dd>{shares ? pct(shares.t, 1) : pct(plan.taxRate)} tax</dd>
-              </div>
-            )}
-            <div className="txn-detail-row">
-              <dt>÷ withdrawal rate</dt>
-              <dd>{pct(plan.withdrawalRate)}</dd>
-            </div>
-            <div className="txn-detail-row">
-              <dt>{plan.fiNumber !== null ? 'Worked out' : 'FI number'}</dt>
-              <dd>
-                <Masked>{money(worked)}</Masked>
-              </dd>
-            </div>
-          </dl>
+          />
           <p className="helper">Each is a row on Your figures, or under Assumptions.</p>
           {shares && plan.fiNumber !== null && plan.fiNumber > 0 && (
             <p className="helper">
@@ -605,6 +584,7 @@ export function FiNumberForm(
                 <Masked>{n}</Masked>
               </p>
             ))}
+          {shares && lawYear !== null && <p className="plan-definition">{lawLabel(lawYear)}</p>}
         </section>
       )}
       {names.length > 0 && (
@@ -621,7 +601,7 @@ export function FiNumberForm(
           <input type="number" inputMode="decimal" value={own} onChange={(e) => setOwn(e.target.value)} placeholder={NO_EXAMPLE} {...s.field('Your own number')} disabled={s.saving} />
         </label>
         {s.under('Your own number')}
-        <p className="helper">Set, your FI date and Home use it, and Will it last? tests your spending from it. Nothing else changes.</p>
+        <p className="helper">If you set one, your FI date and Home use it, and Will it last? tests your spending from it. Nothing else changes.</p>
       </div>
       {plan.fiNumber !== null && (
         <button type="button" className="btn ghost" disabled={s.disabled} onClick={() => s.save(() => ({ ...plan, fiNumber: null }))}>
@@ -781,7 +761,7 @@ export function FigureForm(
               'Nya has nothing to measure this from yet, so the plan leaves it out until you type your own.'
             ) : today && sheet ? (
               <>
-                <Masked>{headLine(measured, today.groups.reduce((n, g) => n + g.accounts.length, 0), sheet.asOf, money)}</Masked> Each account&rsquo;s bucket comes from its type; change one that is in another.
+                <Masked>{headLine(measured, today.groups.reduce((n, g) => n + g.accounts.length, 0), sheet.asOf, money)}</Masked> Each account&rsquo;s tax bucket comes from its type. Open an account to change it.
               </>
             ) : (
               <>
@@ -1179,7 +1159,7 @@ export function AssumptionsForm(
             : "How much you'd draw each year, as a share of what you have: it sets the FI number (spending divided by it) and the rate the simulation tests."}
         </p>
         <label className="field">
-          Growth after inflation until FI (% a year)
+          {detail ? 'Growth after inflation (% a year)' : 'Growth after inflation until FI (% a year)'}
           <input
             type="number"
             inputMode="decimal"
@@ -1192,7 +1172,7 @@ export function AssumptionsForm(
           />
         </label>
         {s.under('Growth after inflation')}
-        <p className="helper">Only for the years until FI: years to FI, Coast FI and the balance at your stop age. The simulation uses market history instead.</p>
+        <p className="helper">{detail ? 'For years to FI, Coast FI, the balance at your stop age and the steady years on Drawdown, which your FI number’s tax and health coverage come from. Will it last? uses market history for its returns, with tax and health coverage from those steady years.' : 'Only for the years until FI: years to FI, Coast FI and the balance at your stop age. Will it last? uses market history for its returns, with tax and health coverage from those steady years.'}</p>
         {!taxWorked && (
           <>
         <label className="field">
@@ -1272,7 +1252,7 @@ export function AssumptionsForm(
               <input type="number" inputMode="decimal" data-percent step="0.5" value={inflation} onChange={(e) => setInflation(e.target.value)} {...s.field('Inflation')} disabled={s.saving} />
             </label>
             {s.under('Inflation')}
-            <p className="helper">For what the tax law doesn’t index, and income that doesn’t keep up with prices.</p>
+            <p className="helper">Used for amounts the tax law doesn’t adjust for inflation, and for income that doesn’t keep up with prices.</p>
             <label className="field">
               Health costs rise faster than prices by (points a year)
               <input type="number" inputMode="decimal" step="0.1" value={growth} onChange={(e) => setGrowth(e.target.value)} placeholder={String(props.defaultGrowth ?? '')} data-percent {...s.field('How fast health costs rise')} disabled={s.saving} />

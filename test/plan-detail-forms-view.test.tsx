@@ -19,7 +19,7 @@ async function optedIn(props: Parameters<typeof render>[0] = {}, plan = PLAN, se
   await flagged();
   const tab = await render({ planTax: true, ...props });
   await pick(tab.container, 'Drawdown');
-  await press(tab.row('Work it out from your accounts'));
+  await press(tab.row('Work out tax from your accounts'));
   await press(button(tab.dialog(), 'Work it out'));
   await pick(tab.container, 'Your path');
   return tab;
@@ -102,7 +102,7 @@ describe('Invested assets', () => {
     const tab = await optedIn({ institutions }, PLAN, true);
     const text = (await sheet(tab, 'Invested assets')).textContent;
     expect(text).toContain('Required withdrawals start at');
-    expect(text).toContain('From 65 it pays Medicare Part B and IRMAA premiums untaxed');
+    expect(text).toContain('From 65 it pays Medicare Part B and its income surcharge (IRMAA) untaxed');
     expect(text).toContain('What went into your Roth isn’t given, so none of it counts as reachable before 59½. Say how much here.');
     expect(text).not.toContain('With a flat tax rate these don’t change');
     await tab.unmount();
@@ -127,7 +127,8 @@ describe('About these numbers', () => {
     expect(text).toContain('75% counts as qualified');
     expect(text).toContain('Only premiums count as health costs');
     expect(text).toContain('An education account you count stands in as tax-deferred');
-    expect(text).toContain('Not modeled: the child tax credit');
+    expect(text).toContain('Not modeled: the rule of 55 and 72(t) payments');
+    expect(text).toContain('the child tax credit');
     await tab.unmount();
   }, 30_000);
 });
@@ -166,7 +167,7 @@ describe('Health coverage', () => {
     expect(sent.household).toBeUndefined();
     expect((await read()).tax.health.beforeMedicare.adult).toBe(11_000);
     expect(subOf(tab, 'Health coverage')).toBe('ACA before 65, then Medicare · in your FI number');
-    expect(tab.row('Health coverage')?.textContent).toMatch(/About \$[\d,]+ a year/);
+    expect(tab.row('Health coverage')?.textContent).toMatch(/\$[\d,]+a year, on average/);
     await tab.unmount();
   }, 30_000);
 
@@ -252,6 +253,10 @@ describe('Health coverage', () => {
     test('the usual line, with the work rule from 2027', async () => {
       const text = await wordsIn('CA');
       expect(text).toContain('Under 138% of the poverty line California covers adults through Medicaid. From 2027 that needs 80 hours a month');
+      expect(text).toContain('A household income of about $580 a month also meets it, and Nya checks that.');
+      expect(text).toContain('Otherwise there is no credit at that income, so coverage is counted at full price.');
+      expect(text).toContain('Who’d meet the work rule');
+      expect(text).toContain('If Medicaid would cover you');
     }, 30_000);
     test('a state’s higher line', async () => {
       expect(await wordsIn('DC')).toContain('Under 215% of the poverty line');
@@ -262,8 +267,30 @@ describe('Health coverage', () => {
     test('a state with its own work rule says so, and for how long', async () => {
       expect(await wordsIn('GA')).toContain('Under 100% of the poverty line Georgia covers adults through Medicaid if they meet its own work rule, through 2026.');
     }, 30_000);
-    test('a state with no line says nothing of it', async () => {
-      expect(await wordsIn('TX')).not.toContain('poverty line Texas covers');
+    test('a state with no line says what that means, and asks nothing of a work rule', async () => {
+      const text = await wordsIn('TX');
+      expect(text).not.toContain('poverty line Texas covers');
+      expect(text).toContain('Under 100% of the poverty line Texas has no Medicaid for most adults and there is no credit, so coverage is counted at full price.');
+      expect(text).not.toContain('Who’d meet the work rule');
+    }, 30_000);
+    test('with no state given, it doesn’t guess', async () => {
+      const text = await wordsIn(null);
+      expect(text).not.toContain('has no Medicaid for most adults');
+      expect(text).not.toContain('covers adults through Medicaid');
+    }, 30_000);
+    test('under the 2026 law the ACA’s share moves with health costs; with the enhanced credits it doesn’t', async () => {
+      const tab = await optedIn();
+      const sheetIs = await sheet(tab, 'Health coverage');
+      await pick(sheetIs, 'ACA marketplace');
+      expect(tab.dialog()!.textContent).toContain('Under the 2026 law, the share of income the ACA asks you to pay moves with it too.');
+      await pick(tab.dialog()!, 'If the enhanced credits return');
+      expect(tab.dialog()!.textContent).not.toContain('the share of income the ACA asks you to pay');
+      await pick(tab.dialog()!, 'The law in 2026');
+      expect(tab.dialog()!.textContent).toContain('the share of income the ACA asks you to pay');
+      // Coverage that isn't the ACA has no such share.
+      await pick(tab.dialog()!, 'Something else');
+      expect(tab.dialog()!.textContent).not.toContain('the share of income the ACA asks you to pay');
+      await tab.unmount();
     }, 30_000);
   });
 
@@ -338,7 +365,7 @@ describe('Household', () => {
     await flagged();
     const tab = await render({ planTax: true });
     await pick(tab.container, 'Drawdown');
-    await press(tab.row('Work it out from your accounts'));
+    await press(tab.row('Work out tax from your accounts'));
     await press(button(tab.dialog(), 'Work it out'));
     await openCopy(tab, 'Move');
     await pick(tab.container, 'Your path');
@@ -369,14 +396,14 @@ describe('Assumptions', () => {
     await save(tab);
     const sent = lastSave();
     expect([sent.tax.inflation, sent.tax.health.growth]).toEqual([0.025, 0.015]);
-    expect(subOf(tab, 'Assumptions')).toContain('2.5% inflation · health costs +1.5 points');
+    expect(subOf(tab, 'Assumptions')).toContain('2.5% inflation · health costs 1.5 points above inflation');
     await sheet(tab, 'Tax after you stop');
     await press(tab.sheetRow('Use a flat rate instead'));
     expect(tab.dialog()).toBeNull();
     expect((await read()).tax_facts.model).toBe('flat');
     await pick(tab.container, 'Drawdown');
     expect(tab.text()).not.toContain('Year by year, at');
-    expect(tab.row('Work it out from your accounts')).not.toBeNull();
+    expect(tab.row('Work out tax from your accounts')).not.toBeNull();
     await tab.unmount();
   }, 30_000);
 

@@ -87,11 +87,11 @@ export function balanceShares(b: { taxable: number; deferred: number; roth: numb
 
 /** Why the buckets matter, behind the disclosure. */
 export function bucketsWhy(partner: boolean, detailed = false): string {
-  return `Each is taxed differently when you draw it: only the gain when you sell from taxable, all of it from tax-deferred, none from Roth. Before 59½ only some of it can be reached without a penalty${partner ? ', and each of you has your own 59½' : ''}.${detailed ? '' : ' With a flat tax rate these don’t change your plan’s figures.'}`;
+  return `Each is taxed differently when you draw it: only the gain when you sell from taxable, all of it from tax-deferred, none from Roth. Before 59½, Nya counts only some of it as reachable without a penalty${partner ? ', and each of you has your own 59½' : ''}.${detailed ? '' : ' With a flat tax rate these don’t change your plan’s figures.'}`;
 }
 
 /** The HSA, as a detailed plan draws it. */
-export const HSA_WORDS = 'From 65 it pays Medicare Part B and IRMAA premiums untaxed, then is taxed like tax-deferred money. Before 65 it is the last thing drawn, since it’s taxed with a 20% penalty.';
+export const HSA_WORDS = 'From 65 it pays Medicare Part B and its income surcharge (IRMAA) untaxed, then is taxed like tax-deferred money. Before 65, money not spent on medical costs pays tax and a 20% penalty, so it’s drawn last.';
 
 /** When required withdrawals start, under the tax-deferred group. */
 export function rmdLine(ages: { you: number; partner: number }, partner: boolean): string {
