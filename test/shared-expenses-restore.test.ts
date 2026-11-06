@@ -21,7 +21,8 @@ const { forgetEpochs } = await import('@/lib/sessions');
 const { createPerson, saveShare, saveIou, confirmPayment, dismissRow, saveSettings } = await import('@/lib/shared-expenses/edits');
 const { readCard } = await import('@/lib/shared-expenses/read');
 const { linkAccounts } = await import('@/lib/links');
-const { EXPORTED, downloadText, restoreAll, activity, connectAgain } = await import('./restore-run');
+const { EXPORTED, holdClockAfterExport, downloadText, restoreAll, activity, connectAgain } = await import('./restore-run');
+holdClockAfterExport();
 
 const ctx = TEST_CTX;
 

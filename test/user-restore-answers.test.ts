@@ -38,7 +38,8 @@ const { restoredAnswersStore, userRestoreStore } = await import('@/lib/user-rest
 const { connectionsStore, connectorAccountsStore } = await import('@/lib/connectors/store');
 const { institutionRef } = await import('@/lib/connectors/institutions');
 const { removeItem } = await import('@/lib/storage');
-const { EXPORTED, downloadText, restoreAll, connectAgain, call, planned } = await import('./restore-run');
+const { EXPORTED, holdClockAfterExport, aMinuteLater, downloadText, restoreAll, connectAgain, call, planned } = await import('./restore-run');
+holdClockAfterExport();
 const { NOV, JAN, month, every, shared } = await import('./restore-readers');
 const { countedLines } = await import('@/components/restore-state');
 const linksRoute = await import('@/app/api/account-links/route');
@@ -264,6 +265,8 @@ describe('a file that says an account ended', () => {
     fake.reset();
     forgetEpochs();
     await registerTestContainer(fake);
+    // Its end was set before the restore starts.
+    aMinuteLater();
     return text;
   }
 

@@ -7,7 +7,7 @@
 // Imports the routes, so a test file imports it dynamically, after mocking
 // lib/storage.
 
-import { expect } from 'bun:test';
+import { afterAll, beforeEach, expect, setSystemTime } from 'bun:test';
 import { ctxKey, TEST_CTX, type FakeRedis } from './fake-redis';
 import { resetEachTest } from './shared-reset';
 import { bankTxn } from './restore-fixture';
@@ -28,6 +28,29 @@ import * as forgetRoute from '@/app/api/user-restore/forget/route';
 import * as answersRoute from '@/app/api/user-restore/answers/route';
 
 export const EXPORTED = new Date('2026-10-06T12:00:00.000Z');
+
+/** The day a test runs, two weeks after the download. */
+const HELD = new Date('2026-10-20T12:00:00.000Z');
+
+/** Holds a test file's clock, from where this is called to the file's end: on the day
+ *  of the download at its top level, where the fixture is read, and two weeks later in
+ *  each test. Activity and the other readers read a window back from today, and the
+ *  fixture's rows have dates of their own, so on the real clock they age out of it.
+ *  Call it at the top level, before anything reads the fixture. */
+export function holdClockAfterExport(): void {
+  setSystemTime(EXPORTED);
+  beforeEach(() => {
+    setSystemTime(HELD);
+  });
+  afterAll(() => {
+    setSystemTime();
+  });
+}
+
+/** A held clock doesn't move: what comes after this is later than what came before. */
+export function aMinuteLater(): void {
+  setSystemTime(new Date(Date.now() + 60_000));
+}
 
 /** Batches sent through the fetch, and after how many it fails as a dropped
  *  connection does. Set back before each test of every file that loads this
