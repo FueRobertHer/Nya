@@ -1436,7 +1436,7 @@ export default function PlanTab({
     : fiHeld
       ? { sub: 'Working it out', line: null, why: null, notes: [], value: '--' }
       : offerDetail && !entry
-        ? { sub: 'As set · work it out from your accounts', line: null, why: null, notes: [], value: pct(shownPlan.taxRate) }
+        ? { sub: 'As set · work out tax from your accounts', line: null, why: null, notes: [], value: pct(shownPlan.taxRate) }
         : null;
   const fiSub = shownPlan.fiNumber !== null ? null : shownShares ? `Spending, health coverage and tax, at a ${pct(shownPlan.withdrawalRate)} withdrawal rate` : fiHeld ? 'Working it out' : null;
   const stressNotes = stressNotice(figureArgs, engine, shown?.startsWith ?? null);

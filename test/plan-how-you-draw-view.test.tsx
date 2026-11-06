@@ -368,7 +368,7 @@ describe('Your figures', () => {
     await off.unmount();
     const tab = await render({ planTax: true });
     const row = tab.row('Tax after you stop')!;
-    expect(subOf(row)).toBe('As set · work it out from your accounts');
+    expect(subOf(row)).toBe('As set · work out tax from your accounts');
     await press(row);
     expect(tab.dialog()!.getAttribute('aria-label')).toBe(WAY_IN);
     await tab.unmount();
@@ -738,7 +738,7 @@ describe('a new plan', () => {
     await press(button(tab.dialog(), 'Save'));
     await settle(300);
     expect(optIns()).toBe(was);
-    expect(subOf(tab.row('Tax after you stop'))).toBe('As set · work it out from your accounts');
+    expect(subOf(tab.row('Tax after you stop'))).toBe('As set · work out tax from your accounts');
     await tab.unmount();
   }, 30_000);
 
