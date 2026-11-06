@@ -10,8 +10,8 @@ process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
 // Deserializing like Upstash: what production reads back.
 const fake = new FakeRedis({ deserialize: true });
-afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 afterEach(() => setSystemTime());
+afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt } = await import('@/lib/crypto');

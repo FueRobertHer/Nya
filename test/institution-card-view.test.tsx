@@ -172,8 +172,7 @@ describe('the institution card notices, words and color', () => {
     expect(html).toContain('<span class="badge neg">Overdue</span>');
     const sub = html.slice(html.indexOf('<span class="list-row-sub">'));
     // The missed payment's day, said as past (it was before today).
-    // (With its year, once today is in another.)
-    expect(text(sub.slice(0, sub.indexOf('</button>')))).toMatch(/^Overdue · 24\.99% APR · min \$35\.00 · was due Oct 24(, 2026)?( |$)/);
+    expect(text(sub.slice(0, sub.indexOf('</button>')))).toMatch(/^Overdue · 24\.99% APR · min \$35\.00 · was due Oct 24( |$)/);
   });
 
   test('overdue with nothing else reported: the badge still shows, beside the kind of account unless its name says it', () => {

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ForecastCard from '@/components/ForecastCard';
 import CalendarView from '@/components/CalendarView';
@@ -16,9 +16,7 @@ import { localDate } from '@/lib/local-date';
 import { EMPTY_BUDGETS } from '@/lib/budget-set';
 import { NO_CONNECTIONS_WITHOUT } from '@/lib/no-transactions';
 import { DrawnWidth } from '@/components/drawn-width';
-import { holdDay } from './held-day';
-
-holdDay();
+import { HELD_DAY } from './held-day';
 
 // The forecast, the calendar, the recurring list and the planned items as the
 // Budgets tab renders them, and Home's upcoming bills: what each says, and
@@ -99,6 +97,10 @@ function series(): RecurringSeries[] {
 }
 
 describe('the forecast', () => {
+  // Its rows are dated, and a day reads without its year only in its own year.
+  beforeEach(() => setSystemTime(HELD_DAY));
+  afterEach(() => setSystemTime());
+
   const card = (over: Partial<Parameters<typeof ForecastCard>[0]> = {}) =>
     text(renderToStaticMarkup(<ForecastCard institutions={[chase()]} series={series()} planned={EMPTY_PLANNED} today={TODAY} {...over} />));
   // Upcoming as the Budgets tab draws it, for what is said at its top.

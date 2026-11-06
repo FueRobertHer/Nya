@@ -156,8 +156,7 @@ describe('the account sheet', () => {
     });
     const html = renderToStaticMarkup(<AccountSheet {...props(a, plaid(a))} />);
     expect(html).toContain('<span class="badge neg">Overdue</span>');
-    // Its year too once today is in another (liabilitySummary).
-    expect(text(html)).toMatch(/Overdue · 24\.99% APR · min \$35\.00 · was due Oct 24(, 2026)?( |$)/);
+    expect(text(html)).toMatch(/Overdue · 24\.99% APR · min \$35\.00 · was due Oct 24( |$)/);
     expect(text(html)).toContain('28% of $5,000.00 limit');
     expect(text(html)).toContain('Statement balance $1,288.40');
     expect(text(html)).toContain('Last payment $900.00 on Sep 25');
