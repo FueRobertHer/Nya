@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { seedOld } from './restore-fixture';
 
@@ -48,10 +48,16 @@ await seedOld(fake, ctx);
 const OLD = await downloadText(EXPORTED);
 
 beforeEach(async () => {
+  // Read as of the day it was exported: Activity reads a window back from today,
+  // and the fixture's rows have dates of their own.
+  setSystemTime(EXPORTED);
   fake.reset();
   forgetEpochs();
   await registerTestContainer(fake);
   await restoreAll(OLD);
+});
+afterEach(() => {
+  setSystemTime();
 });
 
 /** Connected again, and both restored accounts linked to their new ones. */

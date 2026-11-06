@@ -27,7 +27,7 @@ import { rmdAge } from '@/lib/fire/tax/rmd';
 import { STATE_CODES, type Filing, type StateCode, type Statute } from '@/lib/fire/tax/law/types';
 import { FILING_NAMES, fiYearly, householdNotes, sharesNote, STATE_NAMES } from './plan-drawdown';
 import type { FiShares } from '@/lib/fire/plan-figures';
-import { METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
+import { METHOD_NAMES, RULE_NAMES, ruleText, pct, saidAbove, saidRate, wholeMoney } from './plan-text';
 import { BLOCK_MONTHS, DEFAULT_RUNS, DEFAULT_SEED } from '@/lib/fire/simulate';
 import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
 import { Masked, NO_EXAMPLE, spokenLabel } from './HideAmounts';
@@ -553,7 +553,7 @@ export function FiNumberForm(
           <h3 className="section-label" id="fi-number-how">
             How it&apos;s worked out
           </h3>
-          <dl className="txn-detail">
+          <dl className="txn-detail txn-detail-wide">
             <div className="txn-detail-row">
               <dt>{retirementSpending !== null ? 'Spending in retirement' : 'Spending'}</dt>
               <dd>
@@ -998,7 +998,7 @@ function startConsequence(
   const spend = props.spending !== null ? `your spending of ${money(props.spending)} a year` : 'your spending';
   if (drawn !== null) {
     const how = start === 'fi-number' ? 'at your stop age with your FI number' : start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : start === 'at-stop' ? 'at your stop age with what you’d have then' : 'at your stop age with the balance you type';
-    return `Stops working ${how}, withdrawing ${pct(drawn, 1)} of it a year: ${spend} and health coverage, with their tax${drawn > rate * 1.001 ? `. Your FI number assumes ${pct(rate)}` : ''}.`;
+    return `Stops working ${how}, withdrawing ${pct(saidRate(drawn, rate))} of it a year: ${spend} and health coverage, with their tax${saidAbove(drawn, rate) ? `. Your FI number assumes ${pct(rate)}` : ''}.`;
   }
   if (start === 'fi-number') {
     const stop = stopOf(plan);
@@ -1006,7 +1006,7 @@ function startConsequence(
   }
   const actual = taxWorked ? null : startRate(start, props, typed, tax);
   const when = start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : start === 'at-stop' ? 'at your stop age with what you’d have then' : `at your stop age with the balance you type`;
-  return `Stops working ${when}, spending ${spend}${actual !== null ? `: a ${pct(actual, 1)} withdrawal rate${actual > rate * 1.001 ? `, above the ${pct(rate)} your FI number assumes` : ''}` : ''}. Answers whether what you spend now would have lasted.`;
+  return `Stops working ${when}, spending ${spend}${actual !== null ? `: a ${pct(saidRate(actual, rate))} withdrawal rate${saidAbove(actual, rate) ? `, above the ${pct(rate)} your FI number assumes` : ''}` : ''}. Answers whether what you spend now would have lasted.`;
 }
 
 /** Whether the starting balance field still says what is saved. */
@@ -1103,7 +1103,8 @@ export function AssumptionsForm(
   // A detailed plan's as it stands: another start's isn't worked out until it is saved,
   // nor another withdrawal rate's from the FI number.
   const drawnNow = detail && start === plan.start && startBalanceSame(balance, plan) && (!taxWorked || start !== 'fi-number' || rateSame) ? (props.drawnRate ?? null) : null;
-  const ruleRate = drawnNow ?? (taxWorked ? null : startRate(start, props, Number(balance), taxNow)) ?? rateNow;
+  const workedRate = drawnNow ?? (taxWorked ? null : startRate(start, props, Number(balance), taxNow));
+  const ruleRate = workedRate !== null ? saidRate(workedRate, rateNow) : rateNow;
 
   // Opened at a part: the sheet's body is scrolled to it. Set on the body
   // alone (never scrollIntoView, which would scroll the page behind too, as

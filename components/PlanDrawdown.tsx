@@ -5,6 +5,7 @@
 // stage's sheet holds its years, and a year's sheet, a level over it, how it was
 // worked out. Words in components/plan-drawdown.ts.
 
+import { CopyTag } from './CopyTag';
 import type { DrawdownStage, DrawdownYear } from '@/lib/fire/drawdown';
 import type { PlanDetail } from '@/lib/fire/plan-detail';
 import { spoken } from '@/lib/format';
@@ -36,6 +37,7 @@ export function drawdownMarks(years: readonly DrawdownYear[], rmdAge: number): D
 }
 
 export function DrawdownCard({
+  copyName = null,
   detail,
   realReturn,
   money,
@@ -47,6 +49,7 @@ export function DrawdownCard({
   stageRef,
   titleRef,
 }: {
+  copyName?: string | null;
   detail: PlanDetail;
   realReturn: number;
   money: Money;
@@ -66,6 +69,7 @@ export function DrawdownCard({
   const endAge = last ? last.age + 1 : null;
   return (
     <section className={working ? 'card plan-answer-pending' : 'card'} aria-labelledby="plan-years-title" aria-busy={working || undefined}>
+      <CopyTag name={copyName} />
       <div className="card-header">
         <h3 id="plan-years-title" ref={titleRef} tabIndex={-1}>
           Year by year, at a steady {pct(realReturn)}
