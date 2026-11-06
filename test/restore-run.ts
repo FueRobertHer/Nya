@@ -32,24 +32,24 @@ export const EXPORTED = new Date('2026-10-06T12:00:00.000Z');
 /** The day a test runs, two weeks after the download. */
 const HELD = new Date('2026-10-20T12:00:00.000Z');
 
+let held = false;
+
 /** Holds a test file's clock, from where this is called to the file's end: on the day
  *  of the download at its top level, where the fixture is read, and two weeks later in
  *  each test. Activity and the other readers read a window back from today, and the
  *  fixture's rows have dates of their own, so on the real clock they age out of it.
+ *  A held clock doesn't move, so the fetcher below moves it on with each request.
  *  Call it at the top level, before anything reads the fixture. */
 export function holdClockAfterExport(): void {
+  held = true;
   setSystemTime(EXPORTED);
   beforeEach(() => {
     setSystemTime(HELD);
   });
   afterAll(() => {
+    held = false;
     setSystemTime();
   });
-}
-
-/** A held clock doesn't move: what comes after this is later than what came before. */
-export function aMinuteLater(): void {
-  setSystemTime(new Date(Date.now() + 60_000));
 }
 
 /** Batches sent through the fetch, and after how many it fails as a dropped
@@ -62,8 +62,10 @@ resetEachTest(() => {
   sent.failAfter = Infinity;
 });
 
-/** The routes, as the page's fetch reaches them. */
+/** The routes, as the page's fetch reaches them. Each request has an instant of its
+ *  own, on a held clock too: what it stamps tells it from what came before. */
 export const fetcher: Fetcher = async (input, init) => {
+  if (held) setSystemTime(new Date(Date.now() + 1));
   const url = new URL(input, 'http://localhost');
   const req = new Request(url, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), 'x-forwarded-for': '203.0.113.9' } });
   if (url.pathname === '/api/user-restore') return (restoreRoute as unknown as Record<string, (r: Request) => Promise<Response>>)[init?.method ?? 'GET'](req);

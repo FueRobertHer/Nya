@@ -38,7 +38,7 @@ const lifecycleRoute = await import('@/app/api/account-lifecycle/route');
 const linksRoute = await import('@/app/api/account-links/route');
 const { earlierNames } = await import('@/lib/earlier-names');
 const { unreadableNotes, canUndo } = await import('@/components/restore-state');
-const { EXPORTED, holdClockAfterExport, aMinuteLater, sent, fetcher, call, downloadText, sourceOf, planned, restoreAll, activity, rowsOf, hold, connectAgain } = await import('./restore-run');
+const { EXPORTED, holdClockAfterExport, sent, fetcher, call, downloadText, sourceOf, planned, restoreAll, activity, rowsOf, hold, connectAgain } = await import('./restore-run');
 holdClockAfterExport();
 type Source = import('./restore-run').Source;
 
@@ -148,7 +148,6 @@ describe('a round trip', () => {
     const again = await restoreAll(second);
     expect(again.earlier).toEqual([{ exported_at: EXPORTED.toISOString(), restored_at: first.started_at }]);
     const b = JSON.parse(second);
-    aMinuteLater();
     const c = JSON.parse(await downloadText(new Date()));
     expect(differing(b, c)).toEqual(['exported_at', 'user-restore']);
   });
