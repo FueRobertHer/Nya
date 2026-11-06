@@ -34,7 +34,8 @@ const { institutionRef } = await import('@/lib/connectors/institutions');
 const { manualTxnStore } = await import('@/lib/manual-txns');
 const { saveManualAccount } = await import('@/lib/manual');
 const { queryTransactions } = await import('@/lib/api-read');
-const { EXPORTED, downloadText, restoreAll, activity, rowsOf, connectAgain, hold } = await import('./restore-run');
+const { EXPORTED, holdClockAfterExport, downloadText, restoreAll, activity, rowsOf, connectAgain, hold } = await import('./restore-run');
+holdClockAfterExport();
 const { NOV, JAN, month, every, shared } = await import('./restore-readers');
 
 const ctx = TEST_CTX;

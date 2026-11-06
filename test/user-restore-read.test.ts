@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { seedOld } from './restore-fixture';
 
@@ -38,7 +38,8 @@ const { categoryUsages } = await import('@/lib/category-usage');
 const { historyImportStore } = await import('@/lib/history-import/store');
 const historyImport = await import('@/app/api/history-import/route');
 const backfill = await import('@/app/api/backfill/route');
-const { EXPORTED, downloadText, restoreAll, activity, rowsOf, hold, connectAgain } = await import('./restore-run');
+const { EXPORTED, holdClockAfterExport, downloadText, restoreAll, activity, rowsOf, hold, connectAgain } = await import('./restore-run');
+holdClockAfterExport();
 
 const ctx = TEST_CTX;
 
@@ -48,16 +49,10 @@ await seedOld(fake, ctx);
 const OLD = await downloadText(EXPORTED);
 
 beforeEach(async () => {
-  // Read as of the day it was exported: Activity reads a window back from today,
-  // and the fixture's rows have dates of their own.
-  setSystemTime(EXPORTED);
   fake.reset();
   forgetEpochs();
   await registerTestContainer(fake);
   await restoreAll(OLD);
-});
-afterEach(() => {
-  setSystemTime();
 });
 
 /** Connected again, and both restored accounts linked to their new ones. */
