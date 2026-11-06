@@ -10,6 +10,9 @@ import { reconnectAlerts } from '@/components/Insights';
 import { monthGapNotes, monthGaps, stoppedConnections, joinNames } from '@/lib/month-coverage';
 import { CAUSES, type Cause, type ConnectionHealth } from '@/lib/connection-state';
 import { localDate } from '@/lib/local-date';
+import { holdDay } from './held-day';
+
+holdDay();
 
 // What the person sees of connection health (#51): on each institution's
 // card since rollout phase 3b (components/ConnectionStatus.tsx: what is

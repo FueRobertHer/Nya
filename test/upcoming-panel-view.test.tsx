@@ -2,6 +2,9 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { installDom, trackRoots, click, type, fakeClock, FakeElement, FakeEvent } from './mini-dom';
 import { CAR, REFUND, RENT_AND_PAY, SCENES, chase, derived, txn, type UpcomingScene } from './upcoming-notes-fixture';
 import { PLANNED_TEXT } from '@/components/upcoming-notes';
+import { HELD_DAY, holdDay } from './held-day';
+
+holdDay();
 
 // Budgets > Upcoming (rollout phase 6a3, docs/design/information-
 // architecture.md#budgets), used as a person would (react-dom/client over
@@ -37,7 +40,7 @@ type ListState = import('@/lib/whole-list-store').ListState<Planned>;
 (FakeElement.prototype as unknown as { scrollIntoView: () => void }).scrollIntoView = () => {};
 
 /** The time a sheet takes to slide in (one frame), or out. */
-const pass = fakeClock();
+const pass = fakeClock({ now: HELD_DAY });
 const settle = (ms = 5) => pass(ms);
 
 function harness(host: FakeElement) {

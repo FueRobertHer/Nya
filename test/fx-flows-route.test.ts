@@ -1,6 +1,9 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKeys, testKey } from './fake-redis';
 import { ecbHash } from './fx-fixture';
+import { holdDay } from './held-day';
+
+holdDay();
 
 // What the page converts its transactions' totals with (app/api/transactions
 // `fx`, lib/fx/read.ts readFlowFx): absent without a home currency, so every

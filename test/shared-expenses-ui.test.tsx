@@ -180,7 +180,7 @@ describe('the card', () => {
   });
 
   test('a shared transaction gone from the accounts: kept, with a move, keep or remove', () => {
-    const moved = txn({ transaction_id: 't-dinner-2', name: 'Bistro', amount: 120, date: daysAgo(9) });
+    const moved = txn({ transaction_id: 't-dinner-2', name: 'Bistro', amount: 120, date: '2026-10-11' });
     const facts = { gone: { shares: ['t-dinner'], payments: [] }, twice: [], moves: { shares: { 't-dinner': [{ transaction_id: 't-dinner-2', account_id: 'chk-2' }] }, payments: {} } };
     const said = text(renderToStaticMarkup(<SharedExpensesCard shared={shared(cardOf())} txns={[moved]} facts={facts} tags={[]} taxonomy={null} currency="USD" />));
     expect(said).toContain('Dinner,');

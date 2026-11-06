@@ -251,7 +251,7 @@ describe('the nightly fetch', () => {
     const hmget = fake.hmget.bind(fake);
     fake.hmget = ((key: string, ...ids: string[]) => (ids.some((id) => /^[A-Z]{3}:/.test(id)) ? new Promise(() => {}) : hmget(key, ...ids))) as typeof fake.hmget;
     try {
-      const outcome = await quiet(() => run({ now: Date.now, readTimeoutMs: 30 }));
+      const outcome = await quiet(() => run({ readTimeoutMs: 30 }));
       expect(outcome).toMatchObject({ ok: false, written: ['2026', '2025'] });
       if (!outcome.ok) expect(outcome.reason).toMatch(/^checking (2022|2011|2010|1999) took longer than 0\.03s, after 2 years written$/);
     } finally {

@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import Insights, { type InsightAccount } from '@/components/Insights';
 import type { Txn } from '@/components/MonthBreakdown';
-import { instantDay, localMonth } from '@/lib/local-date';
+import { formatInstantDay } from '@/lib/format';
+import { localMonth } from '@/lib/local-date';
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
 
 // Home's insights (components/Insights.tsx): the alerts are the ones worth
@@ -87,7 +88,7 @@ describe("the spending figures in a month that may be missing a connection's tra
   const insights = (incomplete: Incomplete[], stopped: Stopped[], txns = spent, accounts: InsightAccount[] = []) =>
     text(renderToStaticMarkup(<Insights txns={txns} accounts={accounts} incomplete={incomplete} stopped={stopped} />));
   /** What Activity and Budgets say under this month. */
-  const said = (incomplete: Incomplete[], stopped: Stopped[]) => monthGapNotes(thisMonth, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10));
+  const said = (incomplete: Incomplete[], stopped: Stopped[]) => monthGapNotes(thisMonth, incomplete, stopped, (at) => formatInstantDay(at, { sentence: true }) ?? at.slice(0, 10));
 
   test('the pace beside a connection that stopped syncing says what the month may be missing, in the words Activity uses', () => {
     const stopped = [{ institution_name: 'Chase', last_ok_at: `${lastMonth}-12T15:00:00.000Z` }];
