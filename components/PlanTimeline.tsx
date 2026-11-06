@@ -492,7 +492,11 @@ export function TimelineCard({
     )
   ) : (
     <>
-      <p className="helper">{whereItCountsText(startAge, planInWalk)}</p>
+      {whereItCountsText(startAge, planInWalk).map((line) => (
+        <p key={line} className="helper">
+          {line}
+        </p>
+      ))}
       {noAge && ask(askAgesText('age'))}
       {!noAge && noStop && ask(askAgesText('stop'))}
       {full && <p className="helper">{ITEMS_FULL_TEXT}</p>}

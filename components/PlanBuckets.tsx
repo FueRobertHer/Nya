@@ -98,7 +98,7 @@ function RothRow({ row, sheet, money }: { row: BucketsToday['roth'][number]; she
           <span className="list-row-title">{rothTitle(row.owner)}</span>
           <span className="list-row-sub">
             {row.amount === null ? (
-              <span className="badge">Put in not set</span>
+              <span className="badge">Not set yet</span>
             ) : (
               <>
                 Put in <Masked>{money(row.amount)}</Masked>
@@ -383,7 +383,7 @@ function RothLevel({ owner, sheet, onBack }: { owner: Owner; sheet: BucketSheet;
   return (
     <div className="stack loose">
       <p className="helper">
-        What {owner === 'you' ? 'you’ve' : 'your partner has'} put into Roth accounts over the years, without the growth: it can come out before 59½.
+        What {owner === 'you' ? 'you’ve' : 'your partner has'} put into Roth IRAs over the years, not counting growth or conversions from the last five tax years. It can come out before 59½ with no tax or penalty. A Roth 401(k) has its own rules: leave it out unless it’s been rolled into a Roth IRA.
       </p>
       <div className="stack tight">
         <label className="field">

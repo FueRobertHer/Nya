@@ -39,6 +39,7 @@ import { copyDiffParts, figureChoices, itemChoices } from '@/components/plan-dif
 import { ProgressView, SheetBody as ProgressSheetBody } from '@/components/PlanProgress';
 import { TimelineCard } from '@/components/PlanTimeline';
 import { CompareCard, HowYouDrawCard, RuleLevel } from '@/components/PlanHowYouDraw';
+import { BesideTable } from '@/components/PlanBeside';
 import { OptInSheet } from '@/components/PlanOptIn';
 import { PlanTaxSheet } from '@/components/PlanTaxSheet';
 import { compareRows } from '@/lib/fire/compare-conversions';
@@ -1322,7 +1323,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
   ),
   'Plan: Compare conversions, what each rule leaves and costs': () => {
     const { rows, money } = WORKED();
-    return <CompareCard rows={rows} money={money} realReturn={0.05} lawYear={2026} healthGrowth={0.021} onRule={() => {}} />;
+    return <CompareCard rows={rows} money={money} realReturn={0.05} lawYear={2026} healthGrowth={0.021} acaLaw="2026" onRule={() => {}} />;
   },
   'Plan: a rule’s sheet, its figures and stages': () => {
     const { rows, money } = WORKED();
@@ -1344,6 +1345,20 @@ const SCREENS: Record<string, () => React.ReactElement> = {
         onYears={() => {}}
         onFlatRate={null}
         onDone={() => {}}
+      />
+    );
+  },
+  'Plan: a rule’s preview, its figures beside no rule': () => {
+    const money = (n: number) => wholeMoney(n, 'USD');
+    return (
+      <BesideTable
+        caption="This rule beside no conversions"
+        heads={['This rule', 'None']}
+        rows={[
+          ['Converted', `About ${money(60_000)}, by 60`, money(0)],
+          ['Tax and health, in all', money(497_310), money(707_530)],
+          ['Left at 62, after tax', money(3_660_060), money(2_850_840)],
+        ]}
       />
     );
   },

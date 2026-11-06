@@ -147,11 +147,12 @@ export type StopAges = { age: number | null; stopAge: number | null; stopAtFi?: 
 /** `runsOutAt`: the age the steady projection can't go on at, when it can't
  *  before the stop age (lib/fire/path.ts); `noDate`: the walk can't get to
  *  FI at all (a cost it can't pay); `need`: what an answer not worked out
- *  waits for, said as the answer (figuresNeed), where the Plan draws it. */
+ *  waits for, said as the answer (figuresNeed), where the Plan draws it;
+ *  `saving`: the date counts savings, so one after the stop rests on them going on. */
 export function fiHeadline(
   view: { yearsToFi: number | null; fiAge: number | null },
   ages: StopAges,
-  o: { noDate?: boolean; runsOutAt?: number | null; need?: string | null } = {}
+  o: { noDate?: boolean; runsOutAt?: number | null; need?: string | null; saving?: boolean } = {}
 ): FiHeadline {
   // Under "stop when I reach FI" there is no stop age to ask for.
   const noStop = ages.stopAge === null && !ages.stopAtFi;
@@ -174,7 +175,7 @@ export function fiHeadline(
   const t = ages.stopAge;
   const before = t === null ? null : t - age;
   const against =
-    t === null || before === null ? null : before > 0 ? `${years(before)} before you stop at ${t}` : before < 0 ? `${years(-before)} after you stop at ${t}` : `Right when you stop at ${t}`;
+    t === null || before === null ? null : before > 0 ? `${years(before)} before you stop at ${t}` : before < 0 ? `${years(-before)} after you stop at ${t}${o.saving ? ', if you keep saving until then' : ''}` : `Right when you stop at ${t}`;
   return { ...base, kind: 'age', headline: `Around age ${age}`, against, age, before, runsOut };
 }
 
@@ -304,7 +305,7 @@ export function leftOutText(leftOut: PathAfter['leftOut']): string | null {
 
 /** The definition shown beside every success rate. */
 export function successDefinition(years: number): string {
-  return `Success: the portfolio never ran out. Every year's withdrawal was paid in full for all ${years} years.`;
+  return `It counts as lasting if every year’s withdrawal is paid in full, for all ${years} years.`;
 }
 
 /** The short label every result keeps (rollout 6d); the full statement,

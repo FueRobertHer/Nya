@@ -260,13 +260,13 @@ describe('the Timeline follows the switch', () => {
   };
 
   test('on: one-offs and income count in the FI date until you reach it, and a one-off before Will it last? counts there only', () => {
-    expect(card(true)).toContain('In your FI date: costs, windfalls, changes in pay, work that starts before you stop, and other money in, until you reach it. In Will it last?: costs, windfalls and income, from 55, where it starts.');
+    expect(card(true)).toContain('Your FI date counts costs, windfalls, changes in pay, work that starts before you stop and other money in, until you reach it. Will it last? counts costs, windfalls and income, from 55, where it starts.');
     expect(card(true)).toContain('Before 55, where Will it last? starts, so it counts in your FI date, not in Will it last?');
     expect(card(true)).toContain('Counts in your FI date');
   });
 
   test('off: a cost and income don’t count there yet, and the row says so by not saying it', () => {
-    expect(card(false)).toContain('a cost and income don’t count there yet. In Will it last?: costs, windfalls and income, from 55, where it starts.');
+    expect(card(false)).toContain('Other costs and income don’t count there yet. Will it last? counts costs, windfalls and income, from 55, where it starts.');
     expect(card(false)).toContain('Before 55, where Will it last? starts, so it isn’t counted anywhere.');
     expect(card(false)).not.toContain('Counts in your FI date');
   });

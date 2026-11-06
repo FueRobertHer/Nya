@@ -14,8 +14,9 @@ import type { Strategy } from '@/lib/fire/tax/rules';
 import { Masked, NO_EXAMPLE } from './HideAmounts';
 import RadioRows from './RadioRows';
 import { Buttons, FieldProblem, readNumber, useDetailSave, type DetailForm, type SaveProps } from './PlanForms';
-import { pointsText, lawLabel, stageSources, stageTitle } from './plan-drawdown';
-import { convertedIn, endAgeOf, endWords, ORDER_WORDS, previewLine, ruleName, ruleSentence } from './plan-conversions';
+import { BesideTable } from './PlanBeside';
+import { healthPace, lawLabel, STAGE_TAX_NOTE, stageSources, stageTitle } from './plan-drawdown';
+import { convertedIn, endAgeOf, endWords, ORDER_WORDS, previewRows, ruleName, RULES_DIFFER_LABEL, rulesDifferText, ruleSentence } from './plan-conversions';
 import { pct } from './plan-text';
 import { Notice } from './TotalCaveats';
 import { Why } from './Why';
@@ -97,7 +98,7 @@ export function OrderForm(props: SaveProps & { detail: DetailForm }) {
   return (
     <div className="stack loose">
       <RadioRows
-        legend="Order"
+        legend="Which money goes first"
         name="plan-draw-order"
         value={order}
         onChange={(v) => setOrder(v as Strategy['order'])}
@@ -136,10 +137,14 @@ export function ConversionsForm(
     preview: ((strategy: Strategy) => { rule: Drawdown | null; none: Drawdown | null }) | null;
     /** A start from the FI number moves with the rule: the balance it starts from now. */
     movingStart: number | null;
+    /** The law the preview ran under, for its label. */
+    lawYear: number;
     money: Money;
   }
 ) {
   const { detail, plan, money, defaultUntil, preview } = props;
+  const acaLaw = detail.choices.health.acaLaw;
+  const either = props.partner ? 'either of you is' : 'you’re';
   const stored = detail.choices.strategy;
   const rule = stored.conversions;
   const [kind, setKind] = useState<Rule['kind']>(rule.kind);
@@ -183,7 +188,7 @@ export function ConversionsForm(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, top, acaTop, yearly, until, stored]);
   const runs = useMemo(() => (typed && preview ? preview(typed) : null), [typed, preview]);
-  const saying = runs?.rule && runs.none && kind !== 'none' ? previewLine(runs.rule, runs.none, money) : null;
+  const saying = runs?.rule && runs.none && kind !== 'none' ? previewRows(runs.rule, runs.none, money) : null;
 
   const untilField =
     kind === 'none' ? null : (
@@ -193,7 +198,7 @@ export function ConversionsForm(
           <input type="number" inputMode="numeric" value={until} onChange={(e) => setUntil(e.target.value)} placeholder={String(defaultUntil)} {...s.field('Until age')} disabled={s.saving} />
         </label>
         {s.under('Until age')}
-        <p className="helper">{`${props.partner ? `The year before the first RMDs, when you’re ${defaultUntil + 1}` : `The year before your RMDs start at ${defaultUntil + 1}`}. The rule you pick is yours: Nya starts with none.`}</p>
+        <p className="helper">{props.partner ? `Empty stops the year before the first required withdrawals (RMDs), when you’re ${defaultUntil + 1}.` : `Empty stops the year before your required withdrawals (RMDs) start at ${defaultUntil + 1}.`}</p>
       </>
     );
   const bracketSelect = <T extends number>(label: string, list: readonly T[], value: T, set: (v: T) => void) => (
@@ -215,23 +220,23 @@ export function ConversionsForm(
 
   return (
     <div className="stack loose">
-      <p className="helper">Each year, move tax-deferred money to Roth up to a ceiling you pick. Tax-deferred money you draw to spend counts toward the same ceiling, and so do gains you sell under the ACA limit, though not under a bracket.</p>
+      <p className="helper">A Roth conversion moves tax-deferred money to Roth. You pay income tax on it now, and it can grow and come out tax-free later. Nya starts with none and doesn’t recommend a rule.</p>
       <RadioRows
-        legend="Roth conversions"
+        legend="Rule"
         name="plan-conversions"
         value={kind}
         onChange={(v) => setKind(v as Rule['kind'])}
         disabled={s.saving}
         options={[
           { value: 'none', name: 'None', note: 'Move nothing.' },
-          { value: 'bracket', name: 'Fill a bracket', note: 'Up to the top of a tax bracket each year.', detail: fieldsWith(bracketSelect('Up to the top of', BRACKETS, top, setTop)) },
+          { value: 'bracket', name: 'Fill a bracket', note: 'Each year it converts up to the top of a tax bracket. What you draw from tax-deferred to spend counts toward that top.', detail: fieldsWith(bracketSelect('Up to the top of', BRACKETS, top, setTop)) },
           ...(props.onAca || rule.kind === 'aca-then-bracket'
-            ? [{ value: 'aca-then-bracket', name: 'Up to the ACA limit, then a bracket', note: `Under the limit while ${props.partner ? 'either of you is' : 'you’re'} on the ACA, then a bracket.${detail.choices.health.acaLaw === 'enhanced' ? ' With the enhanced credits there’s no cliff at that limit, but this rule still stops there.' : ''}`, detail: fieldsWith(bracketSelect('After 65, up to the top of', ACA_BRACKETS, acaTop, setAcaTop)) }]
+            ? [{ value: 'aca-then-bracket', name: 'Up to the ACA limit, then a bracket', note: `While ${either} on the ACA, it keeps income under 400% of the poverty line if it can, then fills a bracket. What you draw from tax-deferred and gains you sell count toward the limit.${acaLaw === 'enhanced' ? ' With the enhanced credits there’s no cliff at that limit, but this rule still stops there.' : ' The credit stops above 400%.'}`, detail: fieldsWith(bracketSelect('After 65, up to the top of', ACA_BRACKETS, acaTop, setAcaTop)) }]
             : []),
           {
             value: 'fixed',
             name: 'A fixed amount',
-            note: 'The same amount each year, under no ceiling.',
+            note: 'The same amount each year, with no ceiling.',
             detail: fieldsWith(
               <>
                 <label className="field">
@@ -245,18 +250,22 @@ export function ConversionsForm(
         ]}
       />
       {saying && (
-        <Notice level="info">
-          <Masked>{saying}</Masked>
-        </Notice>
+        <section className="stack tight" aria-labelledby="plan-conversion-preview">
+          <h3 className="section-label" id="plan-conversion-preview">
+            What it comes to
+          </h3>
+          <BesideTable caption="This rule beside no conversions" heads={['This rule', 'None']} rows={saying} />
+          <p className="plan-definition">{lawLabel(props.lawYear)}</p>
+        </section>
       )}
       {props.movingStart !== null && typed !== null && JSON.stringify(typed) !== JSON.stringify(stored) && (
         <p className="helper">
           <Masked>{`From your start of ${money(props.movingStart)}. Your FI number moves with the rule, so once saved this plan starts from a different number.`}</Masked>
         </p>
       )}
-      {kind === 'aca-then-bracket' && <p className="helper">{`While ${props.partner ? 'either of you is' : 'you’re'} on ACA coverage, income is also kept at least at the Medicaid line, so a year never falls under it while there is money to convert.`}</p>}
-      <Why label="Why can filling a bracket cost more?">
-        <p>Filling a bracket can raise income past the ACA limit, and it can empty tax-deferred money early. After that only Roth is left, income falls under the Medicaid line, and without the work rule coverage is full price. Compare conversions on Drawdown sets the rules side by side.</p>
+      {kind === 'aca-then-bracket' && <p className="helper">{`Past the age you set, while ${either} on ACA coverage, it still converts what it takes to keep coverage from counting at full price, if there’s money to convert.`}</p>}
+      <Why label={RULES_DIFFER_LABEL}>
+        <p>{`${rulesDifferText({ onAca: props.onAca, acaLaw })} Compare conversions on Drawdown sets the rules side by side.`}</p>
       </Why>
       {s.error && (
         <Notice level="critical" role="alert">
@@ -302,6 +311,7 @@ export function CompareCard({
   realReturn,
   lawYear,
   healthGrowth,
+  acaLaw,
   copyName = null,
   held = false,
   working = false,
@@ -314,6 +324,7 @@ export function CompareCard({
   lawYear: number;
   /** Fractions of a point, as the years have it. */
   healthGrowth: number;
+  acaLaw: TaxChoices['health']['acaLaw'];
   /** A copy is shown: its rule is this copy's, not your plan's. */
   copyName?: string | null;
   held?: boolean;
@@ -344,6 +355,7 @@ export function CompareCard({
       <div className="card-header">
         <h3 id="plan-compare-rules">Compare conversions</h3>
       </div>
+      <p className="helper">{`Each rule run on this plan at a steady ${pct(realReturn)} after inflation. Nya doesn’t recommend one. Tap a heading to sort, a rule to see its stages.`}</p>
       <div className="plan-table-scroll">
         <table className="plan-compare-table plan-rules-table">
           <caption className="visually-hidden">{`Each conversion rule at a steady ${pct(realReturn)}, ${lawYear} tax law`}</caption>
@@ -385,7 +397,10 @@ export function CompareCard({
           </tbody>
         </table>
       </div>
-      <p className="plan-definition">{`Hypothetical, ${lawYear} tax law, steady growth, health costs ${pointsText(healthGrowth)} a year faster than prices. Tap a heading to sort, a rule to see its stages.`}</p>
+      <Why label={RULES_DIFFER_LABEL}>
+        <p>{rulesDifferText({ onAca, acaLaw })}</p>
+      </Why>
+      <p className="plan-definition">{`Hypothetical, ${lawYear} tax law, steady growth, health costs ${healthPace(healthGrowth)}. Not tax advice.`}</p>
     </section>
   );
 }
@@ -430,6 +445,7 @@ export function RuleLevel({
         <h3 className="section-label" id="plan-rule-stages">
           Stage by stage
         </h3>
+        <p className="helper">{STAGE_TAX_NOTE}</p>
         <dl className="txn-detail txn-detail-wide">
           {drawn.stages.map((s) => (
             <div key={s.key} className="txn-detail-row">

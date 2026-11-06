@@ -500,7 +500,7 @@ describe('the simulation card', () => {
     expect(html).not.toContain('class="meta"');
     expect(t).toContain('Stop working at 65 with $1,000,000 (your FI number), withdrawing 4% of it, $40,000 a year after tax, your spending now, for 30 years (to age 95)');
     expect(t).toContain(`${successText(r.successRate, 1)} of ${r.paths.toLocaleString('en-US')} historical starts (${monthName(r.firstStart!)} to ${monthName(r.lastStart!)}) lasted 30 years, from 65`);
-    expect(t).toContain("Success: the portfolio never ran out. Every year's withdrawal was paid in full for all 30 years.");
+    expect(t).toContain('It counts as lasting if every year’s withdrawal is paid in full, for all 30 years.');
     expect(html).toContain('<p class="plan-definition">Hypothetical, from US history: not a prediction, and not advice.</p>');
     // Behind its disclosure.
     expect(html).toMatch(/<details class="why"><summary>Worst starting years<\/summary>/);
@@ -915,7 +915,7 @@ describe('income and one-offs on the Timeline', () => {
       expenses: [{ id: 'roof', label: 'Roof', amount: 30_000, atAge: 45 }],
     });
     const t = card(p);
-    expect(t).toContain('In Will it last?: costs, windfalls and income, from 50, where it starts.');
+    expect(t).toContain('Will it last? counts costs, windfalls and income, from 50, where it starts.');
     expect(t).toContain('Before 50, where Will it last? starts, so it isn’t counted anywhere.');
     // One before today: already spent, so your measured figures may count it.
     expect(card(plan({ age: 40, targetAge: 50, spending: 40_000, expenses: [{ id: 'car', label: 'Car', amount: 20_000, atAge: 38 }] }))).toContain('Before today, so it isn’t counted: your measured figures may already count it.');

@@ -201,7 +201,7 @@ describe('the Invested assets sheet', () => {
     expect(part(rowIn(d, 'Brokerage')!, 'list-row-sub')!.textContent).toBe('Cost basis $105,000 · gain $35,000');
     expect(part(rowIn(d, '401(k)')!, 'list-row-sub')).toBeNull();
     expect(tab.shown()).toContain('$485,000 in 5 accounts, as of ');
-    expect(tab.shown()).toContain('Each account’s bucket comes from its type; change one that is in another.');
+    expect(tab.shown()).toContain('Each account’s tax bucket comes from its type. Open an account to change it.');
     expect(tab.shown()).toContain('counts them as tax-deferred until you say');
     expect(tab.shown()).toContain('Nya’s figure');
     expect(tab.shown()).toContain('Count checking and savings accounts too');
@@ -236,7 +236,7 @@ describe('the Invested assets sheet', () => {
     const d = tab.dialog()!;
     const roth = rowIn(d, 'Your Roth contributions')!;
     const badge = part(roth, 'badge')!;
-    expect(badge.textContent).toBe('Put in not set');
+    expect(badge.textContent).toBe('Not set yet');
     expect(badge.getAttribute('class')).toBe('badge');
     expect(d.findAll((e) => has(e, 'notice')).length).toBe(0);
     await tab.unmount();

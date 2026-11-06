@@ -13,7 +13,7 @@ import { Masked } from './HideAmounts';
 import { Notice } from './TotalCaveats';
 import { Why } from './Why';
 import DrawdownChart, { type DrawdownMark } from './DrawdownChart';
-import { detailLines, lawLabel, runSub, runTax, runTitle, stageFoot, stageHelper, stageSentence, stageSources, stageTitle, survivorLine, yearBadges, yearHelper, yearRuns, yearSections, yearSub, yearValueLabel, type YearContext, type YearSection } from './plan-drawdown';
+import { detailLines, EARLY_ACCESS_WHY, lawLabel, runSub, runTax, runTitle, STAGE_TAX_NOTE, stageFoot, stageHelper, stagePenalties, stagePercentLine, stageSentence, stageSources, stageTitle, survivorLine, yearBadges, yearHelper, yearRuns, yearSections, yearSub, yearValueLabel, type YearContext, type YearLine, type YearSection } from './plan-drawdown';
 import { pct } from './plan-text';
 
 type Money = (n: number) => string;
@@ -32,8 +32,26 @@ export function drawdownMarks(years: readonly DrawdownYear[], rmdAge: number): D
   ];
   const paid = years.find((y) => y.income.socialSecurity >= 0.5);
   if (paid) marks.push({ age: paid.age, label: `Social Security ${paid.age}`, short: `${paid.age}` });
-  marks.push({ age: rmdAge, label: `RMD age ${rmdAge}`, short: `${rmdAge}` });
+  marks.push({ age: rmdAge, label: `RMD age ${rmdAge}`, short: `${rmdAge}`, spelled: `required withdrawals (RMDs) at ${rmdAge}` });
   return marks.sort((a, b) => a.age - b.age);
+}
+
+/** A sum's lines, each drawn as its kind: a total, or a part of the line above it. */
+export function MoneyLines({ lines }: { lines: readonly YearLine[] }) {
+  return (
+    <dl className="txn-detail txn-detail-wide">
+      {lines.map((l) => (
+        <div key={l.label} className={`txn-detail-row${l.sum ? ' txn-detail-sum' : ''}${l.part ? ' txn-detail-part' : ''}`}>
+          <dt>
+            <Masked>{l.label}</Masked>
+          </dt>
+          <dd className="money">
+            <Masked>{l.value}</Masked>
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
 }
 
 export function DrawdownCard({
@@ -72,7 +90,7 @@ export function DrawdownCard({
       <CopyTag name={copyName} />
       <div className="card-header">
         <h3 id="plan-years-title" ref={titleRef} tabIndex={-1}>
-          Year by year, at a steady {pct(realReturn)}
+          Year by year, at a steady {pct(realReturn)} after inflation
         </h3>
       </div>
       {working && (
@@ -80,36 +98,47 @@ export function DrawdownCard({
           Working it out
         </p>
       )}
+      <p className="helper">{`One steady path, not market history, to show how each year’s tax and coverage work. ${STAGE_TAX_NOTE}`}</p>
       <DrawdownChart years={start.years} marks={drawdownMarks(start.years, rmdAge)} money={money} />
       <ul className="list-rows">
-        {start.stages.map((s, i) => (
-          <li key={s.key}>
-            <button
-              ref={stageRef ? (el) => stageRef(i, el) : undefined}
-              type="button"
-              className="list-row"
-              aria-haspopup="dialog"
-              aria-disabled={held ? 'true' : undefined}
-              onClick={() => {
-                if (!held) onStage(i);
-              }}
-            >
-              <span className="list-row-text">
-                <span className="list-row-title">{stageTitle(s)}</span>
-                <span className="list-row-sub">
-                  <Masked>{stageSources(s, start.years, money)}</Masked>
+        {start.stages.map((s, i) => {
+          const penalties = stagePenalties(s, start.years);
+          return (
+            <li key={s.key}>
+              <button
+                ref={stageRef ? (el) => stageRef(i, el) : undefined}
+                type="button"
+                className="list-row"
+                aria-haspopup="dialog"
+                aria-disabled={held ? 'true' : undefined}
+                onClick={() => {
+                  if (!held) onStage(i);
+                }}
+              >
+                <span className="list-row-text">
+                  <span className="list-row-title">{stageTitle(s)}</span>
+                  <span className="list-row-sub">
+                    <Masked>{stageSources(s, start.years, money)}</Masked>
+                  </span>
+                  {penalties.years > 0 && (
+                    <span className="row-badges">
+                      <span className="badge">
+                        <Masked>{`${penalties.years === 1 ? 'Penalty' : 'Penalties'} ${money(penalties.total)}`}</Masked>
+                      </span>
+                    </span>
+                  )}
                 </span>
-              </span>
-              <span className="list-row-value money plan-input-value">
-                <span>
-                  <Masked>{money(s.yearlyTax)}</Masked>
+                <span className="list-row-value money plan-input-value">
+                  <span>
+                    <Masked>{money(s.yearlyTax)}</Masked>
+                  </span>
+                  <span className="plan-input-line">tax a year</span>
                 </span>
-                <span className="plan-input-line">tax a year</span>
-              </span>
-              {CHEVRON}
-            </button>
-          </li>
-        ))}
+                {CHEVRON}
+              </button>
+            </li>
+          );
+        })}
       </ul>
       {endAge !== null && (
         <p className="helper">
@@ -147,8 +176,9 @@ export function DrawdownMore({ onGoPath }: { onGoPath: () => void }) {
 }
 
 /** One year's row in a stage's sheet. */
-function YearRow({ y, money, onOpen }: { y: DrawdownYear; money: Money; onOpen: () => void }) {
-  const badges = yearBadges(y, money);
+function YearRow({ y, context, onOpen }: { y: DrawdownYear; context: YearContext; onOpen: () => void }) {
+  const { money } = context;
+  const badges = yearBadges(y, money, context.medicaid);
   return (
     <li>
       <button type="button" className="list-row" onClick={onOpen}>
@@ -180,13 +210,17 @@ function YearRow({ y, money, onOpen }: { y: DrawdownYear; money: Money; onOpen: 
 /** A stage's sheet: what it is, its years as rows, each opening its own sheet. Years
  *  that read the same are one row, which opens to them in place, and stays open while
  *  a year's sheet is over it, so the page holds which are open. */
-export function StageLevel({ stage, years, money, rmdAge, cautions = [], openRuns, onRuns, onYear }: { stage: DrawdownStage; years: readonly DrawdownYear[]; money: Money; rmdAge: number; cautions?: readonly string[]; openRuns: readonly number[]; onRuns: (runs: readonly number[]) => void; onYear: (index: number) => void }) {
+export function StageLevel({ stage, years, context, cautions = [], openRuns, onRuns, onYear }: { stage: DrawdownStage; years: readonly DrawdownYear[]; context: YearContext; cautions?: readonly string[]; openRuns: readonly number[]; onRuns: (runs: readonly number[]) => void; onYear: (index: number) => void }) {
+  const { money } = context;
   const sentence = stageSentence(stage, years, money);
   const foot = stageFoot(stage, years);
+  const percents = stagePercentLine(stage, years, context.acaLaw);
   const rows = years.slice(stage.first, stage.last);
   return (
     <div className="stack loose">
-      <p className="helper">{stageHelper(stage, rmdAge)}</p>
+      <p className="helper">
+        <Masked>{stageHelper(stage, context.rmdAge)}</Masked>
+      </p>
       {sentence && (
         <p className="panel-note">
           <Masked>{sentence}</Masked>
@@ -197,13 +231,18 @@ export function StageLevel({ stage, years, money, rmdAge, cautions = [], openRun
           <Masked>{c}</Masked>
         </Notice>
       ))}
+      {percents && (
+        <p className="helper">
+          <Masked>{percents}</Masked>
+        </p>
+      )}
       <ul className="list-rows">
-        {yearRuns(rows).flatMap((r) => {
+        {yearRuns(rows, context.medicaid).flatMap((r) => {
           const span = rows.slice(r.first, r.last);
-          const one = (y: DrawdownYear, i: number) => <YearRow key={y.age} y={y} money={money} onOpen={() => onYear(stage.first + i)} />;
+          const one = (y: DrawdownYear, i: number) => <YearRow key={y.age} y={y} context={context} onOpen={() => onYear(stage.first + i)} />;
           if (span.length === 1) return [one(span[0], r.first)];
           const opened = openRuns.includes(r.first);
-          const badges = yearBadges(span[0], money);
+          const badges = yearBadges(span[0], money, context.medicaid);
           return [
             <li key={`run-${r.first}`}>
               <button type="button" className="list-row" aria-expanded={opened} onClick={() => onRuns(opened ? openRuns.filter((x) => x !== r.first) : [...openRuns, r.first])}>
@@ -241,6 +280,14 @@ export function StageLevel({ stage, years, money, rmdAge, cautions = [], openRun
           <p>Nya knows your age in whole years, not your birthday, so the year you turn 59 is counted as before 59½. The year you turn 60 is after it.</p>
         </Why>
       )}
+      {stage.key === 'before-60' && (
+        <Why label={EARLY_ACCESS_WHY.label}>
+          <p>{EARLY_ACCESS_WHY.text}</p>
+        </Why>
+      )}
+      <p className="plan-definition">
+        <Masked>{lawLabel(context.lawYear)}</Masked>
+      </p>
     </div>
   );
 }
@@ -252,18 +299,7 @@ function Section({ section }: { section: YearSection }) {
       <h3 className="section-label" id={id}>
         <Masked>{section.title}</Masked>
       </h3>
-      <dl className="txn-detail txn-detail-wide">
-        {section.lines.map((l) => (
-          <div key={l.label} className={l.sum ? 'txn-detail-row txn-detail-sum' : 'txn-detail-row'}>
-            <dt>
-              <Masked>{l.label}</Masked>
-            </dt>
-            <dd className="money">
-              <Masked>{l.value}</Masked>
-            </dd>
-          </div>
-        ))}
-      </dl>
+      <MoneyLines lines={section.lines} />
       {section.meter && (
         <div>
           <div className="meter-track fpl" role="img" aria-label={spoken(section.meter.limitLabel ? `${section.meter.label}, ${section.meter.limitLabel}` : section.meter.label)}>
@@ -298,8 +334,8 @@ function Section({ section }: { section: YearSection }) {
   );
 }
 
-/** One year: where its money comes from, what it pays for, the income the law counts,
- *  how its tax is worked out, and its health coverage. */
+/** One year: where its money comes from, what it pays for, what it moved, the income the
+ *  law counts, how its tax is worked out, and its health coverage. */
 export function YearLevel({ year, context }: { year: DrawdownYear; context: YearContext }) {
   return (
     <div className="stack loose">

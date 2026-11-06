@@ -17,7 +17,7 @@ async function flagged() {
 const drawdown = async (tab: Tab) => {
   await pick(tab.container, 'Drawdown');
 };
-const WAY_IN = 'Work it out from your accounts';
+const WAY_IN = 'Work out tax from your accounts';
 
 async function detailed(plan = PLAN, props: Parameters<typeof render>[0] = {}) {
   await flagged();
@@ -160,7 +160,7 @@ describe('while what a plan’s years rest on is out', () => {
       letGo();
       await page.settle(800);
       await page.settle(1500);
-      expect(tab.text()).toContain('your spending and health coverage with their tax');
+      expect(tab.text()).toContain('Your spending, health coverage and tax come to about');
       expect(whole().length).toBe(1);
       await tab.unmount();
     });
@@ -346,7 +346,7 @@ describe('marks on Whole path', () => {
     await pick(tab.container, 'To 50');
     expect(summary(tab)).not.toContain('Marks at');
     await pick(tab.container, 'Whole path');
-    expect(summary(tab)).toContain('Marks at 59½, 65 and RMD age');
+    expect(summary(tab)).toContain('Marks at 59½, 65 and required withdrawals (RMDs) at');
     expect(ticks(tab)).toContain('59½');
     await tab.unmount();
   }, 30_000);
@@ -381,7 +381,7 @@ describe('the way in', () => {
     await press(tab.row(WAY_IN));
     const sheet = tab.dialog()!;
     expect(sheet.getAttribute('aria-label')).toBe(WAY_IN);
-    expect(sheet.textContent).toContain('your FI number, Home and every copy use them.');
+    expect(sheet.textContent).toContain('Your FI number, Home and every copy of your plan use them.');
     expect(sheet.textContent).toContain('Each account’s tax bucket, owner and cost basis');
     expect(sheet.textContent).toContain('2026 tax law. Not tax advice.');
     await press(button(sheet, 'Not now'));
@@ -391,14 +391,53 @@ describe('the way in', () => {
     await tab.unmount();
   }, 20_000);
 
+  test('a rule that moves with the balance says the rate for its first year only', async () => {
+    const tab = await detailed({ ...PLAN, rule: 'percent' } as typeof PLAN);
+    expect(tab.text()).toMatch(/Your spending, health coverage and tax come to [\d.]+% of it in the first year\./);
+    await tab.unmount();
+  }, 30_000);
+
+  test('Year by year says what its stages’ figures are, and the first stage what it leaves out', async () => {
+    const tab = await detailed();
+    expect(tab.text()).toContain('Each stage’s tax is a yearly average, with any penalty in it.');
+    const stage = tab.container.findAll((e) => e.tagName === 'BUTTON' && classOf(e).includes('list-row') && (e.textContent ?? '').includes('59½'))[0];
+    await press(stage);
+    expect(tab.dialog()!.textContent).toContain('What about the rule of 55 and 72(t) payments?');
+    await tab.unmount();
+  }, 30_000);
+
+  describe('the hero says where it starts, in words for that start', () => {
+    const said = async (over: Record<string, unknown>) => {
+      const tab = await detailed({ ...PLAN, ...over } as typeof PLAN);
+      const text = tab.text();
+      await tab.unmount();
+      return text;
+    };
+    test('a balance you typed, with its tax once and its one label', async () => {
+      const typed = await said({ start: 'custom', startBalance: 777_000 });
+      expect(typed).toContain('with the $777,000 you typed, for 40 years');
+      expect(typed.match(/from the steady years below\./g)?.length).toBe(1);
+      expect(typed.match(/Hypothetical, from US history and 2026 tax law/g)?.length).toBe(1);
+    }, 30_000);
+    test('what you’d have at the stop', async () => {
+      expect(await said({ start: 'at-stop' })).toMatch(/with the \$[\d,]+ you’d have then, for \d+ years/);
+    }, 30_000);
+    test('your invested assets', async () => {
+      expect(await said({ start: 'assets' })).toMatch(/with your invested assets, \$[\d,]+, for \d+ years/);
+    }, 30_000);
+    test('your FI number', async () => {
+      expect(await said({ start: 'fi-number' })).toMatch(/with your FI number, \$[\d,]+, for \d+ years/);
+    }, 30_000);
+  });
+
   test('Work it out shows the years, the hero’s words and no way in', async () => {
     const tab = await detailed();
     expect(tab.dialog()).toBeNull();
     expect(tab.row(WAY_IN)).toBeNull();
     expect(tab.text()).toContain('Year by year, at a steady 5%');
-    expect(tab.text()).toContain('from the years below.');
-    expect(tab.text()).toContain('your spending and health coverage with their tax');
-    expect(tab.text()).toContain('Hypothetical, 2026 tax law. Not tax advice.');
+    expect(tab.text()).toContain('from the steady years below.');
+    expect(tab.text()).toContain('Your spending, health coverage and tax come to about');
+    expect(tab.text()).toContain('Hypothetical, from US history and 2026 tax law: not a prediction, and not investment or tax advice.');
     expect(tab.text()).toContain('Go to Your path');
     await tab.unmount();
   }, 30_000);
