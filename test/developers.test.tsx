@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import './clerk-mock';
 import { FakeRedis, storageMock, registerTestContainer } from './fake-redis';
 import { writingIn } from './writing-words';
+import { HELD_DAY } from './held-day';
 
 const source = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
@@ -201,6 +202,7 @@ function paths(value: unknown, prefix = '', out = new Set<string>()): Set<string
 describe('the reference, held to the API’s real answers', () => {
   let token = '';
   beforeEach(async () => {
+    setSystemTime(HELD_DAY);
     fake.reset();
     forgetEpochs();
     delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;

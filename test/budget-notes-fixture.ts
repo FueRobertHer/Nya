@@ -9,7 +9,8 @@
 import { categoriesFor } from './category-fixture';
 import { addMonths, monthName } from '@/lib/rollover';
 import type { Carry, IncomePool, MonthGap } from '@/lib/rollover';
-import { instantDay, localDate, localMonth } from '@/lib/local-date';
+import { formatInstantDay } from '@/lib/format';
+import { localDate, localMonth } from '@/lib/local-date';
 import { indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { consideredMonths, suggestBudgets } from '@/lib/budget-suggestions';
 import type { Txn } from '@/components/MonthBreakdown';
@@ -252,7 +253,7 @@ const PLACES: [string, string][] = [
     [monthName(addMonths(NOW, n)), `{month ${n} with its year}`],
     [monthName(addMonths(NOW, n), NOW), `{month ${n}}`],
   ]),
-  [instantDay(`${addMonths(NOW, -1)}-15T12:00:00.000Z`) ?? '', '{day}'],
+  [formatInstantDay(`${addMonths(NOW, -1)}-15T12:00:00.000Z`, { sentence: true }) ?? '', '{day}'],
 ];
 export const filled = (s: string) => PLACES.reduce((t, [real, place]) => t.split(place).join(real), s);
 

@@ -1,5 +1,8 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { installDom, trackRoots, click, type FakeElement } from './mini-dom';
+import { holdDay } from './held-day';
+
+holdDay();
 
 // One account's sheet (rollout phase 3), which replaced the row that expanded
 // in place and the buttons inside it: what it shows for each kind of account,
@@ -153,8 +156,7 @@ describe('the account sheet', () => {
     });
     const html = renderToStaticMarkup(<AccountSheet {...props(a, plaid(a))} />);
     expect(html).toContain('<span class="badge neg">Overdue</span>');
-    // Its year too once today is in another (liabilitySummary).
-    expect(text(html)).toMatch(/Overdue · 24\.99% APR · min \$35\.00 · was due Oct 24(, 2026)?( |$)/);
+    expect(text(html)).toMatch(/Overdue · 24\.99% APR · min \$35\.00 · was due Oct 24( |$)/);
     expect(text(html)).toContain('28% of $5,000.00 limit');
     expect(text(html)).toContain('Statement balance $1,288.40');
     expect(text(html)).toContain('Last payment $900.00 on Sep 25');

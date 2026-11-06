@@ -1,5 +1,8 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { installDom, trackRoots, click, type, fakeClock, FakeElement, FakeEvent } from './mini-dom';
+import { HELD_DAY, holdDay } from './held-day';
+
+holdDay();
 
 // Budgets > Upcoming's Recurring and Planned cards and their sheets (rollout
 // phase 6a3, docs/design/information-architecture.md#budgets), used as a
@@ -58,7 +61,7 @@ const RENT = SERIES.find((s) => s.name === 'Rent')!;
 const PAYROLL = SERIES.find((s) => s.name === 'Payroll')!;
 
 /** The time a sheet takes to slide in (one frame), or out. */
-const pass = fakeClock();
+const pass = fakeClock({ now: HELD_DAY });
 const settle = (ms = 5) => pass(ms);
 
 function harness(host: FakeElement) {

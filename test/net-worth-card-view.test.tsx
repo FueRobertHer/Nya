@@ -5,6 +5,9 @@ import NetWorthCard, { HeroDelta } from '@/components/NetWorthCard';
 import { Hero } from '@/components/Hero';
 import { allHiddenCaveats, type Caveat } from '@/components/TotalCaveats';
 import { MASK, setAmountsHidden } from '@/lib/format';
+import { holdDay } from './held-day';
+
+holdDay();
 
 // Home's one Net worth card (rollout phase 4a): the total, its caveats, the
 // chart's notes, the nightly jobs (the fact; what to do is the admin's, in
