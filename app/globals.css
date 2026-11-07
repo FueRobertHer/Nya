@@ -1341,7 +1341,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 }
 
 /* Critical is told from caution by its edge and its triangle (caution has a
-   clock), not by color: in light --neg and --warn are about 1.1:1 apart. */
+   clock), not by color: in light --neg and --warn are about 1.02:1 apart. */
 .notice.critical {
   border-color: currentColor;
   background: var(--neg-tint);
@@ -1383,7 +1383,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 
 .notice-summary > summary > .notice-chevron {
   margin-top: 0;
-  transition: transform var(--dur-fast) ease;
+  transition: transform var(--dur-fast) var(--ease);
 }
 
 .notice-summary[open] > summary > .notice-chevron {
