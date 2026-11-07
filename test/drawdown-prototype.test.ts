@@ -21,6 +21,7 @@ import { ON } from './plan-gen';
 import { NO_STRATEGY, type Strategy } from '@/lib/fire/tax/rules';
 import { compareRows, conversionRun } from '@/lib/fire/compare-conversions';
 import { convertedIn } from '@/components/plan-conversions';
+import { tunedRows, tuneRuns, type TuneAsk } from '@/lib/fire/tune';
 
 const account = (bucket: string, value: number, basis: number | null = null) => ({ owner: 'you', value, basis, account_id: bucket, bucket });
 const group = (bucket: string, value: number, basis: number | null = null) => ({ bucket, accounts: [account(bucket, value, basis)], total: value });
@@ -170,5 +171,58 @@ describe('the prototype’s household, through the build', () => {
       return Math.round(d.leftAtEnd);
     };
     expect([50, 51, 52, 53, 54, 55, 56, 57, 58].map(left)).toEqual([3_340_629, 3_384_767, 3_395_681, 3_413_851, 3_426_628, 3_430_066, 3_434_652, 3_417_736, 3_379_609]);
+  });
+
+  // Tune to a goal, on this household: each rule's setting for each goal and limit, as
+  // Overview has them. What's picked moves with any change to the engine or Left at 95.
+  describe('tuned for a goal', () => {
+    const input = inputAt(0.021, 0.011);
+    const f = planFigures(PLAN, M, { count: ON, detailed: detailWork(input) });
+    if ('refused' in f) throw new Error('refused');
+    const runs = tuneRuns(f, input);
+    const tuned = (ask: TuneAsk) =>
+      Object.fromEntries(
+        tunedRows(runs, ask, NO_STRATEGY, 74).map((r) => {
+          const c = r.run.strategy.conversions;
+          const top = c.kind === 'bracket' || c.kind === 'aca-then-bracket' ? `${Math.round(c.top * 100)}%` : null;
+          return [r.key, [top, r.run.strategy.convertUntil, r.run.strategy.order === 'standard' ? 'std' : 'roth', Math.round(r.run.left), Math.round(r.run.cost), r.run.short, r.crossing.map((x) => `${x.limit} ${x.years}`).join(', '), r.beatsNone]];
+        })
+      );
+    test('252 settings', () => expect(runs.length).toBe(252));
+    test('most left', () =>
+      expect(tuned({ goal: 'left', limits: [] })).toEqual({
+        none: [null, null, 'std', 3_126_746, 720_330, null, '', null],
+        'fill-10': ['10%', 74, 'roth', 2_709_397, 620_276, null, '', false],
+        'fill-12': ['12%', 50, 'std', 2_729_770, 720_904, null, '', false],
+        'fill-22': ['22%', 50, 'std', 2_641_196, 695_021, null, '', false],
+        aca: ['12%', 56, 'std', 3_434_652, 592_155, null, '', true],
+      }));
+    test('least tax and health', () =>
+      expect(tuned({ goal: 'cost', limits: [] })).toEqual({
+        none: [null, null, 'std', 3_126_746, 720_330, null, '', null],
+        'fill-10': ['10%', 74, 'roth', 2_709_397, 620_276, null, '', true],
+        'fill-12': ['12%', 51, 'std', 2_557_832, 700_464, null, '', true],
+        'fill-22': ['22%', 50, 'std', 2_641_196, 695_021, null, '', true],
+        aca: ['12%', 59, 'std', 3_332_097, 556_474, null, '', true],
+      }));
+    test('most left, under the ACA limit', () =>
+      expect(tuned({ goal: 'left', limits: ['aca'] })).toEqual({
+        none: [null, null, 'std', 3_126_746, 720_330, null, 'aca 1', null],
+        'fill-10': ['10%', 50, 'std', 2_690_090, 744_900, null, 'aca 2', null],
+        'fill-12': ['12%', 50, 'std', 2_729_770, 720_904, null, 'aca 2', null],
+        'fill-22': ['22%', 50, 'std', 2_641_196, 695_021, null, 'aca 1', null],
+        aca: ['12%', 56, 'std', 3_434_652, 592_155, null, '', null],
+      }));
+    test('least tax and health, under the ACA limit', () =>
+      expect(tuned({ goal: 'cost', limits: ['aca'] })).toEqual({
+        none: [null, null, 'std', 3_126_746, 720_330, null, 'aca 1', null],
+        'fill-10': ['10%', 50, 'std', 2_690_090, 744_900, null, 'aca 2', null],
+        'fill-12': ['12%', 51, 'std', 2_557_832, 700_464, null, 'aca 2', null],
+        'fill-22': ['22%', 50, 'std', 2_641_196, 695_021, null, 'aca 1', null],
+        aca: ['12%', 59, 'std', 3_332_097, 556_474, null, '', null],
+      }));
+    test('IRMAA’s and the 22% bracket’s limits leave the rows as they were on this household', () => {
+      expect(tuned({ goal: 'left', limits: ['irmaa', 'bracket-22'] })).toEqual(tuned({ goal: 'left', limits: [] }));
+    });
   });
 });

@@ -42,6 +42,10 @@ import { CompareCard, HowYouDrawCard, RuleLevel } from '@/components/PlanHowYouD
 import { BesideTable } from '@/components/PlanBeside';
 import { OptInSheet } from '@/components/PlanOptIn';
 import { PlanTaxSheet } from '@/components/PlanTaxSheet';
+import { TunedAnswer, TuneLevel } from '@/components/PlanTune';
+import { tunedRows, tuneRuns } from '@/lib/fire/tune';
+import { DEFAULT_TAX_CHOICES } from '@/lib/fire/tax-choices';
+import { DEFAULT_TAX_FACTS } from '@/lib/fire/tax-facts';
 import { compareRows } from '@/lib/fire/compare-conversions';
 import { detailWork, type DetailedInput } from '@/lib/fire/plan-detail';
 import { planFigures } from '@/lib/fire/plan-figures';
@@ -1002,7 +1006,7 @@ function WORKED() {
   };
   const f = planFigures(worked, { spending: null, savings: null, assets: null }, { count: ON, detailed: detailWork(input) });
   if ('refused' in f || !f.shares || f.detail === null || 'failed' in f.detail) throw new Error('no drawdown');
-  return { money, f, shares: f.shares, rows: compareRows(f, input, f.detail.start), detail: f.detail };
+  return { money, f, shares: f.shares, rows: compareRows(f, input, f.detail.start), detail: f.detail, input, worked };
 }
 
 const SCREENS: Record<string, () => React.ReactElement> = {
@@ -1328,6 +1332,41 @@ const SCREENS: Record<string, () => React.ReactElement> = {
   'Plan: a rule’s sheet, its figures and stages': () => {
     const { rows, money } = WORKED();
     return <RuleLevel row={rows[2]} money={money} lawYear={2026} copyOpen={false} whyNot={null} onTry={async () => true} />;
+  },
+  'Plan: Tune to a goal, each rule’s row and what your plan has now': () => {
+    const { f, money, detail, input } = WORKED();
+    const rows = tunedRows(tuneRuns(f, input), { goal: 'left', limits: ['aca'] }, NO_STRATEGY, 74);
+    return <TunedAnswer ask={{ goal: 'left', limits: ['aca'] }} rows={rows} own={NO_STRATEGY} until={74} now={{ drawn: detail.start, stop: f.view.stopAge, start: 1_474_369 }} sort={null} onSort={() => {}} held={false} onRow={() => {}} money={money} lawYear={2026} healthGrowth={0.021} copyOpen={false} />;
+  },
+  'Plan: Tune to a goal, a row’s own sheet and what moved': () => {
+    const { f, money, detail, input, worked } = WORKED();
+    const row = tunedRows(tuneRuns(f, input), { goal: 'left', limits: [] }, NO_STRATEGY, 74).find((r) => r.key === 'fill-12')!;
+    const form = { choices: { ...DEFAULT_TAX_CHOICES, strategy: NO_STRATEGY }, facts: DEFAULT_TAX_FACTS, factsLocked: false, stateTaxes: {} as never, statute: {} as never, calendarYear: 2026, save: async () => true } as const;
+    return (
+      <TuneLevel
+        row={row}
+        ask={{ goal: 'left', limits: [] }}
+        plan={worked}
+        onSave={async () => true}
+        onDone={() => {}}
+        editable
+        detail={form}
+        money={money}
+        lawYear={2026}
+        healthGrowth={0.021}
+        copyOpen={false}
+        whyNot={null}
+        now={{ drawn: { ...detail.start, leftAtEnd: 1 }, stop: 50, start: 1_474_369 }}
+        used={() => ({ drawn: detail.start, stop: 52, start: 1_600_000, working: false, failed: false })}
+        onTry={async () => true}
+      />
+    );
+  },
+  'Plan: Tune to a goal, a row’s own sheet where it couldn’t be worked out': () => {
+    const { f, money, input, worked } = WORKED();
+    const row = tunedRows(tuneRuns(f, input), { goal: 'left', limits: [] }, NO_STRATEGY, 74).find((r) => r.key === 'fill-12')!;
+    const form = { choices: { ...DEFAULT_TAX_CHOICES, strategy: NO_STRATEGY }, facts: DEFAULT_TAX_FACTS, factsLocked: false, stateTaxes: {} as never, statute: {} as never, calendarYear: 2026, save: async () => true } as const;
+    return <TuneLevel row={row} ask={{ goal: 'left', limits: [] }} plan={worked} onSave={async () => true} onDone={() => {}} editable detail={form} money={money} lawYear={2026} healthGrowth={0.021} copyOpen={false} whyNot={null} now={null} used={() => ({ drawn: null, stop: null, start: null, working: false, failed: true })} onTry={async () => true} />;
   },
   'Plan: Tax after you stop, how it goes into your FI number': () => {
     const { shares, money, f, detail } = WORKED();

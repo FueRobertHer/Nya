@@ -10,14 +10,15 @@
 // No React here, so it can be tested on its own.
 
 import type { SearchJob, SearchResult } from '@/lib/fire/search-job';
-import { createPlanRunner, type WorkerLike } from './plan-runner';
+import type { TuneJob, TuneResult } from '@/lib/fire/tune-job';
+import { createPlanRunner, type JobFailure, type WorkerLike } from './plan-runner';
 
 const MAX_KEPT = 16;
 
-export type PlanSearch = {
+export type PlanSearch<J extends SearchJob = SearchJob, R extends { ok: boolean } = SearchResult> = {
   /** The job's answer, or null while it is worked out. Safe in a render: a job is
    *  asked for once, whoever and however often asks. */
-  answer(slot: string, job: SearchJob): SearchResult | null;
+  answer(slot: string, job: J): R | JobFailure | null;
   /** `slot` no longer asks for anything. */
   drop(slot: string): void;
   /** Asks again for what failed, on the next render. */
@@ -31,9 +32,9 @@ export type PlanSearch = {
  *  a year holds one set of them. */
 export const searchKey = ({ plan, measured, count, detailed }: SearchJob): string => JSON.stringify([plan, measured, count, { ...detailed, law: undefined }]);
 
-export function createPlanSearch(opts: { startWorker: () => WorkerLike<SearchResult> | null; runHere: (job: SearchJob) => Promise<SearchResult> }): PlanSearch {
-  const runner = createPlanRunner<SearchJob, SearchResult>(opts);
-  type Kept = { controller: AbortController; result: SearchResult | null };
+export function createPlanSearch<J extends SearchJob = SearchJob, R extends { ok: boolean } = SearchResult>(opts: { startWorker: () => WorkerLike<R> | null; runHere: (job: J) => Promise<R> }): PlanSearch<J, R> {
+  const runner = createPlanRunner<J, R>(opts);
+  type Kept = { controller: AbortController; result: R | JobFailure | null };
   const kept = new Map<string, Kept>();
   const slots = new Map<string, string>();
   const listeners = new Set<() => void>();
@@ -113,6 +114,20 @@ export function planSearch(): PlanSearch {
     runHere: async (job) => {
       const { runSearchJob } = await import('@/lib/fire/search-job');
       return runSearchJob(job);
+    },
+  }));
+}
+
+let sharedTune: PlanSearch<TuneJob, TuneResult> | null = null;
+
+/** The page's one for Tune to a goal: a second thread of the same script, started only
+ *  by the first Tune, so a tune never waits behind a search or holds one up. */
+export function planTune(): PlanSearch<TuneJob, TuneResult> {
+  return (sharedTune ??= createPlanSearch<TuneJob, TuneResult>({
+    startWorker: () => (typeof Worker === 'undefined' ? null : (new Worker(new URL('../lib/fire/search.worker.ts', import.meta.url)) as unknown as WorkerLike<TuneResult>)),
+    runHere: async (job) => {
+      const { runTuneJob } = await import('@/lib/fire/tune-job');
+      return runTuneJob(job);
     },
   }));
 }
