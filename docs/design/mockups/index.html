@@ -2,7 +2,7 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Red+Hat+Display:wght@500..700&family=Red+Hat+Text:wght@400..700&display=swap">
 <style>
-/* Layout: a spec sheet. Page chrome is a quiet document; the phones carry Nya's proposed tokens. */
+/* Layout: a spec sheet. Page chrome is a quiet document; the phones carry Nya's tokens. */
 :root {
   --pg-bg: #f3f4f7;
   --pg-fg: #171a22;
@@ -230,7 +230,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .menu div.danger { color: var(--neg); }
 .app .section-title { font-size: 12px; font-weight: 500; color: var(--text-2); padding: 4px 2px 0; }
 
-/* "Today" frame: approximates the current look for the comparison only. */
+/* "Before" frame: approximates the look the app started from, for the comparison only. */
 .old { --o-bg: #0f1115; --o-card: #171a21; --o-text: #e8e9ec; --o-muted: #8b8f98; --o-accent: #5b8def; --o-warn: #e0a83c; --o-down: #ef5b5b; --o-up: #3ecf8e; }
 .old.screen { background: var(--o-bg); color: var(--o-text); }
 .old .ocard { background: var(--o-card); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 4px; }
@@ -277,9 +277,9 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 
 <div class="doc">
   <header class="intro">
-    <p class="eyebrow">Nya · design proposal · docs/design</p>
+    <p class="eyebrow">Nya · as built · docs/design</p>
     <h1 class="doc-title">Nya, reorganized: one job per screen</h1>
-    <p class="lede">Phone mockups of every surface in the proposed reorganization. Manage mode is gone, settings have their own screen, each tab opens on its main object, and warnings keep their words and severity. Every figure is example data.</p>
+    <p class="lede">Phone mockups of every surface in the reorganization, which is built through its last phase. Manage mode is gone, settings have their own screen, each tab opens on its main object, and warnings keep their words and severity. Every figure is example data.</p>
     <div class="controls">
       <span class="lbl">App theme</span>
       <div class="seg-doc" role="group" aria-label="App theme in the mockups">
@@ -304,13 +304,13 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
   <!-- ===================== DIRECTION ===================== -->
   <section class="spec" id="direction">
     <div class="spec-head">
-      <p class="eyebrow">Pick one before any build</p>
-      <h2>Direction: today and proposed</h2>
-      <p>Home with the same data. Today: the current look with up to five kinds of note under the total and a separate card per fact. Proposed: one Net worth card, a Needs attention list and a This month card, on the ledger tokens (deeper button blue, hairline rows, tabular money, nothing under 12px).</p>
+      <p class="eyebrow">The choice that started it</p>
+      <h2>Direction: before and after</h2>
+      <p>Home with the same data. Before: the look the app started from, with up to five kinds of note under the total and a separate card per fact. After: the net worth figure on the page, a Needs attention list and a This month card, on the tokens the app uses now (hairline rows, tabular money, nothing under 12px).</p>
     </div>
     <div class="phones">
       <figure class="shot">
-        <div class="phone"><div class="app screen old" aria-label="Home today">
+        <div class="phone"><div class="app screen old" aria-label="Home before">
           <div class="scroll">
             <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"></span></div>
             <div class="ocard">
@@ -338,11 +338,11 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab on"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>TODAY</b>Notes stack under the total in one color; the backup instruction is for the deployment owner but shows to everyone.</figcaption>
+        <figcaption><b>BEFORE</b>Notes stack under the total in one color; the backup instruction is for the deployment owner but shows to everyone.</figcaption>
       </figure>
 
       <figure class="shot">
-        <div class="phone"><div class="app screen" data-app aria-label="Home proposed">
+        <div class="phone"><div class="app screen" data-app aria-label="Home after">
           <div class="scroll">
             <div class="topbar"><span class="brand"><span class="logo"></span>Nya</span><span class="ibtn"><svg><use href="#i-eye"/></svg></span><span class="ibtn"><svg><use href="#i-ref"/></svg></span><span class="avatar"><span class="dot"></span></span></div>
             <div class="hero-page">
@@ -368,7 +368,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab on"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>PROPOSED</b>Critical caveats in full and in red on the total, things to do in one list, quiet facts last.</figcaption>
+        <figcaption><b>AFTER</b>Critical caveats in full and in red on the total, things to do in one list, quiet facts last.</figcaption>
       </figure>
     </div>
   </section>
@@ -593,7 +593,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           </div>
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab on"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
-        <figcaption><b>TRANSACTIONS</b>The first transaction is on the first screen (today it starts two screens down). In, Out and Net are one strip under the bar, on the page and signed, said once on the tab. The filters are chips; with the queue on, the review bar under them heads "12 to review" beside Card Mode. The month's row is Budgets' own: under the name a line held for This month, empty on the month the tab opens on, so stepping months never moves the list. Adding and importing a transaction are in the Transactions card's ⋯.</figcaption>
+        <figcaption><b>TRANSACTIONS</b>The first transaction is on the first screen. In, Out and Net are one strip under the bar, on the page and signed, said once on the tab. The filters are chips; with the queue on, the review bar under them heads "12 to review" beside Card Mode. The month's row is Budgets' own: under the name a line held for This month, empty on the month the tab opens on, so stepping months never moves the list. Adding and importing a transaction are in the Transactions card's ⋯.</figcaption>
       </figure>
 
       <figure class="shot">

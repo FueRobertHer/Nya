@@ -99,7 +99,7 @@ A button asks `/api/demo/sign-in` for a one-minute Clerk ticket for that account
 
 They work on every environment but production: Vercel's Preview and Development (`VERCEL_ENV=preview` or `development`) and a local `next dev`. Set on Production, or on a self-hosted `next start`, the variable does nothing. Demo accounts don't need to be on `CLERK_ALLOWED_USER_IDS`, can link sandbox banks (username `user_good`, password `pass_good`), connect and share like anyone, but can't be deleted. Everyone who tries them shares them. A demo account is never the admin: while one owns the environment's own container (on a fresh Preview, the first sign-in claims the data already there, so a demo pressed first does), nobody is the admin there, until that container is handed to a real account by hand ([Which account owns which container](#which-account-owns-which-container)).
 
-Before making Preview public (turning off Vercel's protection for it), give it its own database and `MASTER_KEY`, as described in [deployment.md](deployment.md#what-preview-runs-against).
+Preview is a public demo (the share link in the README carries visitors through Vercel's protection), so it runs on its own database and keys, never production's, as described in [deployment.md](deployment.md#what-preview-runs-against).
 
 ### Resetting the demo accounts
 

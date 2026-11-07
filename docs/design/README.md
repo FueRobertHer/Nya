@@ -1,6 +1,6 @@
 # Nya design
 
-A plan to make Nya easier to use: less on each screen, everything in one obvious place, and one look across the app. Phases 1 and 2 of the [rollout](rollout.md) are built; the rest is planned here.
+How Nya stays easy to use: less on each screen, everything in one obvious place, and one look across the app. The [rollout](rollout.md) that got it there is built through its last phase; new UI follows the documents below.
 
 | Document | What it covers |
 |---|---|
