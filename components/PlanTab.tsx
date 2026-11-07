@@ -153,11 +153,14 @@ import type { DrawdownMark } from './DrawdownChart';
 import PlanHealthForm, { type PaidChoice } from './PlanHealthForm';
 import { OptInRow, OptInSheet, OPT_IN_TITLE } from './PlanOptIn';
 import { CompareCard, ConversionsForm, HowYouDrawCard, OrderForm, RuleLevel } from './PlanHowYouDraw';
+import { TuneForm } from './PlanTune';
+import { TUNE_TITLE } from './plan-tune';
 import { PlanTaxSheet } from './PlanTaxSheet';
 import { choicesDiffParts, copyNameFor, ruleTitle } from './plan-conversions';
 import { ABOUT_DETAIL, WITH_EACH_YEARS_TAX, gridSampleLine, assumptionsLine, assumptionsWorked, HEALTH_NOT_SET, healthSub, honestyNotes, householdLine, hypotheticalDrawdown, namesCoverage, stageHealthLines, stageTitle, STATE_NAMES, taxHypothetical, yearTitle, type YearContext } from './plan-drawdown';
 import { planFigures, resolveSaved, type FiguresRefused, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
 import { compareRows, conversionRun, type CompareRow } from '@/lib/fire/compare-conversions';
+import type { TunedRow } from '@/lib/fire/tune';
 import { defaultUntil as untilByDefault, type Strategy } from '@/lib/fire/tax/rules';
 import { lawFor } from '@/lib/fire/tax/law';
 import { householdOf, type TaxFactOp } from '@/lib/fire/tax-facts';
@@ -257,7 +260,9 @@ export type SheetState =
   | { kind: 'tax' }
   | { kind: 'order' }
   | { kind: 'conversions' }
-  | { kind: 'rule'; key: string };
+  | { kind: 'rule'; key: string }
+  // Tune to a goal, from Compare conversions.
+  | { kind: 'tune' };
 
 const SHEET_TITLES: Record<SheetState['kind'], string> = {
   about: 'Household',
@@ -272,6 +277,7 @@ const SHEET_TITLES: Record<SheetState['kind'], string> = {
   order: 'Order',
   conversions: 'Roth conversions',
   rule: '',
+  tune: TUNE_TITLE,
 };
 
 const FIGURE_TITLES: Record<FigureKind, string> = {
@@ -1030,6 +1036,7 @@ export default function PlanTab({
   const [figureLevel, setFigureLevel] = useState<FigureLevel | null>(null);
   // A stage's year, by its place in Year by year's years, drawn over the stage.
   const [yearLevel, setYearLevel] = useState<number | null>(null);
+  const [tuneLevel, setTuneLevel] = useState<TunedRow | null>(null);
   const [stageRuns, setStageRuns] = useState<readonly number[]>([]);
   const [opened, setOpened] = useState(0);
   const shownSheet = useLast(sheet);
@@ -1064,6 +1071,7 @@ export default function PlanTab({
     setSheet(s);
     setFigureLevel(null);
     setYearLevel(null);
+    setTuneLevel(null);
     setStageRuns([]);
   };
   const close = () => setSheet(null);
@@ -1505,6 +1513,13 @@ export default function PlanTab({
   const sheetStage = shownSheet?.kind === 'stage' ? (drawn?.start.stages[shownSheet.at] ?? null) : null;
   const sheetYear = sheetStage && yearLevel !== null ? (drawn?.start.years[yearLevel] ?? null) : null;
   const sheetRule: CompareRow | null = shownSheet?.kind === 'rule' ? (compare.find((r) => r.key === shownSheet.key) ?? null) : null;
+  // A tuned row's own sheet runs the plan with that setting in it: one run, or the
+  // search's on a plan that searches, dropped as the sheet closes.
+  const tuneLevelShown = shownSheet?.kind === 'tune' ? tuneLevel : null;
+  const tuneLevelOn = sheet !== null && tuneLevelShown !== null;
+  useEffect(() => {
+    if (!tuneLevelOn) search.drop('tune-level');
+  }, [tuneLevelOn, search]);
   /** A choice of model moves every plan's stamp, so all of them are read again, however
    *  it went: a later save names what is stored now. */
   const chooseModel = async (op: TaxFactOp): Promise<true | string> => {
@@ -1688,10 +1703,10 @@ export default function PlanTab({
   /** The Timeline's Try it: a copy of your plan with the item in it (in place
    *  of the one it changes, else added). */
   const tryItem = (item: PlanItem, name: string) => createCopy(plansState.main, name, true, withItem(basePlan, item));
-  /** Compare's Try it: a copy of the plan shown with a rule, opened on Drawdown. */
-  const tryRule = async (row: CompareRow): Promise<true | string> => {
-    const name = copyNameFor(row.strategy.conversions, plansState.list);
-    const strategy: Strategy = { ...detailChoices.strategy, conversions: row.strategy.conversions, convertUntil: row.strategy.convertUntil };
+  /** Try it, from Compare or Tune: a copy of the plan shown with a rule, opened on
+   *  Drawdown. `until` goes in its name, as a tuned setting's end says which it is. */
+  const tryRule = async (strategy: Strategy, until: number | null = null): Promise<true | string> => {
+    const name = copyNameFor(strategy.conversions, plansState.list, until);
     const r = await createCopy(entry ? entry.id : plansState.main, name, true, undefined, { ...detailChoices, strategy });
     if (r === true) close();
     return r;
@@ -2127,6 +2142,9 @@ export default function PlanTab({
                   working={shownWorking}
                   onRule={(r) => open({ kind: 'rule', key: r.key }, `rule-${r.key}`)}
                   ruleRef={(key, el) => inputRowRef(`rule-${key}`, el)}
+                  tunable={shownPlan.rule === 'constant'}
+                  onTune={() => open({ kind: 'tune' }, 'tune')}
+                  tuneRef={(el) => inputRowRef('tune', el)}
                 />
               )}
               <DrawdownMore onGoPath={() => switchSegment('path')} />
@@ -2191,7 +2209,7 @@ export default function PlanTab({
 
       <Sheet
         open={!!sheet}
-        title={shownSheet ? (shownSheet.kind === 'figure' ? (figureLevel?.title ?? FIGURE_TITLES[shownSheet.figure]) : shownSheet.kind === 'stage' ? (sheetYear ? yearTitle(sheetYear) : sheetStage ? stageTitle(sheetStage) : 'Year by year') : shownSheet.kind === 'rule' ? (sheetRule ? ruleTitle(sheetRule.strategy.conversions, sheetRule.strategy.convertUntil) : 'Roth conversions') : SHEET_TITLES[shownSheet.kind]) : ''}
+        title={shownSheet ? (shownSheet.kind === 'figure' ? (figureLevel?.title ?? FIGURE_TITLES[shownSheet.figure]) : shownSheet.kind === 'stage' ? (sheetYear ? yearTitle(sheetYear) : sheetStage ? stageTitle(sheetStage) : 'Year by year') : shownSheet.kind === 'rule' ? (sheetRule ? ruleTitle(sheetRule.strategy.conversions, sheetRule.strategy.convertUntil) : 'Roth conversions') : tuneLevelShown ? ruleTitle(tuneLevelShown.run.strategy.conversions, tuneLevelShown.run.strategy.convertUntil) : SHEET_TITLES[shownSheet.kind]) : ''}
         onClose={() => {
           if (levelSaves === 0) close();
         }}
@@ -2202,9 +2220,13 @@ export default function PlanTab({
               }
             : sheetYear
               ? () => setYearLevel(null)
-              : undefined
+              : tuneLevelShown
+                ? () => {
+                    if (levelSaves === 0) setTuneLevel(null);
+                  }
+                : undefined
         }
-        level={figureLevel ? `${figureLevel.kind}:${figureLevel.title}` : sheetYear ? `year:${sheetYear.age}` : undefined}
+        level={figureLevel ? `${figureLevel.kind}:${figureLevel.title}` : sheetYear ? `year:${sheetYear.age}` : tuneLevelShown ? `tune:${tuneLevelShown.key}` : undefined}
       >
         {/* Atop every sheet of the copy open, so one isn't taken for your plan. */}
         {shownSheet && shownSheet.kind !== 'numbers' && <CopyTag name={copyName} />}
@@ -2289,7 +2311,37 @@ export default function PlanTab({
             lawYear={drawn.law.year}
             copyOpen={entry !== null}
             whyNot={editable && canOpen && plansState.status === 'ready' && !plansState.saving && planCurrency !== null ? null : (paused ?? 'A copy can’t be made just yet. Try again in a moment.')}
-            onTry={() => tryRule(sheetRule)}
+            onTry={() => tryRule(sheetRule.strategy)}
+          />
+        )}
+        {shownSheet?.kind === 'tune' && detailForm && (
+          <TuneForm
+            key={opened}
+            {...formProps}
+            detail={{ ...detailForm, save: (next, more, also) => heldBy(detailForm.save(next, more, also)) }}
+            job={drawn && shownInput ? { tune: true, plan: shownPlan, measured, count, detailed: shownInput } : null}
+            offers={{
+              aca: !!drawn && drawn.start.aca.on > 0 && shownInput?.health.acaLaw !== 'enhanced',
+              irmaa: !!drawn && drawn.start.years.some((y) => y.care.people.some((p) => p.status === 'medicare')),
+            }}
+            irmaaUnknown={!!drawn && drawn.start.notes.includes('irmaa-unknown')}
+            held={shownWorking}
+            level={tuneLevelShown}
+            onLevel={setTuneLevel}
+            money={money}
+            lawYear={drawn?.law.year ?? lawNow.year}
+            healthGrowth={yearContext?.healthGrowth ?? 0}
+            copyOpen={entry !== null}
+            whyNot={editable && canOpen && plansState.status === 'ready' && !plansState.saving && planCurrency !== null ? null : (paused ?? 'A copy can’t be made just yet. Try again in a moment.')}
+            now={drawn ? { drawn: drawn.start, stop: shown?.view.stopAge ?? null, start: shown && 'sim' in shown.engine ? shown.engine.sim.startBalance : null } : null}
+            used={(strategy) => {
+              const a = figuresFor('tune-level', shownPlan, { ...detailChoices, strategy });
+              const f = a.figures;
+              if ('refused' in f) return { drawn: null, stop: null, start: null, working: false, failed: true };
+              const d = f.detail && !('failed' in f.detail) ? f.detail.start : null;
+              return { drawn: d, stop: f.view.stopAge, start: 'sim' in f.engine ? f.engine.sim.startBalance : null, working: a.working, failed: a.failed || (d === null && !a.working) };
+            }}
+            onTry={(strategy) => heldBy(tryRule(strategy, strategy.convertUntil))}
           />
         )}
         {shownSheet?.kind === 'assumptions' && (
@@ -2843,7 +2895,7 @@ export type InputKind = 'fi-number' | 'spending' | 'savings' | 'assets' | 'about
 
 /** Every row a sheet opens from, which focus goes back to as it closes:
  *  Your figures', Drawdown's, and Portfolio's "Use my allocation". */
-type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix' | 'ask-about' | 'ask-timeline' | 'timeline-first' | 'fi-how' | 'opt-in' | 'years' | 'order' | 'conversions' | `stage-${number}` | `rule-${string}`;
+type RowKind = InputKind | 'stress-assumptions' | 'numbers' | 'mix' | 'ask-about' | 'ask-timeline' | 'timeline-first' | 'fi-how' | 'opt-in' | 'years' | 'order' | 'conversions' | 'tune' | `stage-${number}` | `rule-${string}`;
 
 /** A rule's name in a few words, for the Assumptions row. */
 const RULE_SHORT: Record<FirePlan['rule'], string> = {

@@ -24,7 +24,7 @@
 import type { PlanJob, PlanJobResult } from '@/lib/fire/jobs';
 
 /** A job's answer when no run answered it. */
-type JobFailure = { ok: false; error: string; unavailable?: true };
+export type JobFailure = { ok: false; error: string; unavailable?: true };
 
 /** The part of a Worker this uses. */
 export type WorkerLike<R = PlanJobResult> = {

@@ -1,12 +1,19 @@
 import { describe, expect, test } from 'bun:test';
 import { runDrawdown, type DrawdownInput } from '@/lib/fire/drawdown';
+import type { PlanItem } from '@/lib/fire/items';
+import { DEFAULT_PLAN } from '@/lib/fire/plan';
+import { detailWork, type DetailedInput } from '@/lib/fire/plan-detail';
+import { planFigures } from '@/lib/fire/plan-figures';
+import { planOf, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { seededRandom } from '@/lib/fire/random';
 import { historicalCycles, monteCarlo, type SimPlan } from '@/lib/fire/simulate';
 import { taxedPaths, type SimTax } from '@/lib/fire/taxed-paths';
-import { NO_STRATEGY, type Strategy } from '@/lib/fire/tax/rules';
 import { LAW_2026 } from '@/lib/fire/tax/law/2026';
+import { NO_STRATEGY, type Strategy } from '@/lib/fire/tax/rules';
 import { newPersonYear, newYearResult, runYear, type YearInput, type YearResult } from '@/lib/fire/tax/year';
+import { tuneRuns } from '@/lib/fire/tune';
 import { usMarket } from '@/lib/fire/us-market';
+import { ON } from './plan-gen';
 
 // What the year costs: the year in a 5,000 by 40 loop, as a Monte Carlo job
 // with taxes runs it, timed against the flat Monte Carlo job of the same size on
@@ -255,5 +262,45 @@ describe('the cost of the year', () => {
     if (process.env.TAX_TIMING) console.log(JSON.stringify({ fillingMs: +(filling / 50).toFixed(2), converted: Math.round(converted) }));
     expect(converted).toBeGreaterThan(0);
     expect(filling / 50).toBeLessThan(80);
+  }, 60_000);
+
+  // Tune to a goal's grid: each rule's settings, in a worker, on a constant rule (the only
+  // one it's offered on). It is meant to take under 1 s on a mid-range phone, a person's own
+  // fixed amount under 3 s. The bounds are a good deal over what was measured, as above.
+  test('Tune’s grid stays what a person can wait for', () => {
+    const social = (id: string, owner: 'you' | 'partner', age: number, yearly: number): PlanItem => ({ id, label: id, kind: 'social-security', from: { anchor: { at: 'age', age }, offset: 0 }, until: null, once: null, yearly, replaces: null, every: null, times: null, inflationAdjusted: true, owner, beforeTax: true });
+    const plan: FirePlanV2 = {
+      ...planOf({ ...DEFAULT_PLAN, age: 41, targetAge: 50, spending: 64_000, savings: 50_000, assets: 595_000, realReturn: 0.05, withdrawalRate: 0.04, fee: 0.001, stocksPct: 75, bondsPct: 25, rebalance: 'annual', rule: 'constant' }),
+      partnerAge: 40,
+      start: 'at-stop',
+      items: [social('you', 'you', 67, 30_000), social('partner', 'partner', 68, 18_000)],
+    };
+    const account = (bucket: string, value: number, basis: number | null = null) => ({ owner: 'you', value, basis, account_id: bucket, bucket });
+    const group = (bucket: string, value: number, basis: number | null = null) => ({ bucket, accounts: [account(bucket, value, basis)], total: value });
+    const input: DetailedInput = {
+      calendarYear: 2026, filing: 'joint', dependents: [], rmdAges: { you: 75, partner: 75 },
+      buckets: { groups: [group('taxable', 140_000, 105_000), group('tax-deferred', 360_000), group('roth', 70_000), group('hsa', 25_000)], roth: [{ owner: 'you', amount: 45_000 }], total: 595_000 } as unknown as DetailedInput['buckets'],
+      savingsSplit: [{ bucket: 'taxable', share: 18 / 50 }, { bucket: 'tax-deferred', share: 24 / 50 }, { bucket: 'roth', share: 8 / 50 }],
+      share457: { you: 0, partner: 0 }, inflation: 0.03, taxableYield: 0.02,
+      health: { coverage: { kind: 'aca', adult: 11_000, quotedAge: 50, child: null }, medicareExtra: 0, meetsRule: [], countMedicaid: false, acaLaw: '2026', growth: 0.021, incomeGrowth: 0.011 },
+      state: 'NV', stateRate: 0, paidToday: 0, strategy: NO_STRATEGY, law: LAW_2026, lawYear: { year: 2026, behind: false },
+    };
+    const measure = (strategy: Strategy) => {
+      const job = { ...input, strategy };
+      const f = planFigures(plan, { spending: null, savings: null, assets: null }, { count: ON, detailed: detailWork(job) });
+      if ('refused' in f) throw new Error('refused');
+      let runs = 0;
+      const ms = readMs(() => {
+        runs = tuneRuns(f, job).length;
+      });
+      return { ms, runs };
+    };
+    const grid = measure(NO_STRATEGY);
+    const fixed = measure({ order: 'standard', conversions: { kind: 'fixed', yearly: 40_000 }, convertUntil: null });
+    if (process.env.TAX_TIMING) console.log(JSON.stringify({ tuneRuns: grid.runs, tuneMs: +grid.ms.toFixed(1), tuneFixedRuns: fixed.runs, tuneFixedMs: +fixed.ms.toFixed(1) }));
+    expect(grid.runs).toBe(252);
+    expect(fixed.runs).toBe(2_352);
+    expect(grid.ms).toBeLessThan(1_500);
+    expect(fixed.ms).toBeLessThan(6_000);
   }, 60_000);
 });

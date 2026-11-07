@@ -7,7 +7,7 @@
 
 import type { Drawdown } from '@/lib/fire/drawdown';
 import type { TaxChoices } from '@/lib/fire/tax-choices';
-import { nameTaken } from '@/lib/fire/plan-list';
+import { nameTaken, SCENARIO_NAME_MAX } from '@/lib/fire/plan-list';
 import type { Strategy } from '@/lib/fire/tax/rules';
 import { pct } from './plan-text';
 
@@ -97,9 +97,11 @@ export function rulesDifferText(a: { onAca: boolean; acaLaw: TaxChoices['health'
   return `Conversions move income between years. ${early} and can empty tax-deferred money early.${low} Less income early can leave larger required withdrawals later.`;
 }
 
-/** A copy's name after its rule, with a number if that is taken. */
-export function copyNameFor(rule: Rule, plans: readonly { id: string; name: string }[]): string {
-  const base = ruleTitle(rule);
+/** A copy's name after its rule, with a number if that is taken, and the age it runs to
+ *  where a plan's name still has room for that and a number. */
+export function copyNameFor(rule: Rule, plans: readonly { id: string; name: string }[], until: number | null = null): string {
+  const aged = ruleTitle(rule, until);
+  const base = `${aged} 99`.length <= SCENARIO_NAME_MAX ? aged : ruleTitle(rule);
   if (!nameTaken(plans, base)) return base;
   for (let n = 2; ; n++) {
     const name = `${base} ${n}`;
