@@ -39,7 +39,7 @@
 // Arithmetic only: no engine run, no market history.
 
 import { projectBalance, projectionShort } from './fi';
-import { compileItems, conditionalFlows, type CompileAt, type CompiledItems, type Count, type ItemAges, type ItemNote } from './compile';
+import { compileItems, conditionalFlows, type CompiledItems, type Count, type ItemAges, type ItemNote } from './compile';
 import { hasWalk, lastChange, savingsIn, walkBalanceAt, walkToFi, type CompiledEvents, type Shortfall, type WalkChanges } from './events';
 import { MONEY_KINDS } from './items';
 import { enginePlan, fiView, formulasTake, planYears, projectFrom, startAge, unmeasuredOf, type EnginePlan, type FiView, type Measured, type Missing, type PlanCore, type StartChoice, type WorkedOut } from './plan';
@@ -146,12 +146,8 @@ type Built = {
   core: FiView;
   engine: EnginePlan | { missing: Missing };
   compiled: CompiledItems;
-  /** The parts the simulation runs as fixed: all of `compiled`'s but what waits
-   *  on a run's own balance. */
-  fixed: CompiledItems;
   /** What the FI number leaves out: changes after the age it reads its lasting changes at. */
   later: CompiledItems['later'];
-  at: CompileAt;
   walk: WalkChanges;
   retirement: PlanFigures['retirement'];
   short: Shortfall | null;
@@ -248,7 +244,7 @@ function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], 
     }
   }
   if (walkAtStop !== null) view = { ...view, atTargetAge: atStop };
-  return { view, core, engine, compiled, fixed, later, at, walk, retirement, short, walked, walkedSavings };
+  return { view, core, engine, compiled, later, walk, retirement, short, walked, walkedSavings };
 }
 
 function assemble(plan: FirePlanV2, b: Built, resolution: Resolution, shares: FiShares | null): PlanFigures {
@@ -341,7 +337,7 @@ export function planFigures(plan: FirePlanV2, measured: Measured, { count, detai
   const b = build(plan, measured, resolution.ages, resolution.stop, count, undefined, resolution.perRun, detailed, shares);
   if ('refused' in b) return b;
   const assembled = assemble(plan, b, resolution, shares);
-  const f = detailed ? { ...assembled, ...detailed.figures(assembled, b.fixed, b.at) } : assembled;
+  const f = detailed ? { ...assembled, ...detailed.figures(assembled) } : assembled;
   if (resolution.searched === 'none' || plan.age === null) return f;
   // The search's answer is the date: the age found, or none by the end. With
   // none and no date without it either (a figure not measured, or a cost the

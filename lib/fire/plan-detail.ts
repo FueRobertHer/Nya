@@ -7,7 +7,8 @@
 //
 // THREE DRAWDOWNS:
 //   - `start`, from the plan's own start with the mix projected at the start age,
-//     scaled to its balance (Year by year, its tax and health, the stress test);
+//     scaled to its balance (Year by year, and the rule's split and rate the stress
+//     test runs with, lib/fire/taxed-paths.ts);
 //   - `whole`, from the balance projected at the stop (Whole path's years after
 //     the stop, and the milestones that fire on them);
 //   - `fiRun`, from the FI number itself, at the stop, whose tax and health go in
@@ -20,13 +21,17 @@
 // there, or nothing to project from, takes today's shares, or all taxable with no
 // accounts to go by, and says so.
 //
+// THE ENGINE a detailed plan is stressed with (`taxedEngine`) starts no earlier than
+// today, since a tax year can't run before it, and ends at the plan's own end. What
+// waits on a run's own balance is out of its fixed parts and only in `conditional`, so
+// it counts once.
+//
 // Arithmetic only, and nothing that touches storage: the Plan tab runs this in the
 // browser.
 
 import type { TaxBucket } from '@/lib/allocation/buckets';
 import type { BucketsToday } from './buckets-today';
-import { bridgedEngine } from './bridge';
-import { compileItems, conditionalFlows, type CompileAt, type CompiledItems } from './compile';
+import { compileItems, conditionalFlows, type CompileAt } from './compile';
 import { runDrawdown, type Drawdown, type DrawdownHealth } from './drawdown';
 import type { WalkChanges } from './events';
 import { planPath } from './path';
@@ -38,6 +43,7 @@ import { chosenSplit } from './savings-split';
 import type { Owner } from './tax-facts';
 import type { Filing, StateCode, TaxLaw } from './tax/law/types';
 import { mixToday, taxedMix, type MixSlot, type TaxedWalk } from './tax/mix';
+import type { SimTax } from './taxed-paths';
 
 /** What the page knows that the plan doesn't say. Plain data, as a search's job
  *  carries it to a worker (lib/fire/search-job.ts). */
@@ -101,7 +107,7 @@ export type DetailWork = {
    *  read, and is `whole`. */
   forPath(f: PlanFigures): PlanDetail | { failed: string } | null;
   /** What the assembled figures gain: the drawdowns, and the engine to stress. */
-  figures(f: PlanFigures, fixed: CompiledItems, at: CompileAt): Pick<PlanFigures, 'detail' | 'engine'>;
+  figures(f: PlanFigures): Pick<PlanFigures, 'detail' | 'engine'>;
 };
 
 type Plain = Omit<WalkChanges, 'taxes'>;
@@ -142,7 +148,7 @@ export function detailWork(input: DetailedInput): DetailWork {
   /** A drawdown from `balance` at `age` to `endAge`, the plan's items where the
    *  figures have them. Null where there is nothing to draw, as afterStop has it
    *  (lib/fire/path.ts). */
-  function run(f: PlanFigures, age: number, balance: number, endAge: number): { drawn: Drawdown | { failed: string }; noMix: boolean; spending: number; paid: number } | null {
+  function run(f: PlanFigures, age: number, balance: number, endAge: number): { drawn: Drawdown | { failed: string }; noMix: boolean; spending: number; paid: number; slots: readonly MixSlot[] } | null {
     const plan = f.plan;
     const spendingNow = f.view.spending.value;
     const years = endAge - age;
@@ -159,7 +165,7 @@ export function detailWork(input: DetailedInput): DetailWork {
       placed = slotsAt(f, age, balance);
     } catch (e) {
       // As runDrawdown says it of its own years, so the flat model carries the plan.
-      return { drawn: { failed: e instanceof Error ? e.message : 'The years couldn’t be worked out' }, noMix: false, spending, paid };
+      return { drawn: { failed: e instanceof Error ? e.message : 'The years couldn’t be worked out' }, noMix: false, spending, paid, slots: [] };
     }
     const { slots, noMix } = placed;
     const drawn = runDrawdown({
@@ -185,7 +191,7 @@ export function detailWork(input: DetailedInput): DetailWork {
       law: input.law,
       strategy: input.strategy,
     });
-    return { drawn, noMix, spending, paid };
+    return { drawn, noMix, spending, paid, slots };
   }
 
   /** The walk's balance at the stop: where `whole` starts. */
@@ -196,7 +202,9 @@ export function detailWork(input: DetailedInput): DetailWork {
     return path.points[path.points.length - 1];
   }
 
-  const endOf = (f: PlanFigures, startAge: number) => startAge + planYears(f.plan, f.view.stopAge);
+  /** The age the engine's years end at. `f.engine` may have moved its start to today,
+   *  and its length with it, so the two are read together. */
+  const endOf = ({ engine }: { engine: { startAge: number | null; sim: { years: number } } }) => (engine.startAge as number) + engine.sim.years;
 
   const failedIn = (d: Drawdown | { failed: string }): d is { failed: string } => 'failed' in d;
 
@@ -217,7 +225,7 @@ export function detailWork(input: DetailedInput): DetailWork {
     startRun(f) {
       const { engine, plan } = f;
       if (plan.age === null || !('sim' in engine) || engine.startAge === null) return null;
-      const start = run(f, Math.max(engine.startAge, plan.age), engine.sim.startBalance, endOf(f, engine.startAge));
+      const start = run(f, Math.max(engine.startAge, plan.age), engine.sim.startBalance, endOf({ engine }));
       return start === null || failedIn(start.drawn) ? null : start.drawn;
     },
 
@@ -236,18 +244,18 @@ export function detailWork(input: DetailedInput): DetailWork {
       if (f.plan.age === null || !('sim' in f.engine) || f.engine.startAge === null) return null;
       const stop = atStop(f);
       if (stop === null) return null;
-      const whole = run(f, stop.age, stop.balance, endOf(f, f.engine.startAge));
+      const whole = run(f, stop.age, stop.balance, endOf({ engine: f.engine }));
       if (whole === null) return null;
       if (failedIn(whole.drawn)) return whole.drawn;
       return { start: whole.drawn, startAge: stop.age, whole: whole.drawn, walkTax: 0, law: input.lawYear, notes: [] };
     },
 
-    figures(f, fixed, at) {
+    figures(f) {
       const { engine, plan } = f;
       if (plan.age === null || !('sim' in engine) || engine.startAge === null) return { detail: null, engine };
       const first = Math.max(engine.startAge, plan.age);
       const balance = engine.sim.startBalance;
-      const end = endOf(f, engine.startAge);
+      const end = endOf({ engine });
       const start = run(f, first, balance, end);
       if (start === null) return { detail: null, engine };
       if (failedIn(start.drawn)) return { detail: start.drawn, engine };
@@ -263,9 +271,51 @@ export function detailWork(input: DetailedInput): DetailWork {
         law: input.lawYear,
         notes: start.noMix ? ['no-mix'] : [],
       };
-      const perRun = f.resolution.perRun;
-      const conditional = perRun ? conditionalFlows(plan.items, perRun, f.resolution.ages, { ...at, taxRate: start.drawn.t }, true) : undefined;
-      return { detail, engine: bridgedEngine(plan, engine, start.drawn, fixed, conditional) };
+      const { t, h, rate } = start.drawn;
+      const { ages, perRun } = f.resolution;
+      const at: CompileAt = { age: plan.age, startAge: first, stop: first, years: end - first, taxRate: t };
+      // Only the simulation's parts are read here, so the walk's switch is off.
+      const fixed = compileItems(plan.items, ages.map((x, i) => (perRun?.edges[i] ? null : x)), at, { planInWalk: false });
+      const tax: SimTax = {
+        startAge: first,
+        today: { age: plan.age, partnerAge: plan.partnerAge, calendarYear: input.calendarYear },
+        filing: input.filing,
+        dependents: input.dependents,
+        rmdAges: input.rmdAges,
+        slots: start.slots,
+        share457: input.share457,
+        inflation: input.inflation,
+        taxableYield: input.taxableYield,
+        income: fixed.incomeBy,
+        health: input.health,
+        state: input.state,
+        stateRate: input.stateRate,
+        law: input.law,
+        strategy: input.strategy,
+        t,
+        h,
+      };
+      const { conditional: _flat, ...sim } = engine.sim;
+      return {
+        detail,
+        engine: {
+          ...engine,
+          startAge: first,
+          rate,
+          rateFrom: 'spending',
+          sim: {
+            ...sim,
+            years: end - first,
+            taxRate: t,
+            rule: ruleSpec(plan, rate),
+            income: [],
+            oneOffs: fixed.sim.oneOffs,
+            lowerSpending: fixed.sim.lowerSpending,
+            tax,
+            ...(perRun ? { conditional: conditionalFlows(plan.items, perRun, ages, at, true) } : {}),
+          },
+        },
+      };
     },
   };
 }

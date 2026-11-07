@@ -24,7 +24,7 @@ mock.module('@/lib/storage', () => storageMock(fake));
 const { encrypt } = await import('@/lib/crypto');
 const { firePlansStore, planFactsStore } = await import('@/lib/plan-copies');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
-const { DEFAULT_PLAN_V2 } = await import('@/lib/fire/plan-v2');
+const { DEFAULT_PLAN_V2, NEW_PLAN_START } = await import('@/lib/fire/plan-v2');
 const { itemFromIncome } = await import('@/lib/fire/items');
 const { itemFromEvent } = await import('./plan-gen');
 const { MAIN_ID, MAX_FIRE_PLANS, factsOf } = await import('@/lib/fire/copies');
@@ -166,12 +166,12 @@ describe('your plan’s first entry', () => {
     expect(order).toEqual(['entries', 'facts']);
     expect((await firePlansStore.ids(ctx)).sort()).toEqual([MAIN_ID, made.id].sort());
     const main = await stored(MAIN_ID);
-    expect(main).toEqual({ name: 'First plan', plan: DEFAULT_PLAN_V2, tax: null, currency: null, createdAt: main.createdAt, updatedAt: main.updatedAt });
+    expect(main).toEqual({ name: 'First plan', plan: { ...DEFAULT_PLAN_V2, start: NEW_PLAN_START }, tax: null, currency: null, createdAt: main.createdAt, updatedAt: main.updatedAt });
     expect(await stored(made.id)).toEqual({ name: 'Stop at 52', plan: { ...DEFAULT_PLAN_V2, targetAge: 52 }, tax: null, currency: null, createdAt: made.created_at, updatedAt: made.updated_at });
     expect(main.updatedAt).not.toBe(made.updated_at);
     expect(await planFactsStore.get(ctx)).toEqual({ version: 1, main: MAIN_ID, ...DEFAULTS });
     // Your plan is saved now: it has a stamp.
-    expect((await get()).body).toEqual({ id: MAIN_ID, plan: DEFAULT_PLAN_V2, currency: null, updated_at: main.updatedAt, tax: null, tax_facts: null });
+    expect((await get()).body).toEqual({ id: MAIN_ID, plan: { ...DEFAULT_PLAN_V2, start: NEW_PLAN_START }, currency: null, updated_at: main.updatedAt, tax: null, tax_facts: null });
   });
 
   test('Try it makes it too: the copy holds the event, in the currency sent, your plan the defaults with none', async () => {
@@ -188,7 +188,7 @@ describe('your plan’s first entry', () => {
   test('a rename of your plan before it is saved makes it, under that name', async () => {
     const r = await plans('PATCH', { id: MAIN_ID, name: 'Base', based_on: null });
     expect(r.status).toBe(200);
-    expect(await stored(MAIN_ID)).toMatchObject({ name: 'Base', plan: DEFAULT_PLAN_V2 });
+    expect(await stored(MAIN_ID)).toMatchObject({ name: 'Base', plan: { ...DEFAULT_PLAN_V2, start: NEW_PLAN_START } });
     expect(await planFactsStore.get(ctx)).toEqual({ version: 1, main: MAIN_ID, ...DEFAULTS });
   });
 
@@ -243,7 +243,7 @@ describe('two first writes at once', () => {
     before(firePlansStore, 'updateMany', () => plans('POST', { from: MAIN_ID, name: 'Stop at 52', plan: { ...DEFAULT_PLAN_V2, targetAge: 52 }, currency: null }));
     expect((await save(TYPED, null, { facts_were: DEFAULTS })).status).toBe(409);
     expect(await firePlansStore.count(ctx)).toBe(2);
-    expect((await stored(MAIN_ID)).plan).toEqual(DEFAULT_PLAN_V2);
+    expect((await stored(MAIN_ID)).plan).toEqual({ ...DEFAULT_PLAN_V2, start: NEW_PLAN_START });
   });
 });
 

@@ -37,7 +37,7 @@
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
 
 import type { Filing, TaxLaw } from './law/types';
-import { addScaled, atLeastOf, atMost, bracketTax, lin, plus, scale, set, smaller, type Lin } from './piece';
+import { addScaled, atLeastOf, atMost, bracketTax, limit, lin, plus, scale, set, smaller, type Lin } from './piece';
 
 export type FederalInput = {
   filing: Filing;
@@ -134,9 +134,14 @@ export function federal(inp: FederalInput, law: TaxLaw, out: FederalResult): Fed
   // 1. Gains less the carryover; a net loss's deduction.
   plus(net, inp.gains, -inp.carryover);
   atLeastOf(netGain, net, 0);
-  scale(loss, net, -1);
-  atLeastOf(loss, loss, 0);
-  atMost(lossDed, loss, st.capitalLoss / p);
+  if (net.s >= 0 && net.v > 1e-6) {
+    set(loss, 0);
+    set(lossDed, 0);
+  } else {
+    scale(loss, net, -1);
+    atLeastOf(loss, loss, 0);
+    atMost(lossDed, loss, st.capitalLoss / p);
+  }
 
   // Income before Social Security: AGI's other lines.
   addScaled(t, inp.wages[0], inp.wages[1]);
@@ -212,27 +217,44 @@ export function federal(inp: FederalInput, law: TaxLaw, out: FederalResult): Fed
   set(out.ordinaryTaxable, q5.v, q5.s);
 
   // 6. NIIT, the state rate, the additional taxes and FICA.
-  addScaled(t, inp.investmentOrdinary, inp.qualified);
-  addScaled(t, t, netGain);
-  addScaled(t, t, lossDed, -1);
-  atLeastOf(nii, t, 0);
-  plus(t, out.agi, -st.niit.threshold[f] / p);
-  atLeastOf(over, t, 0);
-  smaller(t, nii, over);
-  scale(out.niit, t, st.niit.rate);
+  const niitAt = st.niit.threshold[f] / p;
+  if (out.agi.v < niitAt - 1e-6) {
+    // Under the threshold there is none, whatever the investment income.
+    if (out.agi.s > 0) limit((niitAt - out.agi.v) / out.agi.s);
+    set(out.niit, 0);
+  } else {
+    addScaled(t, inp.investmentOrdinary, inp.qualified);
+    addScaled(t, t, netGain);
+    addScaled(t, t, lossDed, -1);
+    atLeastOf(nii, t, 0);
+    plus(t, out.agi, -niitAt);
+    atLeastOf(over, t, 0);
+    smaller(t, nii, over);
+    scale(out.niit, t, st.niit.rate);
+  }
 
-  atLeastOf(t, before, 0);
-  scale(out.state, t, inp.stateRate);
+  if (inp.stateRate === 0) {
+    set(out.state, 0);
+  } else {
+    atLeastOf(t, before, 0);
+    scale(out.state, t, inp.stateRate);
+  }
 
-  scale(t, inp.early, st.early);
-  addScaled(out.penalty, t, inp.hsaEarly, st.hsa.rate);
+  if (inp.early.v === 0 && inp.early.s === 0 && inp.hsaEarly.v === 0 && inp.hsaEarly.s === 0) {
+    set(out.penalty, 0);
+  } else {
+    scale(t, inp.early, st.early);
+    addScaled(out.penalty, t, inp.hsaEarly, st.hsa.rate);
+  }
 
   set(out.fica, 0);
-  for (let i = 0; i < 2; i++) {
-    const w = inp.wages[i];
-    atMost(u, w, law.wageBase);
-    addScaled(out.fica, out.fica, u, st.fica.socialSecurity);
-    addScaled(out.fica, out.fica, w, st.fica.medicare);
+  if (inp.wages[0].v !== 0 || inp.wages[1].v !== 0) {
+    for (let i = 0; i < 2; i++) {
+      const w = inp.wages[i];
+      atMost(u, w, law.wageBase);
+      addScaled(out.fica, out.fica, u, st.fica.socialSecurity);
+      addScaled(out.fica, out.fica, w, st.fica.medicare);
+    }
   }
 
   addScaled(t, out.incomeTax, out.niit);

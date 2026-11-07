@@ -33,7 +33,7 @@ import { costIn, hasWalk, walkPath, type Shortfall } from './events';
 import { INCOME_KINDS, MONEY_KINDS } from './items';
 import { enginePlan, planYears, projectFrom, startAge, type FiView, type PlanCore } from './plan';
 import type { PlanFigures } from './plan-figures';
-import { canRunOut, plannedWithdrawal, type YearState } from './rules';
+import { plannedWithdrawal, type YearState } from './rules';
 import { DEFAULT_INFLATION } from './saved-plan';
 import { checkPlan, type SimPlan } from './simulate';
 
@@ -109,8 +109,6 @@ export function steadyRun(sim: SimPlan, realReturn: number): { balances: number[
   const years = sim.years;
   const tax = sim.taxRate;
   const inflation = DEFAULT_INFLATION;
-  const healthIn = sim.bridged && !canRunOut(sim.rule.kind) ? sim.bridged.h : null;
-  const atLeast = sim.bridged ? sim.bridged.h : 0;
   const oneOffs = new Array<number>(years).fill(0);
   for (const o of sim.oneOffs) if (o.year < years) oneOffs[o.year] += o.amount;
   const lower = new Array<number>(years).fill(0);
@@ -133,16 +131,14 @@ export function steadyRun(sim: SimPlan, realReturn: number): { balances: number[
       if (y < s.fromYear || (s.toYear !== undefined && y >= s.toYear)) continue;
       income += s.inflationAdjusted ? s.amount : s.amount / (1 + inflation) ** (y - Math.max(0, s.fromYear));
     }
-    const spend = Math.max(planned * (1 - tax), atLeast);
-    const cost = spend + oneOffs[y];
+    const cost = planned * (1 - tax) + oneOffs[y];
     const need = (lower[y] > 0 ? Math.max(0, cost - lower[y]) : cost) - income;
     if (need > 0) {
       const gross = need / (1 - tax);
-      const gives = healthIn === null ? 0 : Math.max(0, spend - healthIn - lower[y]);
-      if ((need - gives) / (1 - tax) > bal * (1 + EPS) + EPS) return { balances, failedYear: y };
+      if (gross > bal * (1 + EPS) + EPS) return { balances, failedYear: y };
       bal = Math.max(0, bal - gross);
     } else if (need < 0) {
-      bal -= sim.bridged ? need / (1 - tax) : need;
+      bal -= need;
     }
     state.lastNominalReturn = bal > 0 ? (1 + realReturn) * (1 + inflation) - 1 : 0;
     state.lastInflation = inflation;

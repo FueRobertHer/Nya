@@ -92,8 +92,6 @@ export type FiProgressProps = {
   planInWalk?: boolean;
   /** D7's switch (the flag 'plan-child-accounts'), as the Plan tab has it. */
   childOut?: boolean;
-  /** The flag 'plan-tax', as the Plan tab has it. */
-  planTax?: boolean;
   /** Every position, for what a detailed plan's buckets hold: read only for a
    *  detailed plan. */
   holdings?: readonly BasisHolding[];
@@ -121,7 +119,7 @@ const NO_HOLDINGS: readonly BasisHolding[] = [];
 const NO_IDS: readonly string[] = [];
 const NO_NOTES: readonly FigureNote[] = [];
 
-export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan, planInputs, planInWalk = false, childOut = false, planTax = false, holdings = NO_HOLDINGS, onAttention }: FiProgressProps) {
+export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan, planInputs, planInWalk = false, childOut = false, holdings = NO_HOLDINGS, onAttention }: FiProgressProps) {
   const own = useMemo(() => planInputs ?? createPlanInputsStore(), [planInputs]);
   const shared = useSharedPlanInputs(own, institutions, childOut);
   const leaveOut = useMemo(() => leftOutOf(childOut, shared.taxFacts.countAnyway), [childOut, shared.taxFacts.countAnyway]);
@@ -133,7 +131,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
   // replaced by its default there too, with the same result.
   const repair = useMemo(() => basePlanOf(stored), [stored]);
   const plan = repair.plan;
-  const detailedOn = planTax && shared.factsKnown && shared.taxFacts.model === 'detailed';
+  const detailedOn = shared.factsKnown && shared.taxFacts.model === 'detailed';
   const inputs = usePlanInputs({
     txns,
     txnNotes,

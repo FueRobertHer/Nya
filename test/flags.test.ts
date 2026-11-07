@@ -53,7 +53,6 @@ describe('the registry', () => {
       lunchflow: 'LUNCHFLOW_ENABLED',
       'brokerage-link': 'PLAID_BROKERAGE_LINK',
       'api-writes': 'API_WRITES_ENABLED',
-      'plan-tax': null,
       'plan-items-in-fi': null,
       'plan-child-accounts': null,
       csp: 'CSP_MODE',
@@ -68,7 +67,6 @@ describe('the registry', () => {
       expect([key, def.about.length > 10 && def.offMeans.length > 10]).toEqual([key, true]);
       if (def.kind === 'release') expect([key, /^\d{4}-\d{2}-\d{2}$/.test(def.removeBy) && Number.isFinite(Date.parse(def.removeBy))]).toEqual([key, true]);
     }
-    expect(flags.flagDef('plan-tax')).toMatchObject({ kind: 'release', removeBy: '2027-06-30', value: 'audience' });
     expect(flags.flagDef('plan-items-in-fi')).toMatchObject({ kind: 'release', removeBy: '2027-04-30', value: 'audience' });
     expect(flags.flagDef('plan-child-accounts')).toMatchObject({ kind: 'release', removeBy: '2027-04-30', value: 'audience' });
   });
@@ -77,7 +75,7 @@ describe('the registry', () => {
     const names = flags.FLAG_KEYS.map((k) => flags.flagDef(k).name);
     for (const [i, name] of names.entries()) expect([flags.FLAG_KEYS[i], name.length > 0 && name.length <= 40 && !/[\u2013\u2014]/.test(name)]).toEqual([flags.FLAG_KEYS[i], true]);
     expect(new Set(names).size).toBe(names.length);
-    expect(flags.flagDef('plan-tax').name).toBe('Detailed tax in the Plan');
+    expect(flags.flagDef('plan-child-accounts').name).toBe('Child’s accounts out of invested assets');
   });
 
   test('defaults reproduce each variable unset, in every environment', () => {
@@ -192,8 +190,8 @@ describe('reading them', () => {
     ];
     for (const [value, w, on] of cases) {
       fake.reset();
-      await store('plan-tax', value);
-      expect([value, w.container, await read.flagOnFresh('plan-tax', w)]).toEqual([value, w.container, on]);
+      await store('plan-child-accounts', value);
+      expect([value, w.container, await read.flagOnFresh('plan-child-accounts', w)]).toEqual([value, w.container, on]);
     }
   });
 
@@ -347,10 +345,10 @@ describe('the cache', () => {
   });
 
   test('a page’s flags: booleans for the audience flags only', async () => {
-    await store('plan-tax', audience('nobody', [C1]));
+    await store('plan-child-accounts', audience('nobody', [C1]));
     await store('sign-in', { ids: ['user_a'], emails: [], updatedAt: AT });
     const sent = await read.clientFlags(who(C1));
-    expect(sent).toEqual({ restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-tax': true, 'plan-items-in-fi': false, 'plan-child-accounts': false });
+    expect(sent).toEqual({ restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-items-in-fi': false, 'plan-child-accounts': true });
   });
 });
 

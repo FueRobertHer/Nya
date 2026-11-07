@@ -155,7 +155,7 @@ export async function seedDemoAccount(ctx: Ctx, userId: string, profile: DemoPro
  *  account: its entry, then the facts. The sandbox accounts are in USD, so
  *  that is the currency of any amount it types (Sam's income). */
 function seedPlan(ctx: Ctx, plan: FirePlanV2) {
-  return saveMain(ctx, plan, holdsAmounts(plan) ? 'USD' : null, factsOf(DEFAULT_PLAN), null, { gated: false });
+  return saveMain(ctx, plan, holdsAmounts(plan) ? 'USD' : null, factsOf(DEFAULT_PLAN), null);
 }
 
 /** What working tax out from the accounts reads, said while the plan stays flat, so
@@ -167,7 +167,6 @@ async function seedDetail(ctx: Ctx, plan: FirePlanV2, basedOn: string, detail: N
   await saveMain(ctx, { ...plan, items }, 'USD', factsOf(plan), basedOn, {
     tax: { ...DEFAULT_TAX_CHOICES, state: detail.state, health: { ...DEFAULT_TAX_CHOICES.health, beforeMedicare: detail.beforeMedicare } },
     household: { to: { ...were, filing: detail.filing }, were },
-    gated: false,
   });
 }
 

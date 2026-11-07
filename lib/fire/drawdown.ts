@@ -4,7 +4,8 @@
 // (lib/fire/tax/year.ts) per plan year from the start age to the plan's end, at
 // the plan's steady return, each from the year before's close. What Drawdown's
 // Year by year shows, what Whole path's years after the stop are, and where the
-// stress test's tax share `t` and health cost `h` come from (lib/fire/bridge.ts).
+// stress test's rate and split come from (lib/fire/taxed-paths.ts, whose years are
+// these on the market's return and inflation instead).
 //
 // THE RULE COVERS SPENDING AND HEALTH. The plan's rule decides each year's
 // spending as the engine's does (lib/fire/path.ts steadyRun): `planned * (1 - t)`,
@@ -20,8 +21,6 @@
 // `t` and `h`, by when each dollar is paid, discounted at the plan's return:
 //   t = pv(tax) / pv(living + health + one-offs + tax)
 //   h = pv(health) / pv(1)
-// One-offs are in t's denominator because the stress test grosses them up at `t`
-// too, so the two come out the same on a steady market (test/drawdown-bridge).
 // t stops at the first year that can't pay: after it the money is gone, and what
 // income still pays, at little tax, would thin it.
 //
