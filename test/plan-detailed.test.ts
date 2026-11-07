@@ -2,7 +2,7 @@
 // knows made into the drawdown's input, the one flow every caller takes, and what the
 // year's spending holds of the category or tag that already pays for coverage.
 
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import type { BucketsToday } from '@/lib/fire/buckets-today';
 import { trailingFlows } from '@/lib/fire/inputs';
 import type { PlanItem } from '@/lib/fire/items';
@@ -12,6 +12,10 @@ import { planOf, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { runSearchJob, type SearchJob, type SearchResult } from '@/lib/fire/search-job';
 import { DEFAULT_TAX_CHOICES, type TaxChoices } from '@/lib/fire/tax-choices';
 import { DEFAULT_TAX_FACTS, type TaxFacts } from '@/lib/fire/tax-facts';
+import * as lawTables from '@/lib/fire/tax/law';
+import { LAW_2026 } from '@/lib/fire/tax/law/2026';
+import { LAW_2027 } from '@/lib/fire/tax/law/2027';
+import type { TaxLaw } from '@/lib/fire/tax/law/types';
 import type { Txn } from '@/lib/transactions';
 import { createDetailedFigures, detailedInput, measuredYield } from '@/components/plan-detailed';
 import { ON } from './plan-gen';
@@ -41,6 +45,43 @@ describe('what the page knows, as the drawdown’s input', () => {
     expect(made.inflation).toBe(DEFAULT_TAX_CHOICES.inflation);
     expect(made.health.growth).toBe(0.021);
     expect(made.health.coverage).toBeNull();
+  });
+
+  describe('health growth’s defaults are the year’s law’s', () => {
+    // 2027's table with every part in and CMS's next figures, as the yearly steps leave it.
+    const NEXT: TaxLaw = { ...LAW_2026, ...LAW_2027, healthGrowth: { overPrices: 0.03, incomeOverPrices: 0.015 } };
+    const { lawFor } = lawTables;
+    const withNext = (run: () => void) => {
+      const spy = spyOn(lawTables, 'lawFor').mockImplementation((year) => lawFor(year, [LAW_2026, NEXT]));
+      try {
+        run();
+      } finally {
+        spy.mockRestore();
+      }
+    };
+
+    test('today’s figures don’t move', () => {
+      expect(input({ tax: null }).health).toMatchObject({ growth: 0.021, incomeGrowth: 0.011 });
+    });
+
+    test('a year’s own figures reach the plan once its table is in', () => {
+      withNext(() => {
+        const made = input({ tax: null, calendarYear: 2027 });
+        expect(made.lawYear).toEqual({ year: 2027, behind: false });
+        expect(made.health).toMatchObject({ growth: 0.03, incomeGrowth: 0.015 });
+        // The year before keeps its own.
+        expect(input({ tax: null, calendarYear: 2026 }).health).toMatchObject({ growth: 0.021, incomeGrowth: 0.011 });
+        // A year whose table isn't in yet takes them from the law it falls back on.
+        const behind = input({ tax: null, calendarYear: 2028 });
+        expect(behind.lawYear).toEqual({ year: 2027, behind: true });
+        expect(behind.health).toMatchObject({ growth: 0.03, incomeGrowth: 0.015 });
+      });
+    });
+
+    test('a pace you typed stays yours, and income still grows at the law’s', () => {
+      const tax: TaxChoices = { ...DEFAULT_TAX_CHOICES, health: { ...DEFAULT_TAX_CHOICES.health, growth: 0.01 } };
+      withNext(() => expect(input({ tax, calendarYear: 2027 }).health).toMatchObject({ growth: 0.01, incomeGrowth: 0.015 }));
+    });
   });
 
   test('a state with no income tax has no rate, whatever was typed', () => {

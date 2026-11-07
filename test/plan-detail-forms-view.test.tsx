@@ -1,4 +1,7 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import * as lawTables from '@/lib/fire/tax/law';
+import { LAW_2026 } from '@/lib/fire/tax/law/2026';
+import type { TaxLaw } from '@/lib/fire/tax/law/types';
 import { TEST_CONTAINER } from './fake-redis';
 import { planPage } from './plan-page';
 
@@ -7,7 +10,7 @@ import { planPage } from './plan-page';
 // to itself.
 
 const page = await planPage();
-const { PLAN, seedPlan, seedCopy, stored, render, press, button, field, fill, pick, openCopy, calls, settle } = page;
+const { PLAN, answers, seedPlan, seedCopy, stored, render, press, button, closeOf, field, fill, pick, openCopy, calls, settle } = page;
 type Tab = Awaited<ReturnType<typeof render>>;
 
 async function flagged() {
@@ -380,6 +383,78 @@ describe('Household', () => {
     expect((await read()).tax.state).toBeNull();
     expect((await stored()).byName['Move']).toBeDefined();
     await tab.unmount();
+  }, 30_000);
+});
+
+describe('the health growth default', () => {
+  /** A year's table with CMS's next figures in it. 0.022 is 2.1999999999999997 points until it is rounded. */
+  const OWN: TaxLaw = { ...LAW_2026, healthGrowth: { overPrices: 0.022, incomeOverPrices: 0.015 } };
+  /** The page on `law`: its year is the real clock's, and a later year's table would say other figures. */
+  const onLaw = async (law: TaxLaw, run: () => Promise<void>) => {
+    const spy = spyOn(lawTables, 'lawFor').mockReturnValue({ law, behind: false });
+    try {
+      await run();
+    } finally {
+      spy.mockRestore();
+    }
+  };
+  /** Every place on the page that says the default. */
+  const says = async (tab: Tab) => {
+    const row = subOf(tab, 'Assumptions')?.match(/health costs .+ inflation/)?.[0];
+    const empty = field(await sheet(tab, 'Assumptions'), 'Health costs rise')?.getAttribute('placeholder');
+    await press(closeOf(tab.dialog()!));
+    const coverage = (await sheet(tab, 'Health coverage')).textContent?.match(/Empty uses the default, [\d.]+ points/)?.[0];
+    await press(closeOf(tab.dialog()!));
+    const tax = (await sheet(tab, 'Tax after you stop')).textContent?.match(/health costs rising [\d.]+ points? a year faster than prices/)?.[0];
+    await press(closeOf(tab.dialog()!));
+    return { row, empty, coverage, tax };
+  };
+
+  test('today’s figure doesn’t move', async () => {
+    await onLaw(LAW_2026, async () => {
+      const tab = await optedIn();
+      expect(await says(tab)).toEqual({
+        row: 'health costs 2.1 points above inflation',
+        empty: '2.1',
+        coverage: 'Empty uses the default, 2.1 points',
+        tax: 'health costs rising 2.1 points a year faster than prices',
+      });
+      await tab.unmount();
+    });
+  }, 30_000);
+
+  test('a year’s own figure reaches every place, from the law the page uses', async () => {
+    await onLaw(OWN, async () => {
+      const tab = await optedIn();
+      expect(await says(tab)).toEqual({
+        row: 'health costs 2.2 points above inflation',
+        empty: '2.2',
+        coverage: 'Empty uses the default, 2.2 points',
+        tax: 'health costs rising 2.2 points a year faster than prices',
+      });
+      await tab.unmount();
+    });
+  }, 30_000);
+
+  test('a plan whose tax can’t be worked out says it on its flat words too', async () => {
+    await (await optedIn()).unmount();
+    // A reader checks only a value's shape, so a later version can write what this one wouldn't.
+    const { GET } = await import('@/app/api/plan-inputs/route');
+    answers['GET /api/plan-inputs'] = async () => {
+      const body = await (await GET(new Request('http://nya.test/api/plan-inputs'))).json();
+      return Response.json({ ...body, tax: { ...body.tax, taxableYield: 5 } });
+    };
+    const rowOn = (law: TaxLaw, words: string) =>
+      onLaw(law, async () => {
+        const tab = await render({ planTax: true });
+        await pick(tab.container, 'Your path');
+        // Words only the flat row has, so this is the plan the test is about.
+        expect(subOf(tab, 'Assumptions')).toContain('growth after inflation until FI');
+        expect(subOf(tab, 'Assumptions')).toContain(words);
+        await tab.unmount();
+      });
+    await rowOn(LAW_2026, 'health costs 2.1 points above inflation');
+    await rowOn(OWN, 'health costs 2.2 points above inflation');
   }, 30_000);
 });
 
