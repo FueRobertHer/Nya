@@ -49,8 +49,10 @@
 // Imports nothing that touches storage: the Plan tab runs this in the browser.
 
 import { monthLabel, yearFactors, type Market } from './market';
-import { canRunOut, plannedWithdrawal, withRate, type RuleSpec, type YearState } from './rules';
+import { plannedWithdrawal, withRate, type RuleSpec, type YearState } from './rules';
 import { seededRandom } from './random';
+import type { PlanItem } from './items';
+import type { SimTax } from './taxed-paths';
 
 export type Allocation = { stocks: number; bonds: number; cash: number };
 export type Rebalance = 'annual' | 'monthly' | 'none';
@@ -99,8 +101,9 @@ export type ConditionalItem = {
   once: { amount: number; after: number }[];
   /** Comes in once, the year it starts. */
   moneyIn: number;
-  /** A year's income, from its start to its end. */
-  income: { amount: number; inflationAdjusted: boolean } | null;
+  /** A year's income, from its start to its end. With worked-out tax the amount is
+   *  before tax and it says what it is (lib/fire/taxed-paths.ts). */
+  income: { amount: number; inflationAdjusted: boolean; kind?: PlanItem['kind']; owner?: PlanItem['owner']; beforeTax?: boolean } | null;
   /** A year's cost from its start to its end, or below zero, a lower cost. */
   yearly: number;
 };
@@ -132,12 +135,10 @@ export type SimPlan = {
   /** Lower costs (life events in a scenario, lib/fire/events.ts); absent for
    *  the Plan's own plans, which then run exactly as they always have. */
   lowerSpending?: LowerSpending[];
-  /** The drawdown's plan (lib/fire/bridge.ts). A year with money to spare invests it
-   *  divided by `1 - taxRate`, since its income went in at `1 - taxRate` too. A rule
-   *  that can't run out gives up living spending, what it pays over `h`, the yearly
-   *  health cost it holds, before a year comes up short, as the drawdown's year does.
-   *  Absent otherwise: the rest of a year's money is invested as it is. */
-  bridged?: { h: number };
+  /** Each year's tax worked out instead of the flat rate (lib/fire/taxed-paths.ts):
+   *  `taxRate` and `rule` are then the drawdown's, and `income` is empty, since this
+   *  holds it by kind and owner. Absent: the flat plan. */
+  tax?: SimTax;
   /** Items that wait on a run's own balance; absent for every plan but one
    *  starting from what you'd have at your stop age, and then they cost nothing. */
   conditional?: ConditionalFlows;
@@ -163,6 +164,13 @@ export const DEFAULT_SEED = 1;
 /** Five-year blocks: long enough to keep a bear market and its recovery
  *  together, short enough that a run mixes many parts of the history. */
 export const BLOCK_MONTHS = 60;
+
+/** A grid cell with each year's tax runs so many of a Monte Carlo job's runs (the first
+ *  ones, on the same seed), and every so many months of a historical job's starts: a
+ *  cell is many runs and the grid up to 30 cells, against the 4 seconds a phone has
+ *  for it (the tax plan's Overview). The answer above the grid runs them all. */
+export const TAXED_GRID_RUNS = 250;
+export const TAXED_GRID_STEP = 6;
 
 /** How many of the worst starts a result lists. */
 export const WORST_COUNT = 10;
@@ -214,7 +222,15 @@ export type SimResult = {
   blockMonths: number | null;
 };
 
-export type MonteCarloOptions = { runs?: number; seed?: number; blockMonths?: number };
+export type MonteCarloOptions = {
+  runs?: number;
+  seed?: number;
+  blockMonths?: number;
+  /** Runs a plan with `tax`, handed in since this file loads in Home's chunk and the
+   *  year doesn't (lib/fire/jobs.ts). Without it such a plan is refused, so it never
+   *  runs flat by accident. */
+  taxed?: TaxedPaths;
+};
 
 function fail(message: string): never {
   throw new RangeError(message);
@@ -284,7 +300,7 @@ type Growth = {
 // the success grid runs twenty plans that differ only in rate and length.
 let lastGrowth: { market: Market; key: string; tables: Growth } | null = null;
 
-function growthTables(plan: SimPlan, market: Market): Growth {
+export function growthTables(plan: SimPlan, market: Market): Growth {
   const { stocks: s, bonds: b, cash: c } = plan.allocation;
   const key = `${s},${b},${c},${plan.rebalance},${plan.cashRealReturn}`;
   if (lastGrowth && lastGrowth.market === market && lastGrowth.key === key) return lastGrowth.tables;
@@ -311,13 +327,13 @@ function buildGrowthTables(plan: SimPlan, market: Market): Growth {
 }
 
 /** Which months each path's years start in. */
-type PathSource = {
+export type PathSource = {
   count: number;
   monthAt(path: number, year: number): number;
   label(path: number): string | null;
 };
 
-type RunOutput = {
+export type RunOutput = {
   /** paths x (years + 1), when kept. */
   balances: Float64Array | null;
   /** paths x years, when kept. */
@@ -330,17 +346,20 @@ type RunOutput = {
   firedYear: Int32Array | null;
 };
 
+export type TaxedPaths = (plan: SimPlan, market: Market, source: PathSource, keep: boolean, watch: number | null) => RunOutput;
+
 const EPS = 1e-9;
 
-function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boolean, watch: number | null = null): RunOutput {
+function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boolean, opts: MonteCarloOptions, watch: number | null = null): RunOutput {
   checkPlan(plan);
+  if (plan.tax) {
+    if (!opts.taxed) fail('a plan with worked-out tax needs its tax year to run');
+    return opts.taxed(plan, market, source, keep, watch);
+  }
   const years = plan.years;
   const count = source.count;
   const g = growthTables(plan, market);
   const tax = plan.taxRate;
-  const bridged = plan.bridged !== undefined;
-  const healthIn = plan.bridged && !canRunOut(plan.rule.kind) ? plan.bridged.h : null;
-  const atLeast = plan.bridged ? plan.bridged.h : 0;
   const afterFee = 1 - plan.fee;
   const w = plan.allocation;
   const drift = plan.rebalance === 'none';
@@ -411,7 +430,7 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
       const planned = Number.isFinite(raw) && raw > 0 ? raw : 0;
       if (y === 0) initial = planned;
       previous = planned;
-      const spend = Math.max(planned * (1 - tax), atLeast);
+      const spend = planned * (1 - tax);
       if (y === 0 && p === 0) out.firstYearSpending = spend;
 
       let income = 0;
@@ -441,8 +460,7 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
       const need = (less > 0 ? Math.max(0, cost - less) : cost) - income;
       if (need > 0) {
         const gross = need / (1 - tax);
-        const gives = healthIn === null ? 0 : Math.max(0, spend - healthIn - less);
-        if ((need - gives) / (1 - tax) > bal * (1 + EPS) + EPS) {
+        if (gross > bal * (1 + EPS) + EPS) {
           failed = y;
           break;
         }
@@ -455,7 +473,7 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
         }
         bal = left;
       } else if (need < 0) {
-        const spare = bridged ? -need / (1 - tax) : -need;
+        const spare = -need;
         if (drift) {
           if (bal > 0) {
             const k = (bal + spare) / bal;
@@ -612,10 +630,11 @@ export function historicalStarts(market: Market, years: number): number {
   return Math.max(0, market.months - 12 * years + 1);
 }
 
-function historicalSource(market: Market, years: number): PathSource {
-  const count = historicalStarts(market, years);
-  if (count < 1) fail(`the history is too short for a ${years}-year plan`);
-  return { count, monthAt: (p, y) => p + 12 * y, label: (p) => monthLabel(market, p) };
+/** Every `step`th of those starts, from the first. */
+function historicalSource(market: Market, years: number, step = 1): PathSource {
+  const starts = historicalStarts(market, years);
+  if (starts < 1) fail(`the history is too short for a ${years}-year plan`);
+  return { count: Math.ceil(starts / step), monthAt: (p, y) => p * step + 12 * y, label: (p) => monthLabel(market, p * step) };
 }
 
 function monteCarloSource(market: Market, opts: MonteCarloOptions): PathSource & { runs: number; seed: number; blockMonths: number } {
@@ -656,9 +675,9 @@ function monteCarloSource(market: Market, opts: MonteCarloOptions): PathSource &
 }
 
 /** The plan started in every historical month that leaves its whole length inside the data. */
-export function historicalCycles(plan: SimPlan, market: Market): SimResult {
+export function historicalCycles(plan: SimPlan, market: Market, opts: MonteCarloOptions = {}): SimResult {
   const source = historicalSource(market, plan.years);
-  const run = runPaths(plan, market, source, true);
+  const run = runPaths(plan, market, source, true, opts);
   return summarize('historical', plan, source, run, {
     firstStart: source.label(0),
     lastStart: source.label(source.count - 1),
@@ -671,7 +690,7 @@ export function historicalCycles(plan: SimPlan, market: Market): SimResult {
 /** The plan run through resampled history: see the top of this file. */
 export function monteCarlo(plan: SimPlan, market: Market, opts: MonteCarloOptions = {}): SimResult {
   const source = monteCarloSource(market, opts);
-  const run = runPaths(plan, market, source, true);
+  const run = runPaths(plan, market, source, true, opts);
   return summarize('monte-carlo', plan, source, run, {
     firstStart: null,
     lastStart: null,
@@ -683,7 +702,7 @@ export function monteCarlo(plan: SimPlan, market: Market, opts: MonteCarloOption
 
 /** Either method by name. */
 export function simulate(method: Method, plan: SimPlan, market: Market, opts: MonteCarloOptions = {}): SimResult {
-  return method === 'historical' ? historicalCycles(plan, market) : monteCarlo(plan, market, opts);
+  return method === 'historical' ? historicalCycles(plan, market, opts) : monteCarlo(plan, market, opts);
 }
 
 /** How an item that waits on a run's own balance falls across the runs. */
@@ -700,7 +719,7 @@ export type FiredResult = {
 export function firedAcross(method: Method, plan: SimPlan, market: Market, trigger: number, offset: number, opts: MonteCarloOptions = {}): FiredResult {
   if (!plan.conditional || trigger < 0 || trigger >= plan.conditional.triggers.length) fail('no such trigger');
   const source = method === 'historical' ? historicalSource(market, plan.years) : monteCarloSource(market, opts);
-  const years = (runPaths(plan, market, source, false, trigger).firedYear as Int32Array).filter((y) => y >= 0 && y + offset < plan.years).map((y) => y + offset);
+  const years = (runPaths(plan, market, source, false, opts, trigger).firedYear as Int32Array).filter((y) => y >= 0 && y + offset < plan.years).map((y) => y + offset);
   years.sort();
   return { runs: source.count, fired: years.length, byHalf: years.length > 0 ? years[Math.ceil(years.length / 2) - 1] : null };
 }
@@ -727,7 +746,8 @@ export type GridCell = {
  * a shorter length may never reach) and changes only the rule's rate and the
  * plan's length. A rule without a rate (VPW) gets one cell per length, with
  * `rate` null. Monte Carlo cells share a seed, so every cell of a column is
- * judged on the same runs.
+ * judged on the same runs. With each year's tax a cell runs a sample
+ * (TAXED_GRID_RUNS, TAXED_GRID_STEP), and `paths` says how many.
  */
 export function successGrid(
   method: Method,
@@ -739,7 +759,7 @@ export function successGrid(
 ): GridCell[] {
   const cells: GridCell[] = [];
   for (const years of horizons) {
-    const source = method === 'historical' ? historicalSource(market, years) : monteCarloSource(market, opts);
+    const source = method === 'historical' ? historicalSource(market, years, plan.tax ? TAXED_GRID_STEP : 1) : monteCarloSource(market, plan.tax ? { ...opts, runs: TAXED_GRID_RUNS } : opts);
     const span = {
       firstStart: method === 'historical' ? source.label(0) : null,
       lastStart: method === 'historical' ? source.label(source.count - 1) : null,
@@ -748,7 +768,7 @@ export function successGrid(
       ? rates.map((rate) => ({ rate, rule: withRate(plan.rule, rate) as RuleSpec }))
       : [{ rate: null, rule: plan.rule }];
     for (const { rate, rule } of variants) {
-      const run = runPaths({ ...plan, years, rule }, market, source, false);
+      const run = runPaths({ ...plan, years, rule }, market, source, false, opts);
       let lasted = 0;
       let lowest = Infinity;
       for (let p = 0; p < source.count; p++) {

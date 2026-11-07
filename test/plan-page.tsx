@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, expect, mock } from 'bun:test';
 import { FakeRedis, storageMock, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { installDom, trackRoots, click, type, fakeClock, FakeElement } from './mini-dom';
 import { simulateOnPage } from './plan-on-page';
+import { mockForFile } from './scoped-mock';
 
 // The Plan tab on the page for the suites of the tax plan's E2 (the Timeline,
 // the item sheet, Household and the FI number): rendered and used as a person
@@ -25,6 +26,28 @@ export async function planPage() {
   }));
   const fake = new FakeRedis({ deserialize: true });
   mock.module('@/lib/storage', () => storageMock(fake));
+
+  // A detailed plan runs real years on the page, its answer and up to 30 cells of the
+  // grid a render, about a second here, in tests about something else and a suite that
+  // flakes when slow. So its answer runs on the history's first 70 years, the same code
+  // on fewer starts (289, not 1,290, for 46 years), and its cells at the flat rate,
+  // unless a test asks for them. A flat plan's jobs run as ever.
+  let realGrid = false;
+  const jobs = { ...(await import('@/lib/fire/jobs')) };
+  const { makeMarket } = await import('@/lib/fire/market');
+  const whole = (await import('@/lib/fire/us-market')).usMarket();
+  const MONTHS = 70 * 12;
+  const shorter = makeMarket(whole.firstMonth, whole.stocks.subarray(0, MONTHS), whole.bonds.subarray(0, MONTHS), whole.inflation.subarray(0, MONTHS));
+  await mockForFile('@/lib/fire/jobs', () => ({
+    ...jobs,
+    runPlanJob: (job: import('@/lib/fire/jobs').PlanJob, market: import('@/lib/fire/market').Market) => {
+      if (!job.plan.tax) return jobs.runPlanJob(job, market);
+      if (job.kind !== 'grid-cell' || realGrid) return jobs.runPlanJob(job, shorter);
+      const { tax: _, ...flat } = job.plan;
+      return jobs.runPlanJob({ ...job, plan: flat }, market);
+    },
+  }));
+  afterEach(() => void (realGrid = false));
 
   const dom = installDom();
   const realFetch = globalThis.fetch;
@@ -155,13 +178,15 @@ export async function planPage() {
   };
   const titleOf = (e: FakeElement) => e.findAll((t) => classOf(t).includes('list-row-title'))[0]?.textContent ?? null;
 
+  /** A detailed plan's years wait for the balances: a test whose years should run says they are in. */
+  const WITH_BALANCES = { balancesAsOf: '2026-01-01T12:00:00.000Z' };
+
   /** The Plan tab, with what a test looks for. */
   async function render(props: Partial<PlanTabProps> = {}) {
     const container = dom.document.createElement('div');
     dom.document.body.appendChild(container);
     const root = createRoot(container as unknown as Element);
-    // A detailed plan's years wait for the balances, so with the flag they are in, unless a test says not.
-    const all: PlanTabProps = { txns: [], txnsLoading: false, txnNotes: [], institutions: [], balancesAsOf: props.planTax ? '2026-01-01T12:00:00.000Z' : null, currency: 'USD', holdings: [], ...props };
+    const all: PlanTabProps = { txns: [], txnsLoading: false, txnNotes: [], institutions: [], balancesAsOf: null, currency: 'USD', holdings: [], ...props };
     await act(async () => root.render(<PlanTab {...all} />));
     await settle(100);
     const find = (pred: (e: FakeElement) => boolean) => container.findAll(pred)[0] ?? null;
@@ -235,5 +260,5 @@ export async function planPage() {
   /** What the preview says once typing has rested. */
   const rest = () => settle(250);
 
-  return { dom, act, PLAN, fake, answers, settle, rest, seedPlan, seedCopy, stored, writes, classOf, render, press, button, closeOf, field, fill, choice, pick, openCopy, addTemplate, calls: () => calls, click, type };
+  return { dom, act, PLAN, WITH_BALANCES, askForRealGrid: () => void (realGrid = true), fake, answers, settle, rest, seedPlan, seedCopy, stored, writes, classOf, render, press, button, closeOf, field, fill, choice, pick, openCopy, addTemplate, calls: () => calls, click, type };
 }

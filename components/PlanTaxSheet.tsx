@@ -76,7 +76,7 @@ export function PlanTaxSheet({
       )}
       {differs && (
         <p className="helper">
-          <Masked>{`This is for a plan that starts from your ${ownNumber ? 'worked-out ' : ''}FI number. Will it last? and the years on Drawdown start from ${money(startBalance)}, so their tax comes to ${pct(start.t, 1)}.`}</Masked>
+          <Masked>{`This is for a plan that starts from your ${ownNumber ? 'worked-out ' : ''}FI number. The years on Drawdown start from ${money(startBalance)}, so their tax comes to ${pct(start.t, 1)}.`}</Masked>
         </p>
       )}
       {shares && converts && <p className="helper">Conversions pay tax and can raise health costs early, when costs count most, so your FI number can rise even when lifetime costs fall.</p>}

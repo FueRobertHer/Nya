@@ -114,15 +114,6 @@ export const FLAGS = {
     variable: 'API_WRITES_ENABLED',
     offMeans: 'Every token reads only: a token made to write is refused each write, and new ones can only read.',
   },
-  'plan-tax': {
-    name: 'Detailed tax in the Plan',
-    about: 'The Plan’s detailed US tax model: the opt-in, and plans saved as detailed.',
-    kind: 'release',
-    removeBy: '2027-06-30',
-    value: 'audience',
-    defaults: NOBODY,
-    offMeans: 'A detailed plan says it uses the flat rate, and a plan can’t be saved as detailed.',
-  },
   'plan-items-in-fi': {
     name: 'One-offs and income in the FI date',
     about: 'Counts a plan’s one-off costs and income in the walk to its FI date, in Home’s FI line and in a saved plan’s Progress line.',

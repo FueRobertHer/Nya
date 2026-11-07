@@ -780,6 +780,34 @@ describe('the grid', () => {
     expect(html).toContain("the lowest year&#x27;s spending was 42% of the first year&#x27;s");
   });
 
+  test('your plan’s cell can read the answer above: the others and the column heads stay the sample’s', () => {
+    const html = renderToStaticMarkup(
+      <PlanGrid
+        cells={[cell(0.04, 30, 0.83), cell(0.05, 30, 0.7)]}
+        rates={[0.04, 0.05]}
+        horizons={[30]}
+        current={{ rate: 0.04, years: 30 }}
+        ownCell={cell(0.04, 30, 0.814)}
+        flexible={false}
+        pathsNoun="starts"
+      />
+    );
+    expect(html).toContain('4% for 30 years: 81.4% of 1,470 starts lasted');
+    expect(html).not.toContain('83%');
+    expect(html).toContain('5% for 30 years: 70% of 1,470 starts lasted');
+  });
+
+  test('a sampled card says so, by its method, and Which starts says every sixth', () => {
+    const p = plan({ horizon: 30 });
+    const e = enginePlan(p, fiView(p, measured)) as { sim: any };
+    const cells = successGrid('historical', e.sim, usMarket(), [0.04], [30]);
+    const card = (q: typeof p) => text(renderToStaticMarkup(<GridCard plan={q} cells={cells} sampled rates={[0.04]} years={[30]} current={{ rate: 0.04, years: 30 }} startBalance={e.sim.startBalance} money={money} />));
+    const history = card({ ...p, method: 'historical' });
+    expect(history).toContain('With each year’s tax, every sixth start, to keep this quick, so a cell can differ a little from the answer above.');
+    expect(history).toContain('Each length starts every sixth month');
+    expect(card({ ...p, method: 'monte-carlo' })).toContain('With each year’s tax, 250 runs, to keep this quick');
+  });
+
   test('the card works the grid out for the plan, with each column’s starts named', () => {
     const p = plan({ horizon: 30 });
     const e = enginePlan(p, fiView(p, measured)) as { sim: any };

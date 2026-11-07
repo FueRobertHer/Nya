@@ -6,7 +6,8 @@ import { detailWork, type DetailedInput } from '@/lib/fire/plan-detail';
 import { planFigures } from '@/lib/fire/plan-figures';
 import { planOf, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { seededRandom } from '@/lib/fire/random';
-import { monteCarlo, type SimPlan } from '@/lib/fire/simulate';
+import { historicalCycles, monteCarlo, type SimPlan } from '@/lib/fire/simulate';
+import { taxedPaths, type SimTax } from '@/lib/fire/taxed-paths';
 import { LAW_2026 } from '@/lib/fire/tax/law/2026';
 import { NO_STRATEGY, type Strategy } from '@/lib/fire/tax/rules';
 import { newPersonYear, newYearResult, runYear, type YearInput, type YearResult } from '@/lib/fire/tax/year';
@@ -15,12 +16,12 @@ import { usMarket } from '@/lib/fire/us-market';
 import { ON } from './plan-gen';
 
 // What the year costs: the year in a 5,000 by 40 loop, as a Monte Carlo job
-// with taxes would run it, timed against today's flat Monte Carlo job of the
-// same size on the same machine, so a slow runner slows both. A job with
-// taxes is meant to take under 1 s on a mid-range phone; this test only
-// measures. The bound guards against the year's work growing (a solver that
-// walks every cell, say), not against a slow machine: a ratio of 200, about
-// three times the 60 to 66 measured. Set TAX_TIMING=1 to print the figures,
+// with taxes runs it, timed against the flat Monte Carlo job of the same size on
+// the same machine, so a slow runner slows both. This test only measures. The
+// bound guards against the year's work growing (a solver that walks every cell,
+// say), not against a slow machine: a ratio of 60, about three times the 19
+// measured. And the jobs themselves, by the same rule, which the tax plan's
+// Overview sets against a phone's budget. Set TAX_TIMING=1 to print the figures,
 // which docs/architecture.md records.
 //
 // The workload: a couple, 50 and 48 in Nevada, from 50 to 89. On the ACA to
@@ -143,7 +144,7 @@ const flatPlan: SimPlan = {
 };
 
 describe('the cost of the year', () => {
-  test('5,000 runs by 40 years of the year cost under 200 times the flat Monte Carlo job of the same size', () => {
+  test('5,000 runs by 40 years of the year cost under 60 times the flat Monte Carlo job of the same size', () => {
     const market = usMarket();
     const flat = readMs(() => monteCarlo(flatPlan, market));
     const saved: YearInput['people'][] = new Array(RUNS);
@@ -166,9 +167,63 @@ describe('the cost of the year', () => {
         usPerMedicareYear: +((medicare * 1000) / (RUNS * (YEARS - ACA_YEARS))).toFixed(2),
       }));
     }
-    expect(total / flat).toBeLessThan(200);
+    expect(total / flat).toBeLessThan(60);
     expect(total).toBeLessThan(20_000);
   }, 120_000);
+
+  // The jobs as the tab runs them: the household above from 50, a rate and the steady
+  // years' `t` and `h` as it would have them, no conversions and the ACA rule. Against
+  // the flat job of the same size: about 28 and 60 for Monte Carlo, on a fifth of the runs.
+  test('a job with each year’s tax stays the same order, with and without conversions', () => {
+    const market = usMarket();
+    const taxOf = (strategy: Strategy): SimTax => ({
+      startAge: 50,
+      today: { age: 41, partnerAge: 40, calendarYear: 2026 },
+      filing: 'joint',
+      dependents: [],
+      rmdAges: { you: 75, partner: 75 },
+      slots: [
+        { owner: 'you', bucket: 'taxable', value: 415_664, basis: 224_828, reachable: 0 },
+        { owner: 'you', bucket: 'tax-deferred', value: 823_116, basis: 0, reachable: 0 },
+        { owner: 'you', bucket: 'roth', value: 196_805, basis: 0, reachable: 98_646 },
+        { owner: 'you', bucket: 'hsa', value: 38_783, basis: 0, reachable: 0 },
+      ],
+      share457: { you: 0, partner: 0 },
+      inflation: 0.03,
+      taxableYield: 0.02,
+      income: [
+        { amount: 28_500, fromYear: 17, inflationAdjusted: true, kind: 'social-security', owner: 'you', beforeTax: true, gross: 30_000 },
+        { amount: 17_000, fromYear: 18, inflationAdjusted: true, kind: 'social-security', owner: 'partner', beforeTax: true, gross: 18_000 },
+      ],
+      health: { coverage: { kind: 'aca', adult: 11_000, quotedAge: 50, child: null }, medicareExtra: 0, meetsRule: [], countMedicaid: false, acaLaw: '2026', growth: 0.021, incomeGrowth: 0.011 },
+      state: 'NV',
+      stateRate: 0,
+      law: LAW_2026,
+      strategy,
+      t: 0.05,
+      h: 8_000,
+    });
+    const sim = (strategy: Strategy): SimPlan => ({
+      ...flatPlan,
+      startBalance: 1_474_368,
+      rule: { kind: 'constant', rate: 0.052 },
+      income: [],
+      tax: taxOf(strategy),
+    });
+    const WITH_TAX = { taxed: taxedPaths };
+    const SOME = { runs: 1_000 };
+    const flat = readMs(() => monteCarlo(flatPlan, market, SOME));
+    const none = sim(NO_STRATEGY);
+    const aca = sim({ order: 'standard', conversions: { kind: 'aca-then-bracket', top: 0.12 }, convertUntil: null });
+    const mcNone = readMs(() => monteCarlo(none, market, { ...SOME, ...WITH_TAX }));
+    const mcAca = readMs(() => monteCarlo(aca, market, { ...SOME, ...WITH_TAX }));
+    const historicalNone = readMs(() => historicalCycles(none, market, WITH_TAX));
+    if (process.env.TAX_TIMING) {
+      console.log(JSON.stringify({ flatMs: +flat.toFixed(1), monteCarlo1000NoneMs: +mcNone.toFixed(1), monteCarlo1000AcaMs: +mcAca.toFixed(1), historicalNoneMs: +historicalNone.toFixed(1), ratios: [+(mcNone / flat).toFixed(1), +(mcAca / flat).toFixed(1)] }));
+    }
+    expect(mcNone / flat).toBeLessThan(90);
+    expect(mcAca / flat).toBeLessThan(180);
+  }, 60_000);
 
   // One drawdown is what a sheet's preview, the search's candidates and each
   // plan in Compare wait on: 46 years, a Medicaid and ACA stretch, the cells
@@ -195,7 +250,7 @@ describe('the cost of the year', () => {
     expect(ms / 50).toBeLessThan(40);
 
     // A rule that fills a ceiling searches around each year it converts,
-    // which G's grid and T5's paths will multiply. It must stay the same order.
+    // which G's grid and the stress test's paths multiply. It must stay the same order.
     let converted = 0;
     const filling = readMs(() => {
       for (let i = 0; i < 50; i++) {

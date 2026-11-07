@@ -8,7 +8,7 @@ import { planPage } from './plan-page';
 // saving, Try it in a copy, Also change it in, and Remove.
 
 const page = await planPage();
-const { dom, PLAN, settle, rest, seedPlan, seedCopy, stored, writes, classOf, render, press, button, fill, field, pick, choice, addTemplate, openCopy } = page;
+const { dom, PLAN, WITH_BALANCES, settle, rest, seedPlan, seedCopy, stored, writes, classOf, render, press, button, fill, field, pick, choice, addTemplate, openCopy } = page;
 const { ITEM_TEMPLATES, templateHelp } = await import('@/components/plan-items');
 const { itemFromExpense, itemFromIncome } = await import('@/lib/fire/items');
 type PlanItem = import('@/lib/fire/items').PlanItem;
@@ -191,10 +191,8 @@ describe('what is possible', () => {
   }, 20_000);
 
   test('with a start from what you would have then, a later milestone says where it falls across the runs', async () => {
-    const { flagsStore } = await import('@/lib/flag-store');
-    await flagsStore.update('plan-tax', async () => ({ on: 'nobody', containers: [TEST_CONTAINER], updatedAt: new Date().toISOString() }) as never, TEST_CONTAINER);
     await seedPlan({ ...PLAN, start: 'at-stop', items: [ROOF] });
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     const sheet = await addTemplate(tab, 'A change in spending');
     await fill(sheet, 'Change a year', '4000');
     await press(tab.sheetRow('Starts'));

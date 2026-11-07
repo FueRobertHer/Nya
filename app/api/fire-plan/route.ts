@@ -22,7 +22,7 @@ import { CURRENCY_CODE, isTypedAmounts } from '@/lib/fire/plan-currency';
 // age back) and `based_on` (the stamp the page loaded, null before your plan
 // is saved). A body without `based_on` or `facts_were` is a page from before
 // plans were copies, still open: refused, so it loads again. The other plans
-// are saved through /api/plans. Behind `plan-tax`, and only when they changed:
+// are saved through /api/plans. Only when they changed:
 // `tax`, the plan's tax choices, and `household` with `household_were`, what the
 // page loaded, which goes with the facts.
 //

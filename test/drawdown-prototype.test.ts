@@ -1,5 +1,5 @@
 // The tax plan's household (Overview: "What the prototype found"), run through the
-// build rather than the prototype: the drawdown, the bridge and the engine, under
+// build rather than the prototype: the drawdown and the tax branch, under
 // D6's work rule by household income, and T4's rules side by side. These figures go
 // into Overview. Pinned, so a change to any of the three shows here.
 //   A couple, 41 and 40, stopping at 50 on $64,000 a year. 5% growth, 3% inflation,
@@ -15,6 +15,7 @@ import { detailWork, type DetailedInput, type PlanDetail } from '@/lib/fire/plan
 import { planFigures } from '@/lib/fire/plan-figures';
 import { planOf, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { historicalCycles } from '@/lib/fire/simulate';
+import { taxedPaths } from '@/lib/fire/taxed-paths';
 import { lawFor } from '@/lib/fire/tax/law';
 import { usMarket } from '@/lib/fire/us-market';
 import { ON } from './plan-gen';
@@ -68,7 +69,7 @@ function run(growth: number, incomeGrowth: number) {
   const f = planFigures(PLAN, M, { count: ON, detailed: detailWork(input) });
   if ('refused' in f || !('sim' in f.engine) || f.detail === null || 'failed' in f.detail) throw new Error('no drawdown');
   const d: PlanDetail = f.detail;
-  const history = historicalCycles(f.engine.sim, usMarket());
+  const history = historicalCycles(f.engine.sim, usMarket(), { taxed: taxedPaths });
   return {
     start: Math.round(f.engine.sim.startBalance),
     rate: Number((f.engine.rate * 100).toFixed(2)),
@@ -131,7 +132,7 @@ function rules(growth: number, incomeGrowth: number) {
 
 describe('the prototype’s household, through the build', () => {
   test('at the law’s health growth, 2.1 and 1.1 points', () => {
-    expect(run(0.021, 0.011)).toEqual({ start: 1_474_369, rate: 5.17, t: 5.28, h: 8_250, historical: 84.6, left: 3_126_746, taxAndHealth: 720_330, rounds: 1 });
+    expect(run(0.021, 0.011)).toEqual({ start: 1_474_369, rate: 5.17, t: 5.28, h: 8_250, historical: 82.2, left: 3_126_746, taxAndHealth: 720_330, rounds: 1 });
   });
   // From the plan's own start, as Compare has them, and each rule's own FI number. The
   // order the prototype found holds: the ACA rule leaves the most, with a credit every
@@ -155,9 +156,9 @@ describe('the prototype’s household, through the build', () => {
     });
   });
   test('at the prototype’s, 1.5 and 1', () => {
-    // The start is the prototype's to the dollar. It had 81.1% with no conversions:
-    // the 5.4 points are D6, a household over the work rule's income meeting it.
-    expect(run(0.015, 0.01)).toEqual({ start: 1_474_369, rate: 5.09, t: 5.36, h: 7_039, historical: 86.5, left: 3_314_950, taxAndHealth: 645_914, rounds: 1 });
+    // The start is the prototype's to the dollar. It had 81.1% with no conversions, at
+    // a flat rate and before D6, a household over the work rule's income meeting it.
+    expect(run(0.015, 0.01)).toEqual({ start: 1_474_369, rate: 5.09, t: 5.36, h: 7_039, historical: 84.3, left: 3_314_950, taxAndHealth: 645_914, rounds: 1 });
   });
   // Stopping early leaves money tax-deferred at 95, and this rule's last year sits by
   // the 22% line. A single rate on all of it made 51 to 52 jump by $90,112.

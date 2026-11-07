@@ -1,29 +1,23 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { TEST_CONTAINER } from './fake-redis';
 import { planPage } from './plan-page';
 
 // Tune to a goal on the page, on the real routes: the row, nothing chosen by default, the
 // job's states, the table and its sort, a row's own sheet, and what Use and Try send.
 
 const page = await planPage();
-const { PLAN, seedPlan, render, press, button, closeOf, fill, pick, calls, settle, classOf, stored, answers, act, click } = page;
+const { PLAN, WITH_BALANCES, seedPlan, render, press, button, closeOf, fill, pick, calls, settle, classOf, stored, answers, act, click } = page;
 type Tab = Awaited<ReturnType<typeof render>>;
 type Node = NonNullable<ReturnType<Tab['dialog']>>;
 
-async function flagged() {
-  const { flagsStore } = await import('@/lib/flag-store');
-  await flagsStore.update('plan-tax', async () => ({ on: 'nobody', containers: [TEST_CONTAINER], updatedAt: new Date().toISOString() }) as never, TEST_CONTAINER);
-}
 const WAY_IN = 'Work out tax from your accounts';
 const account = (subtype: string, balance: number) => ({ institutions: [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [{ account_id: 'k', name: subtype, type: 'investment', subtype, balance, currency: 'USD' }] }] as never });
 /** A 401(k), so the rules have something to convert. */
 const WITH_ACCOUNTS = account('401k', 600_000);
 
 async function detailed(plan = PLAN, props: Parameters<typeof render>[0] = WITH_ACCOUNTS) {
-  await flagged();
   await seedPlan(plan);
-  const tab = await render({ planTax: true, ...props });
+  const tab = await render({ ...WITH_BALANCES, ...props });
   await pick(tab.container, 'Drawdown');
   await press(tab.row(WAY_IN));
   await press(button(tab.dialog(), 'Work it out'));
@@ -108,9 +102,8 @@ const { NO_STRATEGY } = await import('@/lib/fire/tax/rules');
 
 describe('the row', () => {
   test('only where Compare is: in the detailed model', async () => {
-    await flagged();
     await seedPlan();
-    const simple = await render({ planTax: true, ...WITH_ACCOUNTS });
+    const simple = await render({ ...WITH_BALANCES, ...WITH_ACCOUNTS });
     await pick(simple.container, 'Drawdown');
     expect(simple.row(TUNE)).toBeNull();
     await press(simple.row(WAY_IN));
