@@ -7,7 +7,7 @@ import { DEFAULT_TAX_CHOICES } from '@/lib/fire/tax-choices';
 import { DEFAULT_TAX_FACTS } from '@/lib/fire/tax-facts';
 import { markRows } from '@/components/DrawdownChart';
 import { wholeMoney } from '@/components/plan-text';
-import { assumptionsWorked, EARLY_ACCESS_WHY, healthPace, STAGE_TAX_NOTE, stagePenalties, stagePercentLine, detailLines, healthSub, honestyNotes, householdLine, householdNotes, lawLabel, onAca, fiLines, stageHelper, stageSentence, stageSources, stageTitle, survivorLine, taxLine, yearBadges, yearRuns, yearHelper, yearSections, yearSub, yearTitle, yearValueLabel, type YearContext } from '@/components/plan-drawdown';
+import { assumptionsWorked, EARLY_ACCESS_WHY, healthPace, STAGE_TAX_NOTE, stagePenalties, stagePercentLine, detailLines, healthSub, honestyNotes, householdLine, householdNotes, lawLabel, onAca, fiLines, stageHelper, stageSentence, stageSources, stageTitle, survivorLine, WITH_EACH_YEARS_TAX, yearBadges, yearRuns, yearHelper, yearSections, yearSub, yearTitle, yearValueLabel, type YearContext } from '@/components/plan-drawdown';
 
 // What Year by year says, on real years: the stages, a stage's rows and a year's sheet.
 
@@ -296,7 +296,7 @@ describe('what a detailed plan says it can’t know', () => {
 
   test('the small lines', () => {
     expect(lawLabel(2026)).toBe('Hypothetical, 2026 tax law. Not tax advice.');
-    expect(taxLine(0.034)).toBe('Tax is one rate, 3.4%, from the steady years below.');
+    expect(WITH_EACH_YEARS_TAX).toBe('With each year’s tax.');
     expect(survivorLine(95)).toBe('Assumes you both live to 95. A survivor files single, at higher rates.');
     expect(householdLine({ filing: 'joint' }, { state: 'NV' })).toBe('joint · Nevada');
     expect(householdLine({ filing: null }, { state: null })).toBe('single · no state yet');

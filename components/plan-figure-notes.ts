@@ -89,14 +89,14 @@ export type FigureArgs = {
   /** The ECB's rates that weigh what is left out for its currency, without
    *  a home currency (lib/fire/progress.ts ShareRates). */
   shareRates: ShareRates | null;
-  /** Detailed tax is saved for this account, and this release or the switch
-   *  (plan-tax) can't work it out, so the flat rate does the work. */
+  /** Detailed tax is saved for this account, and the plan isn't in US dollars, so
+   *  the flat rate does the work. */
   taxOnHold: boolean;
 };
 
 /** What Tax says while detailed tax is saved and can't be worked out: the flat
  *  rate, never silently. */
-export const taxOnHoldText = (rate: number) => `Worked-out tax is paused; using a flat ${pct(rate)}.`;
+export const taxOnHoldText = (rate: number) => `Worked-out tax needs US dollars; using a flat ${pct(rate)}.`;
 
 /** How long the window was, for one shorter than a year: "5 months". */
 function spanText(flows: TrailingFlows): string {
@@ -166,7 +166,7 @@ export function assetCaveatLines(caveats: AssetCaveat[]): string[] {
  *  and Budgets' for the connections that bring in no transactions
  *  (components/budget-notes.ts). */
 export const NOTE_KINDS = {
-  taxOnHold: 'worked-out tax paused',
+  taxOnHold: 'worked-out tax needs US dollars',
   spendingGap: 'spending not measured',
   rateGap: 'savings rate not measured',
   yearGap: 'savings not measured',

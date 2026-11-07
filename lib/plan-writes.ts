@@ -27,16 +27,13 @@
 // stopped before it) reads from your plan's own fields, which every write
 // keeps in step.
 //
-// The detailed tax model (T3) writes three things behind `plan-tax`, on a fresh
-// read of the flag: the opt-in, a plan's tax choices (`tax`, on its save) and the
-// household (`household`, on your plan's save, written with the facts). A change of
-// start to "at your stop age" waits on the flag too. Going back to flat never does,
-// so nobody is trapped in it.
+// The detailed tax model (T3) writes three things: the opt-in, a plan's tax choices
+// (`tax`, on its save) and the household (`household`, on your plan's save, written
+// with the facts).
 
 import type { Ctx } from './containers';
 import { eager } from './eager';
 import { stampAfter } from './edit-stamp';
-import { flagOnFresh, requestWho } from './flag-read';
 import { FIRST_PLAN, entryOf, firePlansStore, mainAnswer, noPlanAnswer, planFactsStore, readMain, rowOf, type MainPlan, type PlanRow } from './plan-copies';
 import { MAIN_ID, MAX_FIRE_PLANS, entryHoldsAmounts, factsOf, isPlanFacts, mainOf, sameFacts, withFacts, type Facts, type PlanEntry, type PlanFacts } from './fire/copies';
 import { DEFAULT_PLAN_V2, NEW_PLAN_START, type StoredPlan } from './fire/plan-v2';
@@ -67,7 +64,6 @@ export const ALREADY = 'A currency is recorded for your plan already, so it was 
 export const NAME_TAKEN = 'Another plan has that name: choose another, so they can be told apart.';
 export const KEEP_MAIN = 'Your plan can’t be deleted: make another your plan first.';
 export const AT_MOST = `You have ${MAX_FIRE_PLANS} plans, the most Nya keeps: delete one to make another.`;
-export const TAX_OFF = 'Working tax out from your accounts isn’t on for this account, so nothing was saved: load the page again.';
 export const HOUSEHOLD_NOT_SAVED = 'Your plan was saved; your household wasn’t: try again';
 
 /** The facts a page loaded, as it sends them (`facts_were`): the shape the
@@ -135,18 +131,11 @@ function stampFor(was: string, now: Date, taken: Set<string>): string {
   return at;
 }
 
-/** Refuses what only the detailed tax model writes, on a fresh read of its flag
- *  (one that fails answers off). */
-async function requireTaxFlag(ctx: Ctx): Promise<void> {
-  if (!(await flagOnFresh('plan-tax', await requestWho(ctx)))) throw new Refused(TAX_OFF, 403, false);
-}
-
 /** While your plan has no entry, what is written first takes the start a new plan
- *  takes behind the flag, as the page shows it: a rename or a new copy never moves
- *  the start it is looking at. */
-async function newPlanStart(ctx: Ctx, s: State): Promise<void> {
-  if (!s.empty || !(await flagOnFresh('plan-tax', await requestWho(ctx)))) return;
-  s.mainEntry = { ...s.mainEntry, plan: { ...DEFAULT_PLAN_V2, start: NEW_PLAN_START } };
+ *  takes, as the page shows it: a rename or a new copy never moves the start it is
+ *  looking at. */
+function newPlanStart(s: State): void {
+  if (s.empty) s.mainEntry = { ...s.mainEntry, plan: { ...DEFAULT_PLAN_V2, start: NEW_PLAN_START } };
 }
 
 /** The household as `plan-facts` holds it, as read. */
@@ -252,8 +241,6 @@ function choicesFor(x: Save, cur: PlanEntry): TaxChoices | null {
   return parsed.choices;
 }
 
-const movesToAtStop = (plan: StoredPlan, cur: PlanEntry) => plan.start === 'at-stop' && cur.plan.start !== 'at-stop';
-
 /**
  * Saves whole plans: one (your plan's save, a copy's) or several (Also change
  * it in), all or none. Each is sent with the facts in its fields; the facts
@@ -261,26 +248,22 @@ const movesToAtStop = (plan: StoredPlan, cur: PlanEntry) => plan.start === 'at-s
  * is refused. `factsWere` is what the page loaded: facts that differ from it
  * are this save's change, written first, but only over the facts it loaded,
  * so another device's new age stands through an unrelated save. The household
- * goes with them, over the one the page loaded. `gated` false is the demo seed's,
- * which writes a demo account's plan whatever the flag says.
+ * goes with them, over the one the page loaded.
  */
-export async function saveEntries(ctx: Ctx, saves: Save[], factsWere: Facts, { household, gated = true }: { household?: HouseholdChange; gated?: boolean } = {}): Promise<{ main: MainPlan; rows: PlanRow[] }> {
+export async function saveEntries(ctx: Ctx, saves: Save[], factsWere: Facts, { household }: { household?: HouseholdChange } = {}): Promise<{ main: MainPlan; rows: PlanRow[] }> {
   const now = new Date();
   const at = now.toISOString();
   const s = await readState(ctx, at);
   const sent = factsOf(saves[0].plan);
   if (saves.some((x) => !sameFacts(factsOf(x.plan), sent))) throw new Refused('Every plan saved together shares the facts: send them all with the same ones', 400, false);
   if (new Set(saves.map((x) => x.id)).size !== saves.length) throw new Refused('Each plan is saved once', 400, false);
-  let asksFlag = household !== undefined;
   for (const x of saves) {
     if (s.unreadable.includes(x.id) || s.unrecognised.includes(x.id)) entryOf(s, x.id);
     const cur = x.id === s.main ? s.mainEntry : s.entries.get(x.id);
     if (!cur) throw new Refused(CHANGED);
     checkEntry(cur, x.plan, choicesFor(x, cur), x.currency, x.basedOn);
-    asksFlag ||= x.tax !== undefined || movesToAtStop(x.plan, cur);
   }
   if (household && !sameHousehold(household.were, storedHousehold(s))) throw new Refused(OTHER_DEVICE);
-  if (gated && asksFlag) await requireTaxFlag(ctx);
   const stored = storedFacts(s);
   let change: Facts | null = null;
   if (!sameFacts(sent, factsWere)) {
@@ -350,7 +333,7 @@ export async function saveEntries(ctx: Ctx, saves: Save[], factsWere: Facts, { h
 
 /** Your plan's save (PUT /api/fire-plan names no id): into the entry that is
  *  yours now. */
-export async function saveMain(ctx: Ctx, plan: StoredPlan, currency: string | null, factsWere: Facts, basedOn: string | null, more: { tax?: unknown; household?: HouseholdChange; gated?: boolean } = {}): Promise<MainPlan> {
+export async function saveMain(ctx: Ctx, plan: StoredPlan, currency: string | null, factsWere: Facts, basedOn: string | null, more: { tax?: unknown; household?: HouseholdChange } = {}): Promise<MainPlan> {
   const s = await readState(ctx, new Date().toISOString());
   const { tax, ...opts } = more;
   return (await saveEntries(ctx, [{ id: s.main, plan, currency, basedOn, ...(tax === undefined ? {} : { tax }) }], factsWere, opts)).main;
@@ -365,7 +348,7 @@ export async function saveMain(ctx: Ctx, plan: StoredPlan, currency: string | nu
  * currency is its source's while the source holds amounts (a page in another
  * currency is refused), else the one sent when it brings the first amounts.
  * `tax`, when sent (Try it in a copy, from Compare conversions), is the copy's own
- * choices from the start, behind the flag, so a copy never exists with the wrong rule.
+ * choices from the start, so a copy never exists with the wrong rule.
  */
 export async function createCopy(ctx: Ctx, input: { from: string; name: string; plan: StoredPlan; currency: string | null; tax?: unknown }): Promise<PlanRow> {
   const now = new Date();
@@ -377,14 +360,11 @@ export async function createCopy(ctx: Ctx, input: { from: string; name: string; 
   if (s.empty) names.push({ id: MAIN_ID, name: FIRST_PLAN });
   if (nameTaken(names, input.name)) throw new Refused(NAME_TAKEN, 409, false);
   if (s.unreadable.includes(input.from) || s.unrecognised.includes(input.from)) entryOf(s, input.from);
-  await newPlanStart(ctx, s);
+  newPlanStart(s);
   const source = input.from === s.main ? s.mainEntry : s.entries.get(input.from);
   if (!source) throw new Refused(CHANGED);
-  // Never on "at your stop age" alone, or Duplicate traps someone with the flag off.
-  if (movesToAtStop(input.plan, source)) await requireTaxFlag(ctx);
   let tax = source.tax;
   if (input.tax !== undefined) {
-    await requireTaxFlag(ctx);
     const parsed = parseTaxChoices(input.tax, source.tax);
     if ('error' in parsed) throw new Refused(parsed.error, 400, false);
     tax = parsed.choices;
@@ -436,7 +416,7 @@ async function changeOne(ctx: Ctx, id: string, basedOn: string | null, change: (
   const s = await readState(ctx, at);
   if (s.unreadable.includes(id) || s.unrecognised.includes(id)) entryOf(s, id);
   if (id !== s.main && !s.entries.has(id)) throw new Refused(CHANGED);
-  await newPlanStart(ctx, s);
+  newPlanStart(s);
   const facts = storedFacts(s);
   const written = await writeEntries(
     ctx,
@@ -565,11 +545,10 @@ export async function saveTaxFacts(ctx: Ctx, op: TaxFactOp) {
  * plans again, whichever way it ends. Answers as GET /api/fire-plan does.
  */
 export async function optIn(ctx: Ctx) {
-  await requireTaxFlag(ctx);
   const now = new Date();
   const at = now.toISOString();
   const s = await readState(ctx, at);
-  await newPlanStart(ctx, s);
+  newPlanStart(s);
   const facts = storedFacts(s);
   await writeEntries(
     ctx,

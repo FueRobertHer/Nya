@@ -18,11 +18,10 @@ import { SCENARIO_NAME_MAX } from '@/lib/fire/plan-list';
 //   POST   { from, name, plan, currency, tax? } a new copy: `plan` whole, made from
 //                                         `from` (New copy, Duplicate, Try it);
 //                                         `tax` its own tax choices, when they
-//                                         differ (behind `plan-tax`)
+//                                         differ
 //   PUT    { saves, facts_were }          saves plans whole, all or none:
 //                                         [{ id, plan, currency, based_on, tax? }],
 //                                         `tax` its tax choices, when they changed
-//                                         (behind `plan-tax`)
 //   PATCH  { id, name, based_on }         renames one
 //          { id, currency, based_on }     says a copy's amounts are in that
 //                                         currency (the person's answer)

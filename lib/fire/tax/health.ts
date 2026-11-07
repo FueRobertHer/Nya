@@ -94,6 +94,8 @@ export type HealthInput = {
   growth: number;
   /** Points a year incomes rise faster than prices (the ACA's indexing). */
   incomeGrowth: number;
+  /** (1 + growth)^yearsFromToday, when the caller has it. */
+  growthFactor?: number;
   /** The ACA's MAGI this year. */
   magi: Lin;
   /** IRMAA's MAGI from two years before, in that year's (today's) dollars; null when unknown. */
@@ -259,18 +261,56 @@ function bandOf(bands: readonly AcaBand[], pct: number): AcaBand {
   return bands[bands.length - 1];
 }
 
+// Each year's figures, kept once worked out: a figure rests on the law, the schedule,
+// the two growths and the calendar year, none of which a run of market years moves.
+const FIGURES = 512;
+let figureLaw: TaxLaw | null = null;
+const figureYears = new Map<number, Float64Array>();
+let lastYear = -1;
+let lastFigures: Float64Array | null = null;
+let figureGrowth = NaN;
+let figureIncome = NaN;
+let figureAca = '';
+function figuresFor(law: TaxLaw, inp: HealthInput): Float64Array {
+  if (law !== figureLaw || inp.growth !== figureGrowth || inp.incomeGrowth !== figureIncome || inp.acaLaw !== figureAca) {
+    figureLaw = law;
+    figureGrowth = inp.growth;
+    figureIncome = inp.incomeGrowth;
+    figureAca = inp.acaLaw;
+    figureYears.clear();
+    lastYear = -1;
+    lastFigures = null;
+  }
+  if (inp.calendarYear === lastYear) return lastFigures as Float64Array;
+  let m = figureYears.get(inp.calendarYear);
+  if (m === undefined) {
+    m = new Float64Array(FIGURES).fill(NaN);
+    figureYears.set(inp.calendarYear, m);
+  }
+  lastYear = inp.calendarYear;
+  lastFigures = m;
+  return m;
+}
+
 /** The applicable figure, as a fraction, for whole percent `pct` (Form 8962
  *  line 7): the band's initial percentage plus its share of the way to the
  *  final one, rounded half up to four places, worked in integer hundredths of
  *  a percent so no tie is lost to floating error. */
 export function cellFigure(law: TaxLaw, inp: HealthInput, pct: number): number {
+  const m = pct >= 0 && pct < FIGURES ? figuresFor(law, inp) : null;
+  if (m !== null) {
+    const known = m[pct];
+    if (known === known) return known;
+  }
   const ratio = indexRatio(law, inp);
   const b = bandOf(scheduleOf(law, inp).bands, pct);
   const lo = hundredths(b.initial, ratio);
   const hi = hundredths(b.final, ratio);
   const width = b.to === Infinity ? 1 : b.to - b.from;
   const step = b.to === Infinity ? 0 : roundHalfUp((hi - lo) * Math.max(0, pct - b.from), width);
-  return (lo + step) / 10_000;
+  const figure = (lo + step) / 10_000;
+  if (m !== null) m[pct] = figure;
+  return figure;
 }
 
 /** Whether a band's figure changes from one whole percent to the next. */
@@ -287,7 +327,7 @@ export function health(inp: HealthInput, law: TaxLaw, out: HealthResult): Health
   const st = law.statute;
   const filers = inp.filing === 'joint' ? 2 : 1;
   const size = filers + inp.dependents;
-  const hf = (1 + inp.growth) ** inp.yearsFromToday;
+  const hf = inp.growthFactor ?? (1 + inp.growth) ** inp.yearsFromToday;
   const magi = inp.magi;
   const schedule = scheduleOf(law, inp);
 
@@ -424,7 +464,10 @@ export function health(inp: HealthInput, law: TaxLaw, out: HealthResult): Health
     // lower edge on a falling MAGI, the cell below.
     let pct = Math.floor((100 * (magi.v + LINE_EPS)) / creditPov);
     const lowerEdge = (pct * creditPov) / 100;
-    if (track.right && magi.s < 0 && Math.abs(magi.v - lowerEdge) <= LINE_EPS) pct -= 1;
+    if (track.right && magi.s < 0 && Math.abs(magi.v - lowerEdge) <= LINE_EPS) {
+      pct -= 1;
+      track.onLine = true;
+    }
     out.linePercent = pct;
     const figure = cellFigure(law, inp, pct);
     out.figure = figure;
@@ -435,7 +478,7 @@ export function health(inp: HealthInput, law: TaxLaw, out: HealthResult): Health
     const inside = sloped(law, inp, pct);
     if (inside) {
       if (magi.s > 0) reaching(magi, ((pct + 1) * creditPov) / 100, true);
-      else if (magi.s < 0) reaching(magi, lowerEdge, true);
+      else if (magi.s < 0) reaching(magi, (pct * creditPov) / 100, true);
     }
     contribution.v = figure * magi.v;
     contribution.s = figure * magi.s;

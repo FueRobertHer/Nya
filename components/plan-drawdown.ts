@@ -11,10 +11,12 @@ import type { DrawdownNote, DrawdownStage, DrawdownYear, PersonCare, StageKey } 
 import type { PlanItem } from '@/lib/fire/items';
 import type { DetailNote, PlanDetail } from '@/lib/fire/plan-detail';
 import type { FiShares } from '@/lib/fire/plan-figures';
+import { TAXED_GRID_RUNS, type Method } from '@/lib/fire/simulate';
 import type { TaxChoices } from '@/lib/fire/tax-choices';
 import type { Owner, TaxFacts } from '@/lib/fire/tax-facts';
 import type { Filing, StateCode } from '@/lib/fire/tax/law/types';
 import type { FigureNote } from './plan-figure-notes';
+import { plainNumber } from '@/lib/format';
 import { pct } from './plan-text';
 
 type Money = (n: number) => string;
@@ -34,8 +36,12 @@ export const lawLabel = (year: number) => `Hypothetical, ${year} tax law. Not ta
 /** The hero's label on a detailed plan: the two things it rests on, in one line. */
 export const hypotheticalDrawdown = (year: number) => `Hypothetical, from US history and ${year} tax law: not a prediction, and not investment or tax advice.`;
 
-/** The end of the setup: the one rate every start runs at. */
-export const taxLine = (t: number) => `Tax is one rate, ${pct(t, 1)}, from the steady years below.`;
+/** The end of the setup: every start works out its own years. */
+export const WITH_EACH_YEARS_TAX = 'With each year’s tax.';
+
+/** The grid card, with each year's tax: it runs a sample, and says so
+ *  (lib/fire/simulate.ts TAXED_GRID_STEP, TAXED_GRID_RUNS). */
+export const gridSampleLine = (method: Method) => `With each year’s tax, ${method === 'historical' ? 'every sixth start' : `${plainNumber(TAXED_GRID_RUNS)} runs`}, to keep this quick, so a cell can differ a little from the answer above.`;
 
 /** Who is on what, by the household's first age: the year's helper reads it. */
 const ACA_KINDS: readonly PersonCare['status'][] = ['aca', 'medicaid', 'under-line', 'over-cliff'];
@@ -632,7 +638,7 @@ export function householdNotes(a: { facts: Pick<TaxFacts, 'dependents'>; choices
 /** About these numbers, under a detailed plan: how tax is worked out, what stands in
  *  for what, and what isn't modeled. */
 export const ABOUT_DETAIL = {
-  how: 'Drawdown works out each year from your accounts at a steady return: federal income tax, your state’s one rate, penalties, required withdrawals and health coverage, under one year’s law held in today’s dollars. Your FI number takes its tax and health coverage from those years run from the FI number itself, so it doesn’t move with where a plan starts. Will it last? runs every start at one share of tax from the years of its own start, with each year’s health coverage as its own cost, so a tax that moves with the markets isn’t in it.',
+  how: 'Drawdown works out each year from your accounts at a steady return: federal income tax, your state’s one rate, penalties, required withdrawals and health coverage, under one year’s law held in today’s dollars. Your FI number takes its tax and health coverage from those years run from the FI number itself, so it doesn’t move with where a plan starts. Will it last? works out the same years in every start, on that start’s own returns and inflation. Its grid does that for every sixth start, or 250 runs, to keep it quick.',
   standIns: [
     'Of dividends and interest, 75% counts as qualified.',
     'Only premiums count as health costs: deductibles, coinsurance, dental, vision and hearing don’t. Premiums are about 45% of a 65-year-old’s lifetime health costs (Fidelity’s 2026 estimate).',

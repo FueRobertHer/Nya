@@ -223,7 +223,7 @@ describe('Your path’s range', () => {
     const shown = await render({});
     await press(shown.tab('Drawdown'));
     const line = shown.notices('drawdown').find((t) => t.startsWith('Note: Starting from your FI number'))!;
-    expect(line).toMatch(/^Note: Starting from your FI number, \$[\d,]+, not the \$[\d,]+ you’d have at 62\.$/);
+    expect(line).toMatch(/^Note: Starting from your FI number, \$[\d,]+, not the \$[\d,]+ you’d have at 62\.Start from what you'd have at 62$/);
     await shown.unmount();
     setAmountsHidden(true);
     try {
@@ -234,7 +234,7 @@ describe('Your path’s range', () => {
       await press(tab.tab('Drawdown'));
       const hidden = tab.notices('drawdown').find((t) => t.startsWith('Note: Starting from your FI number'))!;
       // As drawn, then as read aloud (Masked).
-      expect(hidden).toBe(`Note: Starting from your FI number, $${MASK}, not the $${MASK} you’d have at 62.Starting from your FI number, hidden, not the hidden you’d have at 62.`);
+      expect(hidden).toBe(`Note: Starting from your FI number, $${MASK}, not the $${MASK} you’d have at 62.Starting from your FI number, hidden, not the hidden you’d have at 62.Start from what you'd have at 62`);
       await tab.unmount();
     } finally {
       setAmountsHidden(false);

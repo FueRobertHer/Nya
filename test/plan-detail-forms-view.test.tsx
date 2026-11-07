@@ -10,17 +10,12 @@ import { planPage } from './plan-page';
 // to itself.
 
 const page = await planPage();
-const { PLAN, answers, seedPlan, seedCopy, stored, render, press, button, closeOf, field, fill, pick, openCopy, calls, settle } = page;
+const { PLAN, WITH_BALANCES, answers, seedPlan, seedCopy, stored, render, press, button, closeOf, field, fill, pick, openCopy, calls, settle } = page;
 type Tab = Awaited<ReturnType<typeof render>>;
 
-async function flagged() {
-  const { flagsStore } = await import('@/lib/flag-store');
-  await flagsStore.update('plan-tax', async () => ({ on: 'nobody', containers: [TEST_CONTAINER], updatedAt: new Date().toISOString() }) as never, TEST_CONTAINER);
-}
 async function optedIn(props: Parameters<typeof render>[0] = {}, plan = PLAN, seeded = false) {
   if (!seeded) await seedPlan(plan);
-  await flagged();
-  const tab = await render({ planTax: true, ...props });
+  const tab = await render({ ...WITH_BALANCES, ...props });
   await pick(tab.container, 'Drawdown');
   await press(tab.row('Work out tax from your accounts'));
   await press(button(tab.dialog(), 'Work it out'));
@@ -139,8 +134,7 @@ describe('About these numbers', () => {
 describe('Health coverage', () => {
   test('no row in the flat model, even with the flag', async () => {
     await seedPlan();
-    await flagged();
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     expect(tab.row('Health coverage')).toBeNull();
     await tab.unmount();
   }, 20_000);
@@ -365,8 +359,7 @@ describe('Household', () => {
   test('in a copy the shared ones are locked and the state is its own', async () => {
     await seedPlan();
     await seedCopy('Move');
-    await flagged();
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     await pick(tab.container, 'Drawdown');
     await press(tab.row('Work out tax from your accounts'));
     await press(button(tab.dialog(), 'Work it out'));
@@ -446,7 +439,7 @@ describe('the health growth default', () => {
     };
     const rowOn = (law: TaxLaw, words: string) =>
       onLaw(law, async () => {
-        const tab = await render({ planTax: true });
+        const tab = await render(WITH_BALANCES);
         await pick(tab.container, 'Your path');
         // Words only the flat row has, so this is the plan the test is about.
         expect(subOf(tab, 'Assumptions')).toContain('growth after inflation until FI');
@@ -482,16 +475,10 @@ describe('Assumptions', () => {
     await tab.unmount();
   }, 30_000);
 
-  test('the start line takes you to what you would have at the stop, only with the flag', async () => {
+  test('the start line takes you to what you would have at the stop', async () => {
     const typed = { ...PLAN, start: 'custom' as const, startBalance: 500_000, targetAge: 60 };
     await seedPlan(typed);
-    const off = await render();
-    await pick(off.container, 'Drawdown');
-    expect(off.text()).toContain('Starting from the balance you typed');
-    expect(off.text()).not.toContain('Start from what you');
-    await off.unmount();
-    await flagged();
-    const on = await render({ planTax: true });
+    const on = await render(WITH_BALANCES);
     await pick(on.container, 'Drawdown');
     const link = button(on.container, 'Start from what you\'d have at 60');
     expect(link!.parentElement?.parentElement?.textContent).toContain('Starting from the balance you typed');
@@ -503,29 +490,21 @@ describe('Assumptions', () => {
     await on.unmount();
   }, 30_000);
 
-  test('a plan never saved starts from what it would have at the stop, only with the flag', async () => {
-    const off = await render();
-    await pick(off.container, 'Your path');
-    const WITH_THEN = 'with what you’d have then';
-    expect((await sheet(off, 'Assumptions')).textContent).not.toContain(WITH_THEN);
-    await off.unmount();
-    await flagged();
-    const on = await render({ planTax: true });
+  test('a plan never saved starts from what it would have at the stop', async () => {
+    const on = await render(WITH_BALANCES);
     await pick(on.container, 'Your path');
-    expect((await sheet(on, 'Assumptions')).textContent).toContain(WITH_THEN);
+    expect((await sheet(on, 'Assumptions')).textContent).toContain('with what you’d have then');
     await on.unmount();
   }, 30_000);
 
-  test('flat, it reads as it always has, and the fourth start only with the flag', async () => {
+  test('flat, it reads as it always has, with the fourth start', async () => {
     await seedPlan();
-    const off = await render();
-    const form = await sheet(off, 'Assumptions');
+    const on = await render(WITH_BALANCES);
+    const form = await sheet(on, 'Assumptions');
     expect(form.textContent).toContain('A flat share of every withdrawal');
-    expect(form.textContent).not.toContain('What I’d have at my stop age');
-    await off.unmount();
-    await flagged();
-    const on = await render({ planTax: true });
-    expect((await sheet(on, 'Assumptions')).textContent).toContain('What I’d have at my stop age');
+    expect(form.textContent).toContain('What I’d have at my stop age');
+    expect(form.textContent).toContain('Will it last? uses market history for its returns.');
+    expect(form.textContent).not.toContain('each year’s tax');
     await on.unmount();
   }, 30_000);
 });

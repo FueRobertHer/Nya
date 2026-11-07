@@ -222,7 +222,7 @@ describe('deleting my account', () => {
     const stored = async () => Object.fromEntries((await flagsStore.getAllReport()).entries);
     beforeEach(async () => {
       await flagsStore.update('lunchflow', audience('admin', [partner.container, TEST_CONTAINER]), TEST_CONTAINER);
-      await flagsStore.update('plan-tax', audience('nobody', [partner.container]), TEST_CONTAINER);
+      await flagsStore.update('plan-child-accounts', audience('nobody', [partner.container]), TEST_CONTAINER);
       await flagsStore.update('restore', audience('nobody', [TEST_CONTAINER]), TEST_CONTAINER);
     });
 
@@ -230,11 +230,11 @@ describe('deleting my account', () => {
       expect((await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(200);
       expect(await stored()).toMatchObject({
         lunchflow: { on: 'admin', containers: [TEST_CONTAINER] },
-        'plan-tax': { on: 'nobody', containers: [] },
+        'plan-child-accounts': { on: 'nobody', containers: [] },
         restore: { on: 'nobody', containers: [TEST_CONTAINER] },
       });
       const { entries } = await flagsStore.changes();
-      expect(entries.filter((c) => c.by === 'account deletion').map((c) => c.key).sort()).toEqual(['lunchflow', 'plan-tax']);
+      expect(entries.filter((c) => c.by === 'account deletion').map((c) => c.key).sort()).toEqual(['lunchflow', 'plan-child-accounts']);
       expect(entries.filter((c) => c.by === TEST_CONTAINER)).toHaveLength(3);
     });
 
@@ -255,7 +255,7 @@ describe('deleting my account', () => {
       expect((await stored()).lunchflow).toMatchObject({ containers: [partner.container, TEST_CONTAINER] });
       expect((await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(200);
       expect((await stored()).lunchflow).toMatchObject({ containers: [TEST_CONTAINER] });
-      expect((await stored())['plan-tax']).toMatchObject({ containers: [] });
+      expect((await stored())['plan-child-accounts']).toMatchObject({ containers: [] });
     });
   });
 

@@ -36,14 +36,16 @@ export function lin(v = 0, s = 0): Lin {
   return { v, s };
 }
 
-/** The evaluation in progress: its mode and the rooms found so far. */
-export const track = { right: false, room: Infinity, federalRoom: Infinity };
+/** The evaluation in progress: its mode, the rooms found so far, and whether it sits
+ *  on a line where "at" can differ from just right of here. */
+export const track = { right: false, room: Infinity, federalRoom: Infinity, onLine: false };
 
 /** Starts an evaluation: "just right of x" when `right`, else "at x". */
 export function begin(right: boolean): void {
   track.right = right;
   track.room = Infinity;
   track.federalRoom = Infinity;
+  track.onLine = false;
 }
 
 /** Ends both rooms at `d` (if nearer). A cell's edge ends only `room`. */
@@ -55,7 +57,11 @@ export function limit(d: number, cell = false): void {
 
 /** The room until `a` reaches `t`, in either direction. */
 export function reaching(a: Lin, t: number, cell = false): void {
-  if (a.s === 0 || Math.abs(t - a.v) <= LINE_EPS) return;
+  if (a.s === 0) return;
+  if (Math.abs(t - a.v) <= LINE_EPS) {
+    track.onLine = true;
+    return;
+  }
   limit((t - a.v) / a.s, cell);
 }
 
@@ -116,7 +122,10 @@ export function plus(out: Lin, a: Lin, c: number): Lin {
 export function smaller(out: Lin, a: Lin, b: Lin): Lin {
   const gap = b.v - a.v;
   const ds = a.s - b.s;
-  if (ds !== 0 && Math.abs(gap) > LINE_EPS) limit(gap / ds);
+  if (ds !== 0) {
+    if (Math.abs(gap) > LINE_EPS) limit(gap / ds);
+    else track.onLine = true;
+  }
   const pickA = gap > LINE_EPS ? true : gap < -LINE_EPS ? false : !track.right || a.s <= b.s;
   return pickA ? copy(out, a) : copy(out, b);
 }
@@ -125,7 +134,10 @@ export function smaller(out: Lin, a: Lin, b: Lin): Lin {
 export function larger(out: Lin, a: Lin, b: Lin): Lin {
   const gap = b.v - a.v;
   const ds = a.s - b.s;
-  if (ds !== 0 && Math.abs(gap) > LINE_EPS) limit(gap / ds);
+  if (ds !== 0) {
+    if (Math.abs(gap) > LINE_EPS) limit(gap / ds);
+    else track.onLine = true;
+  }
   const pickA = gap < -LINE_EPS ? true : gap > LINE_EPS ? false : !track.right || a.s >= b.s;
   return pickA ? copy(out, a) : copy(out, b);
 }

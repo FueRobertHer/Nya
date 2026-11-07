@@ -293,6 +293,12 @@ const earlyOf = new Float64Array(MAX_SOURCES); // under the 10% per dollar
 const hsaEarlyOf = new Float64Array(MAX_SOURCES); // under the 20% per dollar
 const stoppedOf = new Uint8Array(MAX_SOURCES);
 let sourceCount = 0;
+// Each owner's money by kind this year, worked out once for the order's categories.
+const deferredLeftOf = new Float64Array(2);
+const plan457LeftOf = new Float64Array(2);
+const rothOf = new Float64Array(2);
+const reachableOf = new Float64Array(2);
+const youngOf = new Float64Array(2);
 
 // The year being solved.
 const fed = newFederalInput();
@@ -310,6 +316,12 @@ let delta = 0; // how much of it, in the current piece
 let ceilingUnder = false; // a ceiling holds and the walk hasn't crossed it
 let answeredAt = false; // the walk's last evaluation was "at" its answer
 let scanEnd = 0; // the cells' scan: the value at its end, from the left
+// (1 + health's growth)^years, kept while the two stay the same.
+let growthYears = -1;
+let growthRate = NaN;
+let growthFactor = 1;
+/** Dollars under what the year needs that the walk may start from. */
+const BOUND_SLACK = 0.01;
 
 /** Evaluates the year with `delta` drawn from the active source on top of
  *  what is drawn, "just right of" that point when `right`, into out.federal,
@@ -432,6 +444,16 @@ export function splitConversion(inp: YearInput, law: TaxLaw, total: number): voi
   inp.people[1 - first].conversion = joint ? Math.min(Math.max(0, total) - take, convertible(inp, law, 1 - first)) : 0;
 }
 
+/** Last year's slope of the fill's measure, kept for the next hinted year. A run starts
+ *  it afresh (startFilling), so a job's answer rests on nothing that ran before it. */
+let fillSlope = FILL_SLOPE;
+export function startFilling(): void {
+  fillSlope = FILL_SLOPE;
+}
+
+/** The walk's and the fill's shortcuts, off only for a test holding them to the long way. */
+export const shortcuts = { on: true };
+
 /**
  * Works out one year with the least conversion that brings its measure to
  * `inp.fill` (see the header), or as much as there is to convert. A year already
@@ -441,26 +463,62 @@ export function splitConversion(inp: YearInput, law: TaxLaw, total: number): voi
  *
  * Under a ceiling the measure sits on its line past the answer, so a try on the
  * line only bounds the answer from above: a try a little under it is the answer.
+ *
+ * `hint` is last year's conversion in this run (lib/fire/taxed-paths.ts), tried first,
+ * since a run's years sit close together. Where health's jumps give the fill two
+ * answers it can find the other, which the rule allows as well, so the drawdown, whose
+ * years are read one by one, passes none.
  */
-export function runYearFilling(inp: YearInput, law: TaxLaw, out: YearResult): YearResult {
-  splitConversion(inp, law, 0);
-  runYear(inp, law, out);
+export function runYearFilling(inp: YearInput, law: TaxLaw, out: YearResult, hint = 0): YearResult {
   const target = inp.fill ?? null;
-  if (target === null || out.short) return out;
+  if (target === null) {
+    splitConversion(inp, law, 0);
+    return runYear(inp, law, out);
+  }
   const at = target.at;
   const capped = inp.ceiling != null;
   let avail = convertible(inp, law, 0);
   if (inp.filing === 'joint') avail += convertible(inp, law, 1);
   let lo = 0;
-  let underLo = at - measure(target, out.federal).v;
-  if (underLo <= FILL_EPS || avail <= LINE_EPS) return out;
+  let underLo = 0;
   let before = -1; // the try under the line before `lo`, for the slope
   let underBefore = 0;
   let hi = -1;
   let hiCrosses = false;
   let hiShort = false;
-  let c = Math.min(avail, underLo / FILL_SLOPE);
+  let c = 0;
   let solved = 0;
+  let started = false;
+  if (hint > 0 && shortcuts.on && avail > LINE_EPS) {
+    c = Math.min(avail, hint);
+    splitConversion(inp, law, c);
+    runYear(inp, law, out);
+    solved = c;
+    const under = at - measure(target, out.federal).v;
+    const crosses = out.short || under < -LINE_EPS;
+    if (!crosses && under <= FILL_EPS && (under > FILL_ON_LINE || !capped)) return out;
+    if (!crosses && under > FILL_ON_LINE) {
+      if (c >= avail - LINE_EPS) return out;
+      lo = c;
+      underLo = under;
+      started = true;
+      c = Math.min(avail, lo + (underLo - FILL_EPS / 2) / fillSlope);
+    } else {
+      hi = c;
+      hiCrosses = crosses;
+      hiShort = out.short;
+    }
+  }
+  if (!started) {
+    splitConversion(inp, law, 0);
+    runYear(inp, law, out);
+    solved = 0;
+    if (out.short) return out;
+    underLo = at - measure(target, out.federal).v;
+    if (underLo <= FILL_EPS || avail <= LINE_EPS) return out;
+    c = Math.min(avail, underLo / FILL_SLOPE);
+    if (hi >= 0 && !(c > lo && c < hi)) c = (lo + hi) / 2;
+  }
   for (let n = 0; n < MAX_FILL; n++) {
     splitConversion(inp, law, c);
     runYear(inp, law, out);
@@ -482,7 +540,8 @@ export function runYearFilling(inp: YearInput, law: TaxLaw, out: YearResult): Ye
     if (hi >= 0 && hi - lo < FILL_WIDTH) break;
     // Along the line through the last two tries under it; a dollar converted
     // raises the measure by a dollar or more once it has passed the deduction.
-    const slope = before >= 0 ? Math.max(1, (underBefore - underLo) / (lo - before)) : FILL_SLOPE;
+    const slope = before >= 0 ? Math.max(1, (underBefore - underLo) / (lo - before)) : hint > 0 && shortcuts.on ? fillSlope : FILL_SLOPE;
+    if (before >= 0) fillSlope = slope;
     const next = lo + (underLo - FILL_EPS / 2) / slope;
     if (hi < 0) c = Math.min(avail, next);
     else c = n < FILL_GUESSES && next > lo && next < hi ? next : (lo + hi) / 2;
@@ -623,6 +682,12 @@ function prepare(inp: YearInput, law: TaxLaw, out: YearResult): void {
   hin.acaLaw = inp.acaLaw;
   hin.growth = inp.healthGrowth;
   hin.incomeGrowth = inp.incomeGrowth;
+  if (inp.yearsFromToday !== growthYears || inp.healthGrowth !== growthRate) {
+    growthYears = inp.yearsFromToday;
+    growthRate = inp.healthGrowth;
+    growthFactor = (1 + inp.healthGrowth) ** inp.yearsFromToday;
+  }
+  hin.growthFactor = growthFactor;
   hin.irmaaMagi = inp.irmaaMagi;
 
   // What an HSA may pay untaxed doesn't depend on the withdrawal.
@@ -639,49 +704,57 @@ function prepare(inp: YearInput, law: TaxLaw, out: YearResult): void {
 
   // Step 4: the sources, category by category, the older owner first.
   const order = inp.order === 'roth-before-deferred' ? ROTH_FIRST_ORDER : STANDARD_ORDER;
+  for (let n = 0; n < filers; n++) {
+    const i = n === 0 ? first : 1 - first;
+    const p = inp.people[i];
+    const r = out.people[i];
+    const fromDeferred = Math.min(p.deferred, r.rmd + r.conversion);
+    deferredLeftOf[i] = p.deferred - fromDeferred;
+    plan457LeftOf[i] = p.deferred457 - (r.rmd + r.conversion - fromDeferred);
+    const roth = p.roth + r.conversion;
+    rothOf[i] = roth;
+    const reachable = Math.min(p.rothReachable, roth);
+    reachableOf[i] = reachable;
+    youngOf[i] = p.age >= 60 ? 0 : Math.min(windowSum(p, r.conversion), roth - reachable);
+  }
   for (let o = 0; o < order.length; o++) {
     const c = order[o];
     for (let n = 0; n < filers; n++) {
       const i = n === 0 ? first : 1 - first;
       const p = inp.people[i];
-      const r = out.people[i];
       const after60 = p.age >= 60;
       const from65 = p.age >= 65;
-      const fromDeferred = Math.min(p.deferred, r.rmd + r.conversion);
-      const deferredLeft = p.deferred - fromDeferred;
-      const plan457Left = p.deferred457 - (r.rmd + r.conversion - fromDeferred);
-      const roth = p.roth + r.conversion;
-      const reachable = Math.min(p.rothReachable, roth);
-      const young = Math.min(windowSum(p, r.conversion), roth - reachable);
-      const premiums = from65 ? Math.min(p.hsa, premiumsLeft) : 0;
       switch (c) {
         case 0:
-          if (premiums > 0) {
-            addSource(HSA_PREMIUMS, i, premiums, 0, 0, 0, 0);
-            premiumsLeft -= premiums;
+          if (from65) {
+            const premiums = Math.min(p.hsa, premiumsLeft);
+            if (premiums > 0) {
+              addSource(HSA_PREMIUMS, i, premiums, 0, 0, 0, 0);
+              premiumsLeft -= premiums;
+            }
           }
           break;
         case 1:
           addSource(TAXABLE, i, p.taxable, 0, p.taxable > 0 ? 1 - p.basis / p.taxable : 0, 0, 0);
           break;
         case 2:
-          if (after60) addSource(DEFERRED, i, deferredLeft, 1, 0, 0, 0);
-          addSource(PLAN_457, i, plan457Left, 1, 0, 0, 0);
+          if (after60) addSource(DEFERRED, i, deferredLeftOf[i], 1, 0, 0, 0);
+          addSource(PLAN_457, i, plan457LeftOf[i], 1, 0, 0, 0);
           break;
         case 3:
           if (from65) addSource(HSA_TAXED, i, p.hsa - hsaPremiumCap(i), 1, 0, 0, 0);
           break;
         case 4:
-          addSource(ROTH, i, after60 ? roth : reachable, 0, 0, 0, 0);
+          addSource(ROTH, i, after60 ? rothOf[i] : reachableOf[i], 0, 0, 0, 0);
           break;
         case 5:
-          if (!after60) addSource(YOUNG, i, young, 0, 0, 1, 0);
+          if (!after60) addSource(YOUNG, i, youngOf[i], 0, 0, 1, 0);
           break;
         case 6:
-          if (!after60) addSource(PENALIZED, i, deferredLeft, 1, 0, 1, 0);
+          if (!after60) addSource(PENALIZED, i, deferredLeftOf[i], 1, 0, 1, 0);
           break;
         case 7:
-          if (!after60) addSource(EARNINGS, i, roth - reachable - young, 1, 0, 1, 0);
+          if (!after60) addSource(EARNINGS, i, rothOf[i] - reachableOf[i] - youngOf[i], 1, 0, 1, 0);
           break;
         case 8:
           if (!from65) addSource(HSA_EARLY, i, p.hsa, 1, 0, 0, 1);
@@ -802,10 +875,36 @@ function walk(inp: YearInput, law: TaxLaw, out: YearResult): void {
   delta = 0;
   answeredAt = true;
   let needAt = true;
+  let jumped = false;
+  // Tax and health are never below zero, so nothing under what the year still needs
+  // can pay: the walk starts there. Under a ceiling only where that is still under it,
+  // and every source raises the measure: then no source would have stopped on the way.
+  const bound = needFixed - cashFixed - BOUND_SLACK;
+  if (bound > 0 && shortcuts.on) {
+    let fine = true;
+    if (ceilingUnder) for (let j = 0; j < sourceCount; j++) if (gainOf[j] < 0) fine = false;
+    if (fine) {
+      fillTo(bound);
+      if (ceilingUnder && inp.ceiling !== null) {
+        evaluate(inp, law, out, true);
+        const m = measure(inp.ceiling, out.federal);
+        if (m.v > inp.ceiling.at - LINE_EPS) {
+          drawnOf.fill(0);
+          active = -1;
+          delta = 0;
+        } else if (active >= 0) {
+          jumped = true;
+        }
+      }
+    }
+  }
   for (;;) {
     if (++out.pieces > MAX_PIECES) throw new Error(`The year's walk took more than ${MAX_PIECES} pieces`);
     let fresh = false;
-    if (active < 0 || ceilingUnder) {
+    if (jumped) {
+      jumped = false;
+      fresh = true;
+    } else if (active < 0 || ceilingUnder) {
       commit();
       active = pick(inp, law, out);
       fresh = ceilingUnder && active >= 0;
@@ -821,10 +920,17 @@ function walk(inp: YearInput, law: TaxLaw, out: YearResult): void {
     }
     // 1. Pays here? (Only where "at" can differ from just right of here.)
     if (needAt) {
-      evaluate(inp, law, out, false);
-      if (f.v >= -PAY_EPS) break;
+      if (!fresh) evaluate(inp, law, out, true);
+      fresh = true;
+      if (shortcuts.on && !track.onLine) {
+        // Off every line, "at" is just right of here.
+        if (f.v >= -PAY_EPS) break;
+      } else {
+        evaluate(inp, law, out, false);
+        if (f.v >= -PAY_EPS) break;
+        fresh = false;
+      }
       needAt = false;
-      fresh = false;
     }
     // 2. Pays just right of here: exactly here, or open at this point.
     if (!fresh) evaluate(inp, law, out, true);

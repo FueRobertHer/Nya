@@ -200,11 +200,11 @@ async function measure(what: () => Promise<unknown>) {
 }
 
 type Root = ReturnType<typeof createRoot>;
-async function mountHome(store?: PlanInputsStore, planTax = false, over: Partial<React.ComponentProps<typeof FiProgressCard>> = {}): Promise<{ root: Root; text: () => string }> {
+async function mountHome(store?: PlanInputsStore, over: Partial<React.ComponentProps<typeof FiProgressCard>> = {}): Promise<{ root: Root; text: () => string }> {
   const container = dom.document.createElement('ul');
   dom.document.body.appendChild(container);
   const root = createRoot(container as unknown as Element);
-  await act(async () => root.render(<FiProgressCard txns={YEAR} txnsLoading={false} txnNotes={[]} institutions={INSTITUTIONS} currency="USD" onOpenPlan={() => {}} planInputs={store} planTax={planTax} {...over} />));
+  await act(async () => root.render(<FiProgressCard txns={YEAR} txnsLoading={false} txnNotes={[]} institutions={INSTITUTIONS} currency="USD" onOpenPlan={() => {}} planInputs={store} {...over} />));
   return { root, text: () => container.textContent };
 }
 async function mountPlan(store?: PlanInputsStore): Promise<Root> {
@@ -294,14 +294,12 @@ describe('what the plan’s inputs cost', () => {
 
   // Last, since it moves the stored plan on.
   test('a detailed plan costs Home one read of its settings, and every one with an age has its FI number from its years', async () => {
-    const { flagsStore } = await import('@/lib/flag-store');
     const facts = await import('@/app/api/plan-facts/route');
-    await flagsStore.update('plan-tax', async () => ({ on: 'nobody', containers: [TEST_CONTAINER], updatedAt: new Date().toISOString() }) as never, TEST_CONTAINER);
     const optIn = await facts.POST(new Request('http://nya.test/api/plan-facts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ kind: 'opt-in' }) }));
     expect(optIn.status).toBe(200);
 
     let home!: { root: Root; text: () => string };
-    expect(await measure(async () => (home = await mountHome(createPlanInputsStore(), true)))).toEqual({ ...ONE, others: { 'GET /api/allocation-settings': 1 } });
+    expect(await measure(async () => (home = await mountHome(createPlanInputsStore())))).toEqual({ ...ONE, others: { 'GET /api/allocation-settings': 1 } });
     expect(home.text()).toStartWith('FI');
     expect(home.text()).not.toContain('Working it out');
     await unmount(home.root);
@@ -311,7 +309,7 @@ describe('what the plan’s inputs cost', () => {
     const milestone = { id: 'm', label: 'Part time', kind: 'part-time', from: { anchor: { at: 'balance', amount: 900_000 }, offset: 0 }, until: { anchor: { at: 'age', age: 70 }, offset: 0 }, once: null, yearly: 20_000, replaces: null, every: null, times: null, inflationAdjusted: true, owner: 'you', beforeTax: true };
     const changed = await firePlan.PUT(new Request('http://nya.test/api/fire-plan', { method: 'PUT', body: JSON.stringify({ plan: { ...read.plan, items: [milestone] }, currency: 'USD', facts_were: factsOf(read.plan), based_on: read.updated_at }) }));
     expect(changed.status).toBe(200);
-    const cost = await measure(async () => (home = await mountHome(createPlanInputsStore(), true)));
+    const cost = await measure(async () => (home = await mountHome(createPlanInputsStore())));
     expect(cost.others).toEqual({ 'GET /api/allocation-settings': 1 });
     expect(home.text()).not.toContain('Working it out');
     expect(home.text()).not.toContain('isn’t worked out');
@@ -328,22 +326,25 @@ describe('what the plan’s inputs cost', () => {
     const changed = await firePlan.PUT(new Request('http://nya.test/api/fire-plan', { method: 'PUT', body: JSON.stringify({ plan: { ...read.plan, items: [income] }, currency: 'USD', facts_were: factsOf(read.plan), based_on: read.updated_at }) }));
     expect(changed.status).toBe(200);
 
-    const saidWith = async (planTax: boolean) => {
+    const says = async (over: Partial<React.ComponentProps<typeof FiProgressCard>> = {}) => {
       const said: string[][] = [];
-      const home = await mountHome(createPlanInputsStore(), planTax, { institutions, onAttention: (notes) => said.push(notes.map((n) => n.kind)) });
+      const home = await mountHome(createPlanInputsStore(), { institutions, onAttention: (notes) => said.push(notes.map((n) => n.kind)), ...over });
       await settle();
       await unmount(home.root);
       return said;
     };
-    expect(await saidWith(true)).toEqual([['no tax bucket', 'Roth put-in not given', 'income after tax']]);
+    expect(await says()).toEqual([['no tax bucket', 'Roth put-in not given', 'income after tax']]);
 
     // A bucket the person chose is read from their settings, so it isn't asked for again.
     const settings = STUBS['GET /api/allocation-settings'];
     STUBS['GET /api/allocation-settings'] = { settings: { v: 1, buckets: [{ account_id: 'Mystery', bucket: 'taxable' }], funds: [], accounts: [], target: null } };
-    expect(await saidWith(true)).toEqual([['Roth put-in not given', 'income after tax']]);
+    expect(await says()).toEqual([['Roth put-in not given', 'income after tax']]);
     STUBS['GET /api/allocation-settings'] = settings;
 
-    // With the flag off a detailed plan is held flat, and says nothing here.
-    expect(await saidWith(false)).toEqual([[]]);
+    // In another currency a detailed plan is at its flat rate, and says nothing here.
+    const { firePlansStore } = await import('@/lib/plan-copies');
+    const { MAIN_ID } = await import('@/lib/fire/copies');
+    await firePlansStore.update(TEST_CTX, MAIN_ID, async (entry) => ({ ...entry!, currency: 'EUR' }));
+    expect(await says({ currency: 'EUR' })).toEqual([[]]);
   });
 });

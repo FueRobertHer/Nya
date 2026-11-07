@@ -164,13 +164,13 @@ describe('a fresh sign-in', () => {
 describe('the change', () => {
   test('lands with its change recorded by the admin’s container, and answers the row; this server sees it at once', async () => {
     expect((await cachedFlags()).flags.size).toBe(0);
-    const res = await put({ key: 'plan-tax', change: { op: 'choose', choice: 'admin' } });
+    const res = await put({ key: 'plan-child-accounts', change: { op: 'choose', choice: 'admin' } });
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-store');
-    expect((await res.json()).row).toMatchObject({ key: 'plan-tax', name: 'Detailed tax in the Plan', stored: 'admin', containers: [] });
-    expect(stored('plan-tax')).toMatchObject({ on: 'admin', containers: [] });
-    expect(record()).toEqual([expect.objectContaining({ key: 'plan-tax', from: null, to: expect.objectContaining({ on: 'admin' }), by: TEST_CONTAINER })]);
-    expect((await cachedFlags()).flags.get('plan-tax')).toMatchObject({ on: 'admin' });
+    expect((await res.json()).row).toMatchObject({ key: 'plan-child-accounts', name: 'Child’s accounts out of invested assets', stored: 'admin', containers: [] });
+    expect(stored('plan-child-accounts')).toMatchObject({ on: 'admin', containers: [] });
+    expect(record()).toEqual([expect.objectContaining({ key: 'plan-child-accounts', from: null, to: expect.objectContaining({ on: 'admin' }), by: TEST_CONTAINER })]);
+    expect((await cachedFlags()).flags.get('plan-child-accounts')).toMatchObject({ on: 'admin' });
   });
 
   test('accounts and people, one recorded change each', async () => {

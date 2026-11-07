@@ -54,7 +54,7 @@ const PLAN = { ...DEFAULT_PLAN_V2, age: 41, targetAge: 50, spending: 40_000, sav
 const yearRow = (id: string, income: number, contributions: number) => ({ id, dividends_12m: income, contributions_12m: contributions, contributions_12m_from: '2025-11-05', contributions_12m_partial: false, contributions_12m_rows: [], contributions_12m_activity_from: null, note: null });
 
 type Call = { method: string; url: string; body: any };
-function serve(over: { tax?: TaxFacts; plan?: typeof PLAN; refuse?: string; rows?: Record<string, ReturnType<typeof yearRow>>; hold?: Promise<void>; copies?: boolean } = {}) {
+function serve(over: { tax?: TaxFacts; plan?: typeof PLAN; refuse?: string; rows?: Record<string, ReturnType<typeof yearRow>>; hold?: Promise<void>; copies?: boolean; currency?: string } = {}) {
   const calls: Call[] = [];
   const state = { tax: over.tax ?? DEFAULT_TAX_FACTS, plan: over.plan ?? PLAN, refuse: over.refuse ?? null, settings: { version: 1, target: null, buckets: [], funds: [], accounts: [] } as any };
   const rows = over.rows ?? { 'i1:brk': yearRow('i1:brk', 2_800, 6_000), 'i1:k': yearRow('i1:k', 0, 20_000) };
@@ -64,7 +64,7 @@ function serve(over: { tax?: TaxFacts; plan?: typeof PLAN; refuse?: string; rows
     const call = { method, url, body: init?.body ? JSON.parse(String(init.body)) : null };
     calls.push(call);
     const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } });
-    const plan = () => ({ plan: state.plan, currency: 'USD', tax_facts: state.tax });
+    const plan = () => ({ plan: state.plan, currency: over.currency ?? 'USD', tax_facts: state.tax });
     if (u.pathname === '/api/plan-inputs') {
       if (u.searchParams.get('sync') === '1') {
         await over.hold;
@@ -875,16 +875,16 @@ describe('the rows asked for', () => {
   });
 });
 
-describe('detailed tax saved, while it can’t be worked out', () => {
-  const HELD = 'Worked-out tax is paused; using a flat 15%.';
+describe('detailed tax saved, in another currency', () => {
+  const HELD = 'Worked-out tax needs US dollars; using a flat 15%.';
   const open = async (tab: Tab) => {
     await press(tab.row('Assumptions'));
     await settle(60);
   };
 
   test('a caution on Assumptions and a notice by the rate, never silently', async () => {
-    serve({ tax: { ...DEFAULT_TAX_FACTS, model: 'detailed' }, plan: { ...PLAN, taxRate: 0.15 } });
-    const tab = await mount();
+    serve({ tax: { ...DEFAULT_TAX_FACTS, model: 'detailed' }, plan: { ...PLAN, taxRate: 0.15 }, currency: 'EUR' });
+    const tab = await mount({ currency: 'EUR' });
     await settle(60);
     expect(tab.container.textContent).toContain(HELD);
     await open(tab);
@@ -895,8 +895,8 @@ describe('detailed tax saved, while it can’t be worked out', () => {
   });
 
   test('the flat model draws neither', async () => {
-    serve({ plan: { ...PLAN, taxRate: 0.15 } });
-    const tab = await mount();
+    serve({ plan: { ...PLAN, taxRate: 0.15 }, currency: 'EUR' });
+    const tab = await mount({ currency: 'EUR' });
     await settle(60);
     expect(tab.container.textContent).not.toContain(HELD);
     await open(tab);
@@ -912,21 +912,14 @@ describe('the start from what you’d have at your stop age', () => {
     await settle(60);
   };
 
-  test('is an option only for a plan already on it', async () => {
-    serve({ plan: { ...PLAN, start: 'at-stop' } });
-    const tab = await mount();
-    await settle(60);
-    await open(tab);
-    expect(options(tab).filter((o) => o.includes('at my stop age'))).toHaveLength(1);
-    await tab.unmount();
-  });
-
-  test('and isn’t offered to any other', async () => {
-    serve();
-    const tab = await mount();
-    await settle(60);
-    await open(tab);
-    expect(options(tab).filter((o) => o.includes('at my stop age'))).toHaveLength(0);
-    await tab.unmount();
+  test('is an option for a plan on it, and for any other', async () => {
+    for (const plan of [{ ...PLAN, start: 'at-stop' as const }, PLAN]) {
+      serve({ plan });
+      const tab = await mount();
+      await settle(60);
+      await open(tab);
+      expect(options(tab).filter((o) => o.includes('at my stop age'))).toHaveLength(1);
+      await tab.unmount();
+    }
   });
 });

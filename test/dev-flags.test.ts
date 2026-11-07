@@ -52,14 +52,14 @@ describe('where it exists', () => {
 describe('setting a switch', () => {
   test('lands in both keys, as made in local development, and this server’s copy sees it at once', async () => {
     expect((await cachedFlags()).flags.size).toBe(0);
-    const res = await put({ key: 'plan-tax', choice: 'admin' });
+    const res = await put({ key: 'plan-child-accounts', choice: 'admin' });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ key: 'plan-tax', choice: 'admin' });
-    const stored = JSON.parse(String(fake.hashes.get(testKey('flags:values'))!.get('plan-tax')));
+    expect(await res.json()).toEqual({ key: 'plan-child-accounts', choice: 'admin' });
+    const stored = JSON.parse(String(fake.hashes.get(testKey('flags:values'))!.get('plan-child-accounts')));
     expect(stored).toMatchObject({ on: 'admin', containers: [] });
     const [change] = [...fake.hashes.get(testKey('flags:log'))!.values()].map((v) => JSON.parse(v));
-    expect(change).toMatchObject({ key: 'plan-tax', from: null, to: { on: 'admin' }, by: 'local development' });
-    expect((await cachedFlags()).flags.get('plan-tax')).toMatchObject({ on: 'admin' });
+    expect(change).toMatchObject({ key: 'plan-child-accounts', from: null, to: { on: 'admin' }, by: 'local development' });
+    expect((await cachedFlags()).flags.get('plan-child-accounts')).toMatchObject({ on: 'admin' });
   });
 
   test('an audience keeps the accounts it is also on for', async () => {
@@ -96,26 +96,39 @@ describe('setting a switch', () => {
   });
 });
 
+describe('a switch this release doesn’t have', () => {
+  // A record outlives its switch (docs/operations.md): plan-tax's, once T5 took the switch away.
+  test('is left where it is, and neither read nor listed', async () => {
+    const record = JSON.stringify({ on: 'everyone', containers: [], updatedAt: AT });
+    await fake.hset(testKey('flags:values'), { 'plan-tax': record });
+    const page = (await DevFlagsPage()) as { props: { children: { props: { rows?: unknown[] } }[] } };
+    const rows = page.props.children.find((c) => c?.props?.rows)!.props.rows as { key: string }[];
+    expect(rows.map((r) => r.key)).not.toContain('plan-tax');
+    expect(Object.keys((await cachedFlags()).flags)).not.toContain('plan-tax');
+    expect(await fake.hget(testKey('flags:values'), 'plan-tax')).toEqual(JSON.parse(record));
+  });
+});
+
 describe('the page', () => {
   test('shows every switch, what is stored, and what the environment decides', async () => {
     process.env.CSP_MODE = 'enforce';
     try {
       await fake.hset(testKey('flags:values'), {
-        'plan-tax': JSON.stringify({ on: 'admin', containers: ['5d1c7e2a-9b3f-4c6d-8e1a-2b3c4d5e6f70'], updatedAt: AT }),
+        'plan-child-accounts': JSON.stringify({ on: 'admin', containers: ['5d1c7e2a-9b3f-4c6d-8e1a-2b3c4d5e6f70'], updatedAt: AT }),
         lunchflow: 'not json',
         'sign-in': JSON.stringify({ ids: ['user_a'], emails: ['pat@example.com'], updatedAt: AT }),
       });
       const page = (await DevFlagsPage()) as { props: { children: { props: { rows?: unknown[] } }[] } };
       const rows = page.props.children.find((c) => c?.props?.rows)!.props.rows as { key: string; stored: unknown; variableSet: boolean; people: number | null; accounts: number | null; containers: unknown }[];
       const by = Object.fromEntries(rows.map((r) => [r.key, r]));
-      expect(rows.map((r) => r.key)).toEqual(['restore', 'restore-carry-on', 'lunchflow', 'brokerage-link', 'api-writes', 'plan-tax', 'plan-items-in-fi', 'plan-child-accounts', 'csp', 'ops', 'sign-in']);
-      expect(by['plan-tax'].stored).toBe('admin');
+      expect(rows.map((r) => r.key)).toEqual(['restore', 'restore-carry-on', 'lunchflow', 'brokerage-link', 'api-writes', 'plan-items-in-fi', 'plan-child-accounts', 'csp', 'ops', 'sign-in']);
+      expect(by['plan-child-accounts'].stored).toBe('admin');
       expect(by.lunchflow.stored).toBe('unreadable');
       expect(by.restore.stored).toBeNull();
       expect(by.csp.variableSet).toBe(true);
       expect(by['sign-in'].people).toBe(2);
       // Counted, never named: anyone signed in to a local server sees this page.
-      expect(by['plan-tax']).toMatchObject({ accounts: 1, containers: null });
+      expect(by['plan-child-accounts']).toMatchObject({ accounts: 1, containers: null });
       for (const named of ['5d1c7e2a', 'user_a', 'pat@example.com']) expect(JSON.stringify(rows)).not.toContain(named);
     } finally {
       delete process.env.CSP_MODE;
