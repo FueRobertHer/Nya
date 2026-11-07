@@ -7,20 +7,15 @@ import { planPage } from './plan-page';
 // and after, and a new plan that starts worked out.
 
 const page = await planPage();
-const { PLAN, seedPlan, seedCopy, render, press, button, field, fill, pick, calls, settle, classOf, stored, openCopy } = page;
+const { PLAN, WITH_BALANCES, seedPlan, seedCopy, render, press, button, field, fill, pick, calls, settle, classOf, stored, openCopy } = page;
 type Tab = Awaited<ReturnType<typeof render>>;
 type Node = NonNullable<ReturnType<Tab['dialog']>>;
 
-async function flagged() {
-  const { flagsStore } = await import('@/lib/flag-store');
-  await flagsStore.update('plan-tax', async () => ({ on: 'nobody', containers: [TEST_CONTAINER], updatedAt: new Date().toISOString() }) as never, TEST_CONTAINER);
-}
 const WAY_IN = 'Work out tax from your accounts';
 
 async function detailed(plan = PLAN, props: Parameters<typeof render>[0] = {}) {
-  await flagged();
   await seedPlan(plan);
-  const tab = await render({ planTax: true, ...props });
+  const tab = await render({ ...WITH_BALANCES, ...props });
   await pick(tab.container, 'Drawdown');
   await press(tab.row(WAY_IN));
   await press(button(tab.dialog(), 'Work it out'));
@@ -65,9 +60,8 @@ const holdingPost = async (path: string, run: (letGo: () => void) => Promise<voi
 
 describe('How you draw', () => {
   test('a flat plan has no such card', async () => {
-    await flagged();
     await seedPlan();
-    const flat = await render({ planTax: true });
+    const flat = await render(WITH_BALANCES);
     await pick(flat.container, 'Drawdown');
     expect(flat.text()).not.toContain('How you draw');
     expect(flat.text()).not.toContain('Compare conversions');
@@ -316,7 +310,7 @@ describe('Compare conversions', () => {
   test('Try it takes a number where another plan has its name, in any case', async () => {
     await (await detailed()).unmount();
     await seedCopy('fill the 12% bracket', { targetAge: 52 });
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     await pick(tab.container, 'Drawdown');
     await press(ruleOf(bodyRows(compareTable(tab)).find((r) => ruleOf(r).textContent === 'Fill the 12% bracket')!));
     await press(button(tab.dialog(), 'Try it in a copy'));
@@ -360,13 +354,9 @@ describe('Your figures', () => {
     await tab.unmount();
   }, 30_000);
 
-  test('flat with the flag on, the row says the rate as set and opens the way in; with it off, nothing new', async () => {
-    await flagged();
+  test('flat, the row says the rate as set and opens the way in', async () => {
     await seedPlan();
-    const off = await render({ planTax: false });
-    expect(off.row('Tax after you stop')).toBeNull();
-    await off.unmount();
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     const row = tab.row('Tax after you stop')!;
     expect(subOf(row)).toBe('As set · work out tax from your accounts');
     await press(row);
@@ -645,9 +635,8 @@ describe('Your figures', () => {
 
 describe('the way in', () => {
   test('before and after, and nothing saved until Work it out', async () => {
-    await flagged();
     await seedPlan();
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     await pick(tab.container, 'Drawdown');
     await press(tab.row(WAY_IN));
     await settle(200);
@@ -672,9 +661,8 @@ describe('the way in', () => {
     const real = search.answer;
     search.answer = () => ({ ok: false, error: 'nope' });
     try {
-      await flagged();
       await seedPlan({ ...PLAN, stopAtFi: true, targetAge: null } as typeof PLAN);
-      const tab = await render({ planTax: true, ...WITH_ACCOUNTS });
+      const tab = await render({ ...WITH_BALANCES, ...WITH_ACCOUNTS });
       await pick(tab.container, 'Drawdown');
       await press(tab.row(WAY_IN));
       await settle(300);
@@ -691,8 +679,7 @@ describe('the way in', () => {
 
 describe('a new plan', () => {
   test('starts worked out once both ages are given, with no rate typed', async () => {
-    await flagged();
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     await settle(100);
     await press(tab.row('Household'));
     await fill(tab.dialog()!, 'Your age', '40');
@@ -704,9 +691,8 @@ describe('a new plan', () => {
   }, 30_000);
 
   test('its sheet closes on the save, with no word of the plan being read again', async () => {
-    await flagged();
     await holdingPost('/api/plan-facts', async (letGo) => {
-      const tab = await render({ planTax: true });
+      const tab = await render(WITH_BALANCES);
       await settle(100);
       await press(tab.row('Household'));
       await fill(tab.dialog()!, 'Your age', '40');
@@ -743,9 +729,8 @@ describe('a new plan', () => {
   }, 30_000);
 
   test('a plan with a rate typed stays flat, its offer still there', async () => {
-    await flagged();
     await seedPlan({ ...PLAN, age: null, targetAge: null, taxRate: 0.15 });
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     await press(tab.row('Household'));
     await fill(tab.dialog()!, 'Your age', '40');
     await fill(tab.dialog()!, 'Stop', '50');
@@ -758,9 +743,8 @@ describe('a new plan', () => {
   }, 30_000);
 
   test('a plan with its ages already stays flat', async () => {
-    await flagged();
     await seedPlan({ ...PLAN, age: 40, targetAge: 50 });
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     await press(tab.row('Household'));
     await fill(tab.dialog()!, 'Stop', '52');
     await press(button(tab.dialog(), 'Save'));
@@ -775,7 +759,7 @@ describe('a copy', () => {
     const tab0 = await detailed();
     await tab0.unmount();
     await seedCopy('Stop at 52', { targetAge: 52 });
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     await openCopy(tab, 'Stop at 52');
     await pick(tab.container, 'Drawdown');
     await press(tab.row('Roth conversions'));

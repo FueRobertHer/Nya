@@ -9,7 +9,7 @@ import { parseTaxFactOp } from '@/lib/fire/tax-facts';
 // account's owner, typed basis and Count it, or what one person has put into a
 // Roth. Answers your plan as GET /api/fire-plan does, the facts in it, for the
 // copy of the Plan's inputs Home and the Plan share. With no plan saved it
-// writes the facts alone, and the plan stays new. The opt-in (behind `plan-tax`)
+// writes the facts alone, and the plan stays new. The opt-in
 // makes your plan's entry and writes every plan's choices first; back to the flat
 // model is one change like the others.
 

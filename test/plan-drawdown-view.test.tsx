@@ -7,22 +7,17 @@ import { planPage } from './plan-page';
 // the card, a stage's sheet and a year's, and the way back.
 
 const page = await planPage();
-const { PLAN, answers, seedPlan, seedCopy, render, press, button, closeOf, pick, openCopy, classOf, calls, fake } = page;
+const { PLAN, WITH_BALANCES, answers, seedPlan, seedCopy, render, press, button, closeOf, pick, openCopy, classOf, calls, fake, settle, askForRealGrid } = page;
 type Tab = Awaited<ReturnType<typeof render>>;
 
-async function flagged() {
-  const { flagsStore } = await import('@/lib/flag-store');
-  await flagsStore.update('plan-tax', async () => ({ on: 'nobody', containers: [TEST_CONTAINER], updatedAt: new Date().toISOString() }) as never, TEST_CONTAINER);
-}
 const drawdown = async (tab: Tab) => {
   await pick(tab.container, 'Drawdown');
 };
 const WAY_IN = 'Work out tax from your accounts';
 
 async function detailed(plan = PLAN, props: Parameters<typeof render>[0] = {}) {
-  await flagged();
   await seedPlan(plan);
-  const tab = await render({ planTax: true, ...props });
+  const tab = await render({ ...WITH_BALANCES, ...props });
   await drawdown(tab);
   await press(tab.row(WAY_IN));
   await press(button(tab.dialog(), 'Work it out'));
@@ -78,7 +73,7 @@ describe('while what a plan’s years rest on is out', () => {
   test('a plan the drawdown moves is dimmed, not a flat date that then jumps', async () => {
     await (await detailed(moved, props)).unmount();
     await holding('/api/allocation-settings', async (letGo) => {
-      const tab = await render({ planTax: true, ...(props as object) });
+      const tab = await render({ ...WITH_BALANCES, ...(props as object) });
       expect(tab.said()).toContain('Working it out');
       expect(tab.text()).not.toContain('Year by year, at');
       letGo();
@@ -92,7 +87,7 @@ describe('while what a plan’s years rest on is out', () => {
   test('every detailed plan waits, its FI number, tax and health with it, since all three come from its years', async () => {
     await (await detailed(PLAN, props)).unmount();
     await holding('/api/allocation-settings', async (letGo) => {
-      const tab = await render({ planTax: true, ...(props as object) });
+      const tab = await render({ ...WITH_BALANCES, ...(props as object) });
       expect(tab.said()).toContain('Working it out');
       await pick(tab.container, 'Your path');
       const fi = () => tab.row('FI number')!.textContent ?? '';
@@ -115,12 +110,12 @@ describe('while what a plan’s years rest on is out', () => {
 
   test('with no balances in yet, a plan the drawdown moves waits for them', async () => {
     await (await detailed(moved, props)).unmount();
-    const tab = await render({ planTax: true, planInWalk: true, institutions: [], balancesAsOf: null });
+    const tab = await render({ ...WITH_BALANCES, planInWalk: true, institutions: [], balancesAsOf: null });
     expect(tab.said()).toContain('Working it out');
     expect(tab.text()).not.toContain('Year by year, at');
     await tab.unmount();
     // Balances that couldn't be had don't hold it for good.
-    const failed = await render({ planTax: true, planInWalk: true, institutions: [], balancesAsOf: null, balancesFailed: true });
+    const failed = await render({ ...WITH_BALANCES, planInWalk: true, institutions: [], balancesAsOf: null, balancesFailed: true });
     expect(failed.said()).not.toContain('Working it out');
     expect(failed.text()).toContain('Year by year, at');
     await failed.unmount();
@@ -130,7 +125,7 @@ describe('while what a plan’s years rest on is out', () => {
     await (await detailed(PLAN, props)).unmount();
     await seedCopy('Later', { targetAge: 58 });
     await holding('/api/allocation-settings', async (letGo) => {
-      const tab = await render({ planTax: true, ...(props as object) });
+      const tab = await render({ ...WITH_BALANCES, ...(props as object) });
       await press(tab.plans());
       await press(button(tab.dialog(), 'Compare'));
       await page.settle(1000);
@@ -151,7 +146,7 @@ describe('while what a plan’s years rest on is out', () => {
     const atStop = { ...PLAN, spending: 60_000, start: 'at-stop' } as typeof PLAN;
     await (await detailed(atStop, props)).unmount();
     await holding('/api/allocation-settings', async (letGo) => {
-      const tab = await render({ planTax: true, ...(props as object) });
+      const tab = await render({ ...WITH_BALANCES, ...(props as object) });
       await page.settle(800);
       const flatSetup = /Stop working at \d+ with/;
       const whole = () => tab.container.findAll((e) => e.getAttribute('role') === 'radio' && e.textContent === 'Whole path');
@@ -170,7 +165,7 @@ describe('while what a plan’s years rest on is out', () => {
     const taxed = { ...PLAN, taxRate: 0.15 } as typeof PLAN;
     await (await detailed(taxed, props)).unmount();
     await holding('/api/allocation-settings', async (letGo) => {
-      const tab = await render({ planTax: true, ...(props as object) });
+      const tab = await render({ ...WITH_BALANCES, ...(props as object) });
       await pick(tab.container, 'Drawdown');
       await page.settle(800);
       expect(tab.text()).not.toContain('each starting with');
@@ -187,7 +182,7 @@ describe('while what a plan’s years rest on is out', () => {
     const atStop = { ...PLAN, start: 'at-stop' } as typeof PLAN;
     await (await detailed(atStop, props)).unmount();
     await holding('/api/allocation-settings', async (letGo) => {
-      const tab = await render({ planTax: true, ...(props as object) });
+      const tab = await render({ ...WITH_BALANCES, ...(props as object) });
       const sheet = await page.addTemplate(tab, 'A change in spending');
       await page.fill(sheet, 'Change a year', '4000');
       await press(tab.sheetRow('Starts'));
@@ -216,7 +211,7 @@ describe('while what a plan’s years rest on is out', () => {
   test('an item sheet’s preview takes the answer as it comes, with nothing typed', async () => {
     await (await detailed(moved, props)).unmount();
     await holding('/api/allocation-settings', async (letGo) => {
-      const tab = await render({ planTax: true, ...(props as object) });
+      const tab = await render({ ...WITH_BALANCES, ...(props as object) });
       const sheet = await page.addTemplate(tab, 'A cost');
       await page.fill(sheet, 'The amount', '50000');
       await page.fill(sheet, 'Starts at age', '46');
@@ -237,7 +232,7 @@ describe('while what a plan’s years rest on is out', () => {
     // Its row can't be had, so the page goes on with the stand-ins and says so.
     const real = globalThis.fetch;
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => (String(input).includes('sync=1') ? Promise.resolve(Response.json({ error: 'no' }, { status: 500 })) : real(input, init))) as typeof fetch;
-    const tab = await render({ planTax: true, ...(both as object) });
+    const tab = await render({ ...WITH_BALANCES, ...(both as object) });
     await page.settle(200);
     globalThis.fetch = real;
     expect(tab.text()).toContain('Year by year, at');
@@ -271,9 +266,8 @@ describe('a rule that takes a share of what is there', () => {
 describe('the start link', () => {
   test('on a copy, a save that fails says so where it was pressed', async () => {
     await seedPlan();
-    await flagged();
     await seedCopy('Later', { targetAge: 58 });
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     await openCopy(tab, 'Later');
     const link = () => tab.container.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim().startsWith('Start from what you'))[0] ?? null;
     answers['PUT /api/plans'] = () => Response.json({ error: 'Not now, says the server.' }, { status: 500 });
@@ -311,7 +305,7 @@ describe('a plan whose years can’t be worked out', () => {
       const body = await (await GET(new Request('http://nya.test/api/plan-inputs'))).json();
       return Response.json({ ...body, tax: { ...body.tax, taxableYield: 5 } });
     };
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     expect(tab.text()).toContain('Tax couldn’t be worked out for this plan, so it uses the flat rate.');
     expect(tab.text()).not.toContain('Year by year, at');
     await tab.unmount();
@@ -323,7 +317,7 @@ describe('a copy’s card', () => {
     const tab = await detailed();
     await tab.unmount();
     await seedCopy('Other', { spending: 50_000 });
-    const open = await render({ planTax: true });
+    const open = await render(WITH_BALANCES);
     await openCopy(open, 'Other');
     expect(open.text()).not.toContain('Other settings differ');
     await pick(open.container, 'Your path');
@@ -363,19 +357,9 @@ describe('marks on Whole path', () => {
 });
 
 describe('the way in', () => {
-  test('nothing with the flag off', async () => {
-    await seedPlan();
-    const tab = await render();
-    await drawdown(tab);
-    expect(tab.row(WAY_IN)).toBeNull();
-    expect(tab.text()).not.toContain('Year by year');
-    await tab.unmount();
-  }, 20_000);
-
   test('the row opens what changes and what it reads; Not now changes nothing', async () => {
     await seedPlan();
-    await flagged();
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     await drawdown(tab);
     expect(tab.text()).not.toContain('Year by year');
     await press(tab.row(WAY_IN));
@@ -416,7 +400,7 @@ describe('the way in', () => {
     test('a balance you typed, with its tax once and its one label', async () => {
       const typed = await said({ start: 'custom', startBalance: 777_000 });
       expect(typed).toContain('with the $777,000 you typed, for 40 years');
-      expect(typed.match(/from the steady years below\./g)?.length).toBe(1);
+      expect(typed.match(/With each year’s tax\./g)?.length).toBe(1);
       expect(typed.match(/Hypothetical, from US history and 2026 tax law/g)?.length).toBe(1);
     }, 30_000);
     test('what you’d have at the stop', async () => {
@@ -435,7 +419,8 @@ describe('the way in', () => {
     expect(tab.dialog()).toBeNull();
     expect(tab.row(WAY_IN)).toBeNull();
     expect(tab.text()).toContain('Year by year, at a steady 5%');
-    expect(tab.text()).toContain('from the steady years below.');
+    expect(tab.text()).toContain('With each year’s tax.');
+    expect(tab.text()).not.toContain('from the steady years below');
     expect(tab.text()).toContain('Your spending, health coverage and tax come to about');
     expect(tab.text()).toContain('Hypothetical, from US history and 2026 tax law: not a prediction, and not investment or tax advice.');
     expect(tab.text()).toContain('Go to Your path');
@@ -455,8 +440,7 @@ describe('the way in', () => {
 
   test('a refused opt-in says why, and the plan stays flat', async () => {
     await seedPlan();
-    await flagged();
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     await drawdown(tab);
     await press(tab.row(WAY_IN));
     page.answers['POST /api/plan-facts'] = () => Response.json({ error: 'Not now, says the server.' }, { status: 500 });
@@ -468,8 +452,7 @@ describe('the way in', () => {
 
   test('with no age it says so, and opens Household', async () => {
     await seedPlan({ ...PLAN, age: null, targetAge: null });
-    await flagged();
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     await drawdown(tab);
     const row = tab.row(WAY_IN)!;
     expect(row.textContent).toContain('It needs your age');
@@ -481,8 +464,7 @@ describe('the way in', () => {
   test('in a copy it says where it is done', async () => {
     await seedPlan();
     await seedCopy('Try');
-    await flagged();
-    const tab = await render({ planTax: true });
+    const tab = await render(WITH_BALANCES);
     await openCopy(tab, 'Try');
     await drawdown(tab);
     expect(tab.row(WAY_IN)).toBeNull();
@@ -490,13 +472,44 @@ describe('the way in', () => {
     await tab.unmount();
   }, 20_000);
 
+  test('the grid says it runs a sample, and your plan’s cell reads the answer above it', async () => {
+    askForRealGrid();
+    const tab = await detailed({ ...PLAN, rule: 'constant' });
+    await settle(400);
+    expect(tab.text()).toContain('Your plan is outlined. With each year’s tax, every sixth start, to keep this quick, so a cell can differ a little from the answer above.');
+    expect(tab.text()).toContain('Each length starts every sixth month that leaves all of it inside the data');
+    // The hero's figure and how many starts it ran; the outlined cell says both, and
+    // a cell beside it, in the same column, a sixth of the starts.
+    const figure = tab.container.findAll((e) => classOf(e).includes('total-value') && e.textContent.endsWith('%'))[0].textContent;
+    const starts = Number(tab.text().match(/of ([\d,]+) historical starts/)![1].replace(/,/g, ''));
+    const titled = tab.container.findAll((e) => (e.getAttribute('title') ?? '').includes(' starts lasted'));
+    const own = titled.filter((e) => classOf(e).includes('own'));
+    expect(own).toHaveLength(1);
+    const title = own[0].getAttribute('title')!;
+    expect(title).toContain(`: ${figure} of ${starts.toLocaleString('en-US')} starts lasted`);
+    const years = title.match(/for (\d+) years/)![1];
+    const beside = titled.filter((e) => e !== own[0] && (e.getAttribute('title') ?? '').includes(`for ${years} years`));
+    expect(beside.length).toBeGreaterThan(0);
+    for (const e of beside) expect(e.getAttribute('title')).toContain(` of ${Math.ceil(starts / 6).toLocaleString('en-US')} starts lasted`);
+    await tab.unmount();
+  }, 30_000);
+
+  test('a flat plan’s grid doesn’t say so', async () => {
+    await seedPlan();
+    const tab = await render(WITH_BALANCES);
+    await drawdown(tab);
+    await settle(400);
+    expect(tab.text()).toContain('Your plan is outlined.');
+    expect(tab.text()).not.toContain('every sixth');
+    expect(tab.text()).toContain('Each length starts in every month that leaves all of it inside the data');
+    await tab.unmount();
+  }, 30_000);
+
   test('a plan in another currency isn’t offered it', async () => {
     await seedPlan();
-    await flagged();
     fake.reset();
     await (await import('./fake-redis')).registerTestContainer(fake);
-    await flagged();
-    const tab = await render({ planTax: true, currency: 'EUR' });
+    const tab = await render({ ...WITH_BALANCES, currency: 'EUR' });
     await drawdown(tab);
     expect(tab.row(WAY_IN)).toBeNull();
     await tab.unmount();

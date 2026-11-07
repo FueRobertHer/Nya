@@ -1034,8 +1034,6 @@ export function AssumptionsForm(
     workedNumber?: number | null;
     /** Back to one flat rate, for every plan; null in a copy. */
     onFlatRate?: (() => Promise<true | string>) | null;
-    /** The flag is on: What I'd have at my stop age can be chosen. */
-    planTax?: boolean;
     /** The default growth, in points. */
     defaultGrowth?: number;
     /** What the accounts' year measured as a yield, for the field's placeholder. */
@@ -1172,7 +1170,7 @@ export function AssumptionsForm(
           />
         </label>
         {s.under('Growth after inflation')}
-        <p className="helper">{detail ? 'For years to FI, Coast FI, the balance at your stop age and the steady years on Drawdown, which your FI number’s tax and health coverage come from. Will it last? uses market history for its returns, with tax and health coverage from those steady years.' : 'Only for the years until FI: years to FI, Coast FI and the balance at your stop age. Will it last? uses market history for its returns, with tax and health coverage from those steady years.'}</p>
+        <p className="helper">{detail ? 'For years to FI, Coast FI, the balance at your stop age and the steady years on Drawdown, which your FI number’s tax and health coverage come from. Will it last? uses market history for its returns, and works out each year’s tax and health coverage on them.' : 'Only for the years until FI: years to FI, Coast FI and the balance at your stop age. Will it last? uses market history for its returns.'}</p>
         {!taxWorked && (
           <>
         <label className="field">
@@ -1338,7 +1336,7 @@ export function AssumptionsForm(
               </option>
             ))}
             <option value="custom">A balance I type</option>
-            {(props.planTax || plan.start === 'at-stop') && <option value="at-stop">What I’d have at my stop age</option>}
+            <option value="at-stop">What I’d have at my stop age</option>
           </select>
         </label>
         <p className="helper">

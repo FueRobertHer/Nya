@@ -155,7 +155,7 @@ import { OptInRow, OptInSheet, OPT_IN_TITLE } from './PlanOptIn';
 import { CompareCard, ConversionsForm, HowYouDrawCard, OrderForm, RuleLevel } from './PlanHowYouDraw';
 import { PlanTaxSheet } from './PlanTaxSheet';
 import { choicesDiffParts, copyNameFor, ruleTitle } from './plan-conversions';
-import { ABOUT_DETAIL, assumptionsLine, assumptionsWorked, HEALTH_NOT_SET, healthSub, honestyNotes, householdLine, hypotheticalDrawdown, namesCoverage, stageHealthLines, stageTitle, STATE_NAMES, taxHypothetical, taxLine, yearTitle, type YearContext } from './plan-drawdown';
+import { ABOUT_DETAIL, WITH_EACH_YEARS_TAX, gridSampleLine, assumptionsLine, assumptionsWorked, HEALTH_NOT_SET, healthSub, honestyNotes, householdLine, hypotheticalDrawdown, namesCoverage, stageHealthLines, stageTitle, STATE_NAMES, taxHypothetical, yearTitle, type YearContext } from './plan-drawdown';
 import { planFigures, resolveSaved, type FiguresRefused, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
 import { compareRows, conversionRun, type CompareRow } from '@/lib/fire/compare-conversions';
 import { defaultUntil as untilByDefault, type Strategy } from '@/lib/fire/tax/rules';
@@ -215,10 +215,21 @@ function useLast<T>(value: T | null): T | null {
 type PlanView = { row: PlanRow; plan: FirePlanV2; fixed: Repair[]; other: string | null; figures: PlanFigures | FiguresRefused | null; working: boolean; failed: boolean };
 
 /** Said for a save with nowhere to record its amounts' currency. */
+/** The answer above the grid, as its own cell. */
+const answerCell = (r: SimResult, rate: number | null): GridCell => ({
+  rate,
+  years: r.years,
+  successRate: r.successRate,
+  lowestSpendingShare: r.lowestSpending && r.firstYearSpending > 0 ? r.lowestSpending.amount / r.firstYearSpending : null,
+  paths: r.paths,
+  firstStart: r.firstStart,
+  lastStart: r.lastStart,
+});
+
 /** Your age, and a stop age or stopping at FI: what a detailed plan's years need. */
 const bothAges = (p: FirePlanV2) => p.age !== null && (p.stopAtFi || stopOf(p) !== null);
 
-/** A plan never saved, behind `plan-tax`: it starts from what it would have then. */
+/** A plan never saved: it starts from what it would have then. */
 const NEW_PLAN: FirePlanV2 = { ...DEFAULT_PLAN_V2, start: NEW_PLAN_START };
 
 const NO_COPY_CURRENCY = 'Your plan has no currency yet, so this copy can’t hold amounts: say which currency your plan’s figures are in first (above), then save again.';
@@ -345,8 +356,6 @@ export type PlanTabProps = {
   childNewUntil?: string | null;
   childMovedSeen?: boolean;
   onChildMovedSeen?: () => void;
-  /** The flag 'plan-tax': the detailed tax model may be offered and run. */
-  planTax?: boolean;
   /** Your tags, for what already pays for coverage (a tag is held by its id). */
   tags?: readonly { id: string; name: string }[];
 };
@@ -383,7 +392,6 @@ export default function PlanTab({
   childNewUntil = null,
   childMovedSeen = false,
   onChildMovedSeen,
-  planTax = false,
   tags = NO_TAGS,
 }: PlanTabProps) {
   const count: Count = useMemo(() => ({ planInWalk }), [planInWalk]);
@@ -483,7 +491,7 @@ export default function PlanTab({
   // computes with a value outside what the formulas take.
   // A version 1 plan is repaired by today's repair and held as version 2
   // (lib/fire/plan-v2.ts basePlanOf), which each save sends.
-  const stored: StoredPlan = state.value ?? (planTax ? NEW_PLAN : DEFAULT_PLAN);
+  const stored: StoredPlan = state.value ?? NEW_PLAN;
   const repair = useMemo(() => basePlanOf(stored), [stored]);
   /** The Plan as the tab shows it: the repaired one while a repair waits. */
   const basePlan = repair.plan;
@@ -561,7 +569,7 @@ export default function PlanTab({
   const shared = useSharedPlanInputs(planInputs, institutions, childOut);
   const leaveOut = useMemo(() => leftOutOf(childOut, shared.taxFacts.countAnyway), [childOut, shared.taxFacts.countAnyway]);
   // The detailed tax model (lib/fire/plan-detail.ts): said on, and allowed now.
-  const detailedOn = planTax && shared.factsKnown && shared.taxFacts.model === 'detailed';
+  const detailedOn = shared.factsKnown && shared.taxFacts.model === 'detailed';
   // The opt-in is open: what it would come to is shown before anything is saved.
   const [optInOpen, setOptInOpen] = useState(false);
   const inputs = usePlanInputs({
@@ -784,7 +792,7 @@ export default function PlanTab({
   if (detailedOn && settledNow) settledFor.current = yearRowsKey;
   const detailReady = detailedOn && taxInDollars && settledFor.current === yearRowsKey;
   // The way in, while a plan in dollars is flat, once the facts have been read.
-  const offerDetail = planTax && shared.factsKnown && shared.taxFacts.model === 'flat' && taxInDollars;
+  const offerDetail = shared.factsKnown && shared.taxFacts.model === 'flat' && taxInDollars;
   const detailHeld = detailedOn && taxInDollars && !detailReady;
   const detailBuckets = useMemo(
     () => (detailReady ? pageBuckets({ assets, holdings, facts: shared.taxFacts, settings: allocation.settings.value ?? null, rows: shared.copy.rows, partner: basePlan.partnerAge !== null }) : null),
@@ -1382,7 +1390,7 @@ export default function PlanTab({
     savingsRate: figures.savingsRate,
     shareRates: inputs.rates ?? null,
     // Said detailed, and not worked out that way now.
-    taxOnHold: shared.taxFacts.model === 'detailed' && !(planTax && taxInDollars),
+    taxOnHold: shared.taxFacts.model === 'detailed' && !taxInDollars,
   };
   const shownNow = figureNotes(figureArgs);
   // A detailed plan's own: what it says of its household and rates, and each gap in
@@ -1852,7 +1860,7 @@ export default function PlanTab({
       count={count}
       figuresFor={(slot, p) => figuresFor(slot, p, entry ? entry.tax : yourChoices)}
       figuresVersion={`${searchVersion}:${detailKey}`}
-      firedFor={!planTax ? null : ({ sim: run, trigger, offset }, signal) => runner().run({ kind: 'fired', method: plan.method, plan: run, trigger, offset }, signal).then((r) => (r.ok && r.kind === 'fired' ? r.fired : null))}
+      firedFor={({ sim: run, trigger, offset }, signal) => runner().run({ kind: 'fired', method: plan.method, plan: run, trigger, offset }, signal).then((r) => (r.ok && r.kind === 'fired' ? r.fired : null))}
       copyName={copyName}
       version={shownFor ?? storedKey}
       editable={timelineEditable}
@@ -2073,7 +2081,7 @@ export default function PlanTab({
               badge={stressBadge}
               onRetry={retry}
               onRetryDetail={search.retry}
-              startAtStop={planTax && (editable || state.saving || plansState.saving) && !other && !copyFixing && formPlan.start !== 'at-stop' && view.stopAge !== null ? () => savers.form({ ...formPlan, start: 'at-stop' }) : null}
+              startAtStop={(editable || state.saving || plansState.saving) && !other && !copyFixing && formPlan.start !== 'at-stop' && view.stopAge !== null ? () => savers.form({ ...formPlan, start: 'at-stop' }) : null}
               startBusy={state.saving || plansState.saving}
             />
           )}
@@ -2145,6 +2153,8 @@ export default function PlanTab({
               rates={gridRates}
               years={gridYears}
               current={{ rate: vpw ? null : engine.rate, years: engine.sim.years }}
+              ownCell={engine.sim.tax && !pending && outcome && 'result' in outcome ? answerCell(outcome.result, vpw ? null : engine.rate) : null}
+              sampled={engine.sim.tax !== undefined}
               startBalance={engine.sim.startBalance}
               money={money}
               badge={stressBadge}
@@ -2298,7 +2308,6 @@ export default function PlanTab({
             taxWorked={taxWorked}
             workedNumber={fiHeld ? null : view.workedOut}
             onFlatRate={entry ? null : () => chooseModel({ kind: 'model', model: 'flat' })}
-            planTax={planTax}
             defaultGrowth={defaultGrowth}
             measuredYield={detailBuckets ? measuredYield(detailBuckets) : null}
           />
@@ -3271,14 +3280,14 @@ export function SimulationCard({
   // The setup, and what the starting choice means for it.
   let setup: React.ReactNode;
   if (vpw) {
-    setup = `Stop working ${when} with ${money(sim.startBalance)} (${startLabel}), for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. VPW sets each year's spending from the balance and the years left.${detail ? ` ${taxLine(detail.t)}` : ''}`;
+    setup = `Stop working ${when} with ${money(sim.startBalance)} (${startLabel}), for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. VPW sets each year's spending from the balance and the years left.${detail ? ` ${WITH_EACH_YEARS_TAX}` : ''}`;
   } else if (detail) {
     const balance = <Masked>{money(sim.startBalance)}</Masked>;
     const startsWithIt = plan.start === 'fi-number' ? <>{startLabel}, {balance}</> : plan.start === 'assets' ? <>your invested assets, {balance}</> : plan.start === 'at-stop' ? <>the {balance} you’d have then</> : <>the {balance} you typed</>;
     setup = (
       <>
         Stop working {when} with {startsWithIt}, for {sim.years} years{startAge !== null ? `, to age ${startAge + sim.years}` : ''}. Your spending, health coverage and tax come to {plan.rule === 'constant' ? 'about ' : ''}
-        <strong>{pct(saidRate(rate, plan.withdrawalRate))}</strong> of it {plan.rule === 'constant' ? 'a year' : 'in the first year'}.{saidAbove(rate, plan.withdrawalRate) ? ` That’s above the ${pct(plan.withdrawalRate)} your FI number assumes.` : ''} {taxLine(detail.t)}
+        <strong>{pct(saidRate(rate, plan.withdrawalRate))}</strong> of it {plan.rule === 'constant' ? 'a year' : 'in the first year'}.{saidAbove(rate, plan.withdrawalRate) ? ` That’s above the ${pct(plan.withdrawalRate)} your FI number assumes.` : ''} {WITH_EACH_YEARS_TAX}
       </>
     );
   } else if (rateFrom === 'spending') {
@@ -3350,7 +3359,7 @@ export function SimulationCard({
       <p className="plan-definition">
         {successDefinition(sim.years)}
         {flexible ? ' This rule lasts by cutting spending when markets fall; Lowest year, below, says how far.' : ''}
-        {detail && setupHeld ? ` ${taxLine(detail.t)}` : ''}
+        {detail && setupHeld ? ` ${WITH_EACH_YEARS_TAX}` : ''}
       </p>
       <p className="plan-definition">{detail ? hypotheticalDrawdown(detail.lawYear) : HYPOTHETICAL_LABEL}</p>
     </div>,
@@ -3458,6 +3467,8 @@ export function GridCard({
   rates,
   years,
   current,
+  ownCell = null,
+  sampled = false,
   startBalance,
   money,
   badge = null,
@@ -3478,6 +3489,10 @@ export function GridCard({
   rates: (number | null)[];
   years: number[];
   current: { rate: number | null; years: number };
+  /** What the plan's own cell says, when it isn't one of `cells`. */
+  ownCell?: GridCell | null;
+  /** Each cell runs a sample, with each year's tax (TAXED_GRID_STEP, TAXED_GRID_RUNS). */
+  sampled?: boolean;
   startBalance: number;
   money: (n: number) => string;
   /** Drawdown's notice is about this card's inputs: its badge. */
@@ -3512,9 +3527,9 @@ export function GridCard({
             : `The share of ${noun} that lasted, each starting with ${money(startBalance)} and everything else as your Assumptions set it.`}
         </Masked>
         {flexible ? " This rule lasts by cutting spending, so each cell's second line is the lowest year's spending, as a share of the first year's, in the worst one that lasted." : ''}{' '}
-        Your plan is outlined.
+        Your plan is outlined.{sampled ? ` ${gridSampleLine(plan.method)}` : ''}
       </p>
-      <PlanGrid cells={cells} failed={failed} rates={rates} horizons={years} current={current} flexible={flexible} pathsNoun={noun} />
+      <PlanGrid cells={cells} failed={failed} rates={rates} horizons={years} current={current} ownCell={ownCell} flexible={flexible} pathsNoun={noun} />
       {failed.length > 0 && (
         <>
           <p className="empty-note">
@@ -3533,7 +3548,7 @@ export function GridCard({
           <p className="plan-definition">A longer column leaves out the latest starts, which is why it can read safer than a shorter one.</p>
           <Why label="Which starts">
             <p>
-              Each length starts in every month that leaves all of it inside the data, so a longer one has fewer, earlier starts
+              Each length starts {sampled ? 'every sixth month' : 'in every month'} that leaves all of it inside the data, so a longer one has fewer, earlier starts
               {spans.length ? `: ${spans.join('; ')}` : ''}.
             </p>
           </Why>

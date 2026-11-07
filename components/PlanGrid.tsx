@@ -17,6 +17,11 @@
 // start up to 1973, one of 60 years up to 1963, so each column head says
 // where its starts end, and the line under the grid says why a longer column
 // can read safer than a shorter one.
+//
+// With each year's tax a cell runs a sample (lib/fire/simulate.ts), so the plan's
+// own cell shows the answer above the grid once it has one (`ownCell`), and doesn't
+// read 83 under a hero of 81.4. Column heads keep reading the sampled cells, so a
+// head doesn't change as the answers arrive.
 
 import type { CSSProperties } from 'react';
 import type { GridCell } from '@/lib/fire/simulate';
@@ -32,6 +37,7 @@ export default function PlanGrid({
   rates,
   horizons,
   current,
+  ownCell = null,
   flexible,
   pathsNoun,
 }: {
@@ -44,6 +50,8 @@ export default function PlanGrid({
   horizons: number[];
   /** The plan's own cell, outlined. */
   current: { rate: number | null; years: number };
+  /** What that cell says, when it isn't one of `cells`: the answer above the grid. */
+  ownCell?: GridCell | null;
   /** Show the lowest year's spending under each success rate. */
   flexible: boolean;
   /** "starts" or "runs", for the cell titles. */
@@ -58,8 +66,8 @@ export default function PlanGrid({
   const one = pathsNoun.replace(/s$/, '');
 
   function cell(rate: number | null, years: number) {
-    const c = at(rate, years);
     const own = years === current.years && (rate === null ? current.rate === null : current.rate !== null && Math.abs(rate - current.rate) < 1e-9);
+    const c = own && ownCell ? ownCell : at(rate, years);
     let title = `${rateLabel(rate)} for ${years} years: working it out`;
     let body: React.ReactNode = '…';
     if (!c && didFail(rate, years)) {

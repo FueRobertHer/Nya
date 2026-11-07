@@ -19,7 +19,7 @@ import type { PlanItem } from '@/lib/fire/items';
 // every kind on every anchor, the stop at FI, your partner's age and your own
 // FI number, all of which it reads, and the tax facts (`plan-facts` version 2),
 // with or without a plan, which TF read a release before this one writes them
-// and which its saves keep. Behind `plan-tax` it writes what T2 read a release
+// and which its saves keep. It writes what T2 read a release
 // ahead: `model: 'detailed'`, each plan's choices, the household and `at-stop`.
 // And its restore (test/fixtures/release-before/user-restore/parts.ts) takes a
 // download this release makes, plans and all: it refuses a file with a part it
@@ -52,7 +52,6 @@ const planRoute = await import('@/app/api/fire-plan/route');
 const factsRoute = await import('@/app/api/plan-facts/route');
 const plansRoute = await import('@/app/api/plans/route');
 const savedRoute = await import('@/app/api/saved-plan/route');
-const { flagsStore } = await import('@/lib/flag-store');
 
 beforeEach(async () => {
   fake.reset();
@@ -333,8 +332,6 @@ describe('what the detailed model writes, as the release before reads it', () =>
     ...[0.12, 0.22].map((top) => ({ ...CHOICES, strategy: { order: 'roth-before-deferred', conversions: { kind: 'aca-then-bracket', top }, convertUntil: 64 } })),
     { ...CHOICES, strategy: { order: 'standard', conversions: { kind: 'fixed', yearly: 40_000 }, convertUntil: 70 } },
   ];
-  beforeEach(() => flagsStore.update('plan-tax', (async () => ({ on: 'nobody', containers: [ctx.container], updatedAt: new Date().toISOString() })) as never, ctx.container));
-
   test('the opt-in: every entry, the model, and the plan it reads', async () => {
     ok(await save(TYPED, null, DEFAULTS));
     ok(await plans('POST', { from: MAIN_ID, name: 'Stop at 52', plan: { ...TYPED, targetAge: 52 }, currency: 'USD' }));
