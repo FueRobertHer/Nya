@@ -161,7 +161,6 @@ import { compareRows, conversionRun, type CompareRow } from '@/lib/fire/compare-
 import { defaultUntil as untilByDefault, type Strategy } from '@/lib/fire/tax/rules';
 import { lawFor } from '@/lib/fire/tax/law';
 import { householdOf, type TaxFactOp } from '@/lib/fire/tax-facts';
-import { HEALTH_GROWTH } from '@/lib/fire/tax/law/2026';
 import { planPath, type PathRange, type PlanPath } from '@/lib/fire/path';
 import PlanPathChart, { wholeShown } from './PlanPathChart';
 import { hasWalk, type Shortfall } from '@/lib/fire/events';
@@ -1391,6 +1390,8 @@ export default function PlanTab({
   const shownChoices = entry ? entry.tax : yourChoices;
   const detailShown = detailedOn && taxInDollars;
   const lawNow = lawFor(calendarYear).law;
+  // In points, rounded as the forms round a pace they hold: 0.022 * 100 isn't 2.2.
+  const defaultGrowth = Number((lawNow.healthGrowth.overPrices * 100).toFixed(4));
   const paidChoices: PaidChoice[] = useMemo(() => {
     if (!detailedOn) return [];
     const names = [...new Set((txns ?? []).flatMap((t) => t.category_name ?? t.category ?? []))].sort((a, b) => a.localeCompare(b));
@@ -1428,7 +1429,7 @@ export default function PlanTab({
         ages: { ...shownNow.ages, sub: `${shownNow.ages.sub} · ${householdLine(shared.taxFacts, detailChoices)}` },
         assumptions: {
           ...shownNow.assumptions,
-          sub: taxWorked ? assumptionsWorked(shownPlan, detailChoices, detailChoices.health.growth ?? HEALTH_GROWTH.overPrices, money) : `${shownNow.assumptions.sub} · ${assumptionsLine(detailChoices, detailChoices.health.growth ?? HEALTH_GROWTH.overPrices)}`,
+          sub: taxWorked ? assumptionsWorked(shownPlan, detailChoices, detailChoices.health.growth ?? lawNow.healthGrowth.overPrices, money) : `${shownNow.assumptions.sub} · ${assumptionsLine(detailChoices, detailChoices.health.growth ?? lawNow.healthGrowth.overPrices)}`,
         },
       };
   const taxRow: (FigureText & { value: string }) | null = shownShares
@@ -2205,7 +2206,7 @@ export default function PlanTab({
             detail={detailForm}
             stateName={detailChoices.state ? STATE_NAMES[detailChoices.state] : null}
             medicaid={detailChoices.state === null ? null : lawNow.medicaidStates[detailChoices.state]}
-            defaultGrowth={HEALTH_GROWTH.overPrices * 100}
+            defaultGrowth={defaultGrowth}
             partner={plan.partnerAge !== null}
             paidChoices={paidChoices}
             paidAmount={inputs.paidFor}
@@ -2240,7 +2241,7 @@ export default function PlanTab({
             realReturn={plan.realReturn}
             start={drawn && (plan.start !== 'fi-number' || plan.fiNumber !== null) ? drawn.start : null}
             startBalance={'sim' in engine ? engine.sim.startBalance : null}
-            hypothetical={taxHypothetical({ lawYear: lawNow.year, state: detailChoices.state, stateRate: detailChoices.stateRate, stateTaxes: detailChoices.state ? lawNow.stateIncomeTax[detailChoices.state] : null, converts: detailChoices.strategy.conversions.kind !== 'none', realReturn: plan.realReturn, healthGrowth: detailChoices.health.growth ?? HEALTH_GROWTH.overPrices })}
+            hypothetical={taxHypothetical({ lawYear: lawNow.year, state: detailChoices.state, stateRate: detailChoices.stateRate, stateTaxes: detailChoices.state ? lawNow.stateIncomeTax[detailChoices.state] : null, converts: detailChoices.strategy.conversions.kind !== 'none', realReturn: plan.realReturn, healthGrowth: detailChoices.health.growth ?? lawNow.healthGrowth.overPrices })}
             money={money}
             onYears={
               drawn
@@ -2298,7 +2299,7 @@ export default function PlanTab({
             workedNumber={fiHeld ? null : view.workedOut}
             onFlatRate={entry ? null : () => chooseModel({ kind: 'model', model: 'flat' })}
             planTax={planTax}
-            defaultGrowth={HEALTH_GROWTH.overPrices * 100}
+            defaultGrowth={defaultGrowth}
             measuredYield={detailBuckets ? measuredYield(detailBuckets) : null}
           />
         )}
