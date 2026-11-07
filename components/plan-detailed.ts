@@ -24,7 +24,6 @@ import { anchoredOn, type Resolution } from '@/lib/fire/steady';
 import { DEFAULT_TAX_CHOICES, MAX_RATE, type TaxChoices } from '@/lib/fire/tax-choices';
 import type { Owner, TaxFacts } from '@/lib/fire/tax-facts';
 import { lawFor } from '@/lib/fire/tax/law';
-import { HEALTH_GROWTH } from '@/lib/fire/tax/law/2026';
 import { rmdAge } from '@/lib/fire/tax/rmd';
 import type { PlanInputsCopy } from '@/lib/plan-inputs-store';
 import { planId, yearFrom } from './plan-inputs';
@@ -102,8 +101,8 @@ export function detailedInput({ plan, tax, facts, today, paid, calendarYear }: {
       meetsRule: choices.health.meetsMedicaidRule,
       countMedicaid: choices.health.countMedicaid,
       acaLaw: choices.health.acaLaw,
-      growth: choices.health.growth ?? HEALTH_GROWTH.overPrices,
-      incomeGrowth: HEALTH_GROWTH.incomeOverPrices,
+      growth: choices.health.growth ?? law.healthGrowth.overPrices,
+      incomeGrowth: law.healthGrowth.incomeOverPrices,
     },
     state,
     stateRate: state !== null && !law.stateIncomeTax[state] ? 0 : choices.stateRate,
