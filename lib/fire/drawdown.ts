@@ -192,8 +192,8 @@ export type Drawdown = {
   rate: number;
   rounds: number;
   settled: boolean;
-  /** Taxable at its value, Roth as it is, tax-deferred and an HSA after tax at
-   *  the last year's top rate. */
+  /** Taxable at its value, Roth as it is, tax-deferred and an HSA as `afterTenYears`
+   *  has them, on top of the last year's income. */
   leftAtEnd: number;
   /** What the years paid of tax and health coverage, in today's dollars. A year that
    *  can't pay all it asks gives up living and one-offs first. */
@@ -238,6 +238,27 @@ function topRateOf(ordinaryTaxable: number, filing: Filing, law: TaxLaw): number
   const brackets = law.brackets.ordinary[filing];
   for (const b of brackets) if (ordinaryTaxable <= b.upTo) return b.rate;
   return brackets[brackets.length - 1].rate;
+}
+
+/** The ordinary tax on `taxable`, bracket by bracket. */
+function ordinaryTaxOn(taxable: number, filing: Filing, law: TaxLaw): number {
+  let tax = 0;
+  let low = 0;
+  for (const b of law.brackets.ordinary[filing]) {
+    if (taxable <= low) break;
+    tax += (Math.min(taxable, b.upTo) - low) * b.rate;
+    low = b.upTo;
+  }
+  return tax;
+}
+
+/** Tax-deferred money after the federal tax on drawing it evenly over ten years, each
+ *  year's share on top of `ordinaryTaxable`: the way most heirs must draw it. One rate
+ *  on all of it would jump where the income under it crosses a bracket's line, and a
+ *  rule that lands just under a line would look better for that alone. */
+export function afterTenYears(amount: number, ordinaryTaxable: number, filing: Filing, law: TaxLaw): number {
+  const yearly = ordinaryTaxOn(ordinaryTaxable + amount / 10, filing, law) - ordinaryTaxOn(ordinaryTaxable, filing, law);
+  return amount - 10 * yearly;
 }
 
 type Run = { rows: DrawdownYear[]; t: number; h: number; held: boolean; irmaaUnknown: boolean; aca: Drawdown['aca'] };
@@ -547,7 +568,7 @@ export function runDrawdown(inp: DrawdownInput): Drawdown | { failed: string } {
     }
     const { rows, t, h } = run;
     const last = rows[rows.length - 1];
-    const left = last.end.taxable + last.end.roth + (last.end.deferred + last.end.hsa) * (1 - last.law.topRate);
+    const left = last.end.taxable + last.end.roth + afterTenYears(last.end.deferred + last.end.hsa, last.law.ordinaryTaxable, isJoint(inp) ? 'joint' : 'single', inp.law);
     const firstShort = rows.find((r) => r.short);
     const notes: DrawdownNote[] = [];
     if (foldsPartner(inp)) notes.push('folded-partner');

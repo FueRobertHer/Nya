@@ -80,8 +80,8 @@ function run(growth: number, incomeGrowth: number) {
   };
 }
 
-function rules(growth: number, incomeGrowth: number) {
-  const input: DetailedInput = {
+function inputAt(growth: number, incomeGrowth: number): DetailedInput {
+  return {
     calendarYear: 2026,
     filing: 'joint',
     dependents: [],
@@ -103,6 +103,10 @@ function rules(growth: number, incomeGrowth: number) {
     law: lawFor(2026).law,
     lawYear: { year: 2026, behind: false },
   };
+}
+
+function rules(growth: number, incomeGrowth: number) {
+  const input = inputAt(growth, incomeGrowth);
   const f = planFigures(PLAN, M, { count: ON, detailed: detailWork(input) });
   if ('refused' in f) throw new Error('refused');
   const row = (strategy: Strategy) => {
@@ -153,5 +157,18 @@ describe('the prototype’s household, through the build', () => {
     // The start is the prototype's to the dollar. It had 81.1% with no conversions:
     // the 5.4 points are D6, a household over the work rule's income meeting it.
     expect(run(0.015, 0.01)).toEqual({ start: 1_474_369, rate: 5.09, t: 5.36, h: 7_039, historical: 86.5, left: 3_314_950, taxAndHealth: 645_914, rounds: 1 });
+  });
+  // Stopping early leaves money tax-deferred at 95, and this rule's last year sits by
+  // the 22% line. A single rate on all of it made 51 to 52 jump by $90,112.
+  test('what’s left has no step as a rule stops a year later', () => {
+    const input = inputAt(0.021, 0.011);
+    const f = planFigures(PLAN, M, { count: ON, detailed: detailWork(input) });
+    if ('refused' in f) throw new Error('refused');
+    const left = (convertUntil: number) => {
+      const d = conversionRun(f, input, { order: 'standard', conversions: { kind: 'aca-then-bracket', top: 0.12 }, convertUntil });
+      if (d === null) throw new Error('no run');
+      return Math.round(d.leftAtEnd);
+    };
+    expect([50, 51, 52, 53, 54, 55, 56, 57, 58].map(left)).toEqual([3_340_629, 3_384_767, 3_395_681, 3_413_851, 3_426_628, 3_430_066, 3_434_652, 3_417_736, 3_379_609]);
   });
 });
