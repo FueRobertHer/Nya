@@ -48,6 +48,21 @@ describe('a rule’s words', () => {
     expect(copyNameFor(fill.conversions, plans('fill the 12% bracket'))).toBe('Fill the 12% bracket 2');
   });
 
+  test('a tuned setting’s copy says its age, where a plan’s name has room for that and a number', () => {
+    expect(copyNameFor(fill.conversions, [], 60)).toBe('Fill the 12% bracket, until 60');
+    const plans = (...names: string[]) => names.map((name, i) => ({ id: String(i), name }));
+    expect(copyNameFor(fill.conversions, plans('Fill the 12% bracket, until 60'), 60)).toBe('Fill the 12% bracket, until 60 2');
+    // The ACA rule with an age is too long for that, so it is the rule's name alone.
+    expect(copyNameFor(aca.conversions, [], 59)).toBe('ACA limit, then the 22% bracket');
+    expect(copyNameFor(fixed.conversions, [], 60)).toBe('A fixed amount, until 60');
+    for (const s of [NO_STRATEGY, fill, aca, fixed]) {
+      for (const until of [null, 5, 60, 104]) {
+        const name = copyNameFor(s.conversions, [], until);
+        expect(`${name} 99`.length).toBeLessThanOrEqual(SCENARIO_NAME_MAX);
+      }
+    }
+  });
+
   test('neither says one is better than another', () => {
     const said = [NO_STRATEGY, fill, aca, fixed].flatMap((s) => [ruleName(s.conversions, money), ruleSentence(s, 74, money)]).join(' ');
     expect(said).not.toMatch(/best|better|recommend|optimal|should/i);

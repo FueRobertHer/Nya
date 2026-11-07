@@ -7,7 +7,7 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
-import { createPlanSearch, searchKey } from '@/components/plan-search';
+import { createPlanSearch, planSearch, planTune, searchKey } from '@/components/plan-search';
 import type { WorkerLike } from '@/components/plan-runner';
 import type { BucketsToday } from '@/lib/fire/buckets-today';
 import type { PlanItem } from '@/lib/fire/items';
@@ -19,6 +19,7 @@ import { runSearchJob, type SearchJob, type SearchResult } from '@/lib/fire/sear
 import { lawFor } from '@/lib/fire/tax/law';
 import { ON } from './plan-gen';
 import { NO_STRATEGY } from '@/lib/fire/tax/rules';
+import { runTuneJob, type TuneJob, type TuneResult } from '@/lib/fire/tune-job';
 
 const account = (bucket: string, value: number, basis: number | null = null) => ({ owner: 'you', value, basis, account_id: bucket, bucket, contributions: null });
 const group = (bucket: string, ...accounts: ReturnType<typeof account>[]) => ({ bucket, accounts, total: accounts.reduce((s, a) => s + a.value, 0) });
@@ -210,6 +211,63 @@ describe('the page’s searches', () => {
     expect(searchKey(job)).not.toContain('"brackets"');
     expect(searchKey(job)).not.toBe(searchKey({ ...job, detailed: { ...detailed, lawYear: { year: 2027, behind: false } } }));
     expect(searchKey(job)).not.toBe(searchKey({ ...job, measured: { ...M, spending: 50_000 } }));
+  });
+});
+
+describe('Tune to a goal’s searches', () => {
+  const tuneJob = (targetAge: number): TuneJob => ({ tune: true, plan: plan({ targetAge }), measured: M, count: ON, detailed });
+
+  /** A worker holding every job until told, as lib/fire/search.worker.ts answers it. */
+  class HeldTune implements WorkerLike<TuneResult> {
+    onmessage: WorkerLike<TuneResult>['onmessage'] = null;
+    onerror: WorkerLike<TuneResult>['onerror'] = null;
+    posted: { id: number; job: TuneJob }[] = [];
+    postMessage(m: unknown) {
+      this.posted.push(m as { id: number; job: TuneJob });
+    }
+    respond() {
+      const m = this.posted[this.posted.length - 1];
+      this.onmessage?.({ data: { id: m.id, result: runTuneJob(m.job) } } as MessageEvent);
+    }
+    terminate() {}
+  }
+
+  test('one run per job, whoever asks, and its answer is the job’s', async () => {
+    const worker = new HeldTune();
+    const search = createPlanSearch<TuneJob, TuneResult>({ startWorker: () => worker, runHere: async () => ({ ok: false, error: 'not here' }) });
+    expect(search.answer('tune', tuneJob(55))).toBeNull();
+    expect(search.answer('tune', tuneJob(55))).toBeNull();
+    await settled();
+    expect(worker.posted.length).toBe(1);
+    worker.respond();
+    await settled();
+    const answer = search.answer('tune', tuneJob(55));
+    expect(answer).toEqual(runTuneJob(tuneJob(55)));
+    expect(worker.posted.length).toBe(1);
+  });
+
+  test('a job nobody asks for any more is dropped from the queue', async () => {
+    const worker = new HeldTune();
+    const search = createPlanSearch<TuneJob, TuneResult>({ startWorker: () => worker, runHere: async () => ({ ok: false, error: 'not here' }) });
+    search.answer('tune', tuneJob(55));
+    search.answer('tune', tuneJob(56));
+    search.answer('tune', tuneJob(57));
+    await settled();
+    worker.respond();
+    await settled();
+    expect(worker.posted.map((m) => m.job.plan.targetAge)).toEqual([55, 57]);
+  });
+
+  test('its thread is its own: a tune never waits behind a plan’s search', () => {
+    expect(planTune()).toBe(planTune());
+    expect(planTune() as unknown).not.toBe(planSearch());
+  });
+
+  test('the worker’s script tells the two jobs apart', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'lib/fire/search.worker.ts'), 'utf8');
+    expect(source).toContain("'tune' in job");
+    expect(source).toContain('runTuneJob');
+    expect(source).toContain('runSearchJob');
   });
 });
 

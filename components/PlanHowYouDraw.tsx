@@ -18,6 +18,7 @@ import { BesideTable } from './PlanBeside';
 import { healthPace, lawLabel, STAGE_TAX_NOTE, stageSources, stageTitle } from './plan-drawdown';
 import { convertedIn, endAgeOf, endWords, ORDER_WORDS, previewRows, ruleName, RULES_DIFFER_LABEL, rulesDifferText, ruleSentence } from './plan-conversions';
 import { pct } from './plan-text';
+import { TUNE_NEEDS_CONSTANT, TUNE_ROW_SUB, TUNE_TITLE } from './plan-tune';
 import { Notice } from './TotalCaveats';
 import { Why } from './Why';
 
@@ -277,31 +278,40 @@ export function ConversionsForm(
   );
 }
 
-type SortColumn = 'left' | 'cost' | 'credit';
+export type SortColumn = 'left' | 'cost' | 'credit';
 type SortDir = 'descending' | 'ascending';
+export type ColumnSort = { column: SortColumn; dir: SortDir };
 
 /** Highest first, then lowest. A run that runs short has nothing left: it sorts last in
  *  Left at, the later of two first, whichever way the rest go. */
-function sorted(rows: readonly CompareRow[], sort: { column: SortColumn; dir: SortDir } | null): readonly CompareRow[] {
+export function sortedRows<T>(rows: readonly T[], sort: ColumnSort | null, read: (row: T) => { left: number; cost: number; credit?: number; short: number | null }): readonly T[] {
   if (!sort) return rows;
   const sign = sort.dir === 'descending' ? -1 : 1;
-  const pick: Record<SortColumn, (r: CompareRow) => number> = {
-    left: (r) => r.drawn.leftAtEnd,
-    cost: (r) => r.drawn.taxAndHealth,
-    credit: (r) => r.drawn.aca.withCredit,
-  };
   return [...rows].sort((a, b) => {
-    if (sort.column === 'left') {
-      const x = a.drawn.runsOutAt;
-      const y = b.drawn.runsOutAt;
-      if (x !== null || y !== null) {
-        if (x === null) return -1;
-        if (y === null) return 1;
-        return y - x;
-      }
+    const x = read(a);
+    const y = read(b);
+    if (sort.column === 'left' && (x.short !== null || y.short !== null)) {
+      if (x.short === null) return -1;
+      if (y.short === null) return 1;
+      return y.short - x.short;
     }
-    return sign * (pick[sort.column](a) - pick[sort.column](b));
+    return sign * ((x[sort.column] ?? 0) - (y[sort.column] ?? 0));
   });
+}
+
+/** A column's heading, which sorts by it: highest first, then lowest. */
+export function SortHeading({ column, label, sort, onSort }: { column: SortColumn; label: string; sort: ColumnSort | null; onSort: (sort: ColumnSort) => void }) {
+  const on = sort?.column === column;
+  return (
+    <th scope="col" aria-sort={on ? sort.dir : 'none'}>
+      <button type="button" className="th-sort" onClick={() => onSort({ column, dir: on && sort.dir === 'descending' ? 'ascending' : 'descending' })}>
+        {label}
+        <svg className={`section-chevron${on && sort.dir === 'ascending' ? ' open' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d={on ? 'm6 9 6 6 6-6' : 'm7 15 5 5 5-5M7 9l5-5 5 5'} />
+        </svg>
+      </button>
+    </th>
+  );
 }
 
 /** Each rule, side by side. Nothing is marked best, and nothing sorted until asked. */
@@ -317,6 +327,9 @@ export function CompareCard({
   working = false,
   onRule,
   ruleRef,
+  tunable = false,
+  onTune,
+  tuneRef,
 }: {
   rows: readonly CompareRow[];
   money: Money;
@@ -332,23 +345,15 @@ export function CompareCard({
   working?: boolean;
   onRule: (row: CompareRow) => void;
   ruleRef?: (key: string, el: HTMLButtonElement | null) => void;
+  /** Every setting lives on the same spending, so what's left compares like with like. */
+  tunable?: boolean;
+  /** Tune to a goal's sheet; left out, the card doesn't offer it. */
+  onTune?: () => void;
+  tuneRef?: (el: HTMLButtonElement | null) => void;
 }) {
-  const [sort, setSort] = useState<{ column: SortColumn; dir: SortDir } | null>(null);
+  const [sort, setSort] = useState<ColumnSort | null>(null);
   const endAge = rows.length > 0 ? endAgeOf(rows[0].drawn) : null;
   const onAca = rows.some((r) => r.drawn.aca.on > 0);
-  const heading = (column: SortColumn, label: string) => {
-    const on = sort?.column === column;
-    return (
-      <th scope="col" aria-sort={on ? sort.dir : 'none'}>
-        <button type="button" className="th-sort" onClick={() => setSort({ column, dir: on && sort.dir === 'descending' ? 'ascending' : 'descending' })}>
-          {label}
-          <svg className={`section-chevron${on && sort.dir === 'ascending' ? ' open' : ''}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d={on ? 'm6 9 6 6 6-6' : 'm7 15 5 5 5-5M7 9l5-5 5 5'} />
-          </svg>
-        </button>
-      </th>
-    );
-  };
   return (
     <section className={working ? 'card plan-answer-pending' : 'card'} aria-labelledby="plan-compare-rules" aria-busy={working || undefined}>
       <CopyTag name={copyName} />
@@ -362,13 +367,13 @@ export function CompareCard({
           <thead>
             <tr>
               <th scope="col">Rule</th>
-              {heading('left', endAge === null ? 'Left, after tax' : `Left at ${endAge}, after tax`)}
-              {heading('cost', 'Tax and health')}
-              {onAca && heading('credit', 'Years with an ACA credit')}
+              <SortHeading column="left" label={endAge === null ? 'Left, after tax' : `Left at ${endAge}, after tax`} sort={sort} onSort={setSort} />
+              <SortHeading column="cost" label="Tax and health" sort={sort} onSort={setSort} />
+              {onAca && <SortHeading column="credit" label="Years with an ACA credit" sort={sort} onSort={setSort} />}
             </tr>
           </thead>
           <tbody>
-            {sorted(rows, sort).map((r) => (
+            {sortedRows(rows, sort, (r) => ({ left: r.drawn.leftAtEnd, cost: r.drawn.taxAndHealth, credit: r.drawn.aca.withCredit, short: r.drawn.runsOutAt })).map((r) => (
               <tr key={r.key}>
                 <th scope="row">
                   <button
@@ -401,30 +406,37 @@ export function CompareCard({
         <p>{rulesDifferText({ onAca, acaLaw })}</p>
       </Why>
       <p className="plan-definition">{`Hypothetical, ${lawYear} tax law, steady growth, health costs ${healthPace(healthGrowth)}. Not tax advice.`}</p>
+      {onTune &&
+        (tunable ? (
+          <ul className="list-rows">
+            <li>
+              <button
+                ref={tuneRef}
+                type="button"
+                className="list-row"
+                aria-haspopup="dialog"
+                aria-disabled={held || working ? 'true' : undefined}
+                onClick={() => {
+                  if (!held && !working) onTune();
+                }}
+              >
+                <span className="list-row-text">
+                  <span className="list-row-title">{TUNE_TITLE}</span>
+                  <span className="list-row-sub">{TUNE_ROW_SUB}</span>
+                </span>
+                {CHEVRON}
+              </button>
+            </li>
+          </ul>
+        ) : (
+          <p className="helper">{TUNE_NEEDS_CONSTANT}</p>
+        ))}
     </section>
   );
 }
 
-/** A rule's sheet: what it comes to, stage by stage, and a copy to try it in. */
-export function RuleLevel({
-  row,
-  money,
-  lawYear,
-  copyOpen,
-  whyNot,
-  onTry,
-}: {
-  row: CompareRow;
-  money: Money;
-  lawYear: number;
-  copyOpen: boolean;
-  /** Why no copy can be made yet; null when one can. */
-  whyNot: string | null;
-  onTry: () => Promise<true | string>;
-}) {
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const { drawn } = row;
+/** What a run comes to, stage by stage. */
+export function RuleFigures({ drawn, money }: { drawn: Drawdown; money: Money }) {
   const moved = convertedIn(drawn);
   const endAge = endAgeOf(drawn);
   const line = (label: string, value: React.ReactNode) => (
@@ -434,7 +446,7 @@ export function RuleLevel({
     </div>
   );
   return (
-    <div className="stack loose">
+    <>
       <dl className="txn-detail txn-detail-wide">
         {line(endAge === null ? 'Left, after tax' : `Left at ${endAge}, after tax`, <Masked>{endWords(drawn, money)}</Masked>)}
         {line('Tax and health costs, in all', <Masked>{money(drawn.taxAndHealth)}</Masked>)}
@@ -462,6 +474,32 @@ export function RuleLevel({
           ))}
         </dl>
       </section>
+    </>
+  );
+}
+
+/** A rule's sheet: what it comes to, stage by stage, and a copy to try it in. */
+export function RuleLevel({
+  row,
+  money,
+  lawYear,
+  copyOpen,
+  whyNot,
+  onTry,
+}: {
+  row: CompareRow;
+  money: Money;
+  lawYear: number;
+  copyOpen: boolean;
+  /** Why no copy can be made yet; null when one can. */
+  whyNot: string | null;
+  onTry: () => Promise<true | string>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="stack loose">
+      <RuleFigures drawn={row.drawn} money={money} />
       <p className="plan-definition">{lawLabel(lawYear)}</p>
       {row.mine ? (
         <p className="helper">{copyOpen ? 'This copy has this rule.' : 'Your plan has this rule.'}</p>
