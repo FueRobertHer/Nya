@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { IncomeRow } from '@/lib/fire/compile';
-import { foldsPartner, runDrawdown, taxShares, type Drawdown, type DrawdownInput, type DrawdownYear } from '@/lib/fire/drawdown';
+import { afterTenYears, foldsPartner, runDrawdown, taxShares, type Drawdown, type DrawdownInput, type DrawdownYear } from '@/lib/fire/drawdown';
 import { LAW_2026 } from '@/lib/fire/tax/law/2026';
 import type { MixSlot } from '@/lib/fire/tax/mix';
 
@@ -285,11 +285,36 @@ describe('law by year', () => {
     expect(run({ startAge: 62, years: 33 }).stages.map((s) => s.key)).toEqual(['before-65', 'before-rmd', 'rmd']);
   });
 
-  test('left at the end values tax-deferred and an HSA at the last year’s top rate', () => {
+  test('left at the end values tax-deferred and an HSA over ten years, on top of the last year’s income', () => {
     const d = run();
     const last = d.years[44];
-    expect(d.leftAtEnd).toBeCloseTo(last.end.taxable + last.end.roth + (last.end.deferred + last.end.hsa) * (1 - last.law.topRate), 6);
+    expect(d.leftAtEnd).toBeCloseTo(last.end.taxable + last.end.roth + afterTenYears(last.end.deferred + last.end.hsa, last.law.ordinaryTaxable, 'joint', LAW_2026), 6);
     expect(d.taxAndHealth).toBeCloseTo(d.years.reduce((s, y) => s + y.tax + y.health, 0), 6);
+  });
+
+  test('ten years’ tax, worked by hand from the brackets', () => {
+    // $50,000 a year on nothing else: $24,800 at 10%, $25,200 at 12%.
+    expect(afterTenYears(500_000, 0, 'joint', LAW_2026)).toBeCloseTo(500_000 - 10 * (2_480 + 3_024), 6);
+    // On top of $90,000: $10,800 at 12%, $39,200 at 22%.
+    expect(afterTenYears(500_000, 90_000, 'joint', LAW_2026)).toBeCloseTo(500_000 - 10 * (1_296 + 8_624), 6);
+    // Single: $12,400 at 10%, $37,600 at 12%.
+    expect(afterTenYears(500_000, 0, 'single', LAW_2026)).toBeCloseTo(500_000 - 10 * (1_240 + 4_512), 6);
+    expect(afterTenYears(0, 90_000, 'joint', LAW_2026)).toBe(0);
+    // Into the top bracket, which has no end.
+    expect(afterTenYears(10_000_000, 0, 'single', LAW_2026)).toBeCloseTo(10_000_000 - 10 * (1_240 + 4_560 + 12_166 + 23_058 + 17_424 + 134_531.25 + (1_000_000 - 640_600) * 0.37), 6);
+  });
+
+  test('ten years’ tax has no step where the income crosses a bracket’s line', () => {
+    const line = LAW_2026.brackets.ordinary.joint[1].upTo;
+    const under = afterTenYears(834_607, line - 1, 'joint', LAW_2026);
+    const over = afterTenYears(834_607, line + 1, 'joint', LAW_2026);
+    // Two dollars of income moves ten years' tax by a few dollars, not by 10% of the balance.
+    expect(Math.abs(under - over)).toBeLessThan(10);
+    // More money is always more left, and more income under it never leaves more.
+    for (let a = 0; a < 3_000_000; a += 50_000) {
+      expect(afterTenYears(a + 50_000, 60_000, 'joint', LAW_2026)).toBeGreaterThan(afterTenYears(a, 60_000, 'joint', LAW_2026));
+      expect(afterTenYears(a, 70_000, 'joint', LAW_2026)).toBeLessThanOrEqual(afterTenYears(a, 60_000, 'joint', LAW_2026));
+    }
   });
 
   test('a state’s rate reaches the year', () => {
