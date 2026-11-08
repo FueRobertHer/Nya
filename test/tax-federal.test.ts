@@ -82,9 +82,9 @@ describe('the 2026 brackets', () => {
 });
 
 describe('the 2027 brackets', () => {
-  // 2027's table isn't whole yet, so 2026's other parts stand in; the federal
-  // tax reads only the brackets and the statute.
-  const law2027: TaxLaw = { ...LAW_2026, brackets: LAW_2027.brackets!, year: 2027 };
+  // 2027's table isn't whole yet, so 2026's Medicare and Medicaid poverty
+  // guidelines stand in; the federal tax reads neither.
+  const law2027: TaxLaw = { ...LAW_2026, ...LAW_2027 };
 
   test("each bracket's tax at its start is Rev. Proc. 2026-35's printed base", () => {
     const single = [[12_800, 1_280], [52_025, 5_987], [109_125, 18_549], [208_325, 42_357], [264_550, 60_349], [661_375, 199_237.75]];

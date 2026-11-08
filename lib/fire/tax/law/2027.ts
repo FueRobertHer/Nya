@@ -50,7 +50,7 @@ export const LAW_2027: PartialLaw = {
     },
   },
   // Fixed by law (lib/fire/tax/law/2026.ts cites where): Rev. Proc. 2026-35
-  // adjusts none of these sections.
+  // adjusts none of these figures.
   statute: STATUTE,
   // Rev. Proc. 2026-26 sec. 3.01 (July 21, 2026), for taxable years beginning
   // in 2027.
