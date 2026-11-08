@@ -10,6 +10,7 @@ import { lawFor } from '@/lib/fire/tax/law';
 import { LAW_2026 } from '@/lib/fire/tax/law/2026';
 import type { MixSlot } from '@/lib/fire/tax/mix';
 import { NO_STRATEGY, type Strategy } from '@/lib/fire/tax/rules';
+import { spendDifferently } from '@/components/plan-conversions';
 import { ON } from './plan-gen';
 
 // A rule over a run of years (T4): what it moves, when that money can be reached, the
@@ -265,5 +266,47 @@ describe('Compare’s rows', () => {
     const left = (key: string) => rows.find((r) => r.key === key)!.drawn.years.at(-1)!.end.deferred;
     expect(left('fill-22')).toBeLessThan(left('none'));
     for (const r of rows) expect(Number.isFinite(r.drawn.leftAtEnd) && Number.isFinite(r.drawn.taxAndHealth)).toBe(true);
+  });
+});
+
+describe('what each rule lives on, which Compare and the preview measure', () => {
+  const livedOn = (d: Drawdown) => sum(d.years.map((y) => y.living));
+  const rowsOn = (rule: 'constant' | 'vpw' | 'percent' | 'guardrails' | 'floor-ceiling') => {
+    const plan = { ...PLAN, rule };
+    const f = planFigures(plan, M, { count: ON, detailed: detailWork(INPUT) });
+    if ('refused' in f) throw new Error(f.refused);
+    return compareRows(f, INPUT);
+  };
+
+  test('on the Constant rule every rule lives on the same, so what each leaves compares like with like', () => {
+    const rows = rowsOn('constant');
+    const lived = rows.map((r) => livedOn(r.drawn));
+    expect(Math.max(...lived) - Math.min(...lived)).toBeLessThan(1);
+    expect(new Set(rows.map((r) => Math.round(r.drawn.leftAtEnd))).size).toBeGreaterThan(1);
+    expect(spendDifferently(rows.map((r) => r.drawn))).toBe(false);
+  });
+
+  test('on the Constant rule a run that runs short lives on the same too: what it can’t pay is its shortfall', () => {
+    const short = run(fill(0.22), { spending: 75_000 });
+    const none = run(NO_STRATEGY, { spending: 75_000 });
+    expect(short.runsOutAt ?? none.runsOutAt).not.toBeNull();
+    expect(Math.abs(livedOn(short) - livedOn(none))).toBeLessThan(1);
+    expect(spendDifferently([short, none])).toBe(false);
+  });
+
+  for (const rule of ['vpw', 'percent', 'guardrails', 'floor-ceiling'] as const) {
+    test(`on ${rule} the rules live on different amounts, so what each leaves doesn’t compare like with like`, () => {
+      const rows = rowsOn(rule);
+      const lived = rows.map((r) => livedOn(r.drawn));
+      expect(Math.max(...lived) - Math.min(...lived)).toBeGreaterThan(1_000);
+      expect(spendDifferently(rows.map((r) => r.drawn))).toBe(true);
+    });
+  }
+
+  test('one run, or runs that are the same, never differ', () => {
+    const none = run(NO_STRATEGY);
+    expect(spendDifferently([none])).toBe(false);
+    expect(spendDifferently([none, none])).toBe(false);
+    expect(spendDifferently([])).toBe(false);
   });
 });

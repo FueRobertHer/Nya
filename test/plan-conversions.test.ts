@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { SCENARIO_NAME_MAX } from '@/lib/fire/plan-list';
-import { choicesDiffParts, convertedIn, copyNameFor, endAgeOf, endWords, ORDER_WORDS, previewRows, ruleName, rulesDifferText, ruleSentence, ruleTitle, strategyDiffParts } from '@/components/plan-conversions';
+import { choicesDiffParts, COMPARE_SPENDS, convertedIn, copyNameFor, endAgeOf, endWords, onceUsed, ORDER_WORDS, PREVIEW_SPENDS, previewRows, RULE_USED_FAILED, ruleName, rulesDifferText, ruleSentence, ruleTitle, SAVED_FAILED, savedLine, strategyDiffParts } from '@/components/plan-conversions';
 import { fiYearly, pointsText, runSub, runTax, runTitle, sharesNote, stageFoot, stageSentence, stageSources, taxHypothetical, yearRuns } from '@/components/plan-drawdown';
 import type { Drawdown, DrawdownStage, DrawdownYear } from '@/lib/fire/drawdown';
 import { DEFAULT_TAX_CHOICES, type TaxChoices } from '@/lib/fire/tax-choices';
@@ -98,6 +98,43 @@ describe('where a run ends', () => {
     const short = previewRows(run({ years: [{ age: 60, conversion: 0 }] as DrawdownYear[], runsOutAt: 88 }), { ...none, runsOutAt: 90 }, money);
     expect(short[0]).toEqual(['Converted', '$0', '$0']);
     expect(short[2].slice(1)).toEqual(['Runs short at 88', 'Runs short at 90']);
+  });
+});
+
+describe('what a held run says of a rule once used (Tune’s two limits, on Compare and the preview)', () => {
+  const run = (over: Partial<Drawdown>) => ({ years: [{ age: 94, conversion: 0 }], runsOutAt: null, leftAtEnd: 2_000_000, taxAndHealth: 300_000, ...over }) as Drawdown;
+  const HELD = { left: 2_000_000, cost: 300_000, short: null };
+  const NOW = { drawn: run({}), stop: 54, start: 1_500_000 };
+  const answer = (over: object) => ({ drawn: run({}), stop: 54, start: 1_500_000, working: false, failed: false, ...over });
+
+  test('the same to the dollar, at the same stop and start, is no difference', () => {
+    expect(onceUsed(HELD, NOW, answer({ drawn: run({ leftAtEnd: 2_000_000.6 }) }))).toMatchObject({ stop: null, start: null, differs: false });
+  });
+
+  test('a dollar in either figure, another age it runs short at, or a stop or start that moved, is', () => {
+    expect(onceUsed(HELD, NOW, answer({ drawn: run({ leftAtEnd: 2_000_001 }) })).differs).toBe(true);
+    expect(onceUsed(HELD, NOW, answer({ drawn: run({ taxAndHealth: 299_999 }) })).differs).toBe(true);
+    expect(onceUsed(HELD, NOW, answer({ drawn: run({ runsOutAt: 90 }) })).differs).toBe(true);
+    expect(onceUsed(HELD, NOW, answer({ stop: 57 }))).toMatchObject({ stop: [54, 57], start: null, differs: true });
+    expect(onceUsed(HELD, NOW, answer({ start: 1_600_000 }))).toMatchObject({ stop: null, start: [1_500_000, 1_600_000], differs: true });
+  });
+
+  test('nothing is said of an answer still being worked out, or one that failed', () => {
+    expect(onceUsed(HELD, NOW, answer({ working: true, drawn: run({ leftAtEnd: 1 }) }))).toMatchObject({ ready: null, differs: false });
+    expect(onceUsed(HELD, NOW, answer({ failed: true, drawn: null }))).toMatchObject({ ready: null, differs: false });
+  });
+
+  test('the preview’s line: what moved, then what Save comes to', () => {
+    const drawn = run({ leftAtEnd: 8_051_555, taxAndHealth: 686_439 });
+    expect(savedLine({ stop: [54, 57], start: null, copyOpen: false, drawn }, money)).toBe('Once saved, your plan stops at 57, not 54, so it differs from the table: it leaves $8,051,555 at 95 and costs $686,439 in tax and health.');
+    expect(savedLine({ stop: [54, 57], start: [2_007_610, 2_481_685], copyOpen: false, drawn }, money)).toBe('Once saved, your plan stops at 57, not 54, and starts from $2,481,685, not $2,007,610, so it differs from the table: it leaves $8,051,555 at 95 and costs $686,439 in tax and health.');
+    expect(savedLine({ stop: null, start: null, copyOpen: true, drawn: run({ runsOutAt: 88, taxAndHealth: 686_439 }) }, money)).toBe('Once saved, more of this copy moves with this rule, so it differs from the table: it runs short at 88 and costs $686,439 in tax and health.');
+    expect(savedLine({ stop: null, start: [1, 2], copyOpen: false, drawn: run({ years: [] }) }, money)).toBe('Once saved, your plan starts from $2, not $1, so it differs from the table: it leaves $2,000,000 and costs $300,000 in tax and health.');
+  });
+
+  test('none of it says one rule is better than another, or what to do', () => {
+    const said = [COMPARE_SPENDS, PREVIEW_SPENDS, RULE_USED_FAILED, SAVED_FAILED, savedLine({ stop: [1, 2], start: [1, 2], copyOpen: false, drawn: run({}) }, money)].join(' ');
+    expect(said).not.toMatch(/(best|better|should|optimal|ideal|recommend)/i);
   });
 });
 

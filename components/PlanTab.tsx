@@ -58,7 +58,7 @@
 // your plan unasked. The repair and the allocation settings are your plan's
 // own, so a copy has no saver for them.
 
-import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { Txn } from './MonthBreakdown';
 import { Sheet, focusInsteadOf } from './Sheet';
 import PlanFanChart from './PlanFanChart';
@@ -156,7 +156,7 @@ import { CompareCard, ConversionsForm, HowYouDrawCard, OrderForm, RuleLevel } fr
 import { TuneForm } from './PlanTune';
 import { TUNE_TITLE } from './plan-tune';
 import { PlanTaxSheet } from './PlanTaxSheet';
-import { choicesDiffParts, copyNameFor, ruleTitle } from './plan-conversions';
+import { choicesDiffParts, copyNameFor, ruleTitle, type NowFigures, type UsedFigures } from './plan-conversions';
 import { ABOUT_DETAIL, WITH_EACH_YEARS_TAX, gridSampleLine, assumptionsLine, assumptionsWorked, HEALTH_NOT_SET, healthSub, honestyNotes, householdLine, hypotheticalDrawdown, namesCoverage, stageHealthLines, stageTitle, STATE_NAMES, taxHypothetical, yearTitle, type YearContext } from './plan-drawdown';
 import { planFigures, resolveSaved, type FiguresRefused, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
 import { compareRows, conversionRun, type CompareRow } from '@/lib/fire/compare-conversions';
@@ -1520,6 +1520,27 @@ export default function PlanTab({
   useEffect(() => {
     if (!tuneLevelOn) search.drop('tune-level');
   }, [tuneLevelOn, search]);
+  // A rule's sheet from Compare, and the Roth conversions preview, do the same.
+  const ruleLevelOn = sheet !== null && sheetRule !== null;
+  useEffect(() => {
+    if (!ruleLevelOn) search.drop('rule-level');
+  }, [ruleLevelOn, search]);
+  const conversionsOn = sheet?.kind === 'conversions';
+  useEffect(() => {
+    if (!conversionsOn) search.drop('conversions');
+  }, [conversionsOn, search]);
+  const releaseConversions = useCallback(() => search.drop('conversions'), [search]);
+  /** The plan shown with a rule in it, as Use, Save or a copy would have it. */
+  const usedWith =
+    (slot: string) =>
+    (strategy: Strategy): UsedFigures => {
+      const a = figuresFor(slot, shownPlan, { ...detailChoices, strategy });
+      const f = a.figures;
+      if ('refused' in f) return { drawn: null, stop: null, start: null, working: false, failed: true };
+      const d = f.detail && !('failed' in f.detail) ? f.detail.start : null;
+      return { drawn: d, stop: f.view.stopAge, start: 'sim' in f.engine ? f.engine.sim.startBalance : null, working: a.working, failed: a.failed || (d === null && !a.working) };
+    };
+  const nowFigures: NowFigures | null = drawn ? { drawn: drawn.start, stop: shown?.view.stopAge ?? null, start: shown && 'sim' in shown.engine ? shown.engine.sim.startBalance : null } : null;
   /** A choice of model moves every plan's stamp, so all of them are read again, however
    *  it went: a later save names what is stored now. */
   const chooseModel = async (op: TaxFactOp): Promise<true | string> => {
@@ -2301,6 +2322,10 @@ export default function PlanTab({
             movingStart={plan.start === 'fi-number' && plan.fiNumber === null && 'sim' in engine ? engine.sim.startBalance : null}
             lawYear={drawn?.law.year ?? lawNow.year}
             money={money}
+            fixedSpending={shownPlan.rule === 'constant'}
+            now={nowFigures}
+            used={drawn ? usedWith('conversions') : null}
+            release={releaseConversions}
           />
         )}
         {sheetRule && drawn && (
@@ -2312,6 +2337,8 @@ export default function PlanTab({
             copyOpen={entry !== null}
             whyNot={editable && canOpen && plansState.status === 'ready' && !plansState.saving && planCurrency !== null ? null : (paused ?? 'A copy can’t be made just yet. Try again in a moment.')}
             onTry={() => tryRule(sheetRule.strategy)}
+            now={nowFigures}
+            used={usedWith('rule-level')}
           />
         )}
         {shownSheet?.kind === 'tune' && detailForm && (
@@ -2333,14 +2360,8 @@ export default function PlanTab({
             healthGrowth={yearContext?.healthGrowth ?? 0}
             copyOpen={entry !== null}
             whyNot={editable && canOpen && plansState.status === 'ready' && !plansState.saving && planCurrency !== null ? null : (paused ?? 'A copy can’t be made just yet. Try again in a moment.')}
-            now={drawn ? { drawn: drawn.start, stop: shown?.view.stopAge ?? null, start: shown && 'sim' in shown.engine ? shown.engine.sim.startBalance : null } : null}
-            used={(strategy) => {
-              const a = figuresFor('tune-level', shownPlan, { ...detailChoices, strategy });
-              const f = a.figures;
-              if ('refused' in f) return { drawn: null, stop: null, start: null, working: false, failed: true };
-              const d = f.detail && !('failed' in f.detail) ? f.detail.start : null;
-              return { drawn: d, stop: f.view.stopAge, start: 'sim' in f.engine ? f.engine.sim.startBalance : null, working: a.working, failed: a.failed || (d === null && !a.working) };
-            }}
+            now={nowFigures}
+            used={usedWith('tune-level')}
             onTry={(strategy) => heldBy(tryRule(strategy, strategy.convertUntil))}
           />
         )}
