@@ -6,7 +6,7 @@
 // components/plan-conversions.ts; the rows in lib/fire/compare-conversions.ts.
 
 import { CopyTag } from './CopyTag';
-import { useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import type { CompareRow } from '@/lib/fire/compare-conversions';
 import type { Drawdown } from '@/lib/fire/drawdown';
 import { MAX_YEARLY_CONVERSION, type TaxChoices } from '@/lib/fire/tax-choices';
@@ -16,9 +16,29 @@ import RadioRows from './RadioRows';
 import { Buttons, FieldProblem, readNumber, useDetailSave, type DetailForm, type SaveProps } from './PlanForms';
 import { BesideTable } from './PlanBeside';
 import { healthPace, lawLabel, STAGE_TAX_NOTE, stageSources, stageTitle } from './plan-drawdown';
-import { convertedIn, endAgeOf, endWords, ORDER_WORDS, previewRows, ruleName, RULES_DIFFER_LABEL, rulesDifferText, ruleSentence } from './plan-conversions';
+import {
+  COMPARE_HOLDS,
+  COMPARE_SPENDS,
+  convertedIn,
+  endAgeOf,
+  endWords,
+  onceUsed,
+  ORDER_WORDS,
+  PREVIEW_SPENDS,
+  previewRows,
+  RULE_USED_FAILED,
+  ruleName,
+  RULES_DIFFER_LABEL,
+  rulesDifferText,
+  ruleSentence,
+  SAVED_FAILED,
+  savedLine,
+  spendDifferently,
+  type NowFigures,
+  type UsedFigures,
+} from './plan-conversions';
 import { pct } from './plan-text';
-import { TUNE_NEEDS_CONSTANT, TUNE_ROW_SUB, TUNE_TITLE } from './plan-tune';
+import { movedLine, TUNE_HOLDS, TUNE_NEEDS_CONSTANT, TUNE_ROW_SUB, TUNE_TITLE } from './plan-tune';
 import { Notice } from './TotalCaveats';
 import { Why } from './Why';
 
@@ -141,6 +161,14 @@ export function ConversionsForm(
     /** The law the preview ran under, for its label. */
     lawYear: number;
     money: Money;
+    /** The Constant withdrawal rule: a rule and None live on the same spending. */
+    fixedSpending: boolean;
+    now: NowFigures | null;
+    /** The plan with a rule in it, as Save would have it; null while it can't be run.
+     *  The preview holds the plan's stop and start, and saving a rule can move them. */
+    used: ((strategy: Strategy) => UsedFigures) | null;
+    /** Nothing is asked of `used`: the search it started can go. */
+    release?: () => void;
   }
 ) {
   const { detail, plan, money, defaultUntil, preview } = props;
@@ -190,6 +218,19 @@ export function ConversionsForm(
   }, [kind, top, acaTop, yearly, until, stored]);
   const runs = useMemo(() => (typed && preview ? preview(typed) : null), [typed, preview]);
   const saying = runs?.rule && runs.none && kind !== 'none' ? previewRows(runs.rule, runs.none, money) : null;
+  const changed = typed !== null && JSON.stringify(typed) !== JSON.stringify(stored);
+  const spends = saying !== null && !props.fixedSpending && !!runs?.rule && !!runs.none && spendDifferently([runs.rule, runs.none]);
+  // What Save gives, beside the preview's run of the same rule from where the plan is. It
+  // costs a whole plan's figures, so it renders after typing (useDeferredValue), and a
+  // draft that isn't asked about lets its search go.
+  const rested = useDeferredValue(typed);
+  const asking = saying !== null && changed && props.used !== null && JSON.stringify(rested) === JSON.stringify(typed);
+  const answer = asking && typed && props.used ? props.used(typed) : null;
+  const { release } = props;
+  useEffect(() => {
+    if (!asking) release?.();
+  }, [asking, release]);
+  const once = answer && runs?.rule ? onceUsed({ left: runs.rule.leftAtEnd, cost: runs.rule.taxAndHealth, short: runs.rule.runsOutAt }, props.now, answer) : null;
 
   const untilField =
     kind === 'none' ? null : (
@@ -256,14 +297,21 @@ export function ConversionsForm(
             What it comes to
           </h3>
           <BesideTable caption="This rule beside no conversions" heads={['This rule', 'None']} rows={saying} />
+          {spends && <p className="helper">{PREVIEW_SPENDS}</p>}
           <p className="plan-definition">{lawLabel(props.lawYear)}</p>
         </section>
       )}
-      {props.movingStart !== null && typed !== null && JSON.stringify(typed) !== JSON.stringify(stored) && (
+      {props.movingStart !== null && changed && (
         <p className="helper">
           <Masked>{`From your start of ${money(props.movingStart)}. Your FI number moves with the rule, so once saved this plan starts from a different number.`}</Masked>
         </p>
       )}
+      {once?.ready && once.differs && (
+        <p className="helper">
+          <Masked>{savedLine({ stop: once.stop, start: once.start, copyOpen: !!props.copy, drawn: once.ready }, money)}</Masked>
+        </p>
+      )}
+      {answer?.failed && <p className="helper">{SAVED_FAILED}</p>}
       {kind === 'aca-then-bracket' && <p className="helper">{`Past the age you set, while ${either} on ACA coverage, it still converts what it takes to keep coverage from counting at full price, if there’s money to convert.`}</p>}
       <Why label={RULES_DIFFER_LABEL}>
         <p>{`${rulesDifferText({ onAca: props.onAca, acaLaw })} Compare conversions on Drawdown sets the rules side by side.`}</p>
@@ -345,7 +393,8 @@ export function CompareCard({
   working?: boolean;
   onRule: (row: CompareRow) => void;
   ruleRef?: (key: string, el: HTMLButtonElement | null) => void;
-  /** Every setting lives on the same spending, so what's left compares like with like. */
+  /** The Constant withdrawal rule: every rule and setting lives on the same spending, so
+   *  what's left compares like with like. On any other, the rows are measured. */
   tunable?: boolean;
   /** Tune to a goal's sheet; left out, the card doesn't offer it. */
   onTune?: () => void;
@@ -402,6 +451,7 @@ export function CompareCard({
           </tbody>
         </table>
       </div>
+      <p className="helper">{tunable ? TUNE_HOLDS : spendDifferently(rows.map((r) => r.drawn)) ? COMPARE_SPENDS : COMPARE_HOLDS}</p>
       <Why label={RULES_DIFFER_LABEL}>
         <p>{rulesDifferText({ onAca, acaLaw })}</p>
       </Why>
@@ -478,7 +528,8 @@ export function RuleFigures({ drawn, money }: { drawn: Drawdown; money: Money })
   );
 }
 
-/** A rule's sheet: what it comes to, stage by stage, and a copy to try it in. */
+/** A rule's sheet: what the plan comes to with it once used, stage by stage, what that
+ *  moves from its row, and a copy to try it in. The plan's own rule is its row. */
 export function RuleLevel({
   row,
   money,
@@ -486,6 +537,8 @@ export function RuleLevel({
   copyOpen,
   whyNot,
   onTry,
+  now,
+  used,
 }: {
   row: CompareRow;
   money: Money;
@@ -494,16 +547,38 @@ export function RuleLevel({
   /** Why no copy can be made yet; null when one can. */
   whyNot: string | null;
   onTry: () => Promise<true | string>;
+  now: NowFigures | null;
+  /** The plan with a rule in it, as the page works it out: a row holds the plan's stop
+   *  and start, and using a rule can move them. */
+  used: (strategy: Strategy) => UsedFigures;
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const answer: UsedFigures = row.mine ? { drawn: row.drawn, stop: now?.stop ?? null, start: now?.start ?? null, working: false, failed: false } : used(row.strategy);
+  const { ready, stop, start, differs } = onceUsed({ left: row.drawn.leftAtEnd, cost: row.drawn.taxAndHealth, short: row.drawn.runsOutAt }, now, answer);
+  // Until it is worked out, and where it can't be, the row's run: what is drawn meanwhile
+  // is a stand-in at another stop, neither the row nor the rule as used.
+  const shown = ready ?? row.drawn;
   return (
     <div className="stack loose">
-      <RuleFigures drawn={row.drawn} money={money} />
+      <div className={answer.working ? 'stack loose plan-answer-pending' : 'stack loose'} aria-busy={answer.working || undefined}>
+        {answer.working && (
+          <p className="plan-working-line" role="status">
+            Working it out
+          </p>
+        )}
+        <RuleFigures drawn={shown} money={money} />
+      </div>
+      {answer.failed && <p className="helper">{RULE_USED_FAILED}</p>}
+      {differs && (
+        <p className="helper">
+          <Masked>{movedLine({ stop, start, copyOpen }, money)}</Masked>
+        </p>
+      )}
       <p className="plan-definition">{lawLabel(lawYear)}</p>
       {row.mine ? (
         <p className="helper">{copyOpen ? 'This copy has this rule.' : 'Your plan has this rule.'}</p>
-      ) : (
+      ) : answer.failed ? null : (
         <div className="stack tight">
           <p className="helper">{`Makes a copy of ${copyOpen ? 'this copy' : 'your plan'} with this rule and opens it. ${copyOpen ? 'This copy stays' : 'Your plan stays'} as it is.`}</p>
           {whyNot && <p className="helper plan-paused">{whyNot}</p>}
@@ -516,7 +591,7 @@ export function RuleLevel({
             <button
               type="button"
               className="btn ghost"
-              disabled={saving || whyNot !== null}
+              disabled={saving || whyNot !== null || ready === null}
               onClick={async () => {
                 setSaving(true);
                 setError(null);

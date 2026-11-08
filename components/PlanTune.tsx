@@ -10,13 +10,12 @@
 // like. A row's own sheet runs the plan as it would be with that rule, and says what moved.
 
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
-import type { Drawdown } from '@/lib/fire/drawdown';
 import type { Strategy } from '@/lib/fire/tax/rules';
 import type { TuneJob } from '@/lib/fire/tune-job';
 import { crossesOf, crossingOf, tunedRows, tuneUntil, type TuneAsk, type TunedRow, type TuneGoal, type TuneLimit } from '@/lib/fire/tune';
 import CheckRows from './CheckRows';
 import { Masked } from './HideAmounts';
-import { endAgeOf, endWords } from './plan-conversions';
+import { endAgeOf, endWords, onceUsed, type NowFigures, type UsedFigures } from './plan-conversions';
 import { RuleFigures, SortHeading, sortedRows, type ColumnSort } from './PlanHowYouDraw';
 import { useDetailSave, type DetailForm, type SaveProps } from './PlanForms';
 import { planTune } from './plan-search';
@@ -52,12 +51,6 @@ import { Notice } from './TotalCaveats';
 
 type Money = (n: number) => string;
 
-/** What the plan comes to with a setting in it: its own figures, not the table's. */
-export type TuneUsed = { drawn: Drawdown | null; stop: number | null; start: number | null; working: boolean; failed: boolean };
-
-/** The figures the plan shown has now. */
-export type TuneNow = { drawn: Drawdown; stop: number | null; start: number | null };
-
 type Shared = SaveProps & {
   detail: DetailForm;
   money: Money;
@@ -66,8 +59,8 @@ type Shared = SaveProps & {
   copyOpen: boolean;
   /** Why no copy can be made yet; null when one can. */
   whyNot: string | null;
-  now: TuneNow | null;
-  used: (strategy: Strategy) => TuneUsed;
+  now: NowFigures | null;
+  used: (strategy: Strategy) => UsedFigures;
   onTry: (strategy: Strategy) => Promise<true | string>;
 };
 
@@ -232,7 +225,7 @@ export function TunedAnswer({
   rows: readonly TunedRow[];
   own: Strategy;
   until: number;
-  now: TuneNow | null;
+  now: NowFigures | null;
   sort: ColumnSort | null;
   onSort: (sort: ColumnSort | null) => void;
   /** A job is working out this plan's date: a row opens nothing yet. */
@@ -326,18 +319,14 @@ export function TuneLevel({ row, ask, money, lawYear, healthGrowth, copyOpen, wh
   const [tryError, setTryError] = useState<string | null>(null);
   const answer = used(strategy);
   const drawn = answer.drawn;
-  const ready = !answer.working && !answer.failed && drawn !== null;
+  const { ready, stop: stopMoved, start: startMoved, differs } = onceUsed(row.run, now, answer);
   const own = detail.choices.strategy;
-  const same = ready && !row.mine && now !== null && Math.abs(drawn.leftAtEnd - now.drawn.leftAtEnd) < 1 && Math.abs(drawn.taxAndHealth - now.drawn.taxAndHealth) < 1 && drawn.runsOutAt === now.drawn.runsOutAt;
-  const moved = (a: number | null, b: number | null): [number, number] | null => (a !== null && b !== null && Math.abs(a - b) >= 1 ? [a, b] : null);
-  const stopMoved = now ? moved(now.stop, answer.stop) : null;
-  const startMoved = now ? moved(now.start, answer.start) : null;
-  const differs = ready && (Math.abs(drawn.leftAtEnd - row.run.left) >= 1 || Math.abs(drawn.taxAndHealth - row.run.cost) >= 1 || drawn.runsOutAt !== row.run.short || stopMoved !== null || startMoved !== null);
+  const same = ready !== null && !row.mine && now !== null && Math.abs(ready.leftAtEnd - now.drawn.leftAtEnd) < 1 && Math.abs(ready.taxAndHealth - now.drawn.taxAndHealth) < 1 && ready.runsOutAt === now.drawn.runsOutAt;
   // What it crosses is of the figures on show, which a move leaves out of the row's. How
   // it stands to None is the table's, so it is said only where these are the row's. Its
   // order has a line of its own here.
   const rowShown = drawn === null || answer.failed;
-  const note = tunedNote({ run: row.run, crossing: rowShown ? row.crossing : crossingOf(crossesOf(drawn), ask.limits), beatsNone: rowShown || (ready && !differs) ? row.beatsNone : null }, strategy, ask.goal);
+  const note = tunedNote({ run: row.run, crossing: rowShown ? row.crossing : crossingOf(crossesOf(drawn), ask.limits), beatsNone: rowShown || (ready !== null && !differs) ? row.beatsNone : null }, strategy, ask.goal);
   const busy = s.saving || trying;
   const build = () => {
     more.current = { tax: { ...detail.choices, strategy } };
