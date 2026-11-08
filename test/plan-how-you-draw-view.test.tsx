@@ -330,7 +330,7 @@ describe('Compare conversions', () => {
   test('with no Try of its own out, a rule’s sheet says why no copy can be made, with Try off', () => {
     const drawn = { leftAtEnd: 900_000, taxAndHealth: 300_000, runsOutAt: null, years: [], stages: [], aca: { on: 0, withCredit: 0 } } as never;
     const row = { key: 'fill-12', strategy: { order: 'standard' as const, conversions: { kind: 'bracket' as const, top: 0.12 as const }, convertUntil: 60 }, mine: false, drawn };
-    const html = renderToStaticMarkup(<RuleLevel row={row} money={(n) => wholeMoney(n, 'USD')} lawYear={2026} copyOpen={false} whyNot="A copy can’t be made just yet. Try again in a moment." onTry={async () => true} />);
+    const html = renderToStaticMarkup(<RuleLevel row={row} money={(n) => wholeMoney(n, 'USD')} lawYear={2026} copyOpen={false} whyNot="A copy can’t be made just yet. Try again in a moment." onTry={async () => true} now={null} used={() => ({ drawn, stop: null, start: null, working: false, failed: false, retry: null })} />);
     expect(html).toContain('A copy can’t be made just yet. Try again in a moment.');
     expect(html).toMatch(/<button[^>]*disabled[^>]*>Try it in a copy</);
   });

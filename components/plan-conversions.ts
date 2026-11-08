@@ -74,6 +74,72 @@ export const convertedIn = (d: Pick<Drawdown, 'years'>) => d.years.reduce((n, y)
 /** The last age it moved anything. */
 const lastConverting = (d: Pick<Drawdown, 'years'>) => d.years.reduce<number | null>((n, y) => (y.conversion >= 0.5 ? y.age : n), null);
 
+/** What a run lives on, in all: its years' living spending. */
+const livedOn = (d: Pick<Drawdown, 'years'>) => d.years.reduce((n, y) => n + y.living, 0);
+
+/** Runs that live on different amounts, a dollar or more apart in all, so what each
+ *  leaves doesn't compare like with like. Only a withdrawal rule that spends with the
+ *  balance does that: on the Constant rule each run lives on the same, whatever it pays
+ *  in tax (lib/fire/drawdown.ts grosses its spending up by the run's own share). */
+export function spendDifferently(runs: readonly Pick<Drawdown, 'years'>[]): boolean {
+  const lived = runs.map(livedOn);
+  return lived.length > 1 && Math.max(...lived) - Math.min(...lived) >= 1;
+}
+
+/** What a plan comes to with a rule in it, once used: its own figures, not a row's run
+ *  held at the plan's stop and start. `retry` asks again, where it failed for a search
+ *  that couldn't be run. */
+export type UsedFigures = { drawn: Drawdown | null; stop: number | null; start: number | null; working: boolean; failed: boolean; retry: (() => void) | null };
+
+/** The figures the plan shown has now. */
+export type NowFigures = { drawn: Drawdown; stop: number | null; start: number | null };
+
+/** How a rule once used stands to its run held where the plan is (a row, the preview):
+ *  `ready`, its figures once worked out; the stop and start where each moved, by a
+ *  dollar or more, as [now, once used]; and whether it differs from the held run. */
+export function onceUsed(held: { left: number; cost: number; short: number | null }, now: NowFigures | null, answer: UsedFigures) {
+  const ready = !answer.working && !answer.failed ? answer.drawn : null;
+  const moved = (a: number | null, b: number | null): [number, number] | null => (a !== null && b !== null && Math.abs(a - b) >= 1 ? [a, b] : null);
+  const stop = now ? moved(now.stop, answer.stop) : null;
+  const start = now ? moved(now.start, answer.start) : null;
+  const differs = ready !== null && (Math.abs(ready.leftAtEnd - held.left) >= 1 || Math.abs(ready.taxAndHealth - held.cost) >= 1 || ready.runsOutAt !== held.short || stop !== null || start !== null);
+  return { ready, stop, start, differs };
+}
+
+/** What moved, as Tune's sheet and the preview name it: "stops at 57, not 54, and
+ *  starts from $X, not $Y". Empty where neither did. */
+export function movedWords(a: { stop: [number, number] | null; start: [number, number] | null }, money: Money): string {
+  const stop = a.stop && `stops at ${a.stop[1]}, not ${a.stop[0]}`;
+  const start = a.start && `starts from ${money(a.start[1])}, not ${money(a.start[0])}`;
+  return [stop, start].filter((x) => x !== null).join(', and ');
+}
+
+/** Under Compare's table on a withdrawal rule other than Constant, in place of Tune's
+ *  line: what the rows hold, without saying they compare like with like, since the line
+ *  at the card's foot says such rules spend differently. */
+export const COMPARE_HOLDS = 'Each rule here keeps your stop, your start and what’s timed on them where they are now. A rule’s own sheet shows what it comes to once used.';
+
+/** In its place, where the withdrawal rule spends differently under each rule. */
+export const COMPARE_SPENDS = 'Each rule here keeps your stop, your start and what’s timed on them where they are now, but your withdrawal rule spends differently under each, so what’s left doesn’t compare like with like. A rule’s own sheet shows what it comes to once used.';
+
+/** Under the preview's table, where this rule and None spend differently. */
+export const PREVIEW_SPENDS = 'Your withdrawal rule spends differently under this rule and None, so what’s left doesn’t compare like with like.';
+
+/** A rule's sheet from Compare, where it couldn't be worked out once used. */
+export const RULE_USED_FAILED = 'This couldn’t be worked out once used, so Try it in a copy is off.';
+
+/** The preview, where what Save gives couldn't be worked out. */
+export const SAVED_FAILED = 'What this rule comes to once saved couldn’t be worked out.';
+
+/** Why the preview isn't what Save gives, what moved, and what Save gives. */
+export function savedLine(a: { stop: [number, number] | null; start: [number, number] | null; copyOpen: boolean; drawn: Pick<Drawdown, 'leftAtEnd' | 'taxAndHealth' | 'runsOutAt' | 'years'> }, money: Money): string {
+  const who = a.copyOpen ? 'this copy' : 'your plan';
+  const moved = movedWords(a, money);
+  const age = endAgeOf(a.drawn);
+  const end = a.drawn.runsOutAt !== null ? `runs short at ${a.drawn.runsOutAt}` : `leaves ${money(a.drawn.leftAtEnd)}${age === null ? '' : ` at ${age}`}`;
+  return `Once saved, ${moved ? `${who} ${moved}` : `more of ${who} moves with this rule`}, so it differs from the table: it ${end} and costs ${money(a.drawn.taxAndHealth)} in tax and health.`;
+}
+
 /** The sheet's preview, as the rule is changed: this rule beside none. */
 export function previewRows(rule: Drawdown, none: Drawdown, money: Money): [string, string, string][] {
   const moved = convertedIn(rule);

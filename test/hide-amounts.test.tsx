@@ -1331,7 +1331,22 @@ const SCREENS: Record<string, () => React.ReactElement> = {
   },
   'Plan: a rule’s sheet, its figures and stages': () => {
     const { rows, money } = WORKED();
-    return <RuleLevel row={rows[2]} money={money} lawYear={2026} copyOpen={false} whyNot={null} onTry={async () => true} />;
+    return <RuleLevel row={rows[2]} money={money} lawYear={2026} copyOpen={false} whyNot={null} onTry={async () => true} now={null} used={() => ({ drawn: rows[2].drawn, stop: null, start: null, working: false, failed: false, retry: null })} />;
+  },
+  'Plan: a rule’s sheet, what it comes to once used and what moved': () => {
+    const { rows, money, detail, f } = WORKED();
+    return (
+      <RuleLevel
+        row={rows[2]}
+        money={money}
+        lawYear={2026}
+        copyOpen={false}
+        whyNot={null}
+        onTry={async () => true}
+        now={{ drawn: detail.start, stop: f.view.stopAge, start: 1_474_369 }}
+        used={() => ({ drawn: { ...rows[2].drawn, leftAtEnd: rows[2].drawn.leftAtEnd + 50_000 }, stop: f.view.stopAge, start: 1_600_000, working: false, failed: false, retry: null })}
+      />
+    );
   },
   'Plan: Tune to a goal, each rule’s row and what your plan has now': () => {
     const { f, money, detail, input } = WORKED();
