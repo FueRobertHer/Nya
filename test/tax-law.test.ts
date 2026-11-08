@@ -10,10 +10,10 @@ import { LAW_PARTS, STATE_CODES, type Filing } from '@/lib/fire/tax/law/types';
 // tax-calculator.
 
 describe('which law a plan uses', () => {
-  test('2026 is complete; 2027 lacks the parts not out on 2026-11-01', () => {
+  test('2026 is complete; 2027 lacks the parts not out on 2026-11-07', () => {
     expect(isComplete(LAW_2026)).toBe(true);
     expect(isComplete(LAW_2027)).toBe(false);
-    expect(missingParts(LAW_2027)).toEqual(['brackets', 'medicaidPoverty', 'medicare']);
+    expect(missingParts(LAW_2027)).toEqual(['medicaidPoverty', 'medicare']);
   });
 
   test("a plan in 2027 uses 2026's law and says it is behind; one in 2026, 2026's", () => {
@@ -38,15 +38,19 @@ describe('which law a plan uses', () => {
 });
 
 describe("the tables' shape", () => {
-  test('brackets ascend, end at Infinity, and their rates rise', () => {
-    for (const filing of ['single', 'joint'] as Filing[]) {
-      const b = LAW_2026.brackets.ordinary[filing];
-      expect(b.at(-1)!.upTo).toBe(Infinity);
-      for (let i = 1; i < b.length; i++) {
-        expect(b[i].upTo).toBeGreaterThan(b[i - 1].upTo);
-        expect(b[i].rate).toBeGreaterThan(b[i - 1].rate);
+  test('brackets ascend, end at Infinity, and their rates rise, in every year that has them', () => {
+    const years = LAW_YEARS.filter((law) => law.brackets !== undefined);
+    expect(years.map((law) => law.year)).toEqual([2026, 2027]);
+    for (const law of years) {
+      for (const filing of ['single', 'joint'] as Filing[]) {
+        const b = law.brackets!.ordinary[filing];
+        expect(b.at(-1)!.upTo).toBe(Infinity);
+        for (let i = 1; i < b.length; i++) {
+          expect(b[i].upTo).toBeGreaterThan(b[i - 1].upTo);
+          expect(b[i].rate).toBeGreaterThan(b[i - 1].rate);
+        }
+        expect(law.brackets!.gains[filing].fifteenTo).toBeGreaterThan(law.brackets!.gains[filing].zeroTo);
       }
-      expect(LAW_2026.brackets.gains[filing].fifteenTo).toBeGreaterThan(LAW_2026.brackets.gains[filing].zeroTo);
     }
   });
 
