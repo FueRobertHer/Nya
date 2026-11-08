@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { federal, newFederalInput, newFederalResult, type FederalInput } from '@/lib/fire/tax/federal';
 import { LAW_2026 } from '@/lib/fire/tax/law/2026';
-import type { Bracket, Filing } from '@/lib/fire/tax/law/types';
+import { LAW_2027 } from '@/lib/fire/tax/law/2027';
+import type { Bracket, Filing, TaxLaw } from '@/lib/fire/tax/law/types';
 import { begin, bracketTax, lin } from '@/lib/fire/tax/piece';
 
 // Golden tests: federal.ts against the IRS's own printed figures and its
@@ -11,6 +12,8 @@ import { begin, bracketTax, lin } from '@/lib/fire/tax/piece';
 //   - Rev. Proc. 2025-32 (October 9, 2025), sec. 4.01 Tables 1 and 3: each
 //     2026 bracket's tax at its start ("$11,600 plus 22% of the excess over
 //     $100,800").
+//   - Rev. Proc. 2026-35 (November 5, 2026), sec. 3.01 Tables 1 and 3: the
+//     same for 2027 ("$11,974.00 plus 22% of the excess over $104,050").
 //   - The 2025 Tax Computation Worksheet (Instructions for Form 1040, Tax
 //     Table), on 2025's brackets from Rev. Proc. 2024-40 sec. 3.01: "multiply
 //     by 22%, subtract $5,086.00" and the rest.
@@ -22,18 +25,18 @@ import { begin, bracketTax, lin } from '@/lib/fire/tax/piece';
 
 const fixed = (v: number) => lin(v, 0);
 
-function run(filing: Filing, set: (inp: FederalInput) => void) {
+function run(filing: Filing, set: (inp: FederalInput) => void, law: TaxLaw = LAW_2026) {
   const inp = newFederalInput(filing);
   set(inp);
   begin(false);
-  return federal(inp, LAW_2026, newFederalResult());
+  return federal(inp, law, newFederalResult());
 }
 
 /** Taxable income exactly `ti` from ordinary income alone. */
-function ordinaryTo(filing: Filing, ti: number) {
+function ordinaryTo(filing: Filing, ti: number, law: TaxLaw = LAW_2026) {
   return run(filing, (inp) => {
-    inp.ordinary = fixed(ti + LAW_2026.brackets.standard[filing]);
-  });
+    inp.ordinary = fixed(ti + law.brackets.standard[filing]);
+  }, law);
 }
 
 function tax(brackets: readonly Bracket[], x: number): number {
@@ -74,6 +77,25 @@ describe('the 2026 brackets', () => {
           expect(tax(brackets, ti)).toBeCloseTo(ti * rate - less, 6);
         }
       }
+    }
+  });
+});
+
+describe('the 2027 brackets', () => {
+  // 2027's table isn't whole yet, so 2026's Medicare and Medicaid poverty
+  // guidelines stand in; the federal tax reads neither.
+  const law2027: TaxLaw = { ...LAW_2026, ...LAW_2027 };
+
+  test("each bracket's tax at its start is Rev. Proc. 2026-35's printed base", () => {
+    const single = [[12_800, 1_280], [52_025, 5_987], [109_125, 18_549], [208_325, 42_357], [264_550, 60_349], [661_375, 199_237.75]];
+    const joint = [[25_600, 2_560], [104_050, 11_974], [218_250, 37_098], [416_650, 84_714], [529_100, 120_698], [793_650, 213_290.5]];
+    for (const [ti, base] of single) {
+      expect(tax(law2027.brackets.ordinary.single, ti)).toBeCloseTo(base, 6);
+      expect(ordinaryTo('single', ti, law2027).incomeTax.v).toBeCloseTo(base, 6);
+    }
+    for (const [ti, base] of joint) {
+      expect(tax(law2027.brackets.ordinary.joint, ti)).toBeCloseTo(base, 6);
+      expect(ordinaryTo('joint', ti, law2027).incomeTax.v).toBeCloseTo(base, 6);
     }
   });
 });
