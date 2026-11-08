@@ -1357,7 +1357,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
         copyOpen={false}
         whyNot={null}
         now={{ drawn: { ...detail.start, leftAtEnd: 1 }, stop: 50, start: 1_474_369 }}
-        used={() => ({ drawn: detail.start, stop: 52, start: 1_600_000, working: false, failed: false })}
+        used={() => ({ drawn: detail.start, stop: 52, start: 1_600_000, working: false, failed: false, retry: null })}
         onTry={async () => true}
       />
     );
@@ -1366,7 +1366,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
     const { f, money, input, worked } = WORKED();
     const row = tunedRows(tuneRuns(f, input), { goal: 'left', limits: [] }, NO_STRATEGY, 74).find((r) => r.key === 'fill-12')!;
     const form = { choices: { ...DEFAULT_TAX_CHOICES, strategy: NO_STRATEGY }, facts: DEFAULT_TAX_FACTS, factsLocked: false, stateTaxes: {} as never, statute: {} as never, calendarYear: 2026, save: async () => true } as const;
-    return <TuneLevel row={row} ask={{ goal: 'left', limits: [] }} plan={worked} onSave={async () => true} onDone={() => {}} editable detail={form} money={money} lawYear={2026} healthGrowth={0.021} copyOpen={false} whyNot={null} now={null} used={() => ({ drawn: null, stop: null, start: null, working: false, failed: true })} onTry={async () => true} />;
+    return <TuneLevel row={row} ask={{ goal: 'left', limits: [] }} plan={worked} onSave={async () => true} onDone={() => {}} editable detail={form} money={money} lawYear={2026} healthGrowth={0.021} copyOpen={false} whyNot={null} now={null} used={() => ({ drawn: null, stop: null, start: null, working: false, failed: true, retry: null })} onTry={async () => true} />;
   },
   'Plan: Tax after you stop, how it goes into your FI number': () => {
     const { shares, money, f, detail } = WORKED();

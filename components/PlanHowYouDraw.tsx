@@ -506,7 +506,8 @@ export function RuleLevel({
       ) : (
         <div className="stack tight">
           <p className="helper">{`Makes a copy of ${copyOpen ? 'this copy' : 'your plan'} with this rule and opens it. ${copyOpen ? 'This copy stays' : 'Your plan stays'} as it is.`}</p>
-          {whyNot && <p className="helper plan-paused">{whyNot}</p>}
+          {/* Its own Try is why no copy can be made meanwhile, and that needs no words. */}
+          {!saving && whyNot && <p className="helper plan-paused">{whyNot}</p>}
           {error && (
             <Notice level="critical" role="alert">
               {error}

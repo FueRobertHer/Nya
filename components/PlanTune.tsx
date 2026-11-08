@@ -52,8 +52,9 @@ import { Notice } from './TotalCaveats';
 
 type Money = (n: number) => string;
 
-/** What the plan comes to with a setting in it: its own figures, not the table's. */
-export type TuneUsed = { drawn: Drawdown | null; stop: number | null; start: number | null; working: boolean; failed: boolean };
+/** What the plan comes to with a setting in it: its own figures, not the table's.
+ *  `retry` asks again, where it failed for a search that couldn't be run. */
+export type TuneUsed = { drawn: Drawdown | null; stop: number | null; start: number | null; working: boolean; failed: boolean; retry: (() => void) | null };
 
 /** The figures the plan shown has now. */
 export type TuneNow = { drawn: Drawdown; stop: number | null; start: number | null };
@@ -373,6 +374,13 @@ export function TuneLevel({ row, ask, money, lawYear, healthGrowth, copyOpen, wh
       {strategy.order !== own.order && <p className="helper">{orderLine(strategy.order, own.order, copyOpen)}</p>}
       {note && <p className="helper">{note}</p>}
       {answer.failed && <p className="helper">{usedFailed(copyOpen)}</p>}
+      {answer.failed && answer.retry && (
+        <div>
+          <button type="button" className="btn secondary" onClick={answer.retry}>
+            Try again
+          </button>
+        </div>
+      )}
       {differs && !same && (
         <p className="helper">
           <Masked>{movedLine({ stop: stopMoved, start: startMoved, copyOpen }, money)}</Masked>

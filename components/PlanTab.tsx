@@ -2337,9 +2337,10 @@ export default function PlanTab({
             used={(strategy) => {
               const a = figuresFor('tune-level', shownPlan, { ...detailChoices, strategy });
               const f = a.figures;
-              if ('refused' in f) return { drawn: null, stop: null, start: null, working: false, failed: true };
+              if ('refused' in f) return { drawn: null, stop: null, start: null, working: false, failed: true, retry: null };
               const d = f.detail && !('failed' in f.detail) ? f.detail.start : null;
-              return { drawn: d, stop: f.view.stopAge, start: 'sim' in f.engine ? f.engine.sim.startBalance : null, working: a.working, failed: a.failed || (d === null && !a.working) };
+              // Only a search that couldn't be run is asked again: the rest would come out the same.
+              return { drawn: d, stop: f.view.stopAge, start: 'sim' in f.engine ? f.engine.sim.startBalance : null, working: a.working, failed: a.failed || (d === null && !a.working), retry: a.failed ? search.retry : null };
             }}
             onTry={(strategy) => heldBy(tryRule(strategy, strategy.convertUntil))}
           />
