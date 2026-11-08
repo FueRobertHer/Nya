@@ -859,13 +859,20 @@ describe('the copy’s card, on every segment', () => {
   });
 
   // Worked out in lib/fire/plan.worker.ts, on its own thread, as in a
-  // browser: the one test in these suites whose answers come from there.
+  // browser: the one test in these suites whose answers come from there. The
+  // thread answers when it is done, in real time, later on a loaded machine,
+  // so the test waits for that rather than a fixed time.
   test('one worked out with items: they are on Your path, and the card says what it adds', async () => {
     const posted = realWorkers();
     jest.useRealTimers();
     serve({ copies: [GYM] });
     const tab = await mount();
     await openFromBar(tab, 'Gym');
+    // Your path and Drawdown say they are working it out until the thread has
+    // answered. Four seconds at most, inside the test's five, so a thread
+    // that never answers fails on what is missing, not on the time limit.
+    const working = () => ['Your path', 'Drawdown'].some((s) => /Working (it out|out the new answer)/.test(tab.panelOf(s).textContent));
+    for (let i = 0; i < 80 && working(); i++) await settle(50);
     expect(tab.card()!.textContent).toContain('Adds “Gym”');
     expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'Timeline', 'Progress']);
     expect(tab.panelOf('Drawdown').textContent).toContain('From Your pathGym: ');
