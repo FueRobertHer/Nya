@@ -208,6 +208,59 @@ describe('on a plan that moves when a rule is used', () => {
     await tab.unmount();
   }, 60_000);
 
+  test('a rule’s sheet whose search fails once used says so, and Try again asks again', async () => {
+    const search = planSearch();
+    const real = search.answer;
+    const tab = await detailed(MOVES);
+    await settle(400);
+    try {
+      search.answer = (slot, job) => (slot === 'rule-level' ? { ok: false, error: 'nope' } : real(slot, job));
+      await press(ruleOf(named(compareTable(tab), 'Fill the 22% bracket')));
+      const sheet = tab.dialog()!;
+      expect(sheet.textContent).toContain('This couldn’t be worked out once used, so Try it in a copy is off.');
+      expect(sheet.textContent).not.toContain('nope');
+      expect(button(sheet, 'Try it in a copy')).toBeNull();
+      expect(button(sheet, 'Try again')).not.toBeNull();
+    } finally {
+      search.answer = real;
+    }
+    await press(button(tab.dialog(), 'Try again'));
+    for (let i = 0; i < 400 && (tab.dialog()!.textContent ?? '').includes('Working it out'); i++) await settle(50);
+    const sheet = tab.dialog()!;
+    expect(sheet.textContent).not.toContain('couldn’t be worked out once used');
+    expect(button(sheet, 'Try again')).toBeNull();
+    expect(disabled(button(sheet, 'Try it in a copy'))).toBe(false);
+    await tab.unmount();
+  }, 60_000);
+
+  test('the preview whose search fails says what Save gives couldn’t be worked out, and Try again asks again', async () => {
+    const FAILED = 'What this rule comes to once saved couldn’t be worked out.';
+    const search = planSearch();
+    const real = search.answer;
+    const tab = await detailed(MOVES);
+    await settle(400);
+    try {
+      search.answer = (slot, job) => (slot === 'conversions' ? { ok: false, error: 'nope' } : real(slot, job));
+      await press(tab.row('Roth conversions'));
+      await pick(tab.dialog()!, 'Fill a bracket');
+      await fill(tab.dialog()!, 'Up to the top of', '0.22');
+      for (let i = 0; i < 400 && !(tab.dialog()!.textContent ?? '').includes(FAILED); i++) await settle(50);
+      const sheet = tab.dialog()!;
+      expect(sheet.textContent).toContain(FAILED);
+      expect(sheet.textContent).not.toContain('nope');
+      expect(button(sheet, 'Try again')).not.toBeNull();
+    } finally {
+      search.answer = real;
+    }
+    await press(button(tab.dialog(), 'Try again'));
+    for (let i = 0; i < 400 && !SAVED.test(tab.dialog()!.textContent ?? ''); i++) await settle(50);
+    const sheet = tab.dialog()!;
+    expect(sheet.textContent).toMatch(SAVED);
+    expect(sheet.textContent).not.toContain(FAILED);
+    expect(button(sheet, 'Try again')).toBeNull();
+    await tab.unmount();
+  }, 60_000);
+
   test('a plan that doesn’t move says nothing of the kind, and its rows are what using them gives', async () => {
     const tab = await detailed(STAYS);
     expect(compareCard(tab).textContent).toContain(HOLDS);
@@ -285,7 +338,7 @@ describe('a rule’s sheet, drawn alone', () => {
   const drawn = (over: object) => ({ leftAtEnd: 1_000_000, taxAndHealth: 200_000, runsOutAt: null, years: [], stages: [], aca: { on: 0, withCredit: 0 }, ...over }) as never;
   const ROW = { key: 'fill-12', mine: false, strategy: { order: 'standard' as const, conversions: { kind: 'bracket' as const, top: 0.12 as const }, convertUntil: null }, drawn: drawn({}) };
   const NOW = { drawn: drawn({ leftAtEnd: 900_000, taxAndHealth: 300_000 }), stop: 55, start: 1_500_000 };
-  const NO_ANSWER = { drawn: null, stop: null, start: null, working: false, failed: false };
+  const NO_ANSWER = { drawn: null, stop: null, start: null, working: false, failed: false, retry: null };
   const level = (used: object, over: object = {}) =>
     renderToStaticMarkup(<RuleLevel row={ROW} money={money} lawYear={2026} copyOpen={false} whyNot={null} onTry={async () => true as const} now={NOW} used={() => used as never} {...over} />);
 
@@ -294,6 +347,8 @@ describe('a rule’s sheet, drawn alone', () => {
     expect(html).toContain('This couldn’t be worked out once used, so Try it in a copy is off.');
     expect(html).toContain('$1,000,000');
     expect(html).not.toContain('>Try it in a copy<');
+    // Where asking again would come out the same, nothing offers to.
+    expect(html).not.toContain('>Try again<');
   });
 
   test('worked out as used, the same as its row, it says nothing moved', () => {

@@ -617,7 +617,7 @@ describe('the sheet’s other states, drawn alone', () => {
   const money = (n: number) => wholeMoney(n, 'USD');
   const form = { choices: { ...DEFAULT_TAX_CHOICES, strategy: NO_STRATEGY }, facts: DEFAULT_TAX_FACTS, factsLocked: false, stateTaxes: {} as never, statute: {} as never, calendarYear: 2026, save: async () => true as const };
   const shared = { plan: PLAN, onSave: async () => true, onDone: () => {}, editable: true, detail: form, money, lawYear: 2026, healthGrowth: 0.021, copyOpen: false, whyNot: null, now: null, onTry: async () => true as const };
-  const NO_ANSWER = { drawn: null, stop: null, start: null, working: false, failed: false };
+  const NO_ANSWER = { drawn: null, stop: null, start: null, working: false, failed: false, retry: null };
   const ASK_LEFT = { goal: 'left', limits: [] } as const;
   const drew = (over: object) => ({ ...NO_ANSWER, drawn: { leftAtEnd: 900_000, taxAndHealth: 300_000, runsOutAt: null, years: [], stages: [], aca: { on: 0, withCredit: 0 }, ...over } as never });
   /** Worked out, with figures of its own. */
@@ -636,6 +636,8 @@ describe('the sheet’s other states, drawn alone', () => {
     expect(html).toContain('$200,000');
     expect(html).not.toContain('>Use in your plan<');
     expect(html).not.toContain('>Try it in a copy<');
+    // Nothing to ask again where it would come out the same.
+    expect(html).not.toContain('>Try again<');
   });
 
   test('saving paused: its words above the buttons, and Use off', () => {
@@ -713,6 +715,32 @@ describe('a plan that moves when a rule is used', () => {
     expect(level.textContent).toContain('so this differs from the table.');
     expect(level.textContent).not.toContain(said);
     expect(level.textContent).not.toContain('than None');
+    expect(disabled(button(level, 'Use in your plan'))).toBe(false);
+    await tab.unmount();
+  }, 60_000);
+
+  test('a search that fails once used says so, and Try again asks again', async () => {
+    const search = planSearch();
+    const real = search.answer;
+    const tab = await detailed(MOVES);
+    await settle(400);
+    const table = await tuned(tab);
+    try {
+      search.answer = (slot, job) => (slot === 'tune-level' ? { ok: false, error: 'nope' } : real(slot, job));
+      await press(ruleOf(named(table, 'Fill the 22%')));
+      const level = tab.dialog()!;
+      expect(level.textContent).toContain('This couldn’t be worked out once used');
+      expect(level.textContent).not.toContain('nope');
+      expect(button(level, 'Use in your plan')).toBeNull();
+      expect(button(level, 'Try again')).not.toBeNull();
+    } finally {
+      search.answer = real;
+    }
+    await press(button(tab.dialog(), 'Try again'));
+    for (let i = 0; i < 400 && (tab.dialog()!.textContent ?? '').includes('Working it out'); i++) await settle(50);
+    const level = tab.dialog()!;
+    expect(level.textContent).not.toContain('couldn’t be worked out once used');
+    expect(button(level, 'Try again')).toBeNull();
     expect(disabled(button(level, 'Use in your plan'))).toBe(false);
     await tab.unmount();
   }, 60_000);

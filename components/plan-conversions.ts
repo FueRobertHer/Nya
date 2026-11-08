@@ -87,8 +87,9 @@ export function spendDifferently(runs: readonly Pick<Drawdown, 'years'>[]): bool
 }
 
 /** What a plan comes to with a rule in it, once used: its own figures, not a row's run
- *  held at the plan's stop and start. */
-export type UsedFigures = { drawn: Drawdown | null; stop: number | null; start: number | null; working: boolean; failed: boolean };
+ *  held at the plan's stop and start. `retry` asks again, where it failed for a search
+ *  that couldn't be run. */
+export type UsedFigures = { drawn: Drawdown | null; stop: number | null; start: number | null; working: boolean; failed: boolean; retry: (() => void) | null };
 
 /** The figures the plan shown has now. */
 export type NowFigures = { drawn: Drawdown; stop: number | null; start: number | null };
