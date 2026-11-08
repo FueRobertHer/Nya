@@ -312,6 +312,13 @@ export function ConversionsForm(
         </p>
       )}
       {answer?.failed && <p className="helper">{SAVED_FAILED}</p>}
+      {answer?.failed && answer.retry && (
+        <div>
+          <button type="button" className="btn secondary" onClick={answer.retry}>
+            Try again
+          </button>
+        </div>
+      )}
       {kind === 'aca-then-bracket' && <p className="helper">{`Past the age you set, while ${either} on ACA coverage, it still converts what it takes to keep coverage from counting at full price, if there’s money to convert.`}</p>}
       <Why label={RULES_DIFFER_LABEL}>
         <p>{`${rulesDifferText({ onAca: props.onAca, acaLaw })} Compare conversions on Drawdown sets the rules side by side.`}</p>
@@ -570,6 +577,13 @@ export function RuleLevel({
         <RuleFigures drawn={shown} money={money} />
       </div>
       {answer.failed && <p className="helper">{RULE_USED_FAILED}</p>}
+      {answer.failed && answer.retry && (
+        <div>
+          <button type="button" className="btn secondary" onClick={answer.retry}>
+            Try again
+          </button>
+        </div>
+      )}
       {differs && (
         <p className="helper">
           <Masked>{movedLine({ stop, start, copyOpen }, money)}</Masked>
