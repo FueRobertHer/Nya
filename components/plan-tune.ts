@@ -8,7 +8,7 @@
 import type { Strategy } from '@/lib/fire/tax/rules';
 import type { TunedRow, TuneGoal, TuneLimit } from '@/lib/fire/tune';
 import { healthPace } from './plan-drawdown';
-import { endWords, ORDER_WORDS, ruleName } from './plan-conversions';
+import { endWords, movedWords, ORDER_WORDS, ruleName } from './plan-conversions';
 
 type Money = (n: number) => string;
 
@@ -98,8 +98,6 @@ export const usedFailed = (copyOpen: boolean) => `This couldn’t be worked out 
 /** Why a rule's own sheet differs from its row, naming what moved where it can. */
 export function movedLine(a: { stop: [number, number] | null; start: [number, number] | null; copyOpen: boolean }, money: Money): string {
   const who = a.copyOpen ? 'this copy' : 'your plan';
-  const stop = a.stop && `stops at ${a.stop[1]}, not ${a.stop[0]}`;
-  const start = a.start && `starts from ${money(a.start[1])}, not ${money(a.start[0])}`;
-  const moved = [stop, start].filter((x) => x !== null).join(', and ');
+  const moved = movedWords(a, money);
   return moved ? `Once used, ${who} ${moved}, so this differs from the table.` : `Once used, more of ${who} moves with this rule, so this differs from the table.`;
 }
