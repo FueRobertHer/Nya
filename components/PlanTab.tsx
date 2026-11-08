@@ -1536,9 +1536,10 @@ export default function PlanTab({
     (strategy: Strategy): UsedFigures => {
       const a = figuresFor(slot, shownPlan, { ...detailChoices, strategy });
       const f = a.figures;
-      if ('refused' in f) return { drawn: null, stop: null, start: null, working: false, failed: true };
+      if ('refused' in f) return { drawn: null, stop: null, start: null, working: false, failed: true, retry: null };
       const d = f.detail && !('failed' in f.detail) ? f.detail.start : null;
-      return { drawn: d, stop: f.view.stopAge, start: 'sim' in f.engine ? f.engine.sim.startBalance : null, working: a.working, failed: a.failed || (d === null && !a.working) };
+      // Only a search that couldn't be run is asked again: the rest would come out the same.
+      return { drawn: d, stop: f.view.stopAge, start: 'sim' in f.engine ? f.engine.sim.startBalance : null, working: a.working, failed: a.failed || (d === null && !a.working), retry: a.failed ? search.retry : null };
     };
   const nowFigures: NowFigures | null = drawn ? { drawn: drawn.start, stop: shown?.view.stopAge ?? null, start: shown && 'sim' in shown.engine ? shown.engine.sim.startBalance : null } : null;
   /** A choice of model moves every plan's stamp, so all of them are read again, however

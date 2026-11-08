@@ -312,6 +312,13 @@ export function ConversionsForm(
         </p>
       )}
       {answer?.failed && <p className="helper">{SAVED_FAILED}</p>}
+      {answer?.failed && answer.retry && (
+        <div>
+          <button type="button" className="btn secondary" onClick={answer.retry}>
+            Try again
+          </button>
+        </div>
+      )}
       {kind === 'aca-then-bracket' && <p className="helper">{`Past the age you set, while ${either} on ACA coverage, it still converts what it takes to keep coverage from counting at full price, if there’s money to convert.`}</p>}
       <Why label={RULES_DIFFER_LABEL}>
         <p>{`${rulesDifferText({ onAca: props.onAca, acaLaw })} Compare conversions on Drawdown sets the rules side by side.`}</p>
@@ -554,7 +561,7 @@ export function RuleLevel({
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const answer: UsedFigures = row.mine ? { drawn: row.drawn, stop: now?.stop ?? null, start: now?.start ?? null, working: false, failed: false } : used(row.strategy);
+  const answer: UsedFigures = row.mine ? { drawn: row.drawn, stop: now?.stop ?? null, start: now?.start ?? null, working: false, failed: false, retry: null } : used(row.strategy);
   const { ready, stop, start, differs } = onceUsed({ left: row.drawn.leftAtEnd, cost: row.drawn.taxAndHealth, short: row.drawn.runsOutAt }, now, answer);
   // Until it is worked out, and where it can't be, the row's run: what is drawn meanwhile
   // is a stand-in at another stop, neither the row nor the rule as used.
@@ -570,6 +577,13 @@ export function RuleLevel({
         <RuleFigures drawn={shown} money={money} />
       </div>
       {answer.failed && <p className="helper">{RULE_USED_FAILED}</p>}
+      {answer.failed && answer.retry && (
+        <div>
+          <button type="button" className="btn secondary" onClick={answer.retry}>
+            Try again
+          </button>
+        </div>
+      )}
       {differs && (
         <p className="helper">
           <Masked>{movedLine({ stop, start, copyOpen }, money)}</Masked>
@@ -581,7 +595,8 @@ export function RuleLevel({
       ) : answer.failed ? null : (
         <div className="stack tight">
           <p className="helper">{`Makes a copy of ${copyOpen ? 'this copy' : 'your plan'} with this rule and opens it. ${copyOpen ? 'This copy stays' : 'Your plan stays'} as it is.`}</p>
-          {whyNot && <p className="helper plan-paused">{whyNot}</p>}
+          {/* Its own Try is why no copy can be made meanwhile, and that needs no words. */}
+          {!saving && whyNot && <p className="helper plan-paused">{whyNot}</p>}
           {error && (
             <Notice level="critical" role="alert">
               {error}

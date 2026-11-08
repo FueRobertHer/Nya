@@ -105,7 +105,7 @@ describe('what a held run says of a rule once used (Tune’s two limits, on Comp
   const run = (over: Partial<Drawdown>) => ({ years: [{ age: 94, conversion: 0 }], runsOutAt: null, leftAtEnd: 2_000_000, taxAndHealth: 300_000, ...over }) as Drawdown;
   const HELD = { left: 2_000_000, cost: 300_000, short: null };
   const NOW = { drawn: run({}), stop: 54, start: 1_500_000 };
-  const answer = (over: object) => ({ drawn: run({}), stop: 54, start: 1_500_000, working: false, failed: false, ...over });
+  const answer = (over: object) => ({ drawn: run({}), stop: 54, start: 1_500_000, working: false, failed: false, retry: null, ...over });
 
   test('the same to the dollar, at the same stop and start, is no difference', () => {
     expect(onceUsed(HELD, NOW, answer({ drawn: run({ leftAtEnd: 2_000_000.6 }) }))).toMatchObject({ stop: null, start: null, differs: false });

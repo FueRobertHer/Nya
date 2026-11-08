@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { TEST_CONTAINER } from './fake-redis';
 import { planPage } from './plan-page';
 
@@ -45,6 +46,8 @@ const sortButton = (th: Node) => th.findAll((e) => e.tagName === 'BUTTON')[0];
 const choose = (tab: Tab, label: string) => pick(tab.dialog()!, label);
 /** A 401(k), so the years have tax in them. */
 const WITH_ACCOUNTS = { institutions: [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [{ account_id: 'k', name: '401(k)', type: 'investment', subtype: '401k', balance: 600_000, currency: 'USD' }] }] as never };
+const { RuleLevel } = await import('@/components/PlanHowYouDraw');
+const { wholeMoney } = await import('@/components/plan-text');
 /** Holds what `path` is sent by POST, outside the page's own count, until it is let go. */
 const holdingPost = async (path: string, run: (letGo: () => void) => Promise<void>) => {
   const real = globalThis.fetch;
@@ -306,6 +309,31 @@ describe('Compare conversions', () => {
     expect(tab.dialog()!.textContent).toMatch(/Roth conversions: Fill the 12% bracket, until \d+ \(your plan: None\)/);
     await tab.unmount();
   }, 30_000);
+
+  test('while a rule’s own Try is out, its sheet says Saving…, not that a copy can’t be made', async () => {
+    const tab = await detailed();
+    await press(ruleOf(bodyRows(compareTable(tab)).find((r) => ruleOf(r).textContent === 'Fill the 12% bracket')!));
+    await holdingPost('/api/plans', async (letGo) => {
+      await page.act(async () => page.click(button(tab.dialog(), 'Try it in a copy')!));
+      await settle(100);
+      const sheet = tab.dialog()!;
+      expect(button(sheet, 'Saving…')).not.toBeNull();
+      expect(sheet.textContent).not.toContain('A copy can’t be made just yet');
+      letGo();
+      await settle(400);
+    });
+    expect(tab.dialog()).toBeNull();
+    expect(calls().filter((c) => c.method === 'POST' && c.path === '/api/plans').at(-1)!.body.name).toBe('Fill the 12% bracket');
+    await tab.unmount();
+  }, 30_000);
+
+  test('with no Try of its own out, a rule’s sheet says why no copy can be made, with Try off', () => {
+    const drawn = { leftAtEnd: 900_000, taxAndHealth: 300_000, runsOutAt: null, years: [], stages: [], aca: { on: 0, withCredit: 0 } } as never;
+    const row = { key: 'fill-12', strategy: { order: 'standard' as const, conversions: { kind: 'bracket' as const, top: 0.12 as const }, convertUntil: 60 }, mine: false, drawn };
+    const html = renderToStaticMarkup(<RuleLevel row={row} money={(n) => wholeMoney(n, 'USD')} lawYear={2026} copyOpen={false} whyNot="A copy can’t be made just yet. Try again in a moment." onTry={async () => true} now={null} used={() => ({ drawn, stop: null, start: null, working: false, failed: false, retry: null })} />);
+    expect(html).toContain('A copy can’t be made just yet. Try again in a moment.');
+    expect(html).toMatch(/<button[^>]*disabled[^>]*>Try it in a copy</);
+  });
 
   test('Try it takes a number where another plan has its name, in any case', async () => {
     await (await detailed()).unmount();

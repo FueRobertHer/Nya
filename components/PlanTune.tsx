@@ -362,6 +362,13 @@ export function TuneLevel({ row, ask, money, lawYear, healthGrowth, copyOpen, wh
       {strategy.order !== own.order && <p className="helper">{orderLine(strategy.order, own.order, copyOpen)}</p>}
       {note && <p className="helper">{note}</p>}
       {answer.failed && <p className="helper">{usedFailed(copyOpen)}</p>}
+      {answer.failed && answer.retry && (
+        <div>
+          <button type="button" className="btn secondary" onClick={answer.retry}>
+            Try again
+          </button>
+        </div>
+      )}
       {differs && !same && (
         <p className="helper">
           <Masked>{movedLine({ stop: stopMoved, start: startMoved, copyOpen }, money)}</Masked>
