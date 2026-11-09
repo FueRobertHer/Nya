@@ -8,8 +8,8 @@
 // `lastsIn` (D9: the answer is the earliest stop that lasts) is the one field a
 // plan holds only while it is set: absent is decision 25's answer, so a plan
 // without it is stored, upgraded and downloaded exactly as before it, and the
-// release before (test/fixtures/release-before) reads every one of them. It is
-// read here a release before anything writes it (docs/operations.md).
+// release before (test/fixtures/release-before) reads every one of them. It was
+// read a release (#242) before the FI number's sheet wrote it (docs/operations.md).
 //
 // WHAT IS STORED STAYS AS IT WAS. The store (an entry's plan in `fire-plans`,
 // lib/plan-copies.ts) reads either version and its upgrade (upgradeStoredPlan)

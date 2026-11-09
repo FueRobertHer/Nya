@@ -501,12 +501,18 @@ export function formulasTake(plan: PlanCore): boolean {
   return within(plan.withdrawalRate, 1e-6, 1) && within(plan.taxRate, 0, 0.99) && within(plan.realReturn, -0.99, 1);
 }
 
+/** What a detailed plan brings to its FI number (lib/fire/plan-figures.ts): tax's
+ *  share of what its years cost, in place of the typed rate; their level yearly
+ *  health cost; and what measured spending already holds of coverage, which the
+ *  years add themselves. */
+export type WorkedOut = { t: number; h: number; paid: number };
+
 /** The deterministic FI view of a plan, from what was typed and what Nya
  *  measured, at a stop (the typed one by default; the search's under "stop
  *  when I reach FI", lib/fire/plan-figures.ts). Total: for rates the
  *  formulas don't take, the figures are left out (null) rather than thrown
  *  on, so no stored plan can stop the tab. */
-export function fiView(plan: PlanCore, measured: Measured, stop: number | null = stopOf(plan)): FiView {
+export function fiView(plan: PlanCore, measured: Measured, stop: number | null = stopOf(plan), worked?: WorkedOut): FiView {
   const off = new Set(measured.unmeasured ?? []);
   const spending = input(plan.spending, measured.spending, off.has('spending'));
   const savings = input(plan.savings, measured.savings, off.has('savings'));
@@ -514,7 +520,8 @@ export function fiView(plan: PlanCore, measured: Measured, stop: number | null =
   if (!formulasTake(plan)) {
     return { spending, savings, assets, stopAge: stop, fiNumber: null, workedOut: null, progress: null, yearsToFi: null, fiAge: null, coast: null, barista: null, atTargetAge: null };
   }
-  const workedOut = spending.value === null ? null : fiNumber(spending.value, plan.withdrawalRate, plan.taxRate);
+  const living = (value: number) => (worked ? Math.max(0, value - worked.paid) : value);
+  const workedOut = spending.value === null ? null : worked ? fiNumber(living(spending.value) + worked.h, plan.withdrawalRate, worked.t) : fiNumber(spending.value, plan.withdrawalRate, plan.taxRate);
   // Your own FI number is the target wherever one is (D14); the worked-out
   // one stays beside it.
   const own = plan.fiNumber ?? null;
@@ -533,7 +540,7 @@ export function fiView(plan: PlanCore, measured: Measured, stop: number | null =
   // Worked out from spending, it could sit above your own number: not shown
   // while one is typed.
   if (plan.partTimeIncome > 0 && spending.value !== null && own === null) {
-    const number = baristaFiNumber(spending.value, plan.partTimeIncome, plan.withdrawalRate, plan.taxRate);
+    const number = worked ? fiNumber(Math.max(0, living(spending.value) - plan.partTimeIncome) + worked.h, plan.withdrawalRate, worked.t) : baristaFiNumber(spending.value, plan.partTimeIncome, plan.withdrawalRate, plan.taxRate);
     barista = { number, yearsTo: blocked || neither ? null : yearsToTarget(a, c, plan.realReturn, number) };
   }
   const from = projectFrom(plan, { savings, assets, stopAge: stop });
