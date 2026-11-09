@@ -619,7 +619,7 @@ export function FiNumberForm(
               <Choice label="Lasts in at least" value={share} options={SHARE_OPTIONS} onChange={setShare} disabled={s.saving} />
             </div>
             <p className="helper">
-              The earliest age you could stop with your money lasting to {Math.max(PLAN_TO_AGE, plan.age ?? 0)} in at least this share of Will it last?’s{' '}
+              The earliest age you could stop with your money lasting {plan.horizon !== null ? `${plan.horizon} years` : `to ${Math.max(PLAN_TO_AGE, plan.age ?? 0)}`} in at least this share of Will it last?’s{' '}
               {plan.method === 'historical' ? 'historical starts' : 'Monte Carlo runs'}, from what you’d have then. This number stays as it is: Home’s meter and the line on your path still measure against it.
             </p>
           </>
@@ -633,7 +633,11 @@ export function FiNumberForm(
           <input type="number" inputMode="decimal" value={own} onChange={(e) => setOwn(e.target.value)} placeholder={NO_EXAMPLE} {...s.field('Your own number')} disabled={s.saving} />
         </label>
         {s.under('Your own number')}
-        <p className="helper">If you set one, your FI date and Home use it, and Will it last? tests your spending from it. Nothing else changes.</p>
+        <p className="helper">
+          {lasting
+            ? 'If you set one, Home’s meter and the line on your path use it, and Will it last? tests your spending from it. Your FI date stays the earliest stop that lasts.'
+            : 'If you set one, your FI date and Home use it, and Will it last? tests your spending from it. Nothing else changes.'}
+        </p>
       </div>
       {plan.fiNumber !== null && (
         <button type="button" className="btn ghost" disabled={s.disabled} onClick={() => s.save(() => ({ ...plan, fiNumber: null }))}>

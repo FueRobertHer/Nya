@@ -233,6 +233,18 @@ describe('Your FI date, in the FI number’s sheet', () => {
     await tab.unmount();
   }, 90_000);
 
+  test('with a length set, the share is of runs that long; your own number leaves the FI date be', async () => {
+    await seedPlan({ ...PLAN, horizon: 30, lastsIn: 0.9 });
+    const tab = await render();
+    await press(tab.row('FI number'));
+    const t = tab.dialog()!.textContent;
+    expect(t).toContain('The earliest age you could stop with your money lasting 30 years in at least this share of Will it last?’s historical starts');
+    expect(t).toContain('If you set one, Home’s meter and the line on your path use it, and Will it last? tests your spending from it. Your FI date stays the earliest stop that lasts.');
+    await pick(tab.dialog()!, 'When you reach it');
+    expect(tab.dialog()!.textContent).toContain('If you set one, your FI date and Home use it, and Will it last? tests your spending from it. Nothing else changes.');
+    await tab.unmount();
+  }, 40_000);
+
   test('what it leaves out says your FI date counts it, and the chart’s line goes', async () => {
     const { itemFromIncome } = await import('@/lib/fire/items');
     const social = itemFromIncome({ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true });

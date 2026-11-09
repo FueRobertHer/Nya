@@ -265,7 +265,7 @@ describe('the release before reads every plan this release writes', () => {
   });
 
   test('a saved plan of version 2, as this release’s saved plan route stores it', async () => {
-    for (const plan of [TYPED, { ...TYPED, stopAtFi: true, targetAge: null, items: [income, child] }, { ...DEFAULT_PLAN_V2, partnerAge: 38, fiNumber: 900_000 }]) {
+    for (const plan of [TYPED, { ...TYPED, stopAtFi: true, targetAge: null, items: [income, child] }, { ...DEFAULT_PLAN_V2, partnerAge: 38, fiNumber: 900_000 }, { ...TYPED, lastsIn: 0.9 }]) {
       const body = { saved: { plan, savings: 20_000, currency: 'USD', inflation: 0.03 }, based_on: (await savedPlanStore.get(ctx))?.rev ?? null };
       expect((await call(savedRoute.PUT, 'saved-plan', 'PUT', body)).status).toBe(200);
       expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(true);
