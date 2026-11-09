@@ -3,16 +3,15 @@ import { planPage } from './plan-page';
 
 // D9 on the Plan tab: a plan stored with `lastsIn` answers with the earliest stop that
 // lasts (lib/fire/earliest.ts), found in the simulator's worker, in place of the age the
-// walk reaches the FI number (decision 25). Nothing in this release writes the field
-// (a release before its writer, docs/operations.md), so these plans are stored as a
-// later release would store them.
+// walk reaches the FI number (decision 25). Your FI date in the FI number's sheet
+// sets it and takes it away (the last describe); the rest store it as that sheet does.
 //
 // The page's plan: 40, stopping at 55, $40,000 a year, $30,000 saved on $300,000.
 // Decision 25: around 52. The earliest stop that lasts in 95% of historical starts is
 // 53, in 80% it is 51.
 
 const page = await planPage();
-const { PLAN, WITH_BALANCES, settle, rest, seedPlan, seedCopy, render, pick, press, button, closeOf, openCopy, addTemplate, fill } = page;
+const { PLAN, WITH_BALANCES, settle, rest, seedPlan, seedCopy, stored, writes, render, pick, press, button, closeOf, openCopy, addTemplate, fill } = page;
 
 const { act, dom } = page;
 const { createRoot } = require('react-dom/client') as typeof import('react-dom/client');
@@ -170,4 +169,83 @@ describe('the answer, with lastsIn and without', () => {
     expect(dropped).toContain('conversions');
     await tab.unmount();
   }, 60_000);
+});
+
+describe('Your FI date, in the FI number’s sheet', () => {
+  const chosen = (tab: Awaited<ReturnType<typeof render>>, group: string) =>
+    tab
+      .dialog()!
+      .findAll((e) => e.getAttribute('role') === 'radiogroup' && e.getAttribute('aria-label') === group)[0]
+      ?.findAll((e) => e.getAttribute('aria-checked') === 'true')[0]?.textContent ?? null;
+  const save = async (tab: Awaited<ReturnType<typeof render>>) => {
+    await press(button(tab.dialog(), 'Save'));
+    await settle(400);
+  };
+  const lastsIn = async () => (await stored()).byName['First plan'].plan.lastsIn;
+
+  test('starts on when you reach it, saying how that age is found', async () => {
+    await seedPlan();
+    const tab = await render();
+    await press(tab.row('FI number'));
+    const t = tab.dialog()!.textContent;
+    expect(chosen(tab, 'Your FI date')).toBe('When you reach it');
+    expect(t).toContain('The age your invested assets reach this number, growing a steady 5% a year after inflation.');
+    expect(t).not.toContain('Lasts in at least');
+    await tab.unmount();
+  }, 20_000);
+
+  test('the earliest stop that lasts: saved at 90%, then 95% and 80%, then back to when you reach it', async () => {
+    await seedPlan();
+    const tab = await render();
+    await settle(400);
+    await press(tab.row('FI number'));
+    await pick(tab.dialog()!, 'Earliest stop that lasts');
+    expect(chosen(tab, 'Lasts in at least')).toBe('90%');
+    expect(tab.dialog()!.textContent).toContain(
+      'The earliest age you could stop with your money lasting to 95 in at least this share of Will it last?’s historical starts, from what you’d have then. This number stays as it is: Home’s meter and the line on your path still measure against it.'
+    );
+    await save(tab);
+    expect(writes()).toEqual(['PUT /api/fire-plan']);
+    expect(await lastsIn()).toBe(0.9);
+    expect(answerOf(tab)).toContain('Around age 52');
+    expect(answerOf(tab)).toContain('The earliest stop that lasts to 95 in at least 90% of historical starts');
+
+    await press(tab.row('FI number'));
+    expect(chosen(tab, 'Your FI date')).toBe('Earliest stop that lasts');
+    await pick(tab.dialog()!, '95%');
+    await save(tab);
+    expect(await lastsIn()).toBe(0.95);
+    expect(answerOf(tab)).toContain('Around age 53');
+
+    await press(tab.row('FI number'));
+    await pick(tab.dialog()!, '80%');
+    await save(tab);
+    expect(await lastsIn()).toBe(0.8);
+    expect(answerOf(tab)).toContain('Around age 51');
+
+    await press(tab.row('FI number'));
+    await pick(tab.dialog()!, 'When you reach it');
+    await save(tab);
+    expect(Object.hasOwn((await stored()).byName['First plan'].plan, 'lastsIn')).toBe(false);
+    expect(answerOf(tab)).toContain('Around age 52');
+    expect(answerOf(tab)).toContain('Saving $30,000 a year, growing a steady 5% a year after inflation.');
+    expect(answerOf(tab)).not.toContain('lasts');
+    await tab.unmount();
+  }, 90_000);
+
+  test('what it leaves out says your FI date counts it, and the chart’s line goes', async () => {
+    const { itemFromIncome } = await import('@/lib/fire/items');
+    const social = itemFromIncome({ id: 'ss', label: 'Social Security', amount: 24_000, fromAge: 67, inflationAdjusted: true });
+    await seedPlan({ ...PLAN, items: [social], lastsIn: 0.9 });
+    const tab = await render();
+    await settle(400);
+    expect(tab.text()).not.toContain('Your FI number leaves out');
+    await press(tab.row('FI number'));
+    const why = tab.dialog()!.findAll((e) => e.tagName === 'DETAILS')[0];
+    expect(why?.textContent).toContain('Social Security from 67: your path, Will it last? and your FI date count it.');
+    // Chosen back in the sheet, before a save: as it is said today.
+    await pick(tab.dialog()!, 'When you reach it');
+    expect(tab.dialog()!.findAll((e) => e.tagName === 'DETAILS')[0]?.textContent).toContain('Social Security from 67: your path and Will it last? count it.');
+    await tab.unmount();
+  }, 40_000);
 });

@@ -16,9 +16,9 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { plainNumber } from '@/lib/format';
-import { allocationOf, asText, LIMITS, pctText, stopOf, type FiView, type FirePlan, type PlanCore, type PlanFunding } from '@/lib/fire/plan';
+import { allocationOf, asText, LIMITS, PLAN_TO_AGE, pctText, stopOf, type FiView, type FirePlan, type PlanCore, type PlanFunding } from '@/lib/fire/plan';
 import type { PathAfter } from '@/lib/fire/path';
-import { parsePlanV2, type FirePlanV2 } from '@/lib/fire/plan-v2';
+import { LASTS_IN_CHOICES, parsePlanV2, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { fiNumber as fiNumberOf } from '@/lib/fire/fi';
 import { MAX_STATE_RATE, type TaxChoices } from '@/lib/fire/tax-choices';
@@ -500,10 +500,16 @@ function ownFiNumber(text: string): number {
   return n;
 }
 
+/** The share a plan's FI date lasts in, as its choice says it (D9). */
+const SHARE_OPTIONS: [string, string][] = LASTS_IN_CHOICES.map((x) => [String(x), `${Math.round(x * 100)}%`]);
+/** The share a plan starts with when it asks for the earliest stop that lasts. */
+const FIRST_SHARE = 0.9;
+
 /** The FI number's sheet (the tax plan's E2): the number, how it is worked
- *  out, what it leaves out, and your own number in place of it. Its lines
- *  are read-only: each figure is one row away on Your figures, and opening a
- *  sheet from a sheet would drop what was typed. */
+ *  out, what it leaves out, what your FI date is (D9: when you reach this
+ *  number, or the earliest stop that lasts), and your own number in place of
+ *  it. Its lines are read-only: each figure is one row away on Your figures,
+ *  and opening a sheet from a sheet would drop what was typed. */
 export function FiNumberForm(
   props: SaveProps & {
     view: FiView;
@@ -522,6 +528,8 @@ export function FiNumberForm(
 ) {
   const { plan, view, retirementSpending, leftOut, money, shares = null, held = false, cautions = [], lawYear = null } = props;
   const [own, setOwn] = useState(asText(plan.fiNumber));
+  const [lasting, setLasting] = useState(plan.lastsIn !== undefined);
+  const [share, setShare] = useState(String(plan.lastsIn ?? FIRST_SHARE));
   const s = useSave(props);
   const spending = retirementSpending ?? view.spending.value;
   const worked = view.workedOut ?? (plan.fiNumber === null ? view.fiNumber : null);
@@ -584,11 +592,41 @@ export function FiNumberForm(
       {names.length > 0 && (
         <Why label="What it leaves out">
           <p>
-            {names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`}: your path and Will it last? count {names.length === 1 ? 'it' : 'them'}.
+            {names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`}: {lasting ? 'your path, Will it last? and your FI date' : 'your path and Will it last?'} count{' '}
+            {names.length === 1 ? 'it' : 'them'}.
           </p>
         </Why>
       )}
       {plan.start === 'fi-number' && <p className="helper">Will it last? starts from this number.</p>}
+      <div className="sheet-form">
+        <div className="field">
+          <span aria-hidden="true">Your FI date</span>
+          <Choice
+            label="Your FI date"
+            value={lasting ? 'lasting' : 'number'}
+            options={[
+              ['number', 'When you reach it'],
+              ['lasting', 'Earliest stop that lasts'],
+            ]}
+            onChange={(v) => setLasting(v === 'lasting')}
+            disabled={s.saving}
+          />
+        </div>
+        {lasting ? (
+          <>
+            <div className="field">
+              <span aria-hidden="true">Lasts in at least</span>
+              <Choice label="Lasts in at least" value={share} options={SHARE_OPTIONS} onChange={setShare} disabled={s.saving} />
+            </div>
+            <p className="helper">
+              The earliest age you could stop with your money lasting to {Math.max(PLAN_TO_AGE, plan.age ?? 0)} in at least this share of Will it last?’s{' '}
+              {plan.method === 'historical' ? 'historical starts' : 'Monte Carlo runs'}, from what you’d have then. This number stays as it is: Home’s meter and the line on your path still measure against it.
+            </p>
+          </>
+        ) : (
+          <p className="helper">The age your invested assets reach this number, growing a steady {pct(plan.realReturn)} a year after inflation.</p>
+        )}
+      </div>
       <div className="sheet-form">
         <label className="field">
           Use your own number
@@ -613,7 +651,12 @@ export function FiNumberForm(
         onDone={props.onDone}
         disabled={s.disabled}
         saving={s.saving}
-        onSave={() => s.save(() => ({ ...plan, fiNumber: own.trim() === '' ? null : ownFiNumber(own) }))}
+        onSave={() =>
+          s.save(() => {
+            const { lastsIn: _, ...rest } = plan;
+            return { ...rest, fiNumber: own.trim() === '' ? null : ownFiNumber(own), ...(lasting ? { lastsIn: Number(share) } : {}) };
+          })
+        }
       />
     </>
   );
