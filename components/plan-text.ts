@@ -3,7 +3,7 @@
 // Imports nothing heavy: no engine, no data.
 
 import type { RuleKind } from '@/lib/fire/rules';
-import { PLAN_TO_AGE, type FiView } from '@/lib/fire/plan';
+import { PLAN_TO_AGE, formulasTake, type FiView } from '@/lib/fire/plan';
 import { amountsHidden, formatDay, hiddenMoney, MINUS, trueMinus } from '@/lib/format';
 import type { Method, Rebalance } from '@/lib/fire/simulate';
 import type { PathAfter } from '@/lib/fire/path';
@@ -141,8 +141,9 @@ export type FiHeadline = {
 const years = (n: number) => `${n} year${n === 1 ? '' : 's'}`;
 
 /** Today's age and the stop the figures are at (FiView's stopAge, from
- *  lib/fire/plan.ts stopOf), and whether the stop is "when I reach FI". */
-export type StopAges = { age: number | null; stopAge: number | null; stopAtFi?: boolean };
+ *  lib/fire/plan.ts stopOf), whether the stop is "when I reach FI", and whether
+ *  FI is the earliest stop that lasts (D9, a plan's `lastsIn`). */
+export type StopAges = { age: number | null; stopAge: number | null; stopAtFi?: boolean; lasting?: boolean };
 
 /** `runsOutAt`: the age the steady projection can't go on at, when it can't
  *  before the stop age (lib/fire/path.ts); `noDate`: the walk can't get to
@@ -162,7 +163,7 @@ export function fiHeadline(
   if (o.noDate) return { ...base, kind: 'no-date', headline: 'No FI date' };
   if (y === null) return { ...base, kind: 'unknown', headline: o.need ?? '--' };
   if (y === 0) return { ...base, kind: 'there', headline: 'You’re at FI', against: o.runsOutAt != null ? `At these savings it runs out at ${o.runsOutAt}` : null };
-  if (y === Infinity) return { ...base, kind: 'never', headline: ages.stopAtFi ? `Not by ${Math.max(PLAN_TO_AGE, ages.age ?? 0)}` : 'Not reached at this savings rate' };
+  if (y === Infinity) return { ...base, kind: 'never', headline: ages.stopAtFi || ages.lasting ? `Not by ${Math.max(PLAN_TO_AGE, ages.age ?? 0)}` : 'Not reached at this savings rate' };
   const runsOut = o.runsOutAt != null ? `At these savings it runs out at ${o.runsOutAt}` : null;
   if (view.fiAge === null) {
     if (y >= OLDEST) return { ...base, kind: 'later', headline: `Not within ${OLDEST} years at this savings rate` };
@@ -177,6 +178,24 @@ export function fiHeadline(
   const against =
     t === null || before === null ? null : before > 0 ? `${years(before)} before you stop at ${t}` : before < 0 ? `${years(-before)} after you stop at ${t}${o.saving ? ', if you keep saving until then' : ''}` : `Right when you stop at ${t}`;
   return { ...base, kind: 'age', headline: `Around age ${age}`, against, age, before, runsOut };
+}
+
+/** Whether a plan answers with the earliest stop that lasts (D9): it has `lastsIn`,
+ *  and its figures have what a search needs (an age, nothing refused or missing). */
+export function asksLasting(plan: { lastsIn?: number; age: number | null } & Parameters<typeof formulasTake>[0], flat: { view: Pick<FiView, 'fiNumber' | 'spending' | 'savings' | 'assets'> } | { refused: string }): boolean {
+  return plan.lastsIn !== undefined && plan.age !== null && !('refused' in flat) && figuresNeed(flat.view, formulasTake(plan)) === null;
+}
+
+/** How D9's answer was found, said under it in place of the steady path's line:
+ *  the share of Will it last?'s starts by the plan's method, and the age the run
+ *  lasts to. Says what the age is, never that it is better or safer. */
+export function lastingText(found: { age: number | null; to: number | null; share: number }, method: 'historical' | 'monte-carlo', today: number | null): string {
+  const pct = `${Math.round(found.share * 100)}%`;
+  const of = method === 'historical' ? 'historical starts' : 'Monte Carlo runs';
+  if (found.age === null) return `No stop by ${Math.max(PLAN_TO_AGE, today ?? 0)} lasts in at least ${pct} of ${of}.`;
+  const to = found.to === null ? '' : ` to ${found.to}`;
+  if (today !== null && found.age <= today) return `A stop now lasts${to} in at least ${pct} of ${of}.`;
+  return `The earliest stop that lasts${to} in at least ${pct} of ${of}, from what you’d have then.`;
 }
 
 /** What moved the walk, in the words the answer, the At age row and the

@@ -28,7 +28,7 @@ export type FiWhen =
 export function fiWhen(f: PlanFigures | null): FiWhen {
   if (!f) return { kind: 'not-run' };
   if (f.short) return { kind: 'short', figures: f };
-  const h = fiHeadline(f.view, { age: f.plan.age, stopAge: f.view.stopAge, stopAtFi: f.plan.stopAtFi });
+  const h = fiHeadline(f.view, { age: f.plan.age, stopAge: f.view.stopAge, stopAtFi: f.plan.stopAtFi, lasting: f.resolution.searched === 'lasts' });
   switch (h.kind) {
     case 'age':
       return { kind: 'age', age: h.age as number };

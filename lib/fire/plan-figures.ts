@@ -19,6 +19,8 @@
 //     and income count in it only with D15's switch (`count.planInWalk`);
 //   - under "stop when I reach FI", or with an item on FI, the stop or FI is
 //     searched for (lib/fire/steady.ts), and the date is the age found;
+//   - with D9 (`fiAt`, from lib/fire/earliest.ts), FI is given, and the date is
+//     that age: the earliest stop that lasts;
 //   - what the plan STARTS WITH, and what the walk says it would have then:
 //     a plan run from its FI number at an age it wouldn't have reached it is
 //     said to start with money it wouldn't have (startsWith.more);
@@ -48,7 +50,7 @@ import type { Drawdown } from './drawdown';
 import type { DetailRun, DetailWork, PlanDetail } from './plan-detail';
 import type { SavedItems, SavedPlan } from './saved-plan';
 import { planPath } from './path';
-import { resolveItems, type PerRun, type Resolution, type SteadyWorld } from './steady';
+import { resolveAt, resolveItems, type PerRun, type Resolution, type SteadyWorld } from './steady';
 
 export type StartsWith = {
   balance: number;
@@ -139,6 +141,9 @@ export type FiguresOptions = {
   /** The search's answer, from the job (lib/fire/search-job.ts), so nothing is
    *  searched for twice. */
   resolved?: Resolution;
+  /** FI at this age, and under the stop at FI the stop too, in place of the
+   *  search (D9's earliest stop that lasts, lib/fire/earliest.ts); null: none lasts. */
+  fiAt?: number | null;
 };
 
 type Built = {
@@ -304,7 +309,7 @@ function settleShares(plan: FirePlanV2, measured: Measured, ages: ItemAges[], st
   return sharesOf(higher, false, before === null ? 0 : Math.abs(before.number - last.number));
 }
 
-export function planFigures(plan: FirePlanV2, measured: Measured, { count, detailed, resolved }: FiguresOptions): PlanFigures | FiguresRefused {
+export function planFigures(plan: FirePlanV2, measured: Measured, { count, detailed, resolved, fiAt }: FiguresOptions): PlanFigures | FiguresRefused {
   const kept = new Map<string, FiShares | null>();
   /** Per candidate: a search asks of the same ages and stop more than once. */
   const sharesFor = (ages: ItemAges[], stop: number | null): FiShares | null => {
@@ -332,7 +337,7 @@ export function planFigures(plan: FirePlanV2, measured: Measured, { count, detai
       return 'refused' in b ? null : b.view.fiAge;
     },
   };
-  const resolution = resolved ?? resolveItems(plan, world);
+  const resolution = resolved ?? (fiAt !== undefined ? resolveAt(plan, world, fiAt) : resolveItems(plan, world));
   const shares = sharesFor(resolution.ages, resolution.stop);
   const b = build(plan, measured, resolution.ages, resolution.stop, count, undefined, resolution.perRun, detailed, shares);
   if ('refused' in b) return b;

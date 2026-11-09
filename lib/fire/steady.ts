@@ -19,6 +19,9 @@
 //     target at an age that rounds to k or earlier, as the answer is said
 //     (components/plan-text.ts fiHeadline). The first k that passes is the
 //     answer; none, and what waits on it isn't placed.
+//   - With D9 (a plan's `lastsIn`), FI is the earliest stop that lasts, found by
+//     simulation (lib/fire/earliest.ts), and placed here as given (resolveAt):
+//     the edges on FI at it, and under the stop at FI the stop too.
 //
 // With D11's start (Will it last? from what you'd have at your stop age), a
 // balance milestone not fired by then fires per run instead, and an edge on one
@@ -43,8 +46,8 @@ export type Resolution = {
   stop: number | null;
   /** FI as a search found it, when one ran; null otherwise. */
   fi: number | null;
-  /** Which search ran. */
-  searched: 'none' | 'fi' | 'stop';
+  /** Which search ran: 'lasts', FI given as the earliest stop that lasts (D9). */
+  searched: 'none' | 'fi' | 'stop' | 'lasts';
   /** What waits on a run's own balance: only with D11's start, and only when
    *  something does. */
   perRun?: PerRun;
@@ -250,6 +253,16 @@ function perRunOf(plan: Plan, r: ReturnType<typeof settle>, stop: number | null)
     return { start: start ?? (placed as { start: number }).start, end: end ?? r.ends[i] };
   });
   return triggers.length > 0 ? { perRun: { triggers, edges } } : {};
+}
+
+/** Each item's ages with FI at `k`, the earliest stop that lasts (D9,
+ *  lib/fire/earliest.ts): the stop at `k` too under the stop at FI, the age typed
+ *  otherwise. Null `k`: none lasts, so what waits on FI, or on a stop at FI, isn't
+ *  placed. Nothing is searched for. */
+export function resolveAt(plan: Plan, world: SteadyWorld, k: number | null): Resolution {
+  const stop = plan.stopAtFi ? k : stopOf(plan);
+  const r = settle(plan, world, stop, k);
+  return { ages: r.ages, why: r.why, stop, fi: k, searched: 'lasts', ...perRunOf(plan, r, stop) };
 }
 
 /** Each item's ages on the steady path, the stop, and FI where it was

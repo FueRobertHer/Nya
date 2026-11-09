@@ -83,6 +83,11 @@ describe('how a copy differs from your plan', () => {
     expect(copyDiffParts(plan(), plan({ stopAtFi: true }), money)).toEqual(['Stop age: when it reaches FI (your plan: 55)']);
   });
 
+  test('D9’s FI date is said, in words, never as other settings', () => {
+    expect(copyDiffParts(plan(), plan({ lastsIn: 0.9 }), money)).toEqual(['Your FI date: the earliest stop that lasts in 90% of starts (your plan: when it reaches the FI number)']);
+    expect(copyDiffParts(plan({ lastsIn: 0.8 }), plan(), money)).toEqual(['Your FI date: when it reaches the FI number (your plan: the earliest stop that lasts in 80% of starts)']);
+  });
+
   test('the facts every plan shares are never a difference', () => {
     const copy = plan({ age: 41, partnerAge: 39, includeCash: !DEFAULT_PLAN_V2.includeCash, method: 'monte-carlo' });
     expect(copyDiffParts(plan(), copy, money)).toEqual([]);

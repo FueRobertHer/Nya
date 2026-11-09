@@ -274,6 +274,7 @@ describe('Tune to a goal’s searches', () => {
 describe('what each loads', () => {
   const ROOT = join(import.meta.dir, '..');
   const transpiler = new Bun.Transpiler({ loader: 'ts' });
+  const jsx = new Bun.Transpiler({ loader: 'tsx' });
   const resolveLocal = (from: string, spec: string) => {
     const base = spec.startsWith('@/') ? join(ROOT, spec.slice(2)) : spec.startsWith('.') ? resolve(dirname(from), spec) : null;
     if (!base) return null;
@@ -287,7 +288,7 @@ describe('what each loads', () => {
     const queue = [...seen];
     while (queue.length) {
       const file = queue.shift()!;
-      for (const { path, kind } of transpiler.scanImports(readFileSync(file, 'utf8'))) {
+      for (const { path, kind } of (file.endsWith('.tsx') ? jsx : transpiler).scanImports(readFileSync(file, 'utf8'))) {
         if (kind !== 'import-statement') continue;
         const target = resolveLocal(file, path);
         if (target && !seen.has(target)) {
@@ -314,5 +315,16 @@ describe('what each loads', () => {
   test('the page’s searches hold none of it until a job asks', () => {
     const files = reached('components/plan-search.ts');
     expect(files).toEqual(['components/plan-runner.ts', 'components/plan-search.ts']);
+  });
+
+  test('Home’s FI line, and D9’s flow it loads for a plan with lastsIn, hold no market history and none of the simulator’s jobs', () => {
+    for (const root of ['components/FiProgressCard.tsx', 'components/plan-lasting.ts']) {
+      expect([root, reached(root).filter((f) => /us-market|jobs\.ts|plan\.worker|earliest/.test(f))]).toEqual([root, []]);
+    }
+    expect(reached('components/FiProgressCard.tsx')).not.toContain('components/plan-lasting.ts');
+  });
+
+  test('the simulator’s worker answers D9’s earliest stop that lasts', () => {
+    expect(reached('lib/fire/plan.worker.ts')).toContain('lib/fire/earliest.ts');
   });
 });
