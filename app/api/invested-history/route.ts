@@ -10,7 +10,6 @@ import { isManualId, MANUAL_CURRENCY } from '@/lib/manual';
 import { bankCurrencies } from '@/lib/sharing';
 import { readFx } from '@/lib/fx/read';
 import { savedPlanStore } from '@/lib/saved-plan';
-import { flagOnCached, requestWho } from '@/lib/flag-read';
 import { planFactsStore } from '@/lib/plan-copies';
 import { isChildAccount } from '@/lib/fire/child-accounts';
 import { investedSeries, isComplete, type InvestedSeriesAccount, type InvestedDay } from '@/lib/fire/invested-series';
@@ -37,9 +36,8 @@ import { investedSeries, isComplete, type InvestedSeriesAccount, type InvestedDa
 // What counts comes from the SAVED PLAN, read here, never from the page:
 // investment accounts, and checking and savings when it was saved with
 // include cash; summed in its currency; from the day it was saved. So both
-// ends of the comparison are counted by the same rules. With the flag
-// 'plan-child-accounts' on, accounts for a child's education are in no day
-// unless the person counts one (lib/fire/child-accounts.ts): by the subtype the
+// ends of the comparison are counted by the same rules. Accounts for a
+// child's education (D7) are in no day unless the person counts one (lib/fire/child-accounts.ts): by the subtype the
 // page sends, else the directory's, which knows the accounts a page can't show.
 // An ended manual account has neither, so it stays counted up to its end.
 //
@@ -154,24 +152,20 @@ export async function POST(req: Request) {
 
     const effective = await getEffectiveHidden(ctx);
     const place = placeRecorded({ links: effective.links ?? undefined, hidden: effective.hidden });
-    const [directory, lifecycle, childOut] = await Promise.all([readKnownAccounts(ctx), getEffectiveLifecycle(ctx, effective.links), requestWho(ctx).then((who) => flagOnCached('plan-child-accounts', who))]);
+    const [directory, lifecycle, facts] = await Promise.all([readKnownAccounts(ctx), getEffectiveLifecycle(ctx, effective.links), planFactsStore.get(ctx)]);
     const ends = endDays(lifecycle);
 
-    // Accounts for a child's education, while they are out (D7): by every id
-    // an account is known under, and those the person counts kept, by the id
-    // they said it under, as the browser compares them (lib/fire/child-accounts.ts):
-    // so one reconnected reads as out on every screen until it is counted again.
-    // Off, nothing more is read.
-    const facts = childOut ? await planFactsStore.get(ctx) : null;
+    // Accounts for a child's education are out (D7): by every id an account
+    // is known under, and those the person counts kept, by the id they said
+    // it under, as the browser compares them (lib/fire/child-accounts.ts): so
+    // one reconnected reads as out on every screen until it is counted again.
     const countedAnyway = new Set(facts?.version === 2 ? facts.tax.countAnyway : []);
     const knownSubtype = new Map<string, string>();
-    if (childOut) {
-      for (const [id, k] of directory.known) {
-        const placed = place(id);
-        if (placed && k.subtype && !knownSubtype.has(placed.account)) knownSubtype.set(placed.account, k.subtype);
-      }
+    for (const [id, k] of directory.known) {
+      const placed = place(id);
+      if (placed && k.subtype && !knownSubtype.has(placed.account)) knownSubtype.set(placed.account, k.subtype);
     }
-    const leftOut = (account: string, subtype?: string | null) => childOut && isChildAccount(subtype === undefined ? knownSubtype.get(account) : subtype) && !countedAnyway.has(account);
+    const leftOut = (account: string, subtype?: string | null) => isChildAccount(subtype === undefined ? knownSubtype.get(account) : subtype) && !countedAnyway.has(account);
 
     // The accounts that count, under the ids they are known by now, hidden
     // ones left out.

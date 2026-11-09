@@ -256,44 +256,6 @@ export async function flagsNameAccounts(): Promise<boolean> {
   return AUDIENCE_KEYS.some((key) => audienceOf(key, flags).containers.length > 0);
 }
 
-/** How long a change a release flag makes stays new, for the line that says
- *  so (the tax plan's D15: "Your FI date moved"): days from the change that
- *  turned it on for everyone. */
-export const NEW_DAYS = 60;
-const FAR_DAY = '9999-12-31';
-const PAST_DAY = '1970-01-01';
-const newKept = new Map<AudienceKey, { updatedAt: string; until: string }>();
-
-/**
- * The last day a release flag's change is new, as YYYY-MM-DD:
- *   - on for everyone: NEW_DAYS after the latest change that turned it on
- *     for everyone, from its record of changes (lib/flag-store.ts);
- *   - not on for everyone: a far-off day, so the line shows wherever it is on;
- *   - that change no longer in the record, or the record not read within
- *     WAIT_MS: a past day, so it never reads as new. A read that failed isn't
- *     kept, so the next page asks again.
- * Kept per stored value, by its updatedAt.
- */
-export async function newUntil(key: AudienceKey, now: number = Date.now()): Promise<string> {
-  const { flags } = await cachedFlags(now);
-  const stored = flags.get(key);
-  if (!stored || !isAudienceValue(stored) || stored.on !== 'everyone') return FAR_DAY;
-  const kept = newKept.get(key);
-  if (kept && kept.updatedAt === stored.updatedAt) return kept.until;
-  try {
-    const { entries } = await withLimit(flagsStore.changes(), WAIT_MS);
-    const everyone = (v: unknown) => isAudienceValue(v) && v.on === 'everyone';
-    const turned = entries.find((c) => c.key === key && everyone(c.to) && !everyone(c.from));
-    // Gone from the record stays gone for this value (a value and its change
-    // are written together), so that answer is kept too.
-    const until = turned ? new Date(Date.parse(turned.at) + NEW_DAYS * 86_400_000).toISOString().slice(0, 10) : PAST_DAY;
-    newKept.set(key, { updatedAt: stored.updatedAt, until });
-    return until;
-  } catch {
-    return PAST_DAY;
-  }
-}
-
 /** Every audience flag for `who`, as the browser gets them with the page's
  *  other server values: booleans only, never the accounts or the lists. */
 export type ClientFlags = Record<AudienceKey, boolean>;

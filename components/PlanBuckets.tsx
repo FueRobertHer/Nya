@@ -49,8 +49,6 @@ export type BucketSheet = {
   reading: boolean;
   /** Whether a partner is set, so there are two people to tell apart. */
   partner: boolean;
-  /** D7's switch: a child's account can be counted. */
-  childOut: boolean;
   tax: TaxFacts;
   /** A bucket the person chose, by account. */
   chosen: ReadonlyMap<string, TaxBucket>;
@@ -259,7 +257,7 @@ function AccountLevel({
   const showsBasis = account?.bucket === 'taxable' && account.basisFrom !== 'cash';
   // A partner since removed: the choice stays, to take the account back.
   const showsWhose = !!account && (sheet.partner || heldOwner === 'partner');
-  const showsCount = sheet.childOut && isChildAccount(subtype);
+  const showsCount = isChildAccount(subtype);
   const save = async () => {
     const read = showsBasis ? readAmount(basis, 'Cost basis') : { amount: typed };
     if ('problem' in read) {

@@ -16,7 +16,7 @@
 //   - the FI date (years to FI, the age then) comes from the walk whenever
 //     an item counts in it, and the balance at the stop whenever an item
 //     changes the walk, with an FI number or without one. A plan's one-offs
-//     and income count in it only with D15's switch (`count.planInWalk`);
+//     and income count in it too (D15, `count.planInWalk`);
 //   - under "stop when I reach FI", or with an item on FI, the stop or FI is
 //     searched for (lib/fire/steady.ts), and the date is the age found;
 //   - with D9 (`fiAt`, from lib/fire/earliest.ts), FI is given, and the date is
@@ -134,7 +134,7 @@ export type PlanFigures = {
 export type FiguresRefused = { refused: 'below-zero'; spending: number; lasting: number };
 
 export type FiguresOptions = {
-  /** What counts where, by the release flags (lib/fire/compile.ts Count). */
+  /** What counts where (lib/fire/compile.ts Count): the app's IN_WALK. */
   count: Count;
   /** For a plan in the detailed tax model. */
   detailed?: DetailWork | null;
@@ -364,7 +364,7 @@ const savedKept = new Map<string, SavedItems | null>();
  * start's balance, the savings it kept and its typed spending, or `spending`
  * (today's measured) where none was typed. Null with no age or nothing in
  * the walk, so the line is a steady one, as before items. Kept per saved
- * copy, start, spending and switch, so the month points only evaluate.
+ * copy, start, spending and count, so the month points only evaluate.
  */
 export function resolveSaved(saved: Pick<SavedPlan, 'plan' | 'savings' | 'day' | 'rev'>, start: { day: string; total: number }, spending: number | null, count: Count): SavedItems | null {
   const key = JSON.stringify([saved.rev, saved.day, start.day, start.total, spending, count.planInWalk]);
@@ -374,10 +374,7 @@ export function resolveSaved(saved: Pick<SavedPlan, 'plan' | 'savings' | 'day' |
   let out: SavedItems | null = null;
   if (plan.age !== null && plan.items.length > 0) {
     const f = planFigures({ ...plan, savings: saved.savings, assets: start.total }, { spending, savings: saved.savings, assets: start.total }, { count });
-    if (!('refused' in f) && f.events !== null && hasWalk(f.events.walk)) {
-      const counted = plan.items.flatMap((item, i) => (f.inWalk[i] && MONEY_KINDS.includes(item.kind) ? [{ item, ages: f.resolution.ages[i] }] : []));
-      out = { from: saved.day, age: plan.age, walk: f.events.walk, counted };
-    }
+    if (!('refused' in f) && f.events !== null && hasWalk(f.events.walk)) out = { from: saved.day, age: plan.age, walk: f.events.walk };
   }
   if (savedKept.size >= 16) savedKept.clear();
   savedKept.set(key, out);

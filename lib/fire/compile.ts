@@ -8,9 +8,8 @@
 //
 // What items add to what life events did:
 //   - a plan's one-offs and income (version 1's lists) in the simulation as
-//     enginePlan placed them (lib/fire/plan.ts), and, with the switch D15
-//     turns on (`count.planInWalk`, the flag 'plan-items-in-fi'), in the walk
-//     too: a one-off is a cost in its year, income adds to saving every year
+//     enginePlan placed them (lib/fire/plan.ts), and in the walk too (D15,
+//     `count.planInWalk`): a one-off is a cost in its year, income adds to saving every year
 //     it covers until FI. One begun before today is in measured saving: the
 //     walk leaves it out, and takes it out from its end. Income not kept up
 //     with inflation counts at its amount in the walk, as the simulation
@@ -42,8 +41,14 @@ import type { PerRun, RunEdge } from './steady';
  *  (the resolution says why). */
 export type ItemAges = { start: number; end: number | null } | null;
 
-/** What counts where, by the release flags it rests on. */
+/** What counts where. The app counts a plan's one-offs and income in the
+ *  walk (D15, IN_WALK); left out of it, the walk is as it was before D15,
+ *  for a caller that reads only the simulation's parts and for the tests
+ *  that hold the arithmetic to that from before (test/fixtures/before-d15). */
 export type Count = { planInWalk: boolean };
+
+/** What the app counts, everywhere. */
+export const IN_WALK: Count = { planInWalk: true };
 
 /** Today's age (the walk), the simulation's start age and length, the
  *  resolved stop (part-time work before it is in the walk) and the plan's
@@ -124,7 +129,7 @@ export function compileItems(items: readonly PlanItem[], ages: readonly ItemAges
     };
 
     // A plan's one-offs and income: the simulation as enginePlan placed
-    // them, and the walk behind D15's switch.
+    // them, and the walk (D15).
     if (x.kind === 'one-off') {
       const amount = x.once ?? 0;
       for (const age of repeats(x, start)) {

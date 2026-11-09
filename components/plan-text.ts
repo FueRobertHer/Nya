@@ -200,7 +200,7 @@ export function lastingText(found: { age: number | null; to: number | null; shar
 
 /** What moved the walk, in the words the answer, the At age row and the
  *  chart say it with (lib/fire/plan-figures.ts walkFrom): one-offs and
- *  income (a plan's, with D15's switch) apart from its life events, both
+ *  income (a plan's, D15) apart from its life events, both
  *  joined when both. Null when nothing
  *  did. */
 export function walkWords(from: { items: boolean; events: boolean; tax?: boolean }): string | null {

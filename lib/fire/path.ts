@@ -215,7 +215,7 @@ function afterStop(f: PlanFigures, from: PathPoint): PathAfter | null {
   const endAge = first + planYears(plan, stop);
   const years = endAge - d;
   if (years < 1) return null;
-  // Only the simulation's parts are read here, so the walk's switch is off.
+  // Only the simulation's parts are read here, so nothing goes in the walk.
   const taxRate = f.shares?.t ?? plan.taxRate;
   const at = { age: plan.age, startAge: d, stop: d, years, taxRate };
   const ages = f.resolution.ages;

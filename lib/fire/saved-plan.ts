@@ -24,8 +24,8 @@
 // Both are hypothetical: a steady return and a steady inflation rate, not a
 // prediction.
 //
-// A SAVED PLAN'S ITEMS (its one-offs and income, counted in the walk with
-// D15's switch) are placed once on its own steady path (lib/fire/
+// A SAVED PLAN'S ITEMS (its one-offs and income, counted in the walk since
+// D15) are placed once on its own steady path (lib/fire/
 // plan-figures.ts resolveSaved), in years from the day it was saved: year k
 // is age plan.age + k. Each year's money in and costs land at its start, and
 // a change to savings is added through the years it covers, as the savings
@@ -39,9 +39,7 @@
 // next. Imports no data and no storage.
 
 import { projectBalance } from './fi';
-import type { ItemAges } from './compile';
 import type { WalkChanges } from './events';
-import type { PlanItem } from './items';
 import { parsePlan, type PlanCore } from './plan';
 import { isStoredPlan, parsePlanV2, upgradeStoredPlan, type StoredPlan } from './plan-v2';
 
@@ -147,9 +145,8 @@ export function yearsBetween(from: string, to: string): number {
 
 /** A saved plan's items on its own steady path: the walk's changes, in
  *  years from `from`, the day it was saved, when it was `age` (lib/fire/
- *  plan-figures.ts resolveSaved); and its one-offs and income among them,
- *  in item order, where they are, for the words. */
-export type SavedItems = { from: string; age: number; walk: WalkChanges; counted: { item: PlanItem; ages: ItemAges }[] };
+ *  plan-figures.ts resolveSaved). */
+export type SavedItems = { from: string; age: number; walk: WalkChanges };
 
 /** Where the saved plan has invested assets on `day`, in that day's own
  *  money, growing from `start`, the measured balance on the `from` day (see

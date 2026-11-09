@@ -79,9 +79,8 @@
 //
 // INVESTED ASSETS are the balances of investment accounts (and, if asked,
 // checking and savings), not hidden, as the Accounts tab shows them, with
-// what is stale or missing named. With the flag 'plan-child-accounts' on,
-// without accounts for a child's education, unless the person counts one
-// (lib/fire/child-accounts.ts).
+// what is stale or missing named, without accounts for a child's education,
+// unless the person counts one (lib/fire/child-accounts.ts).
 
 import { type Txn } from '@/components/MonthBreakdown';
 import { categoryKey, currencyOf, inCurrency, isExcluded, isHistoryRow, isTransfer, totalsCurrency, transactionCounter, type LeftOut } from '@/lib/spending';

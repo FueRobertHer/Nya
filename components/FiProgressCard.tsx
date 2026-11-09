@@ -12,9 +12,9 @@
 // same hook (components/plan-inputs.ts: a year of transactions, invested
 // assets, workplace plan contributions) and works the figures out with the
 // same functions (lib/fire/plan-figures.ts planFigures, with the plan's items
-// and D15's switch as the Plan has it, and lib/fire/path.ts planPath for
+// counted as the Plan counts them, and lib/fire/path.ts planPath for
 // where it runs out), so Home and the Plan always agree. Never a simulation
-// here: the market history and the simulator's jobs stay out of Home's bundle
+// here: the engine's code stays out of Home's bundle
 // (components/FiProgressLoader.tsx loads this after Home paints). A plan with
 // `lastsIn` (D9) answers with the earliest stop that lasts, which only the
 // simulator finds: for such a plan alone, Home loads components/plan-lasting.ts
@@ -55,6 +55,7 @@ import { PAYROLL_NOTE, asksLasting, dayName, fiHeadline, pct, progressText, savi
 import { projectFrom, type PlanCore } from '@/lib/fire/plan';
 import { basePlanOf, isStoredPlan, type StoredPlan } from '@/lib/fire/plan-v2';
 import { planFigures } from '@/lib/fire/plan-figures';
+import { IN_WALK } from '@/lib/fire/compile';
 import type { BasisHolding } from '@/lib/fire/buckets-today';
 import { detailAttention, useDetailOnHome, useLastingOnHome, useSettingsRead } from './plan-detailed-home';
 import type { FigureNote } from './plan-figure-notes';
@@ -90,10 +91,6 @@ export type FiProgressProps = {
   /** The copy of the Plan's inputs Home shares with the Plan tab
    *  (components/Dashboard.tsx); left out, the card keeps its own. */
   planInputs?: PlanInputsStore;
-  /** D15's switch (the flag 'plan-items-in-fi'), as the Plan tab has it. */
-  planInWalk?: boolean;
-  /** D7's switch (the flag 'plan-child-accounts'), as the Plan tab has it. */
-  childOut?: boolean;
   /** Every position, for what a detailed plan's buckets hold: read only for a
    *  detailed plan. */
   holdings?: readonly BasisHolding[];
@@ -121,10 +118,10 @@ const NO_HOLDINGS: readonly BasisHolding[] = [];
 const NO_IDS: readonly string[] = [];
 const NO_NOTES: readonly FigureNote[] = [];
 
-export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan, planInputs, planInWalk = false, childOut = false, holdings = NO_HOLDINGS, onAttention }: FiProgressProps) {
+export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan, planInputs, holdings = NO_HOLDINGS, onAttention }: FiProgressProps) {
   const own = useMemo(() => planInputs ?? createPlanInputsStore(), [planInputs]);
-  const shared = useSharedPlanInputs(own, institutions, childOut);
-  const leaveOut = useMemo(() => leftOutOf(childOut, shared.taxFacts.countAnyway), [childOut, shared.taxFacts.countAnyway]);
+  const shared = useSharedPlanInputs(own, institutions);
+  const leaveOut = useMemo(() => leftOutOf(shared.taxFacts.countAnyway), [shared.taxFacts.countAnyway]);
   const answered = shared.copy.plan;
   const loaded = useMemo(() => loadedFrom(answered), [answered]);
   const stored = loaded && typeof loaded === 'object' ? loaded.plan : null;
@@ -149,7 +146,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
     leaveOut,
     paid: detailedOn ? shared.taxFacts.paidToday : null,
   });
-  const count = useMemo(() => ({ planInWalk }), [planInWalk]);
+  const count = IN_WALK;
   // The Plan's own figures: its items placed and counted as the Plan's are,
   // the answer the walk's and where the path runs out the path's.
   const flat = useMemo(() => planFigures(plan, measuredInputs(inputs), { count }), [plan, inputs, count]);

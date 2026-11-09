@@ -61,7 +61,7 @@ describe('each template', () => {
     for (const t of ITEM_TEMPLATES) {
       const sheet = await addTemplate(tab, t.label);
       expect([t.id, sheet.getAttribute('aria-label')]).toEqual([t.id, t.label]);
-      expect(sheet.textContent).toContain(templateHelp(t.id, false)!);
+      expect(sheet.textContent).toContain(templateHelp(t.id)!);
       expect(sheet.textContent).toContain('Your own figures: Nya suggests none.');
       // The age field under Starts follows them.
       expect([t.id, labelsIn(sheet)]).toEqual([t.id, [...FIELDS[t.id], 'Starts at age']]);
@@ -514,10 +514,7 @@ describe('a save that fails', () => {
 describe('the Honesty cautions', () => {
   test('before tax, income before FI says the rate it counts at, in the sheet at caution level', async () => {
     await seedPlan({ ...PLAN, items: [mk('rent', 'other-income', at(45), { label: 'Rent', yearly: 12_000, beforeTax: true })] });
-    const off = await render();
-    expect(off.timeline()!.textContent).not.toContain('In your FI date after 0% tax');
-    await off.unmount();
-    const tab = await render({ planInWalk: true });
+    const tab = await render();
     expect(tab.timeline()!.textContent).toContain('In your FI date after 0% tax');
     await press(tab.row('Rent'));
     await rest();

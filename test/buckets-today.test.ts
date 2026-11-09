@@ -63,10 +63,10 @@ describe('the groups', () => {
   test('a 529 counted anyway sits under Education, a UTMA under Taxable; those left out are their own list', () => {
     const c529 = acct({ account_id: 'c529', subtype: '529', balance: 48_000 });
     const utma = acct({ account_id: 'u', subtype: 'utma', balance: 7_000 });
-    const counted = bucketsToday({ assets: investedAssets([inst([c529, utma])], false, null, NOW, null, leftOutOf(true, ['c529', 'u'])), holdings: [], tax: facts(), overrides: NONE });
+    const counted = bucketsToday({ assets: investedAssets([inst([c529, utma])], false, null, NOW, null, leftOutOf(['c529', 'u'])), holdings: [], tax: facts(), overrides: NONE });
     expect(counted.groups.map((g) => g.bucket)).toEqual(['taxable', 'education']);
     expect(counted.leftOut).toEqual({ accounts: [], total: 0 });
-    const out = bucketsToday({ assets: investedAssets([inst([c529, utma, BROKER])], false, null, NOW, null, leftOutOf(true, [])), holdings: [], tax: facts(), overrides: NONE });
+    const out = bucketsToday({ assets: investedAssets([inst([c529, utma, BROKER])], false, null, NOW, null, leftOutOf([])), holdings: [], tax: facts(), overrides: NONE });
     expect(out.total).toBe(140_000);
     expect(out.leftOut.total).toBe(55_000);
     expect(out.leftOut.accounts.map((a) => a.account_id)).toEqual(['c529', 'u']);
@@ -195,7 +195,7 @@ describe('where savings go', () => {
 
   test('a child’s account left out matches nothing, so its money falls to taxable', () => {
     const c529 = acct({ account_id: 'c529', subtype: '529', balance: 48_000 });
-    const today = bucketsToday({ assets: investedAssets([inst([c529, K401])], false, null, NOW, null, leftOutOf(true, [])), holdings: [], tax: facts(), overrides: NONE, yearOf: (a) => ({ income: null, contributions: a.account_id === 'k' ? 6_000 : 4_000 }) });
+    const today = bucketsToday({ assets: investedAssets([inst([c529, K401])], false, null, NOW, null, leftOutOf([])), holdings: [], tax: facts(), overrides: NONE, yearOf: (a) => ({ income: null, contributions: a.account_id === 'k' ? 6_000 : 4_000 }) });
     expect(new Map(byBucket(savingsSplit(today, 10_000)).map((x) => [x.bucket, x.share])).get('taxable')).toBeCloseTo(0.4, 10);
   });
 });
