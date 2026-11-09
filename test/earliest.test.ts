@@ -133,4 +133,15 @@ describe('the earliest stop that lasts', () => {
     const f = planFigures({ ...PLAN, spending: 20_000_000, savings: 0 }, M, { count: ON, resolved: none.resolution }) as PlanFigures;
     expect(f.view.yearsToFi).toBe(Infinity);
   }, 60_000);
+
+  test('a stop with nothing to draw doesn’t last, and the search goes on past it', () => {
+    const cost = (age: number, once: number): PlanItem => ({ id: `cost-${age}`, label: 'A cost', kind: 'one-off', from: { anchor: { at: 'age', age }, offset: 0 }, until: null, once, yearly: null, replaces: null, every: null, times: null, inflationAdjusted: true, owner: 'you', beforeTax: false }) as unknown as PlanItem;
+    // A cost at 60 the walk can't pay: from then on there is nothing to stop with.
+    const short = solve({ ...PLAN, taxRate: 0.1, items: [...PLAN.items, cost(60, 5_000_000)] }, 'historical', true);
+    expect([short.age, short.share]).toEqual([null, null]);
+    // Nothing invested at 66, Social Security from 67: a stop at 66 has nothing to
+    // draw, and one at 67 lasts.
+    const late = solve({ ...PLAN, age: 66, partnerAge: null, targetAge: 67, assets: 0, savings: 20_000, spending: 30_000, taxRate: 0.1, items: [social('you', 'you', 67, 40_000)] }, 'historical', true);
+    expect(late.age).toBe(67);
+  }, 60_000);
 });

@@ -1506,22 +1506,30 @@ export default function PlanTab({
   const sheetYear = sheetStage && yearLevel !== null ? (drawn?.start.years[yearLevel] ?? null) : null;
   const sheetRule: CompareRow | null = shownSheet?.kind === 'rule' ? (compare.find((r) => r.key === shownSheet.key) ?? null) : null;
   // A tuned row's own sheet runs the plan with that setting in it: one run, or the
-  // search's on a plan that searches, dropped as the sheet closes.
+  // search's (or, with `lastsIn`, the earliest stop's) on a plan that searches,
+  // dropped from both stores as the sheet closes.
+  const release = useCallback(
+    (slot: string) => {
+      search.drop(slot);
+      lastingStore.drop(slot);
+    },
+    [search, lastingStore]
+  );
   const tuneLevelShown = shownSheet?.kind === 'tune' ? tuneLevel : null;
   const tuneLevelOn = sheet !== null && tuneLevelShown !== null;
   useEffect(() => {
-    if (!tuneLevelOn) search.drop('tune-level');
-  }, [tuneLevelOn, search]);
+    if (!tuneLevelOn) release('tune-level');
+  }, [tuneLevelOn, release]);
   // A rule's sheet from Compare, and the Roth conversions preview, do the same.
   const ruleLevelOn = sheet !== null && sheetRule !== null;
   useEffect(() => {
-    if (!ruleLevelOn) search.drop('rule-level');
-  }, [ruleLevelOn, search]);
+    if (!ruleLevelOn) release('rule-level');
+  }, [ruleLevelOn, release]);
   const conversionsOn = sheet?.kind === 'conversions';
   useEffect(() => {
-    if (!conversionsOn) search.drop('conversions');
-  }, [conversionsOn, search]);
-  const releaseConversions = useCallback(() => search.drop('conversions'), [search]);
+    if (!conversionsOn) release('conversions');
+  }, [conversionsOn, release]);
+  const releaseConversions = useCallback(() => release('conversions'), [release]);
   /** The plan shown with a rule in it, as Use, Save or a copy would have it. */
   const usedWith =
     (slot: string) =>
@@ -1893,7 +1901,7 @@ export default function PlanTab({
       measured={measured}
       count={count}
       figuresFor={(slot, p) => figuresFor(slot, p, entry ? entry.tax : yourChoices)}
-      figuresVersion={`${searchVersion}:${detailKey}`}
+      figuresVersion={`${searchVersion}:${lastingVersion}:${detailKey}`}
       firedFor={({ sim: run, trigger, offset }, signal) => runner().run({ kind: 'fired', method: plan.method, plan: run, trigger, offset }, signal).then((r) => (r.ok && r.kind === 'fired' ? r.fired : null))}
       copyName={copyName}
       version={shownFor ?? storedKey}
