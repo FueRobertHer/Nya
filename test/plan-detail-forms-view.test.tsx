@@ -282,18 +282,38 @@ describe('Health coverage', () => {
       await fill(tab.dialog()!, 'Benchmark plan', '11,000');
       await fill(tab.dialog()!, 'Quoted for age', '50');
       await save(tab);
-      const SAID = /Counts on Medicaid in \d+ years, between ages 50 and 6\d, with no premium\. For a plan that doesn’t lean on it, choose Count full price anyway on Health coverage\./;
       const healthRow = () => (tab.row('Health coverage')!.parentNode as unknown as { textContent: string }).textContent;
       const drawdownPanel = () => tab.container.findAll((e) => e.getAttribute('role') === 'tabpanel' && (e.getAttribute('id') ?? '').includes('drawdown'))[0].textContent;
+      const WAY_OUT = 'with no premium. For a plan that doesn’t lean on it, choose Count full price anyway on Health coverage.';
       // On the row whose figure it lowers, and on the notice over the years that show it.
-      expect(healthRow()).toMatch(SAID);
-      expect(drawdownPanel()).toMatch(SAID);
-      expect(drawdownPanel().split('Counts on Medicaid').length).toBe(2);
+      expect(healthRow()).toMatch(/Your FI number counts on Medicaid in \d+ years, between ages 50 and 6\d, /);
+      expect(healthRow()).toContain(WAY_OUT);
+      expect(drawdownPanel()).toMatch(/Year by year counts on Medicaid in \d+ years, between ages 50 and 6\d, /);
+      expect(drawdownPanel().split('counts on Medicaid in').length).toBe(2);
       await pick(await sheet(tab, 'Health coverage'), 'Count full price anyway');
       await save(tab);
       expect(lastSave().tax.health.countMedicaid).toBe(true);
-      expect(healthRow()).not.toContain('Counts on Medicaid');
-      expect(drawdownPanel()).not.toContain('Counts on Medicaid');
+      expect(healthRow()).not.toContain('counts on Medicaid');
+      expect(drawdownPanel()).not.toContain('counts on Medicaid');
+      await tab.unmount();
+    }, 60_000);
+    test('each place counts its own run, and says which', async () => {
+      const k = { account_id: 'k', name: '401(k)', type: 'investment', subtype: '401k', balance: 500_000, currency: 'USD' };
+      const institutions = [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [k] }] as never;
+      // Year by year starts from $3,000,000 on a rule that spends a share of it, so it
+      // draws more than the FI number's run does and leaves the line sooner.
+      const tab = await optedIn({ institutions }, { ...PLAN, age: 50, targetAge: 50, spending: 12_000, savings: 0, rule: 'percent', start: 'custom', startBalance: 3_000_000 });
+      await sheet(tab, 'Household');
+      await fill(tab.dialog()!, 'State', 'CA');
+      await save(tab);
+      await pick(await sheet(tab, 'Health coverage'), 'ACA marketplace');
+      await fill(tab.dialog()!, 'Benchmark plan', '11,000');
+      await fill(tab.dialog()!, 'Quoted for age', '50');
+      await save(tab);
+      const healthRow = (tab.row('Health coverage')!.parentNode as unknown as { textContent: string }).textContent;
+      const drawdownPanel = tab.container.findAll((e) => e.getAttribute('role') === 'tabpanel' && (e.getAttribute('id') ?? '').includes('drawdown'))[0].textContent;
+      expect(healthRow).toContain('Your FI number counts on Medicaid in 15 years, between ages 50 and 64,');
+      expect(drawdownPanel).toContain('Year by year counts on Medicaid in 10 years, between ages 50 and 60,');
       await tab.unmount();
     }, 60_000);
     test('with no state given, it doesn’t guess', async () => {

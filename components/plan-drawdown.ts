@@ -597,12 +597,14 @@ export function medicaidYears(years: readonly Pick<DrawdownYear, 'age' | 'care'>
 
 /** A plan that counts on Medicaid says so, on Drawdown's notice and on the Health
  *  coverage row: it counts that coverage as free, on a work rule Nya checks only by
- *  income or your answer. A caution, since only you can say whether to lean on it. */
-export const medicaidNote = (m: MedicaidYears): FigureNote => ({
+ *  income or your answer. A caution, since only you can say whether to lean on it.
+ *  Each names its run, since the two can differ: the notice Year by year's, from your
+ *  plan's start, and the row your FI number's, from that number at your stop. */
+export const medicaidNote = (m: MedicaidYears, run: 'Year by year' | 'Your FI number'): FigureNote => ({
   key: 'detail:counts on Medicaid',
   level: 'caution',
   kind: 'counts on Medicaid',
-  text: `Counts on Medicaid in ${m.count === 1 ? `1 year, at age ${m.first}` : `${m.count} years, between ages ${m.first} and ${m.last}`}, with no premium. For a plan that doesn’t lean on it, choose Count full price anyway on Health coverage.`,
+  text: `${run} counts on Medicaid in ${m.count === 1 ? `1 year, at age ${m.first}` : `${m.count} years, between ages ${m.first} and ${m.last}`}, with no premium. For a plan that doesn’t lean on it, choose Count full price anyway on Health coverage.`,
 });
 
 const counted = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -644,7 +646,7 @@ export function honestyNotes(a: NoteArgs): FigureNote[] {
   if (a.choices.state === null) add('caution', 'no household', 'No state given: counted with no state tax and no Medicaid expansion. Set your state on Household.');
   if (a.choices.health.beforeMedicare === null) add('caution', 'health not set', 'Health coverage isn’t set: no cost before 65, then Medicare Part B only. Measured spending leaves out coverage through work.');
   if (a.unansweredPaid) add('caution', 'coverage counted twice', `Your spending has ${a.money(a.unansweredPaid.amount)} a year in ${a.unansweredPaid.name}. If that’s the coverage below, say so on Health coverage, so it isn’t counted twice.`);
-  if (a.medicaid) notes.push(medicaidNote(a.medicaid));
+  if (a.medicaid) notes.push(medicaidNote(a.medicaid, 'Year by year'));
   if (a.law?.behind) add('caution', 'older tax law', `Uses ${a.law.year} tax law, the newest Nya has.`);
   return notes;
 }

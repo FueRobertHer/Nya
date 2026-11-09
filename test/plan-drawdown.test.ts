@@ -287,9 +287,9 @@ describe('what a detailed plan says it can’t know', () => {
     expect(some).toEqual({ count: 3, first: 52, last: 58 });
     const quiet = { ...DEFAULT_TAX_CHOICES, state: 'NV' as const, health: { ...DEFAULT_TAX_CHOICES.health, beforeMedicare: { kind: 'other' as const, yearly: 5_000 } } };
     const [note, law] = honestyNotes({ ...none, choices: quiet, medicaid: some, law: { year: 2026, behind: true } });
-    expect(note).toEqual({ key: 'detail:counts on Medicaid', level: 'caution', kind: 'counts on Medicaid', text: 'Counts on Medicaid in 3 years, between ages 52 and 58, with no premium. For a plan that doesn’t lean on it, choose Count full price anyway on Health coverage.' });
+    expect(note).toEqual({ key: 'detail:counts on Medicaid', level: 'caution', kind: 'counts on Medicaid', text: 'Year by year counts on Medicaid in 3 years, between ages 52 and 58, with no premium. For a plan that doesn’t lean on it, choose Count full price anyway on Health coverage.' });
     expect(law.kind).toBe('older tax law');
-    expect(medicaidNote(medicaidYears([year(61, 'medicaid', 'medicaid')])!).text).toStartWith('Counts on Medicaid in 1 year, at age 61, with no premium.');
+    expect(medicaidNote(medicaidYears([year(61, 'medicaid', 'medicaid')])!, 'Your FI number').text).toStartWith('Your FI number counts on Medicaid in 1 year, at age 61, with no premium.');
     expect(kinds({ choices: quiet })).toEqual([]);
   });
 

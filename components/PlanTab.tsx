@@ -1438,7 +1438,7 @@ export default function PlanTab({
         line: shownShares && detailChoices.health.beforeMedicare !== null ? 'a year, on average' : null,
         why: null,
         value: detailChoices.health.beforeMedicare === null ? null : shownShares ? money(shownShares.h) : '--',
-        notes: [...honesty.filter((n) => n.kind === 'health not set' || n.kind === 'coverage counted twice').map((n) => (n.kind === 'health not set' ? { ...n, text: HEALTH_NOT_SET } : n)), ...(rowMedicaid ? [medicaidNote(rowMedicaid)] : [])],
+        notes: [...honesty.filter((n) => n.kind === 'health not set' || n.kind === 'coverage counted twice').map((n) => (n.kind === 'health not set' ? { ...n, text: HEALTH_NOT_SET } : n)), ...(rowMedicaid ? [medicaidNote(rowMedicaid, 'Your FI number')] : [])],
       };
   const figureTexts: typeof shownNow = !detailShown
     ? shownNow
