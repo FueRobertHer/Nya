@@ -28,12 +28,12 @@ import { FakeRedis, storageMock, ctxKey, testKey } from './fake-redis';
 //     writes, the feature switches' included (F1 onward knows them as plain
 //     text, so F2 writes them on the admin page in Preview and Production),
 //     and its export and restore carry them;
-//   - its Plan (test/fixtures/release-before/fire, the readers at 756b97c5, the
-//     merge of T3 and a 529's bank payments, its plans as copies in fire/copies.ts) reads every plan this release writes:
+//   - its Plan (test/fixtures/release-before/fire, the readers at 221c0d7c, the
+//     merge of D9's reader, its plans as copies in fire/copies.ts) reads every plan this release writes:
 //     each entry of `fire-plans` and `plan-facts`, your plan the one it
 //     picks, each with its currency where it holds an amount, and every saved
 //     plan (test/release-before-plans.test.ts, through the routes);
-//   - its restore (test/fixtures/release-before/user-restore/parts.ts, at 756b97c5)
+//   - its restore (test/fixtures/release-before/user-restore/parts.ts, at 221c0d7c)
 //     knows every part of a download this release makes
 //     (test/release-before-plans.test.ts).
 
@@ -145,27 +145,27 @@ describe('the release before’s own code', () => {
       'release-before/export.ts': '5906750754885798848a4dff583f00219bacb519',
       'release-before/restore.ts': '16995a794a83b431b04ac275aa8c3c127ad3b201',
       'release-before/key-families.ts': 'd1bfee8d2ac6f844363f85cd140078eca803d071',
-      // The Plan's readers as at 756b97c5, T3 and a 529's bank payments, the last before T4
-      // (fire/inputs.ts and fire/compile.ts are type stubs).
-      'release-before/fire/plan.ts': '17a2b5ca8d372b32fd6d5a0e682b237c761a3a79',
-      'release-before/fire/plan-v2.ts': '35a3deef033c7e42587d7d03eef2d992a5dc8869',
-      'release-before/fire/items.ts': '5d51b8eb120686c90e421f10531a1572bdf4aac0',
+      // The Plan's readers as at 221c0d7c, D9's reader, the last before its writer
+      // (fire/inputs.ts and fire/taxed-paths.ts are type stubs).
+      'release-before/fire/plan.ts': '993057a8889b5b53010536d5d996260ee77498d8',
+      'release-before/fire/plan-v2.ts': '25d0c33255cc4b98b7a6e84e58a8a0eddd74889d',
+      'release-before/fire/items.ts': '3b6cd0fe331d769e5c6f709dfead827964b6caba',
       'release-before/fire/events.ts': 'ebbe11a2538000bfde3ccbefef294155dfaf132b',
-      'release-before/fire/simulate.ts': '4dcd4d57de2af7557c22a305d8a9746fd390f7d5',
+      'release-before/fire/simulate.ts': '767b505b7fb5f6ac14d2a90fe812482c55d03795',
       'release-before/fire/fi.ts': 'a6f3314cb7c0802bab61939eb958bac16f2e5d5a',
       'release-before/fire/rules.ts': 'd2e78edb52306fa818dfad28dd82478779629800',
       'release-before/fire/market.ts': '9b7c0af56ea3b22d722538608fc96b55729bc9ec',
       'release-before/fire/random.ts': '640b37e505013c46ce15035e191b24b4660dc338',
-      'release-before/fire/saved-plan.ts': '517a6e34e3c9592a7d47deddc9b9c2bc45668f3b',
+      'release-before/fire/saved-plan.ts': '66c23897b5e796711efda4b30a43b0d513a2b7da',
       'release-before/fire/plan-currency.ts': '9ab60fc3919e193395b9c13265fd42db2339ca32',
       'release-before/fire/plan-list.ts': 'cb9bbdbe536b1e8c0469a3be1ae9e538792ae12b',
       // The plans as copies' reader, the tax facts' and the tax choices', with
-      // what the choices import, as at 756b97c5.
+      // what the choices import, as at 221c0d7c.
       'release-before/fire/copies.ts': '09ef6cf9ba437de6d9dcc82926aa95799c4e1fa6',
       'release-before/fire/tax-facts.ts': '03a3a0894955ed4a51ca74e3b6c812a6804b622c',
-      'release-before/fire/tax-choices.ts': '4741ce471ea9c2fee17b2c47208bc7cdddd4f237',
+      'release-before/fire/tax-choices.ts': '9bbeaac0dfce9daa292f1caade6c472219352f21',
       'release-before/fire/tax/law/types.ts': 'ba7a727bad001d407096b29314de4071c6a8f305',
-      // The parts of a download its restore knows, as at 756b97c5.
+      // The parts of a download its restore knows, as at 221c0d7c.
       'release-before/user-restore/parts.ts': 'e4c438f75f43597e8df8752307da97163c3bd85a',
       'release-before/manual-txn-input.ts': 'edc5c2e6e5eba58469d461c5f7a24037c8f23065',
       'release-before/format.ts': 'daea65c675d1ee4992464bf1257c167d46a6b553',

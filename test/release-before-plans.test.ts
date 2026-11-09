@@ -4,7 +4,7 @@ import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { PlanEntry, PlanFacts } from './fixtures/release-before/fire/copies';
 import type { PlanItem } from '@/lib/fire/items';
 
-// The release before (the last merge before this one, 756b97c5, T3 and a 529's bank payments, whose readers
+// The release before (the last merge before this one, 221c0d7c, D9's reader, whose readers
 // of the plans as copies are in test/fixtures/release-before/fire/copies.ts byte
 // for byte, pinned by test/release-before.test.ts) reading what this release
 // writes, so a rollback to it loses no plan. Every write this release makes
@@ -21,6 +21,8 @@ import type { PlanItem } from '@/lib/fire/items';
 // with or without a plan, which TF read a release before this one writes them
 // and which its saves keep. It writes what T2 read a release
 // ahead: `model: 'detailed'`, each plan's choices, the household and `at-stop`.
+// And it writes `lastsIn`, your FI date as the earliest stop that lasts (D9),
+// which the release before reads and its saves keep.
 // And its restore (test/fixtures/release-before/user-restore/parts.ts) takes a
 // download this release makes, plans and all: it refuses a file with a part it
 // doesn't know, or without one of its header parts, and reads each store part
@@ -40,7 +42,7 @@ const { openStored } = await import('@/lib/repo');
 const { firePlansStore, planFactsStore } = await import('@/lib/plan-copies');
 const { savedPlanStore } = await import('@/lib/saved-plan');
 const { emptyAccount } = await import('@/lib/user-restore/undo');
-const { DEFAULT_PLAN_V2, planOf } = await import('@/lib/fire/plan-v2');
+const { DEFAULT_PLAN_V2, LASTS_IN_CHOICES, planOf } = await import('@/lib/fire/plan-v2');
 const { itemFromIncome } = await import('@/lib/fire/items');
 const { MAIN_ID, factsOf } = await import('@/lib/fire/copies');
 const { typedAmounts } = await import('@/lib/fire/plan-currency');
@@ -189,6 +191,7 @@ describe('the release before reads every plan this release writes', () => {
         partnerAge: g.chance(0.3) ? g.int(22, 70) : null,
         stopAtFi: g.chance(0.3),
         fiNumber: g.chance(0.2) ? g.int(500, 3000) * 1000 : null,
+        ...(g.chance(0.3) ? { lastsIn: g.pick([...LASTS_IN_CHOICES]) } : {}),
       };
       const r = await save(plan, based, facts, g.chance(0.5) ? 'USD' : null);
       if (r.status !== 200) {
@@ -249,8 +252,20 @@ describe('the release before reads every plan this release writes', () => {
     await readsAll(MAIN_ID, 'a Try it with items on anchors');
   });
 
+  test('your FI date as the earliest stop that lasts, on your plan and on a copy, and off again', async () => {
+    const main = ok(await save({ ...TYPED, lastsIn: 0.95 }, null, DEFAULTS)).updated_at as string;
+    let entries = await readsAll(MAIN_ID, 'your plan at 95%');
+    expect((entries.get(MAIN_ID)!.plan as FirePlanV2).lastsIn).toBe(0.95);
+    const copy = ok(await plans('POST', { from: MAIN_ID, name: 'At 80%', plan: { ...TYPED, lastsIn: 0.8 }, currency: 'USD' })).plan;
+    entries = await readsAll(MAIN_ID, 'a copy at 80%');
+    expect((entries.get(copy.id)!.plan as FirePlanV2).lastsIn).toBe(0.8);
+    ok(await save(TYPED, main, factsOf(TYPED)));
+    entries = await readsAll(MAIN_ID, 'your plan back to when you reach it');
+    expect(Object.hasOwn(entries.get(MAIN_ID)!.plan, 'lastsIn')).toBe(false);
+  });
+
   test('a saved plan of version 2, as this release’s saved plan route stores it', async () => {
-    for (const plan of [TYPED, { ...TYPED, stopAtFi: true, targetAge: null, items: [income, child] }, { ...DEFAULT_PLAN_V2, partnerAge: 38, fiNumber: 900_000 }]) {
+    for (const plan of [TYPED, { ...TYPED, stopAtFi: true, targetAge: null, items: [income, child] }, { ...DEFAULT_PLAN_V2, partnerAge: 38, fiNumber: 900_000 }, { ...TYPED, lastsIn: 0.9 }]) {
       const body = { saved: { plan, savings: 20_000, currency: 'USD', inflation: 0.03 }, based_on: (await savedPlanStore.get(ctx))?.rev ?? null };
       expect((await call(savedRoute.PUT, 'saved-plan', 'PUT', body)).status).toBe(200);
       expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(true);
@@ -370,14 +385,15 @@ describe('what the detailed model writes, as the release before reads it', () =>
     expect(entries.get(MAIN_ID)!.tax as unknown).toEqual(CHOICES);
   });
 
-  test('a save beside a rule it can’t run goes through its own writer: it isn’t a change', async () => {
+  test('a save beside a rule goes through its own writer, and so does a change of rule within its ranges', async () => {
     const stamp = (ok(await save(TYPED, null, DEFAULTS)) as { updated_at: string }).updated_at;
     const rule = { ...CHOICES, strategy: { order: 'standard', conversions: { kind: 'bracket', top: 0.12 }, convertUntil: 60 } };
     ok(await save(TYPED, stamp, factsOf(TYPED), 'USD', { tax: rule }));
     const stored = (await readsAll(MAIN_ID, 'with a rule')).get(MAIN_ID)!.tax!;
     expect('choices' in oChoices.parseTaxChoices({ ...rule, stateRate: 0.05 }, stored)).toBe(true);
-    // A change of rule, it refuses, and the tab loads again.
-    expect('error' in oChoices.parseTaxChoices({ ...rule, strategy: { ...rule.strategy, convertUntil: 61 } }, stored)).toBe(true);
+    // Since T4 it runs the rules: a change of rule is its own save, held to its ranges.
+    expect('choices' in oChoices.parseTaxChoices({ ...rule, strategy: { ...rule.strategy, convertUntil: 61 } }, stored)).toBe(true);
+    expect('error' in oChoices.parseTaxChoices({ ...rule, strategy: { ...rule.strategy, convertUntil: 101 } }, stored)).toBe(true);
   });
 
   test('a household on a save and on a first save, its dependents and what pays for coverage', async () => {

@@ -889,13 +889,16 @@ export default function PlanTab({
   // ages are parsed (each is repaired), so it is never longer than a plan
   // can be.
   // Until a detailed plan's years are in, what follows the stop would be flat, and then move.
-  // An answer that is the earliest stop that lasts (D9) counts what the FI number
-  // leaves out, so the chart doesn't say it.
-  const path = useMemo(() => {
+  const wholePath = useMemo(() => {
     const p = shown ? planPath(shown) : null;
-    if (p && detailHeld) return { ...p, after: null };
-    return p?.after && shown?.resolution.searched === 'lasts' ? { ...p, after: { ...p.after, leftOut: { items: [], events: false } } } : p;
+    return p && detailHeld ? { ...p, after: null } : p;
   }, [shown, detailHeld]);
+  // An answer that is the earliest stop that lasts (D9) counts what the FI number
+  // leaves out, so the chart doesn't say it; the FI number's sheet still does.
+  const path = useMemo(
+    () => (wholePath?.after && shown?.resolution.searched === 'lasts' ? { ...wholePath, after: { ...wholePath.after, leftOut: { items: [], events: false } } } : wholePath),
+    [wholePath, shown]
+  );
   const stopShort = path?.short ?? null;
   const stopWalked = path?.fromWalk ?? false;
   const engine: EnginePlan | { missing: Missing } = shown?.engine ?? { missing: 'spending' };
@@ -2273,7 +2276,7 @@ export default function PlanTab({
             {...formProps}
             view={view}
             retirementSpending={shown ? (numberSpending(shown)?.spending ?? null) : null}
-            leftOut={path?.after?.leftOut ?? null}
+            leftOut={wholePath?.after?.leftOut ?? null}
             money={money}
             shares={shownShares}
             held={fiHeld}

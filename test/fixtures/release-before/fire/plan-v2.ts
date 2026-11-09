@@ -5,6 +5,12 @@
 // ("Stop when I reach FI", beside `targetAge`) and `fiNumber` (your own; null
 // is worked out). Every other field is version 1's, with its ranges.
 //
+// `lastsIn` (D9: the answer is the earliest stop that lasts) is the one field a
+// plan holds only while it is set: absent is decision 25's answer, so a plan
+// without it is stored, upgraded and downloaded exactly as before it, and the
+// release before (test/fixtures/release-before) reads every one of them. It is
+// read here a release before anything writes it (docs/operations.md).
+//
 // WHAT IS STORED STAYS AS IT WAS. The store (an entry's plan in `fire-plans`,
 // lib/plan-copies.ts) reads either version and its upgrade (upgradeStoredPlan)
 // never changes one into the other, since the seam checks a value and its
@@ -33,7 +39,18 @@ export type FirePlanV2 = Omit<FirePlan, 'version' | 'income' | 'expenses'> & {
   stopAtFi: boolean;
   /** Your own FI number; null works it out from spending. */
   fiNumber: number | null;
+  /** D9: the answer is the earliest stop whose money lasts in at least this
+   *  share of Will it last?'s starts (lib/fire/earliest.ts), one of
+   *  LASTS_IN_CHOICES. Absent: when the walk reaches the FI number (decision 25).
+   *  Never in DEFAULT_PLAN_V2, so never filled in by an upgrade. */
+  lastsIn?: number;
 };
+
+/** The shares a plan's answer can be asked to last in (D9). */
+export const LASTS_IN_CHOICES: readonly number[] = [0.8, 0.9, 0.95];
+
+/** Fields a version 2 plan holds only while they are set. */
+const OPTIONAL_KEYS = ['lastsIn'];
 
 /** A plan as either version stores it. */
 export type StoredPlan = FirePlan | FirePlanV2;
@@ -55,8 +72,8 @@ export function planOf(stored: StoredPlan): FirePlanV2 {
   };
 }
 
-/** The start a new plan takes behind `plan-tax`, never the default every older
- *  reader's plan rests on (`DEFAULT_PLAN.start`). */
+/** The start a new plan takes, never the default every older reader's plan rests on
+ *  (`DEFAULT_PLAN.start`). */
 export const NEW_PLAN_START = 'at-stop' as const;
 
 /** What a plan that was never saved is, as version 2. */
@@ -75,12 +92,12 @@ export function toStored(plan: FirePlanV2, version: 1 | 2): { plan: StoredPlan }
 export function toStored(plan: FirePlanV2, version: 1 | 2): { plan: StoredPlan } | { error: string } {
   if (version === 2) return { plan };
   if (plan.items.some((x) => asIncome(x) === null && asExpense(x) === null)) return { error: 'This plan holds items only a newer version of Nya can save.' };
-  if (plan.partnerAge !== null || plan.stopAtFi || plan.fiNumber !== null) return { error: 'This plan holds settings only a newer version of Nya can save.' };
+  if (plan.partnerAge !== null || plan.stopAtFi || plan.fiNumber !== null || plan.lastsIn !== undefined) return { error: 'This plan holds settings only a newer version of Nya can save.' };
   const income = incomeOf(plan);
   const expenses = expensesOf(plan);
   if (income.length > LIMITS.incomes) return { error: `A plan takes ${LIMITS.incomes} incomes at most.` };
   if (expenses.length > LIMITS.expenses) return { error: `A plan takes ${LIMITS.expenses} one-off expenses at most.` };
-  const { version: _version, items: _items, partnerAge: _partner, stopAtFi: _stop, fiNumber: _fi, planFunding, ...rest } = plan;
+  const { version: _version, items: _items, partnerAge: _partner, stopAtFi: _stop, fiNumber: _fi, lastsIn: _lasts, planFunding, ...rest } = plan;
   return { plan: { version: 1, ...rest, income, expenses, planFunding } };
 }
 
@@ -90,7 +107,7 @@ export function toStored(plan: FirePlanV2, version: 1 | 2): { plan: StoredPlan }
 function readPlanV2(raw: unknown, input: boolean): { plan: FirePlanV2 } | { error: string; field: string } {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { error: 'plan must be an object', field: 'plan' };
   const o = raw as Record<string, unknown>;
-  for (const k of Object.keys(o)) if (!(V2_KEYS as string[]).includes(k)) return { error: `plan has an unknown field "${k.slice(0, 40)}"`, field: 'plan' };
+  for (const k of Object.keys(o)) if (!(V2_KEYS as string[]).includes(k) && !OPTIONAL_KEYS.includes(k)) return { error: `plan has an unknown field "${k.slice(0, 40)}"`, field: 'plan' };
   for (const k of V2_KEYS) if (!(k in o)) return { error: `plan is missing "${k}"`, field: 'plan' };
   if (o.version !== 2) return { error: 'version must be 2', field: 'version' };
   if (typeof o.stopAtFi !== 'boolean') return { error: 'stopAtFi must be true or false', field: 'stopAtFi' };
@@ -116,6 +133,11 @@ function readPlanV2(raw: unknown, input: boolean): { plan: FirePlanV2 } | { erro
   }
   const fi = o.fiNumber;
   if (fi !== null && (typeof fi !== 'number' || !Number.isFinite(fi) || (input && !(fi > 0 && fi <= LIMITS.balance)))) return { error: `fiNumber must be an amount above 0, up to ${LIMITS.balance}`, field: 'fiNumber' };
+  // Stored, any number (a later release may offer another share); to save, a choice.
+  const lastsIn = o.lastsIn;
+  if (Object.hasOwn(o, 'lastsIn') && (typeof lastsIn !== 'number' || !Number.isFinite(lastsIn) || (input && !LASTS_IN_CHOICES.includes(lastsIn)))) {
+    return { error: 'lastsIn must be one of 0.8, 0.9 or 0.95', field: 'lastsIn' };
+  }
   if (!Array.isArray(o.items) || (input && o.items.length > ITEM_LIMITS.items)) return { error: `items must be a list of at most ${ITEM_LIMITS.items}`, field: 'items' };
   const items: PlanItem[] = [];
   for (const [i, x] of o.items.entries()) {
@@ -129,7 +151,17 @@ function readPlanV2(raw: unknown, input: boolean): { plan: FirePlanV2 } | { erro
     }
   }
   const { version: _version, income: _income, expenses: _expenses, ...rest } = shared.plan;
-  const plan: FirePlanV2 = { ...DEFAULT_PLAN_V2, ...rest, targetAge, version: 2, items, partnerAge: partnerAge as number | null, stopAtFi: o.stopAtFi, fiNumber: fi as number | null };
+  const plan: FirePlanV2 = {
+    ...DEFAULT_PLAN_V2,
+    ...rest,
+    targetAge,
+    version: 2,
+    items,
+    partnerAge: partnerAge as number | null,
+    stopAtFi: o.stopAtFi,
+    fiNumber: fi as number | null,
+    ...(Object.hasOwn(o, 'lastsIn') ? { lastsIn: lastsIn as number } : {}),
+  };
   if (input) {
     const broken = itemRules(plan);
     if (broken) return broken;
@@ -201,6 +233,11 @@ export function repairPlanV2(plan: FirePlanV2): { plan: FirePlanV2; fixed: Repai
     } else if (field === 'allocation') {
       fixed.push({ field });
       p = { ...p, stocksPct: DEFAULT_PLAN_V2.stocksPct, bondsPct: DEFAULT_PLAN_V2.bondsPct };
+    } else if (field === 'lastsIn') {
+      // Never set to a default: without it is the answer before D9.
+      fixed.push({ field });
+      const { lastsIn: _lasts, ...without } = p;
+      p = without;
     } else if ((V2_KEYS as string[]).includes(field) && field !== 'version') {
       fixed.push({ field });
       p = { ...p, [field]: DEFAULT_PLAN_V2[field as keyof FirePlanV2] };
