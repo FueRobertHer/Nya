@@ -7,7 +7,7 @@ import { DEFAULT_TAX_CHOICES } from '@/lib/fire/tax-choices';
 import { DEFAULT_TAX_FACTS } from '@/lib/fire/tax-facts';
 import { markRows } from '@/components/DrawdownChart';
 import { wholeMoney } from '@/components/plan-text';
-import { assumptionsWorked, EARLY_ACCESS_WHY, healthPace, STAGE_TAX_NOTE, stagePenalties, stagePercentLine, detailLines, healthSub, honestyNotes, householdLine, householdNotes, lawLabel, onAca, fiLines, stageHelper, stageSentence, stageSources, stageTitle, survivorLine, WITH_EACH_YEARS_TAX, yearBadges, yearRuns, yearHelper, yearSections, yearSub, yearTitle, yearValueLabel, type YearContext } from '@/components/plan-drawdown';
+import { assumptionsWorked, EARLY_ACCESS_WHY, healthPace, STAGE_TAX_NOTE, stagePenalties, stagePercentLine, detailLines, healthSub, honestyNotes, householdLine, householdNotes, lawLabel, medicaidNote, medicaidYears, onAca, fiLines, stageHelper, stageSentence, stageSources, stageTitle, survivorLine, WITH_EACH_YEARS_TAX, yearBadges, yearRuns, yearHelper, yearSections, yearSub, yearTitle, yearValueLabel, type YearContext } from '@/components/plan-drawdown';
 
 // What Year by year says, on real years: the stages, a stage's rows and a year's sheet.
 
@@ -235,7 +235,7 @@ describe('a year’s sheet', () => {
 });
 
 describe('what a detailed plan says it can’t know', () => {
-  const none = { today: null, facts: DEFAULT_TAX_FACTS, choices: DEFAULT_TAX_CHOICES, items: [], partner: false, law: null, unansweredPaid: null, money };
+  const none = { today: null, facts: DEFAULT_TAX_FACTS, choices: DEFAULT_TAX_CHOICES, items: [], partner: false, law: null, unansweredPaid: null, medicaid: null, money };
   const account = (basisFrom: string) => ({ account_id: 'a', basisFrom }) as never;
   const kinds = (args: Partial<Parameters<typeof honestyNotes>[0]>) => honestyNotes({ ...none, ...args }).map((n) => n.kind);
 
@@ -277,6 +277,20 @@ describe('what a detailed plan says it can’t know', () => {
     expect(notes.map((n) => n.kind)).toContain('coverage counted twice');
     expect(notes.map((n) => n.text).join()).toContain('Your spending has $9,600 a year in Health insurance.');
     expect(notes.map((n) => n.text).join()).toContain('Uses 2027 tax law, the newest Nya has.');
+  });
+
+  test('a plan that counts on Medicaid says in how many years, as a caution, and how to plan without it', () => {
+    const year = (age: number, ...status: string[]) => ({ age, care: { people: status.map((s) => ({ status: s })) } }) as never;
+    // Under the line at full price isn't counting on it.
+    expect(medicaidYears([year(50, 'aca'), year(51, 'under-line', 'under-line')])).toBeNull();
+    const some = medicaidYears([year(52, 'medicaid'), year(53, 'aca'), year(54, 'aca', 'medicaid'), year(58, 'medicaid')]);
+    expect(some).toEqual({ count: 3, first: 52, last: 58 });
+    const quiet = { ...DEFAULT_TAX_CHOICES, state: 'NV' as const, health: { ...DEFAULT_TAX_CHOICES.health, beforeMedicare: { kind: 'other' as const, yearly: 5_000 } } };
+    const [note, law] = honestyNotes({ ...none, choices: quiet, medicaid: some, law: { year: 2026, behind: true } });
+    expect(note).toEqual({ key: 'detail:counts on Medicaid', level: 'caution', kind: 'counts on Medicaid', text: 'Year by year counts on Medicaid in 3 years, between ages 52 and 58, with no premium. For a plan that doesn’t lean on it, choose Count full price anyway on Health coverage.' });
+    expect(law.kind).toBe('older tax law');
+    expect(medicaidNote(medicaidYears([year(61, 'medicaid', 'medicaid')])!, 'Your FI number').text).toStartWith('Your FI number counts on Medicaid in 1 year, at age 61, with no premium.');
+    expect(kinds({ choices: quiet })).toEqual([]);
   });
 
   test('Household’s own: Washington’s gains tax, and dependents', () => {
