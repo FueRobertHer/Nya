@@ -8,16 +8,17 @@
 import { seededRandom } from '@/lib/fire/random';
 import { DEFAULT_PLAN, type FirePlan, type PlanExpense, type PlanIncome, type StartChoice } from '@/lib/fire/plan';
 import type { CompiledEvents, EventNote, LifeEvent } from '@/lib/fire/events';
-import { compileItems, type Count, type ItemAges } from '@/lib/fire/compile';
+import { compileItems, IN_WALK, type Count, type ItemAges } from '@/lib/fire/compile';
 import { fixedEdges, type ItemKind, type PlanItem, type When } from '@/lib/fire/items';
 import { planFigures } from '@/lib/fire/plan-figures';
 import { planOf, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { Measured } from '@/lib/fire/plan';
 import { wholeMoney } from '@/components/plan-text';
 
-/** D15's switch off: every figure as the release before E1 had it. */
+/** One-offs and income out of the walk: every figure as the release before
+ *  E1 had it. ON is what the app counts (lib/fire/compile.ts IN_WALK). */
 export const OFF: Count = { planInWalk: false };
-export const ON: Count = { planInWalk: true };
+export const ON: Count = IN_WALK;
 
 const ageWhen = (age: number): When => ({ anchor: { at: 'age', age }, offset: 0 });
 
@@ -98,7 +99,6 @@ export function timelineProps(plan: FirePlanV2, m: Measured = { spending: null, 
     editable: true,
     paused: null as string | null,
     money: (n: number) => wholeMoney(n, 'USD'),
-    planInWalk: count.planInWalk,
     savings: plan.savings ?? m.savings,
     onSave: async () => true as boolean | string,
     alsoFor: () => [],

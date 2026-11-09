@@ -348,52 +348,6 @@ describe('the cache', () => {
   });
 });
 
-describe('how long a change stays new', () => {
-  // Each test's values carry an updatedAt of their own, since newUntil keeps
-  // its answer per stored value.
-  const turn = (on: (typeof flags.AUDIENCES)[number], at: string, containers: string[] = []) =>
-    flagsStore.update('plan-items-in-fi', () => ({ on, containers: containers as never[], updatedAt: at }), 'local development', Date.parse(at));
-
-  test('not on for everyone: a far-off day, so the line shows wherever it is on', async () => {
-    expect(await read.newUntil('plan-items-in-fi')).toBe('9999-12-31');
-    await turn('admin', '2026-11-02T09:00:00.000Z');
-    expect(await read.newUntil('plan-items-in-fi')).toBe('9999-12-31');
-  });
-
-  test('on for everyone: sixty days from the latest change that turned it on, kept per value', async () => {
-    await turn('admin', '2026-10-01T09:00:00.000Z');
-    await turn('everyone', '2026-10-02T09:00:00.000Z');
-    await turn('nobody', '2026-10-03T09:00:00.000Z');
-    await turn('everyone', '2026-11-01T12:00:00.000Z');
-    // A change that keeps it on for everyone doesn't start it again.
-    await turn('everyone', '2026-11-05T12:00:00.000Z', [C1]);
-    flagCache.forget();
-    expect(read.NEW_DAYS).toBe(60);
-    expect(await read.newUntil('plan-items-in-fi')).toBe('2026-12-31');
-    const before = fake.ops;
-    expect(await read.newUntil('plan-items-in-fi')).toBe('2026-12-31');
-    expect(fake.ops).toBe(before);
-  });
-
-  test('that change gone from the record: a past day, so it never reads as new, kept per value', async () => {
-    await store('plan-items-in-fi', { on: 'everyone', containers: [], updatedAt: '2026-11-06T12:00:00.000Z' });
-    expect(await read.newUntil('plan-items-in-fi')).toBe('1970-01-01');
-    const before = fake.ops;
-    expect(await read.newUntil('plan-items-in-fi')).toBe('1970-01-01');
-    expect(fake.ops).toBe(before);
-  });
-
-  test('a record that can’t be read: a past day, not kept, so the next page asks again', async () => {
-    await turn('everyone', '2026-11-07T12:00:00.000Z');
-    flagCache.forget();
-    await read.cachedFlags();
-    fake.failNext('hgetall');
-    expect(await read.newUntil('plan-items-in-fi')).toBe('1970-01-01');
-    expect(errors).toEqual([]);
-    expect(await read.newUntil('plan-items-in-fi')).toBe('2027-01-06');
-  });
-});
-
 describe('the ops routes', () => {
   const ask = (secret?: string) => opsGuard(new Request('https://nya.test/api/ops/export', { method: 'POST', headers: secret ? { authorization: `Bearer ${secret}` } : {} }));
 

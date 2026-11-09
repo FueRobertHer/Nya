@@ -63,9 +63,6 @@ export type SaveProps = {
    *  be read, a repair waits, its currency isn't known), said above the
    *  buttons; null while it isn't, or only for a moment (a save under way). */
   paused?: string | null;
-  /** D15's switch (the flag 'plan-items-in-fi'): one-offs and income count
-   *  in the FI date, which the income and one-off forms say. */
-  planInWalk?: boolean;
 };
 
 /** Said beside an input a copy can't change. */

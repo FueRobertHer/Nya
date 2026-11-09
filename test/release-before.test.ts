@@ -171,8 +171,9 @@ describe('the release before’s own code', () => {
       'release-before/format.ts': 'daea65c675d1ee4992464bf1257c167d46a6b553',
       'release-before/local-date.ts': '23883717b80397910e368084e865ca84f367f988',
       // The Plan's arithmetic from before D15, as at 5d366bd0, where E1
-      // began: what D15's switch off is held to (test/plan-figures-items.test.ts
-      // and the rest), until the switch goes. fire/inputs.ts is a type stub.
+      // began: what the walk without one-offs and income (test/plan-gen.ts
+      // OFF) is held to (test/plan-figures-items.test.ts and the rest).
+      // fire/inputs.ts is a type stub.
       'before-d15/fire/plan.ts': '77d77ae84e01d143a866b7a8831bc0304c9bf220',
       'before-d15/fire/fi.ts': 'a6f3314cb7c0802bab61939eb958bac16f2e5d5a',
       'before-d15/fire/rules.ts': 'd2e78edb52306fa818dfad28dd82478779629800',

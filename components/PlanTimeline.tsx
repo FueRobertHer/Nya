@@ -84,7 +84,6 @@ export function TimelineCard({
   editable,
   paused,
   money,
-  planInWalk,
   savings,
   onSave,
   alsoFor,
@@ -121,8 +120,6 @@ export function TimelineCard({
   /** Why they can't for more than a moment, said in the sheet. */
   paused: string | null;
   money: Money;
-  /** D15's switch. */
-  planInWalk: boolean;
   /** Savings a year as the plan has them, for a change in pay. */
   savings: number | null;
   onSave: (next: FirePlanV2, also: readonly string[], before: FirePlanV2) => Promise<boolean | string>;
@@ -492,7 +489,7 @@ export function TimelineCard({
     )
   ) : (
     <>
-      {whereItCountsText(startAge, planInWalk).map((line) => (
+      {whereItCountsText(startAge).map((line) => (
         <p key={line} className="helper">
           {line}
         </p>
@@ -714,7 +711,6 @@ export function TimelineCard({
               plan={plan}
               money={money}
               stop={stop}
-              planInWalk={planInWalk}
               saving={saving}
               where={copyName ? 'Saved to this copy, not your plan.' : `Saved to ${whose}.`}
               onStarts={() => setLevel({ at: 'starts' })}

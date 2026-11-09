@@ -164,25 +164,22 @@ describe('what counts, by the saved plan’s rules', () => {
 describe('a child’s accounts (D7)', () => {
   const { flagsStore } = flagParts;
   const AT = '2026-10-01T00:00:00.000Z';
-  const turnOn = async () => {
-    await flagsStore.update('plan-child-accounts', () => ({ on: 'everyone', containers: [], updatedAt: AT }), 'local development', Date.parse(AT));
-    flagParts.flagCache.forget();
-  };
   const facts = (countAnyway: string[]) =>
     planFactsStore.set(ctx, { version: 2, main: 'main', ...factsOf(DEFAULT_PLAN_V2), tax: { ...DEFAULT_TAX_FACTS, countAnyway } });
   const college = { ...acct('college'), subtype: '529' };
 
-  test('off: counted as ever, by every path', async () => {
+  test('out with no switch: the retired one, stored off from before, changes nothing', async () => {
+    await flagsStore.update('plan-child-accounts' as never, () => ({ on: 'nobody', containers: [], updatedAt: AT }) as never, 'local development', Date.parse(AT));
+    flagParts.flagCache.forget();
     await saved('2026-10-01');
     await known('college', '2026-10-01', '529', 'investment', '529');
     await measured('2026-10-01', { brk: 10_000, college: 4_000 });
-    expect((await ask({ accounts: [acct('brk'), college] })).body.anchor).toMatchObject({ total: 14_000, counted: 2 });
+    expect((await ask({ accounts: [acct('brk'), college] })).body.anchor).toMatchObject({ total: 10_000, counted: 1 });
     // And without the question saying so, as a page before T2 asks.
-    expect((await ask({ accounts: [acct('brk'), acct('college')] })).body.anchor).toMatchObject({ total: 14_000, counted: 2 });
+    expect((await ask({ accounts: [acct('brk'), acct('college')] })).body.anchor).toMatchObject({ total: 10_000, counted: 1 });
   });
 
-  test('on: out of every day, by the question’s subtype', async () => {
-    await turnOn();
+  test('out of every day, by the question’s subtype', async () => {
     await saved('2026-10-01');
     await measured('2026-10-01', { brk: 10_000, college: 4_000 });
     await measured('2026-10-02', { brk: 10_100, college: 4_100 });
@@ -192,16 +189,14 @@ describe('a child’s accounts (D7)', () => {
     expect(body.accounts.map((a: any) => a.account_id)).toEqual(['brk']);
   });
 
-  test('on: a page that says no subtype is told by the directory', async () => {
-    await turnOn();
+  test('a page that says no subtype is told by the directory', async () => {
     await saved('2026-10-01');
     await known('college', '2026-10-01', '529', 'investment', '529');
     await measured('2026-10-01', { brk: 10_000, college: 4_000 });
     expect((await ask({ accounts: [acct('brk'), acct('college')] })).body.anchor).toMatchObject({ total: 10_000, counted: 1 });
   });
 
-  test('on: an ended one is out by the directory’s subtype, up to its end too', async () => {
-    await turnOn();
+  test('an ended one is out by the directory’s subtype, up to its end too', async () => {
     await saved('2026-09-30');
     const { markEnded } = await import('@/lib/lifecycle');
     await known('old529', '2026-09-30', '529', 'investment', '529');
@@ -213,8 +208,7 @@ describe('a child’s accounts (D7)', () => {
     expect(body.accounts.find((a: any) => a.account_id === 'old529')).toBeUndefined();
   });
 
-  test('on: one the page can’t show is out by the directory’s subtype', async () => {
-    await turnOn();
+  test('one the page can’t show is out by the directory’s subtype', async () => {
     await saved('2026-10-01');
     await known('unshown529', '2026-10-01', '529', 'investment', '529');
     await known('unshown401k', '2026-10-01', '401(k)', 'investment', '401k');
@@ -224,44 +218,34 @@ describe('a child’s accounts (D7)', () => {
     expect((await ask({ accounts })).body.anchor).toMatchObject({ total: 12_000, counted: 2 });
   });
 
-  test('on: what the page says of one it shows beats the directory, as the browser counts it', async () => {
-    await turnOn();
+  test('what the page says of one it shows beats the directory, as the browser counts it', async () => {
     await saved('2026-10-01');
     // An old id the directory knows as a 529, linked by hand to a brokerage account.
     await known('old', '2026-10-01', '529', 'investment', '529');
     await fake.hset(ctxKey('account-links'), { old: await encrypt(ctx, JSON.stringify({ to: 'live', linked_at: '2026-10-02T00:00:00.000Z', evidence: {} })) });
     await measured('2026-10-01', { brk: 10_000, live: 5_000 });
-    expect(leftOutOf(true, [])?.({ account_id: 'live', subtype: 'brokerage' })).toBe(false);
+    expect(leftOutOf([])({ account_id: 'live', subtype: 'brokerage' })).toBe(false);
     expect((await ask({ accounts: [acct('brk'), listedAs('live')] })).body.anchor).toMatchObject({ total: 15_000, counted: 2 });
   });
 
-  test('on: counted under an id since replaced, it reads as out here as in the browser, until counted again', async () => {
-    await turnOn();
+  test('counted under an id since replaced, it reads as out here as in the browser, until counted again', async () => {
     await saved('2026-10-01');
     await facts(['old529']);
     await fake.hset(ctxKey('account-links'), { old529: await encrypt(ctx, JSON.stringify({ to: 'new529', linked_at: '2026-10-02T00:00:00.000Z', evidence: {} })) });
     await measured('2026-10-01', { brk: 10_000, old529: 4_000 });
     const listed = [acct('brk'), { ...acct('new529'), subtype: '529' }];
     expect((await ask({ accounts: listed })).body.anchor).toMatchObject({ total: 10_000, counted: 1 });
-    expect(leftOutOf(true, ['old529'])?.({ account_id: 'new529', subtype: '529' })).toBe(true);
+    expect(leftOutOf(['old529'])({ account_id: 'new529', subtype: '529' })).toBe(true);
     await facts(['old529', 'new529']);
     expect((await ask({ accounts: listed })).body.anchor).toMatchObject({ total: 14_000, counted: 2 });
-    expect(leftOutOf(true, ['old529', 'new529'])?.({ account_id: 'new529', subtype: '529' })).toBe(false);
+    expect(leftOutOf(['old529', 'new529'])({ account_id: 'new529', subtype: '529' })).toBe(false);
   });
 
-  test('on: one counted anyway stays, on every path', async () => {
-    await turnOn();
+  test('one counted anyway stays, on every path', async () => {
     await saved('2026-10-01');
     await facts(['college']);
     await measured('2026-10-01', { brk: 10_000, college: 4_000 });
     expect((await ask({ accounts: [acct('brk'), college] })).body.anchor).toMatchObject({ total: 14_000, counted: 2 });
-  });
-
-  test('off: the facts aren’t read, so damaged ones cost nothing', async () => {
-    await saved('2026-10-01');
-    await fake.set(ctxKey('plan-facts'), 'not-a-ciphertext');
-    await measured('2026-10-01', { brk: 10_000 });
-    expect((await ask({ accounts: [acct('brk')] })).status).toBe(200);
   });
 
   test('the page’s list says the subtype of an account for a child, null for any other it shows (a manual one’s is free text), and nothing of one it can’t', async () => {
