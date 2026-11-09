@@ -23,7 +23,7 @@ describe('the same arithmetic as the release before', () => {
     }
   });
 
-  test('a version 1 plan’s income and one-offs, with the switch off, are enginePlan’s parts, in its order', () => {
+  test('a version 1 plan’s income and one-offs, out of the walk, are enginePlan’s parts, in its order', () => {
     for (let seed = 1; seed <= 300; seed++) {
       const g = rand(seed);
       const p = genPlan(g, true);
@@ -42,7 +42,7 @@ describe('the same arithmetic as the release before', () => {
     }
   });
 
-  test('life events still move the walk with the switch off', () => {
+  test('life events still move the walk with one-offs and income out of it', () => {
     const items = [itemFromEvent({ id: 'w', kind: 'windfall', label: 'Gift', atAge: 45, amount: 100_000 })];
     const c = compileItems(items, fixedAges(items), { age: 40, startAge: 55, stop: 55, years: 40, taxRate: 0 }, off);
     expect(c.walk.moneyIn).toEqual([{ year: 5, amount: 100_000 }]);

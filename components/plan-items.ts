@@ -190,11 +190,9 @@ export function countsInFiDate(f: PlanFigures, i: number): boolean {
   return fi.kind === 'age' ? start <= fi.age : fi.kind !== 'now';
 }
 
-/** A kind's help, by D15's switch: with it off, a cost and income don't count
- *  in the FI date. */
-export function templateHelp(id: string, planInWalk: boolean): string | undefined {
-  const help = TEMPLATE_HELP[id];
-  return planInWalk ? help : help?.replace(', and in your FI date before then.', '.');
+/** A kind's help. */
+export function templateHelp(id: string): string | undefined {
+  return TEMPLATE_HELP[id];
 }
 
 /** Whether any of an item reaches Will it last?, which starts at startAge: it
@@ -387,14 +385,10 @@ export function unplacedText(x: PlanItem, why: Unplaced | null, plan: Facts): st
   }
 }
 
-/** The lines under the Timeline's heading, one for each place its kinds count (D15's
- *  switch decides whether a cost and income count in your FI date). */
-export function whereItCountsText(startAge: number | null, planInWalk: boolean): readonly [string, string] {
+/** The lines under the Timeline's heading, one for each place its kinds count. */
+export function whereItCountsText(startAge: number | null): readonly [string, string] {
   const from = startAge === null ? 'where it starts' : `${startAge}, where it starts`;
-  const fiDate = planInWalk
-    ? 'Your FI date counts costs, windfalls, changes in pay, work that starts before you stop and other money in, until you reach it.'
-    : 'Your FI date counts homes, children, cars, changes in spending and pay, windfalls and work that starts before you stop, until you reach it. Other costs and income don’t count there yet.';
-  return [fiDate, `Will it last? counts costs, windfalls and income, from ${from}.`];
+  return ['Your FI date counts costs, windfalls, changes in pay, work that starts before you stop and other money in, until you reach it.', `Will it last? counts costs, windfalls and income, from ${from}.`];
 }
 
 /** Part-time work's years before Will it last? starts, in words that are

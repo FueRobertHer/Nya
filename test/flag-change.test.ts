@@ -32,7 +32,7 @@ const refused = (key: Parameters<typeof parseFlagChange>[0], raw: unknown) => {
 
 describe('what a request may ask', () => {
   test('a choice of its own kind, for every kind but the list', () => {
-    expect(ok('plan-child-accounts', { op: 'choose', choice: 'admin' })).toEqual({ op: 'choose', choice: 'admin' });
+    expect(ok('lunchflow', { op: 'choose', choice: 'admin' })).toEqual({ op: 'choose', choice: 'admin' });
     expect(ok('csp', { op: 'choose', choice: 'enforce' })).toEqual({ op: 'choose', choice: 'enforce' });
     expect(ok('ops', { op: 'choose', choice: 'on' })).toEqual({ op: 'choose', choice: 'on' });
     expect(refused('ops', { op: 'choose', choice: 'everyone' })).toBe('That isn’t a choice this switch takes.');
@@ -78,9 +78,9 @@ const apply = (key: Parameters<typeof applyFlagChange>[0], current: FlagValue | 
 
 describe('the value a change leaves', () => {
   test('a choice: its value, an audience keeping its accounts; the choice already stored changes nothing', () => {
-    expect(apply('plan-child-accounts', null, { op: 'choose', choice: 'admin' })).toEqual(audience('admin', [], LATER));
-    expect(apply('plan-child-accounts', audience('nobody', [C1]), { op: 'choose', choice: 'everyone' })).toEqual(audience('everyone', [C1], LATER));
-    expect(apply('plan-child-accounts', audience('everyone', [C1]), { op: 'choose', choice: 'everyone' })).toBe('unchanged');
+    expect(apply('lunchflow', null, { op: 'choose', choice: 'admin' })).toEqual(audience('admin', [], LATER));
+    expect(apply('lunchflow', audience('nobody', [C1]), { op: 'choose', choice: 'everyone' })).toEqual(audience('everyone', [C1], LATER));
+    expect(apply('lunchflow', audience('everyone', [C1]), { op: 'choose', choice: 'everyone' })).toBe('unchanged');
     expect(apply('csp', { mode: 'report-only', updatedAt: AT }, { op: 'choose', choice: 'enforce' })).toEqual({ mode: 'enforce', updatedAt: LATER });
     expect(apply('ops', { on: true, updatedAt: AT }, { op: 'choose', choice: 'on' })).toBe('unchanged');
   });
@@ -154,7 +154,7 @@ describe('the rows and the record', () => {
     expect(admin.lunchflow).toMatchObject({ name: 'Lunch Flow', stored: 'admin', accounts: 2, containers: [C1, C2] });
     expect(admin['sign-in']).toMatchObject({ stored: 'list', people: 2, ids: ['user_a'], emails: ['pat@example.com'] });
     expect(admin.restore.stored).toBe('unreadable');
-    expect(admin['plan-child-accounts']).toMatchObject({ stored: null, removeBy: '2027-04-30', offMeans: expect.stringContaining('invested assets') });
+    expect(admin['api-writes']).toMatchObject({ stored: null, removeBy: null, offMeans: expect.stringContaining('reads only') });
     const dev = switchRows(report, 'dev');
     const text = JSON.stringify(dev);
     for (const secret of [C1, C2, 'user_a', 'pat@example.com']) expect(text).not.toContain(secret);
@@ -168,14 +168,14 @@ describe('the rows and the record', () => {
     const rows = Object.fromEntries(switchRows(report, 'admin').map((r) => [r.key, r]));
     expect(rows.lunchflow).toMatchObject({ variableSet: true, variableChoice: 'everyone' });
     expect(rows.csp).toMatchObject({ variableSet: true, variableChoice: 'enforce' });
-    expect(rows['plan-child-accounts']).toMatchObject({ variable: null, variableSet: false, variableChoice: null });
+    expect(rows['brokerage-link']).toMatchObject({ variable: 'PLAID_BROKERAGE_LINK', variableSet: false, variableChoice: null });
   });
 
   test('each change in words, under the flag’s name, with who made it unless it was the admin', () => {
     const admin = C1 as never;
     const line = (key: string, from: FlagValue | null, to: FlagValue, by: string) => describeChange({ at: AT, key, from, to, by }, admin);
-    expect(line('plan-child-accounts', audience('nobody'), audience('admin'), C1)).toEqual({ at: AT, key: 'plan-child-accounts', name: 'Child’s accounts out of invested assets', change: 'Off to You', by: null });
-    expect(line('plan-child-accounts', null, audience('everyone'), 'local development')).toMatchObject({ change: 'Set to Everyone', by: 'Local development' });
+    expect(line('brokerage-link', audience('nobody'), audience('admin'), C1)).toEqual({ at: AT, key: 'brokerage-link', name: 'Brokerage and retirement accounts', change: 'Off to You', by: null });
+    expect(line('brokerage-link', null, audience('everyone'), 'local development')).toMatchObject({ change: 'Set to Everyone', by: 'Local development' });
     expect(line('lunchflow', audience('nobody'), audience('nobody', [C2]), C1)).toMatchObject({ name: 'Lunch Flow', change: 'Added Account 6e2d8f3b' });
     expect(line('lunchflow', audience('nobody', [C2, C1]), audience('nobody', [C1]), 'account deletion')).toMatchObject({ change: 'Removed Account 6e2d8f3b', by: 'Account deletion' });
     expect(line('lunchflow', audience('nobody'), audience('nobody', [C1]), C2)).toMatchObject({ change: 'Added You', by: 'Account 6e2d8f3b' });

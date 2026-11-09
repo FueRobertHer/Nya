@@ -296,7 +296,6 @@ export function ItemFields({
   plan,
   money,
   stop,
-  planInWalk,
   saving,
   where,
   onStarts,
@@ -311,8 +310,6 @@ export function ItemFields({
   money: Money;
   /** The stop as resolved (an age, or under stop when I reach FI the FI age). */
   stop: number | null;
-  /** D15's switch. */
-  planInWalk: boolean;
   saving: boolean;
   /** Where Save puts it, after the helper. */
   where: string;
@@ -348,7 +345,7 @@ export function ItemFields({
   return (
     <>
       <p className="helper">
-        {templateHelp(d.template, planInWalk) ?? templateHelp(k, planInWalk)} Your own figures: Nya suggests none. {where}
+        {templateHelp(d.template) ?? templateHelp(k)} Your own figures: Nya suggests none. {where}
       </p>
       <div className="sheet-form">
         <label className="field">

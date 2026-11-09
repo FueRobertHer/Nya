@@ -141,7 +141,7 @@ async function mount(props: Partial<PlanTabProps> = {}) {
   const container = dom.document.createElement('div');
   dom.document.body.appendChild(container);
   const root = createRoot(container as unknown as Element);
-  const all = { txns: [], txnsLoading: false, txnNotes: [], institutions: INSTITUTIONS, balancesAsOf: '2026-10-31T13:41:00.000Z', currency: 'USD', holdings: HOLDINGS, planInputs: store, childOut: true, ...props } as PlanTabProps;
+  const all = { txns: [], txnsLoading: false, txnNotes: [], institutions: INSTITUTIONS, balancesAsOf: '2026-10-31T13:41:00.000Z', currency: 'USD', holdings: HOLDINGS, planInputs: store, ...props } as PlanTabProps;
   await act(async () => root.render(<PlanTab {...all} />));
   await settle();
   const find = (t: (e: FakeElement) => boolean) => container.findAll(t);
@@ -217,15 +217,6 @@ describe('the Invested assets sheet', () => {
     expect(tab.shown()).toContain('Left out: a child’s education');
     expect(tab.shown()).toContain('Leaves out 1 account for a child’s education, $48,000: it isn’t there for your years after work.');
     expect(part(rowIn(tab.dialog()!, 'NY 529 plan')!, 'list-row-sub')!.textContent).toBe('Count it in your plan');
-    await tab.unmount();
-  });
-
-  test('with the switch off: no group left out, and the 529 counts under Education', async () => {
-    serve();
-    const tab = await mount({ childOut: false });
-    await openAssets(tab);
-    expect(tab.shown()).not.toContain('Left out');
-    expect(tab.dialog()!.findAll((e) => has(e, 'bucket-head')).map((h) => h.textContent)).toContain('Education$48,000');
     await tab.unmount();
   });
 
@@ -833,23 +824,12 @@ describe('the rows asked for', () => {
     await tab.unmount();
   });
 
-  test('with a child’s accounts counted as before, workplace plans alone, the sheet’s asking for the rest', async () => {
-    const server = serve();
-    const tab = await mount({ childOut: false });
-    await settle(60);
-    expect(server.asked()).toEqual(['/api/plan-inputs?plan=i1%3Ak', '/api/plan-inputs?sync=1&plan=i1%3Ak']);
-    await openAssets(tab);
-    await settle(60);
-    expect(server.asked().slice(2)).toEqual(['/api/plan-inputs?sync=1&plan=i1%3Abrk&plan=i1%3Ar&plan=i1%3Ah&plan=i1%3Ao&plan=i2%3Ac']);
-    await tab.unmount();
-  });
-
   test('Home asks for none but those', async () => {
     const server = serve();
     const container = dom.document.createElement('ul');
     dom.document.body.appendChild(container);
     const root = createRoot(container as unknown as Element);
-    await act(async () => root.render(<FiProgressCard txns={[]} txnsLoading={false} txnNotes={[]} institutions={INSTITUTIONS} currency="USD" onOpenPlan={() => {}} planInputs={createPlanInputsStore()} childOut />));
+    await act(async () => root.render(<FiProgressCard txns={[]} txnsLoading={false} txnNotes={[]} institutions={INSTITUTIONS} currency="USD" onOpenPlan={() => {}} planInputs={createPlanInputsStore()} />));
     await settle(60);
     expect(server.asked()).toEqual(['/api/plan-inputs?plan=i1%3Ak&plan=i2%3Ac', '/api/plan-inputs?sync=1&plan=i1%3Ak&plan=i2%3Ac']);
     await act(async () => root.unmount());
@@ -862,7 +842,7 @@ describe('the rows asked for', () => {
     dom.document.body.appendChild(container);
     const root = createRoot(container as unknown as Element);
     const tab = await mount({ planInputs: store });
-    await act(async () => root.render(<FiProgressCard txns={[]} txnsLoading={false} txnNotes={[]} institutions={INSTITUTIONS} currency="USD" onOpenPlan={() => {}} planInputs={store} childOut />));
+    await act(async () => root.render(<FiProgressCard txns={[]} txnsLoading={false} txnNotes={[]} institutions={INSTITUTIONS} currency="USD" onOpenPlan={() => {}} planInputs={store} />));
     await settle(60);
     expect(container.textContent).toContain('$485,000');
     await openAssets(tab);

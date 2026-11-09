@@ -26,9 +26,8 @@ describe('which accounts', () => {
     for (const s of ['401k', 'brokerage', 'roth', 'hsa', 'savings', '', null, undefined]) expect([s, isChildAccount(s)]).toEqual([s, false]);
   });
 
-  test('the switch off leaves nothing out; on, one counted anyway stays', () => {
-    expect(leftOutOf(false, [])).toBeNull();
-    const rule = leftOutOf(true, ['kept'])!;
+  test('the rule: a child’s account is out, and one counted anyway stays', () => {
+    const rule = leftOutOf(['kept']);
     expect(rule({ account_id: 'kept', subtype: '529' })).toBe(false);
     expect(rule({ account_id: 'other', subtype: '529' })).toBe(true);
     expect(rule({ account_id: 'other', subtype: '401k' })).toBe(false);
@@ -39,30 +38,30 @@ describe('which accounts', () => {
 describe('invested assets', () => {
   const COLLEGE = acct({ account_id: 'c', name: 'College', subtype: '529', balance: 48_000 });
   const BROKER = acct({ account_id: 'b', name: 'Brokerage', subtype: 'brokerage', balance: 100_000 });
-  const OUT = leftOutOf(true, []);
+  const OUT = leftOutOf([]);
 
-  test('off: exactly today, with a 529 in the total and nothing named', () => {
+  test('with no rule given: a 529 in the total and nothing named', () => {
     const today = investedAssets([inst([COLLEGE, BROKER])], false);
     expect(today.total).toBe(148_000);
     expect(today.childAccounts).toBeUndefined();
     expect(investedAssets([inst([COLLEGE, BROKER])], false, null, Date.now(), null, null)).toEqual(today);
   });
 
-  test('on: out of the total, named with its value and institution', () => {
+  test('out of the total, named with its value and institution', () => {
     const r = investedAssets([inst([COLLEGE, BROKER])], false, null, Date.now(), null, OUT);
     expect(r.total).toBe(100_000);
     expect(r.accounts.map((a) => a.account_id)).toEqual(['b']);
     expect(r.childAccounts).toEqual([{ ...COLLEGE, institution: 'Broker', item_id: 'i1', value: 48_000 }]);
   });
 
-  test('on, with none held: no account named, and the total as ever', () => {
+  test('with none held: no account named, and the total as ever', () => {
     const r = investedAssets([inst([BROKER])], false, null, Date.now(), null, OUT);
     expect(r.total).toBe(100_000);
     expect(r.childAccounts).toEqual([]);
   });
 
   test('counted anyway: in the total, and not named', () => {
-    const r = investedAssets([inst([COLLEGE, BROKER])], false, null, Date.now(), null, leftOutOf(true, ['c']));
+    const r = investedAssets([inst([COLLEGE, BROKER])], false, null, Date.now(), null, leftOutOf(['c']));
     expect(r.total).toBe(148_000);
     expect(r.childAccounts).toEqual([]);
   });

@@ -13,8 +13,9 @@ import { figuresOf, genEvents, genMeasured, genPlan, ON, rand } from './plan-gen
 
 // The Plan's arithmetic on version 2 (lib/fire/plan-figures.ts, path.ts),
 // held to the files from before D15 (test/fixtures/before-d15, the release
-// before E1's own) for every version 1 plan and scenario: with D15's switch
-// off nothing moves. Then what the switch moves.
+// before E1's own) for every version 1 plan and scenario: with one-offs and
+// income out of the walk (OFF, test/plan-gen.ts) nothing moves. Then what
+// counting them (ON, what the app counts) moves.
 
 const cases = Array.from({ length: 400 }, (_, i) => {
   const g = rand(7000 + i);
@@ -24,7 +25,7 @@ const cases = Array.from({ length: 400 }, (_, i) => {
   return { p, m, events };
 });
 
-describe('with the switch off, the release before’s figures exactly', () => {
+describe('with one-offs and income out of the walk, the release before’s figures exactly', () => {
   test('the view, the engine plan, the walk and what it starts with', () => {
     let compared = 0;
     for (const { p, m, events } of cases) {
@@ -100,7 +101,7 @@ describe('with the switch off, the release before’s figures exactly', () => {
   });
 });
 
-describe('with the switch on (D15)', () => {
+describe('with them in it, as the app counts (D15)', () => {
   const p: FirePlan = { ...DEFAULT_PLAN, age: 40, targetAge: 50, spending: 40_000, savings: 50_000, assets: 500_000 };
   const m = { spending: null, savings: null, assets: null };
   const fi = (plan: FirePlan, on: boolean) => {
@@ -108,7 +109,7 @@ describe('with the switch on (D15)', () => {
     return f.view.fiAge as number;
   };
 
-  test('a one-off before FI moves the FI date; it moves nothing with the switch off', () => {
+  test('a one-off before FI moves the FI date; it moves nothing out of the walk', () => {
     const roof = { ...p, expenses: [{ id: 'roof', label: 'Roof', amount: 100_000, atAge: 45 }] };
     expect(fi(roof, false)).toBe(fi(p, false));
     expect(fi(roof, true)).toBeGreaterThan(fi(p, true));

@@ -75,7 +75,8 @@ const row = (over: Partial<SwitchRow> & Pick<SwitchRow, 'key' | 'name'>): Switch
 const ROWS: SwitchRow[] = [
   row({ key: 'restore', name: 'Bring back a download', variable: 'RESTORE_ENABLED', variableSet: true, variableChoice: 'everyone' }),
   row({ key: 'lunchflow', name: 'Lunch Flow', stored: 'admin', accounts: 2, containers: [C1, GONE] }),
-  row({ key: 'plan-child-accounts', name: 'Child’s accounts out of invested assets', removeBy: '2027-04-30', stored: 'admin', accounts: 0, containers: [] }),
+  // A release switch, as the registry would have one (it has none today).
+  row({ key: 'new-feature', name: 'A new feature', removeBy: '2027-04-30', stored: 'admin', accounts: 0, containers: [] }),
   row({ key: 'brokerage-link', name: 'Brokerage and retirement accounts', stored: 'unreadable' }),
   row({ key: 'csp', name: 'Content security policy', kind: 'mode', choices: ['off', 'report-only', 'enforce'], defaultChoice: 'report-only', variable: 'CSP_MODE' }),
   row({ key: 'sign-in', name: 'Who may sign in', kind: 'list', choices: [], defaultChoice: null, stored: 'list', people: 2, ids: ['user_a'], emails: ['pat@example.com'], variable: 'CLERK_ALLOWED_USER_IDS' }),
@@ -194,7 +195,7 @@ describe('the rows', () => {
     const page = await mount();
     expect(page.rowText('Bring back a download')).toBe('Bring back a download What restore does. Set by RESTORE_ENABLED Everyone');
     expect(page.rowText('Lunch Flow')).toBe('Lunch Flow What lunchflow does. Also on for 2 accounts by name. You');
-    expect(page.rowText('Child’s accounts out of invested assets')).toBe('Child’s accounts out of invested assets What plan-child-accounts does. Remove by Apr 30, 2027 You');
+    expect(page.rowText('A new feature')).toBe('A new feature What new-feature does. Remove by Apr 30, 2027 You');
     expect(page.rowText('Brokerage')).toBe('Brokerage and retirement accounts What brokerage-link does. Can’t be read Off');
     expect(page.rowText('Content security policy')).toBe('Content security policy What csp does. Report only');
     expect(page.rowText('Who may sign in')).toBe('Who may sign in What sign-in does. You and 2 more');
@@ -259,16 +260,16 @@ describe('a choice', () => {
 
   test('a release switch says when it goes, and Off says the accounts added still have it', async () => {
     const page = await mount();
-    await page.open('Child’s accounts out of invested assets');
-    expect(page.sheetParts()).toContain('Child’s accounts out of invested assets What plan-child-accounts does. Temporary: to be removed by Apr 30, 2027 . Environment');
+    await page.open('A new feature');
+    expect(page.sheetParts()).toContain('A new feature What new-feature does. Temporary: to be removed by Apr 30, 2027 . Environment');
     expect(page.sheetText()).toContain('Temporary: to be removed by Apr 30, 2027.');
     expect(page.details()).toEqual([
       ['Environment', 'Preview'],
       ['Default', 'Off'],
-      ['Key', 'plan-child-accounts'],
+      ['Key', 'new-feature'],
     ]);
     expect(page.legend()).toBe('On for');
-    expect(page.radios()[0]).toBe('Off What turning plan-child-accounts off does. Accounts added below still have it.');
+    expect(page.radios()[0]).toBe('Off What turning new-feature off does. Accounts added below still have it.');
     expect(page.radios()[1]).toBe('You The deployment’s owner.');
     expect(page.sheetText()).toContain('No other accounts.');
     page.unmount();
@@ -276,7 +277,7 @@ describe('a choice', () => {
 
   test('saved by Save alone, quiet until the choice changes, to the admin’s route; the row shows the answer and the page reads again', async () => {
     const page = await mount();
-    await page.open('Child’s accounts out of invested assets');
+    await page.open('A new feature');
     expect(page.buttons().slice(-2)).toEqual(['Cancel', 'Save']);
     expect(page.button('Save')!.disabled).toBe(true); // nothing to save yet
     await page.choose('You and the demo accounts');
@@ -285,32 +286,32 @@ describe('a choice', () => {
     expect(puts).toEqual([]); // choosing sends nothing
     answer = (_url, b) => rowAnswer(b.key, { stored: 'everyone' });
     await page.press('Save');
-    expect(puts).toEqual([{ url: '/api/admin/flags', body: { key: 'plan-child-accounts', change: { op: 'choose', choice: 'everyone' } } }]);
+    expect(puts).toEqual([{ url: '/api/admin/flags', body: { key: 'new-feature', change: { op: 'choose', choice: 'everyone' } } }]);
     expect(refreshes).toBe(1);
-    expect(page.rowText('Child’s accounts out of invested assets')).toBe('Child’s accounts out of invested assets What plan-child-accounts does. Remove by Apr 30, 2027 Everyone');
+    expect(page.rowText('A new feature')).toBe('A new feature What new-feature does. Remove by Apr 30, 2027 Everyone');
     expect(page.button('Save')!.disabled).toBe(true);
     page.unmount();
   });
 
   test('Cancel closes the sheet and sends nothing', async () => {
     const page = await mount();
-    await page.open('Child’s accounts out of invested assets');
+    await page.open('A new feature');
     await page.choose('Everyone');
     expect(page.sheet()!.getAttribute('data-open')).toBe('true');
     await page.press('Cancel');
     expect(page.sheet()!.getAttribute('data-open')).toBe('false'); // sliding out
     expect(puts).toEqual([]);
-    expect(page.rowText('Child’s accounts out of invested assets')).toEndWith('You');
+    expect(page.rowText('A new feature')).toEndWith('You');
     page.unmount();
   });
 
   test('the admin and the demo accounts only where there are demo accounts, or while it is the stored choice', async () => {
     let page = await mount({ demos: false });
-    await page.open('Child’s accounts out of invested assets');
+    await page.open('A new feature');
     expect(page.radioNames()).toEqual(['Off', 'You', 'Everyone']);
     page.unmount();
-    page = await mount({ demos: false, rows: ROWS.map((r) => (r.key === 'plan-child-accounts' ? { ...r, stored: 'admin-and-demo' } : r)) });
-    await page.open('Child’s accounts out of invested assets');
+    page = await mount({ demos: false, rows: ROWS.map((r) => (r.key === 'new-feature' ? { ...r, stored: 'admin-and-demo' } : r)) });
+    await page.open('A new feature');
     expect(page.radioNames()).toEqual(['Off', 'You', 'You and the demo accounts', 'Everyone']);
     page.unmount();
   });
@@ -335,7 +336,7 @@ describe('a choice', () => {
   test('a change refused says why, in a critical notice, and nothing is shown as saved', async () => {
     answer = () => new Response(JSON.stringify({ error: 'The stored value of this switch can’t be read, so it was left as it is.' }), { status: 409 });
     const page = await mount();
-    await page.open('Child’s accounts out of invested assets');
+    await page.open('A new feature');
     await page.choose('Everyone');
     await page.press('Save');
     expect(page.sheetText()).toContain('Critical: The stored value of this switch can’t be read');
@@ -457,12 +458,12 @@ describe('a fresh sign-in', () => {
       return rowAnswer(b.key, { stored: 'everyone' });
     };
     const page = await mount({ freshSignIn: true, environment: 'Production' });
-    await page.open('Child’s accounts out of invested assets');
+    await page.open('A new feature');
     await page.choose('Everyone');
     await page.press('Save');
     expect(prompts).toBe(1);
     expect(puts).toHaveLength(2);
-    expect(page.rowText('Child’s accounts out of invested assets')).toContain('Everyone');
+    expect(page.rowText('A new feature')).toContain('Everyone');
     page.unmount();
   });
 
@@ -470,7 +471,7 @@ describe('a fresh sign-in', () => {
     answer = () => new Response(JSON.stringify({ clerk_error: { type: 'forbidden', reason: 'reverification-error' } }), { status: 403 });
     confirm = 'cancel';
     const page = await mount({ freshSignIn: true });
-    await page.open('Child’s accounts out of invested assets');
+    await page.open('A new feature');
     await page.choose('Everyone');
     await page.press('Save');
     expect(page.sheetText()).not.toContain('Critical');
@@ -527,11 +528,11 @@ describe('a fresh sign-in', () => {
 
   test('none asked for: no field, and no password sent', async () => {
     const page = await mount({ clerk: false });
-    await page.open('Child’s accounts out of invested assets');
+    await page.open('A new feature');
     expect(page.sheetText()).not.toContain('app password');
     await page.choose('Everyone');
     await page.press('Save');
-    expect(puts[0].body).toEqual({ key: 'plan-child-accounts', change: { op: 'choose', choice: 'everyone' } });
+    expect(puts[0].body).toEqual({ key: 'new-feature', change: { op: 'choose', choice: 'everyone' } });
     page.unmount();
   });
 });
@@ -564,12 +565,12 @@ describe('/dev/flags', () => {
 
   test('the page’s rows, read again, replace the ones answered', async () => {
     const page = await mount({ rows: DEV_ROWS, place: 'dev', accounts: [] });
-    await page.open('Child’s accounts out of invested assets');
+    await page.open('A new feature');
     await page.choose('Everyone');
     await page.press('Save');
-    expect(page.rowText('Child’s accounts out of invested assets')).toContain('Everyone');
-    await page.rerender(DEV_ROWS.map((r) => (r.key === 'plan-child-accounts' ? { ...r, stored: 'nobody' } : r)));
-    expect(page.rowText('Child’s accounts out of invested assets')).toBe('Child’s accounts out of invested assets What plan-child-accounts does. Remove by Apr 30, 2027 Off');
+    expect(page.rowText('A new feature')).toContain('Everyone');
+    await page.rerender(DEV_ROWS.map((r) => (r.key === 'new-feature' ? { ...r, stored: 'nobody' } : r)));
+    expect(page.rowText('A new feature')).toBe('A new feature What new-feature does. Remove by Apr 30, 2027 Off');
     page.unmount();
   });
 });

@@ -74,10 +74,10 @@ export function childPlansOf(institutions: AssetInstitution[]) {
 }
 
 /** What the shared copy is asked for, by whoever loads it: one list, since the
- *  copy is for one list at a time (lib/plan-inputs-store.ts). With `childOut`
- *  off, workplace plans alone. */
-export function plansAskedFor(institutions: AssetInstitution[], childOut: boolean) {
-  return [...workplacePlansOf(institutions), ...(childOut ? childPlansOf(institutions) : [])];
+ *  copy is for one list at a time (lib/plan-inputs-store.ts), of the workplace
+ *  plans and a child's accounts (D7). */
+export function plansAskedFor(institutions: AssetInstitution[]) {
+  return [...workplacePlansOf(institutions), ...childPlansOf(institutions)];
 }
 
 /** The investment accounts whose last year the buckets' sheets ask for when they
@@ -170,18 +170,17 @@ export function taxFactsFrom(body: { tax_facts?: unknown } | null | undefined): 
  *  contributions and the tax facts from it. Loads when the screen is shown,
  *  when its plans change and when the copy is invalidated, and at no other
  *  time: a copy that stays stale costs a request a screen, never a loop. A copy
- *  for the same plans is shown while a newer one loads. With `childOut` (D7), a
- *  child's accounts are asked for too; with it off the request is as it was. */
+ *  for the same plans is shown while a newer one loads. A child's accounts
+ *  are asked for too (D7). */
 export function useSharedPlanInputs(
   store: PlanInputsStore,
-  institutions: AssetInstitution[],
-  childOut = false
+  institutions: AssetInstitution[]
 ): { copy: PlanInputsCopy; contributions: PlanContributions[] | null; childContributions: PlanContributions[] | null; childPending: boolean; taxFacts: TaxFacts; factsKnown: boolean; choices: TaxChoices | null } {
   const copy = useSyncExternalStore(store.subscribe, store.get, store.get);
   const plans = useMemo(() => workplacePlansOf(institutions), [institutions]);
-  const children = useMemo(() => (childOut ? childPlansOf(institutions) : []), [institutions, childOut]);
+  const children = useMemo(() => childPlansOf(institutions), [institutions]);
   const asked = useRef<string[]>([]);
-  asked.current = plansAskedFor(institutions, childOut).map(planId);
+  asked.current = plansAskedFor(institutions).map(planId);
   const key = asked.current.join(',');
   useEffect(() => {
     void store.load(asked.current);
@@ -216,9 +215,6 @@ export type PlanInputs = FiInputs & {
   cashUnmarked: boolean;
   /** Workplace plan contributions as measured, null while they load. */
   contributions: PlanContributions[] | null;
-  /** What they add to savings with a child's accounts counted again (D7): the
-   *  figure beside `workplace` for what leaving them out moved. */
-  workplaceCounted: WorkplaceSavings | null;
   flows: TrailingFlows | null;
   assets: InvestedAssets;
   workplace: WorkplaceSavings | null;
@@ -267,8 +263,7 @@ export function usePlanInputs({
    *  loads, or with `leaveOut` null. */
   childContributions?: PlanContributions[] | null;
   /** Accounts for a child's education out of invested assets, and what a bank paid
-   *  into them out of savings (D7, lib/fire/child-accounts.ts); null counts them,
-   *  as before. */
+   *  into them out of savings (D7, lib/fire/child-accounts.ts); null counts them. */
   leaveOut?: LeaveOut | null;
   /** The category or tag already paying for coverage, in the detailed tax model. */
   paid?: TaxFacts['paidToday'];
@@ -315,12 +310,6 @@ export function usePlanInputs({
     () => (contributions ? workplaceSavings(contributions, { transfersOut: toRetirementFunds(child?.left ?? bankOut), funding: planFunding }) : null),
     [contributions, child, bankOut, planFunding]
   );
-  // The same with a child's accounts counted again, whose transfers it may then
-  // match, for what leaving them out moved.
-  const workplaceCounted = useMemo(
-    () => (child && contributions ? workplaceSavings(contributions, { transfersOut: toRetirementFunds(bankOut), funding: planFunding }) : workplace),
-    [child, contributions, bankOut, planFunding, workplace]
-  );
   // Without a home currency, what is left out for its currency is weighed by
   // amount at the ECB's newest rates where they price it (lib/fire/progress.ts
   // CurrencyGap): read only when something is left out, and only to weigh.
@@ -328,5 +317,5 @@ export function usePlanInputs({
   const { load } = useCurrencySettings(weigh);
   const rates = weigh && load.kind === 'ready' ? load.view.ecb.rates : null;
   const paidFor = (asked: NonNullable<TaxFacts['paidToday']>) => (txns ? (trailingFlows(txns, today, { cashAccounts, fx, into, ...(currency ? { currency } : {}), paid: asked })?.paid ?? 0) : 0);
-  return { today, flows, unread, coverage, assets, contributions, workplace, workplaceCounted, child, cashOn, cashUnmarked, rates, paidFor };
+  return { today, flows, unread, coverage, assets, contributions, workplace, child, cashOn, cashUnmarked, rates, paidFor };
 }
