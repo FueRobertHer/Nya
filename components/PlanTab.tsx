@@ -157,7 +157,7 @@ import { TuneForm } from './PlanTune';
 import { TUNE_TITLE } from './plan-tune';
 import { PlanTaxSheet } from './PlanTaxSheet';
 import { choicesDiffParts, copyNameFor, ruleTitle, type NowFigures, type UsedFigures } from './plan-conversions';
-import { ABOUT_DETAIL, WITH_EACH_YEARS_TAX, gridSampleLine, assumptionsLine, assumptionsWorked, HEALTH_NOT_SET, healthSub, honestyNotes, householdLine, hypotheticalDrawdown, namesCoverage, stageHealthLines, stageTitle, STATE_NAMES, taxHypothetical, yearTitle, type YearContext } from './plan-drawdown';
+import { ABOUT_DETAIL, WITH_EACH_YEARS_TAX, gridSampleLine, assumptionsLine, assumptionsWorked, HEALTH_NOT_SET, healthSub, honestyNotes, householdLine, hypotheticalDrawdown, medicaidNote, medicaidYears, namesCoverage, stageHealthLines, stageTitle, STATE_NAMES, taxHypothetical, yearTitle, type YearContext } from './plan-drawdown';
 import { planFigures, resolveSaved, type FiguresRefused, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
 import { compareRows, conversionRun, type CompareRow } from '@/lib/fire/compare-conversions';
 import type { TunedRow } from '@/lib/fire/tune';
@@ -1428,7 +1428,9 @@ export default function PlanTab({
   const fiHeld = detailShown && shownWorking;
   const shownShares = fiHeld ? null : (shown?.shares ?? null);
   const taxWorked = shownShares !== null || fiHeld;
-  const honesty = shown?.detail && !('failed' in shown.detail) ? honestyNotes({ today: detailBuckets, choices: detailChoices, items: shownPlan.items, law: shown.detail.law, unansweredPaid, money }) : [];
+  const honesty = shown?.detail && !('failed' in shown.detail) ? honestyNotes({ today: detailBuckets, choices: detailChoices, items: shownPlan.items, law: shown.detail.law, unansweredPaid, medicaid: medicaidYears(shown.detail.start.years), money }) : [];
+  // The Health row's own: from the run its figure comes from, the FI number's.
+  const rowMedicaid = shownShares ? medicaidYears(shownShares.drawn.years) : null;
   const healthRow: (FigureText & { value: string | null }) | null = !detailShown
     ? null
     : {
@@ -1436,7 +1438,7 @@ export default function PlanTab({
         line: shownShares && detailChoices.health.beforeMedicare !== null ? 'a year, on average' : null,
         why: null,
         value: detailChoices.health.beforeMedicare === null ? null : shownShares ? money(shownShares.h) : '--',
-        notes: honesty.filter((n) => n.kind === 'health not set' || n.kind === 'coverage counted twice').map((n) => (n.kind === 'health not set' ? { ...n, text: HEALTH_NOT_SET } : n)),
+        notes: [...honesty.filter((n) => n.kind === 'health not set' || n.kind === 'coverage counted twice').map((n) => (n.kind === 'health not set' ? { ...n, text: HEALTH_NOT_SET } : n)), ...(rowMedicaid ? [medicaidNote(rowMedicaid)] : [])],
       };
   const figureTexts: typeof shownNow = !detailShown
     ? shownNow

@@ -4,7 +4,8 @@
 // can't know (the tax plan's Honesty): the stages, a stage's years, a year's sheet.
 // Pure strings, so a view test and a sheet read one set of them. A plan's outcome (a
 // year over the ACA limit, a penalty) is a neutral badge, never a warning: nothing is
-// wrong with the data. What holds an amount is drawn through Masked by the view.
+// wrong with the data. One outcome also has a caution: a plan that counts on Medicaid
+// (medicaidNote). What holds an amount is drawn through Masked by the view.
 
 import type { BucketsToday } from '@/lib/fire/buckets-today';
 import type { DrawdownNote, DrawdownStage, DrawdownYear, PersonCare, StageKey } from '@/lib/fire/drawdown';
@@ -580,8 +581,29 @@ type NoteArgs = {
   /** What measured spending holds under a name for health insurance, while nothing
    *  has said whether it is the coverage below. */
   unansweredPaid: { name: string; amount: number } | null;
+  /** The years Year by year counts someone on Medicaid. */
+  medicaid: MedicaidYears | null;
   money: Money;
 };
+
+/** The years a drawdown counts someone on Medicaid, the years "On Medicaid" marks, by
+ *  your age as Year by year titles them. */
+export type MedicaidYears = { count: number; first: number; last: number };
+
+export function medicaidYears(years: readonly Pick<DrawdownYear, 'age' | 'care'>[]): MedicaidYears | null {
+  const on = years.filter((y) => y.care.people.some((p) => p.status === 'medicaid'));
+  return on.length === 0 ? null : { count: on.length, first: on[0].age, last: on[on.length - 1].age };
+}
+
+/** A plan that counts on Medicaid says so, on Drawdown's notice and on the Health
+ *  coverage row: it counts that coverage as free, on a work rule Nya checks only by
+ *  income or your answer. A caution, since only you can say whether to lean on it. */
+export const medicaidNote = (m: MedicaidYears): FigureNote => ({
+  key: 'detail:counts on Medicaid',
+  level: 'caution',
+  kind: 'counts on Medicaid',
+  text: `Counts on Medicaid in ${m.count === 1 ? `1 year, at age ${m.first}` : `${m.count} years, between ages ${m.first} and ${m.last}`}, with no premium. For a plan that doesn’t lean on it, choose Count full price anyway on Health coverage.`,
+});
 
 const counted = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -622,6 +644,7 @@ export function honestyNotes(a: NoteArgs): FigureNote[] {
   if (a.choices.state === null) add('caution', 'no household', 'No state given: counted with no state tax and no Medicaid expansion. Set your state on Household.');
   if (a.choices.health.beforeMedicare === null) add('caution', 'health not set', 'Health coverage isn’t set: no cost before 65, then Medicare Part B only. Measured spending leaves out coverage through work.');
   if (a.unansweredPaid) add('caution', 'coverage counted twice', `Your spending has ${a.money(a.unansweredPaid.amount)} a year in ${a.unansweredPaid.name}. If that’s the coverage below, say so on Health coverage, so it isn’t counted twice.`);
+  if (a.medicaid) notes.push(medicaidNote(a.medicaid));
   if (a.law?.behind) add('caution', 'older tax law', `Uses ${a.law.year} tax law, the newest Nya has.`);
   return notes;
 }
