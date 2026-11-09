@@ -26,12 +26,17 @@ const SETTINGS = SET_FIELDS.filter((f): f is Exclude<SetField, 'targetAge'> => f
 
 /** The fields said above, or the same in every plan: anything else that
  *  differs is "Other settings differ". */
-const SAID = new Set<string>([...SET_FIELDS, 'version', 'items', 'stopAtFi', 'fiNumber', 'stocksPct', 'bondsPct', 'age', 'partnerAge', 'includeCash', 'planFunding', 'method']);
+const SAID = new Set<string>([...SET_FIELDS, 'version', 'items', 'stopAtFi', 'fiNumber', 'lastsIn', 'stocksPct', 'bondsPct', 'age', 'partnerAge', 'includeCash', 'planFunding', 'method']);
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 function valueOf(p: FirePlanV2, field: Exclude<SetField, 'targetAge'>): unknown {
   return field === 'mix' ? { stocksPct: p.stocksPct, bondsPct: p.bondsPct } : p[field];
+}
+
+/** What a plan's FI date is (D9): when the walk reaches the number, or the earliest stop that lasts. */
+function fiDateText(p: FirePlanV2): string {
+  return p.lastsIn === undefined ? 'when it reaches the FI number' : `the earliest stop that lasts in ${Math.round(p.lastsIn * 100)}% of starts`;
 }
 
 function stopText(p: FirePlanV2): string {
@@ -68,6 +73,7 @@ export function copyDiffParts(main: FirePlanV2, copy: FirePlanV2, money: Money, 
     const fi = (v: number | null) => (v === null ? 'worked out from spending' : money(v));
     parts.push(`Your own FI number: ${fi(copy.fiNumber)} (your plan: ${fi(main.fiNumber)})`);
   }
+  if (copy.lastsIn !== main.lastsIn) parts.push(`Your FI date: ${fiDateText(copy)} (your plan: ${fiDateText(main)})`);
   const mainItems = new Map(main.items.map((x) => [x.id, x]));
   const copyIds = new Set(copy.items.map((x) => x.id));
   for (const x of copy.items) {

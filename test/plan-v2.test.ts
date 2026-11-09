@@ -109,3 +109,42 @@ describe('repair', () => {
     expect(basePlanOf(null)).toEqual({ plan: DEFAULT_PLAN_V2, fixed: [] });
   });
 });
+
+describe('D9’s lastsIn, held only while it is set', () => {
+  const V2: FirePlanV2 = { ...DEFAULT_PLAN_V2, age: 40, targetAge: 50, spending: 40_000 };
+
+  test('a plan without it reads, upgrades and is sent back without it', () => {
+    expect(parsePlanV2(V2)).toEqual({ plan: V2 });
+    expect(Object.hasOwn((parsePlanV2(V2) as { plan: FirePlanV2 }).plan, 'lastsIn')).toBe(false);
+    expect(Object.hasOwn(upgradeStoredPlan(V2) as object, 'lastsIn')).toBe(false);
+    expect(Object.hasOwn(DEFAULT_PLAN_V2, 'lastsIn')).toBe(false);
+    expect(Object.hasOwn(basePlanOf(V2).plan, 'lastsIn')).toBe(false);
+  });
+
+  test('to save, one of 80, 90 or 95%; stored, any number, so a later share still reads', () => {
+    for (const lastsIn of [0.8, 0.9, 0.95]) {
+      expect(parsePlanV2({ ...V2, lastsIn })).toEqual({ plan: { ...V2, lastsIn } });
+      expect(basePlanOf({ ...V2, lastsIn })).toEqual({ plan: { ...V2, lastsIn }, fixed: [] });
+    }
+    for (const lastsIn of [0, 1, 0.85, 90, -0.9]) {
+      expect(parsePlanV2({ ...V2, lastsIn })).toEqual({ error: 'lastsIn must be one of 0.8, 0.9 or 0.95', field: 'lastsIn' });
+      expect(isFirePlanV2({ ...V2, lastsIn })).toBe(true);
+    }
+    for (const lastsIn of [null, '0.9', Number.NaN, { share: 0.9 }]) {
+      expect(isFirePlanV2({ ...V2, lastsIn })).toBe(false);
+      expect(isStoredPlan({ ...V2, lastsIn })).toBe(false);
+    }
+  });
+
+  test('a repair drops one its checks refuse, never the whole plan', () => {
+    const r = repairPlanV2({ ...V2, lastsIn: 0.85 });
+    expect(r).toEqual({ plan: V2, fixed: [{ field: 'lastsIn' }] });
+    expect(Object.hasOwn(r.plan, 'lastsIn')).toBe(false);
+  });
+
+  test('version 1 can’t hold it', () => {
+    const v1 = planOf(DEFAULT_PLAN);
+    expect(toStored({ ...v1, lastsIn: 0.9 }, 1)).toEqual({ error: 'This plan holds settings only a newer version of Nya can save.' });
+    expect(toStored({ ...V2, lastsIn: 0.9 }, 2)).toEqual({ plan: { ...V2, lastsIn: 0.9 } });
+  });
+});

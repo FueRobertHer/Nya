@@ -66,7 +66,7 @@ import PlanGrid, { type FailedCell } from './PlanGrid';
 import { AboutForm, AssumptionsForm, FiNumberForm, FigureForm, type AssumptionsAt, type DetailForm, type FigureKind } from './PlanForms';
 import { Why } from './Why';
 import { createPlanRunner, type PlanRunner, type WorkerLike } from './plan-runner';
-import { planSearch } from './plan-search';
+import { planLasting, planSearch } from './plan-search';
 import { createDetailedFigures, detailedInput, measuredYield, pageBuckets, type DetailedAnswer } from './plan-detailed';
 import { DEFAULT_TAX_CHOICES } from '@/lib/fire/tax-choices';
 import {
@@ -92,7 +92,10 @@ import {
   fiHeadline,
   walkWords,
   EVENTS_WORDS,
+  asksLasting,
+  lastingText,
 } from './plan-text';
+import { createLastingFigures, type LastingAnswer, type LastingFound } from './plan-lasting';
 import { Hero } from './Hero';
 import { createWholeListStore, initialListState, type ListState, type ListStatus } from '@/lib/whole-list-store';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
@@ -213,7 +216,7 @@ function useLast<T>(value: T | null): T | null {
  *  a value no longer fits them (and what had to change), the currency its
  *  amounts were typed in when it isn't your plan's now, and its figures
  *  (none then). */
-type PlanView = { row: PlanRow; plan: FirePlanV2; fixed: Repair[]; other: string | null; figures: PlanFigures | FiguresRefused | null; working: boolean; failed: boolean };
+type PlanView = { row: PlanRow; plan: FirePlanV2; fixed: Repair[]; other: string | null; figures: PlanFigures | FiguresRefused | null; working: boolean; failed: boolean; lasting: LastingFound | null };
 
 /** Said for a save with nowhere to record its amounts' currency. */
 /** The answer above the grid, as its own cell. */
@@ -786,24 +789,48 @@ export default function PlanTab({
   const search = planSearch();
   const searchVersion = useSyncExternalStore(search.subscribe, search.version, search.version);
   const detailedRun = useMemo(() => createDetailedFigures(search), [search]);
+  // D9's earliest stop that lasts (components/plan-lasting.ts), in the page's own
+  // store on the simulator's worker, so the tab's runner never waits behind it.
+  const lastingStore = planLasting();
+  const lastingVersion = useSyncExternalStore(lastingStore.subscribe, lastingStore.version, lastingStore.version);
+  const lastingRun = useMemo(() => createLastingFigures(lastingStore), [lastingStore]);
+  /** Try again, after an answer couldn't be worked out: a search's or D9's. */
+  const retryAnswer = () => {
+    search.retry();
+    lastingStore.retry();
+  };
   // The opt-in's after, apart from the page's own figures, which stay flat until Work it out.
   const previewing = optInOpen && offerDetail;
   useEffect(() => {
     if (previewing) planInputs.fill(yearRows);
-    else search.drop('opt-in');
-  }, [previewing, planInputs, yearRows, search]);
+    else {
+      search.drop('opt-in');
+      lastingStore.drop('opt-in');
+    }
+  }, [previewing, planInputs, yearRows, search, lastingStore]);
   const previewBuckets = useMemo(
     () => (previewing && settledNow ? pageBuckets({ assets, holdings, facts: shared.taxFacts, settings: allocation.settings.value ?? null, rows: shared.copy.rows, partner: basePlan.partnerAge !== null }) : null),
     [previewing, settledNow, assets, holdings, shared.taxFacts, allocation.settings.value, shared.copy.rows, basePlan.partnerAge]
   );
   /** Every plan's figures, by one flow (components/plan-detailed.ts), so a preview
    *  agrees with the answer it would save. A flat plan costs what it always did. */
-  const figuresFor = (slot: string, p: FirePlanV2, tax: TaxChoices | null): DetailedAnswer => {
+  const figuresFor = (slot: string, p: FirePlanV2, tax: TaxChoices | null): LastingAnswer => {
     const flat = planFigures(p, measured, { count });
     const input = inputOf(p, tax);
-    if (input) return detailedRun(slot, p, measured, count, input, flat);
+    // A plan with `lastsIn` answers with the earliest stop that lasts, never with a
+    // search's answer, which it would replace.
+    if (asksLasting(p, flat)) {
+      search.drop(slot);
+      if (detailHeld) {
+        lastingStore.drop(slot);
+        return { figures: flat, working: true, failed: false, lasting: null };
+      }
+      const found = lastingRun(slot, p, measured, count, input, flat);
+      if (found) return found;
+    } else lastingStore.drop(slot);
+    if (input) return { ...detailedRun(slot, p, measured, count, input, flat), lasting: null };
     // What it rests on hasn't settled: a detailed plan's answer isn't in yet.
-    return { figures: flat, working: detailHeld && p.age !== null && !('refused' in flat), failed: false };
+    return { figures: flat, working: detailHeld && p.age !== null && !('refused' in flat), failed: false, lasting: null };
   };
   // The Plan's figures by the same function a copy's come from
   // (lib/fire/plan-figures.ts).
@@ -831,13 +858,13 @@ export default function PlanTab({
       const r = basePlanOf(withFacts(row.plan, facts));
       const other = entryHoldsAmounts(row.plan, row.tax) && row.currency !== null && planCurrency !== null && row.currency !== planCurrency ? row.currency : null;
       const answer = other ? null : figuresFor(`copy:${row.id}`, r.plan, row.tax);
-      m.set(row.id, { row, plan: r.plan, fixed: r.fixed, other, figures: answer?.figures ?? null, working: answer?.working ?? false, failed: answer?.failed ?? false });
+      m.set(row.id, { row, plan: r.plan, fixed: r.fixed, other, figures: answer?.figures ?? null, working: answer?.working ?? false, failed: answer?.failed ?? false, lasting: answer?.lasting ?? null });
     }
     return m;
     // measuredKey stands for measured, a new object each render; detailKey for what
-    // a detailed plan's years rest on, and searchVersion for a job's answer.
+    // a detailed plan's years rest on, and searchVersion and lastingVersion for a job's answer.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planLoaded, plansState.list, plansState.main, basePlan, planCurrency, measuredKey, count, detailedOn, detailKey, searchVersion]);
+  }, [planLoaded, plansState.list, plansState.main, basePlan, planCurrency, measuredKey, count, detailedOn, detailKey, searchVersion, lastingVersion]);
   const openView = entry ? (views.get(entry.id) ?? null) : null;
   const other = openView?.other ?? null;
   const copyFixing = !!openView && openView.fixed.length > 0;
@@ -846,9 +873,11 @@ export default function PlanTab({
   // A job is out for the plan shown, or it couldn't be run: dimmed, or said.
   const shownWorking = entry ? (openView?.working ?? false) : baseAnswer.working;
   const shownFailed = entry ? (openView?.failed ?? false) : baseAnswer.failed;
+  /** How D9's answer was found, for the plan shown; null without one. */
+  const shownLasting = entry ? (openView?.lasting ?? null) : baseAnswer.lasting;
   // The stress test waits for a detailed plan's years, so it never runs twice, and
   // doesn't run on a date that couldn't be worked out.
-  const holdSim = detailHeld || (detailedOn && taxInDollars && (shownWorking || shownFailed));
+  const holdSim = detailHeld || (detailedOn && taxInDollars && (shownWorking || shownFailed)) || ((openView?.plan ?? basePlan).lastsIn !== undefined && (shownWorking || shownFailed));
   const problem = openFigures && 'refused' in openFigures ? REFUSED_TEXT : null;
   const baseRefused = !entry && baseFigures === null;
   /** The plan the forms edit: the copy open, or your plan. */
@@ -860,9 +889,12 @@ export default function PlanTab({
   // ages are parsed (each is repaired), so it is never longer than a plan
   // can be.
   // Until a detailed plan's years are in, what follows the stop would be flat, and then move.
+  // An answer that is the earliest stop that lasts (D9) counts what the FI number
+  // leaves out, so the chart doesn't say it.
   const path = useMemo(() => {
     const p = shown ? planPath(shown) : null;
-    return p && detailHeld ? { ...p, after: null } : p;
+    if (p && detailHeld) return { ...p, after: null };
+    return p?.after && shown?.resolution.searched === 'lasts' ? { ...p, after: { ...p.after, leftOut: { items: [], events: false } } } : p;
   }, [shown, detailHeld]);
   const stopShort = path?.short ?? null;
   const stopWalked = path?.fromWalk ?? false;
@@ -1474,22 +1506,30 @@ export default function PlanTab({
   const sheetYear = sheetStage && yearLevel !== null ? (drawn?.start.years[yearLevel] ?? null) : null;
   const sheetRule: CompareRow | null = shownSheet?.kind === 'rule' ? (compare.find((r) => r.key === shownSheet.key) ?? null) : null;
   // A tuned row's own sheet runs the plan with that setting in it: one run, or the
-  // search's on a plan that searches, dropped as the sheet closes.
+  // search's (or, with `lastsIn`, the earliest stop's) on a plan that searches,
+  // dropped from both stores as the sheet closes.
+  const release = useCallback(
+    (slot: string) => {
+      search.drop(slot);
+      lastingStore.drop(slot);
+    },
+    [search, lastingStore]
+  );
   const tuneLevelShown = shownSheet?.kind === 'tune' ? tuneLevel : null;
   const tuneLevelOn = sheet !== null && tuneLevelShown !== null;
   useEffect(() => {
-    if (!tuneLevelOn) search.drop('tune-level');
-  }, [tuneLevelOn, search]);
+    if (!tuneLevelOn) release('tune-level');
+  }, [tuneLevelOn, release]);
   // A rule's sheet from Compare, and the Roth conversions preview, do the same.
   const ruleLevelOn = sheet !== null && sheetRule !== null;
   useEffect(() => {
-    if (!ruleLevelOn) search.drop('rule-level');
-  }, [ruleLevelOn, search]);
+    if (!ruleLevelOn) release('rule-level');
+  }, [ruleLevelOn, release]);
   const conversionsOn = sheet?.kind === 'conversions';
   useEffect(() => {
-    if (!conversionsOn) search.drop('conversions');
-  }, [conversionsOn, search]);
-  const releaseConversions = useCallback(() => search.drop('conversions'), [search]);
+    if (!conversionsOn) release('conversions');
+  }, [conversionsOn, release]);
+  const releaseConversions = useCallback(() => release('conversions'), [release]);
   /** The plan shown with a rule in it, as Use, Save or a copy would have it. */
   const usedWith =
     (slot: string) =>
@@ -1499,7 +1539,7 @@ export default function PlanTab({
       if ('refused' in f) return { drawn: null, stop: null, start: null, working: false, failed: true, retry: null };
       const d = f.detail && !('failed' in f.detail) ? f.detail.start : null;
       // Only a search that couldn't be run is asked again: the rest would come out the same.
-      return { drawn: d, stop: f.view.stopAge, start: 'sim' in f.engine ? f.engine.sim.startBalance : null, working: a.working, failed: a.failed || (d === null && !a.working), retry: a.failed ? search.retry : null };
+      return { drawn: d, stop: f.view.stopAge, start: 'sim' in f.engine ? f.engine.sim.startBalance : null, working: a.working, failed: a.failed || (d === null && !a.working), retry: a.failed ? retryAnswer : null };
     };
   const nowFigures: NowFigures | null = drawn ? { drawn: drawn.start, stop: shown?.view.stopAge ?? null, start: shown && 'sim' in shown.engine ? shown.engine.sim.startBalance : null } : null;
   /** A choice of model moves every plan's stamp, so all of them are read again, however
@@ -1510,7 +1550,12 @@ export default function PlanTab({
     return r;
   };
   // Your plan as the opt-in would work it out, and nothing saved.
-  const optInAfter = previewBuckets && basePlan.age !== null ? detailedRun('opt-in', basePlan, measured, count, detailedInput({ plan: basePlan, tax: yourChoices, facts: shared.taxFacts, today: previewBuckets, paid: paidToday, calendarYear }), baseRun) : null;
+  const optInInput = previewBuckets && basePlan.age !== null ? detailedInput({ plan: basePlan, tax: yourChoices, facts: shared.taxFacts, today: previewBuckets, paid: paidToday, calendarYear }) : null;
+  // A plan with `lastsIn` previews the earliest stop that lasts, as its answer will be.
+  const optInLasting = optInInput && asksLasting(basePlan, baseRun) ? lastingRun('opt-in', basePlan, measured, count, optInInput, baseRun) : null;
+  if (optInLasting) search.drop('opt-in');
+  else lastingStore.drop('opt-in');
+  const optInAfter = optInInput ? (optInLasting ?? detailedRun('opt-in', basePlan, measured, count, optInInput, baseRun)) : null;
 
   // The bar, its heading and its Plans button, the copy's card (with
   // the Timeline that fixes it, when it is refused) and the panel shown:
@@ -1856,7 +1901,7 @@ export default function PlanTab({
       measured={measured}
       count={count}
       figuresFor={(slot, p) => figuresFor(slot, p, entry ? entry.tax : yourChoices)}
-      figuresVersion={`${searchVersion}:${detailKey}`}
+      figuresVersion={`${searchVersion}:${lastingVersion}:${detailKey}`}
       firedFor={({ sim: run, trigger, offset }, signal) => runner().run({ kind: 'fired', method: plan.method, plan: run, trigger, offset }, signal).then((r) => (r.ok && r.kind === 'fired' ? r.fired : null))}
       copyName={copyName}
       version={shownFor ?? storedKey}
@@ -1983,7 +2028,8 @@ export default function PlanTab({
               held={reloading}
               working={shownWorking}
               failed={shownFailed}
-              onRetryDetail={search.retry}
+              onRetryDetail={retryAnswer}
+              lasting={shownLasting}
               plan={plan}
               view={view}
               unread={unread}
@@ -2069,7 +2115,7 @@ export default function PlanTab({
               currency={displayCurrency}
               badge={stressBadge}
               onRetry={retry}
-              onRetryDetail={search.retry}
+              onRetryDetail={retryAnswer}
               startAtStop={(editable || state.saving || plansState.saving) && !other && !copyFixing && formPlan.start !== 'at-stop' && view.stopAge !== null ? () => savers.form({ ...formPlan, start: 'at-stop' }) : null}
               startBusy={state.saving || plansState.saving}
             />
@@ -2299,7 +2345,7 @@ export default function PlanTab({
             key={opened}
             {...formProps}
             detail={{ ...detailForm, save: (next, more, also) => heldBy(detailForm.save(next, more, also)) }}
-            job={drawn && shownInput ? { tune: true, plan: shownPlan, measured, count, detailed: shownInput } : null}
+            job={drawn && shownInput ? { tune: true, plan: shownPlan, measured, count, detailed: shownInput, ...(shown?.resolution.searched === 'lasts' ? { resolved: shown.resolution } : {}) } : null}
             offers={{
               aca: !!drawn && drawn.start.aca.on > 0 && shownInput?.health.acaLaw !== 'enhanced',
               irmaa: !!drawn && drawn.start.years.some((y) => y.care.people.some((p) => p.status === 'medicare')),
@@ -2409,6 +2455,7 @@ const REPAIR_NAMES: Record<string, string> = {
   partnerAge: 'your partner’s age',
   stopAtFi: 'stopping when you reach FI',
   fiNumber: 'your own FI number',
+  lastsIn: 'the share your FI date lasts in',
   planFunding: 'how a workplace plan is paid into',
 };
 
@@ -2510,6 +2557,7 @@ export function FiCard({
   working = false,
   failed = false,
   onRetryDetail,
+  lasting = null,
   plan,
   view,
   unread,
@@ -2567,6 +2615,8 @@ export function FiCard({
   /** It couldn't be, so this says so in its place, with Try again. */
   failed?: boolean;
   onRetryDetail?: () => void;
+  /** The answer is the earliest stop that lasts (D9): how it was found. */
+  lasting?: LastingFound | null;
   plan: PlanCore;
   view: FiView;
   /** Institutions whose transactions couldn't all be read. */
@@ -2622,6 +2672,8 @@ export function FiCard({
     // needs, and this says why (nothing when the answer says it all).
     howLine = notWorkedOutText(view, 'below', false) ?? '';
   }
+  // D9: how the earliest stop that lasts was found, in place of the steady path's line.
+  if (lasting) howLine = lastingText(lasting, plan.method, plan.age);
   const notWorkedOut = notWorkedOutText(view, 'below', false);
 
   const fiSpending = retirementSpending ?? spending.value;
@@ -2631,7 +2683,7 @@ export function FiCard({
   // it), it says so; a walk that never gets there says why under the answer.
   // Not worked out, the answer names what it needs, never "--".
   const runsOutAt = !fiShort && path?.short && plan.age !== null ? plan.age + path.short.year : null;
-  const head = fiHeadline(view, { age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi }, { noDate: !!fiShort, runsOutAt, need, saving: (view.savings.value ?? 0) > 0 });
+  const head = fiHeadline(view, { age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi, lasting: lasting !== null }, { noDate: !!fiShort, runsOutAt, need, saving: (view.savings.value ?? 0) > 0 });
   // What qualifies the answer, under it by the hero's rules (design-system.md
   // "Status and honesty"): one in full, two or more on one line that opens to
   // each, every note in its own words. None is critical.

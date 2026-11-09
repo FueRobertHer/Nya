@@ -7,6 +7,11 @@
 // A detailed plan's Home reads the allocation settings for itself (useAllocation loads
 // on mount, which every Home shouldn't pay for), since what Needs attention says of
 // its buckets rests on them. That takes no law: flat plans read nothing.
+//
+// A plan with `lastsIn` (D9) answers with the earliest stop that lasts, found in the
+// simulator's worker (useLastingOnHome, components/plan-lasting.ts), which Home loads
+// only for such a plan; a detailed one's drawdown input comes from here, and no search
+// runs for it, since that answer would be replaced.
 
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { AllocationSettings } from '@/lib/allocation/settings';
@@ -20,9 +25,11 @@ import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { TaxChoices } from '@/lib/fire/tax-choices';
 import type { TaxFacts } from '@/lib/fire/tax-facts';
 import type { PlanInputsCopy, PlanInputsStore } from '@/lib/plan-inputs-store';
+import type { DetailedInput } from '@/lib/fire/plan-detail';
 import type { DetailedAnswer } from './plan-detailed';
 import { attentionNotes } from './plan-drawdown';
-import { planSearch } from './plan-search';
+import type { LastingAnswer } from './plan-lasting';
+import { planLasting, planSearch } from './plan-search';
 
 type Loaded = typeof import('./plan-detailed');
 type SettingsRead = { value: AllocationSettings | null };
@@ -73,8 +80,11 @@ export function useDetailOnHome(
     ids: readonly string[];
     paid: number;
     calendarYear: number;
+    /** The plan answers with the earliest stop that lasts (D9): its input is handed
+     *  back for that, and nothing is searched for. */
+    handOff?: boolean;
   }
-): DetailedAnswer | null {
+): (DetailedAnswer & { input?: DetailedInput }) | null {
   const search = planSearch();
   useSyncExternalStore(search.subscribe, search.version, search.version);
   const [loaded, setLoaded] = useState<Loaded | 'failed' | null>(null);
@@ -105,5 +115,38 @@ export function useDetailOnHome(
   if (!loaded || !run || !settings || !settled) return { figures: args.flat, working: true, failed: false };
   const today = loaded.pageBuckets({ assets: args.assets, holdings: args.holdings, facts: args.facts, settings: settings.value, rows: args.rows, partner: args.plan.partnerAge !== null });
   const input = loaded.detailedInput({ plan: args.plan, tax: args.choices, facts: args.facts, today, paid: args.paid, calendarYear: args.calendarYear });
+  if (args.handOff) {
+    search.drop('home');
+    return { figures: args.flat, working: true, failed: false, input };
+  }
   return run('home', args.plan, args.measured, args.count, input, args.flat);
+}
+
+/** Home's line for a plan with `lastsIn` (D9), as the Plan's answer has it: loads
+ *  components/plan-lasting.ts, and the page's store starts the simulator's worker for
+ *  the job. `input`: a detailed plan's, null in the flat model; `held`, a detailed
+ *  plan's input isn't there yet. Null when not wanted, or with nothing to search with. */
+export function useLastingOnHome(
+  wanted: boolean,
+  args: { plan: FirePlanV2; measured: Measured; count: Count; flat: PlanFigures | FiguresRefused; input: DetailedInput | null; held: boolean }
+): LastingAnswer | null {
+  const store = planLasting();
+  useSyncExternalStore(store.subscribe, store.version, store.version);
+  const [loaded, setLoaded] = useState<typeof import('./plan-lasting') | 'failed' | null>(null);
+  useEffect(() => {
+    if (!wanted || loaded) return;
+    let live = true;
+    import('./plan-lasting').then(
+      (m) => live && setLoaded(m),
+      () => live && setLoaded('failed')
+    );
+    return () => {
+      live = false;
+    };
+  }, [wanted, loaded]);
+  const run = useMemo(() => (loaded && loaded !== 'failed' ? loaded.createLastingFigures(store) : null), [loaded, store]);
+  if (!wanted) return null;
+  if (loaded === 'failed') return { figures: args.flat, working: false, failed: true, lasting: null };
+  if (!run || args.held) return { figures: args.flat, working: true, failed: false, lasting: null };
+  return run('home', args.plan, args.measured, args.count, args.input, args.flat);
 }

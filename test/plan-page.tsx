@@ -41,6 +41,8 @@ export async function planPage() {
   await mockForFile('@/lib/fire/jobs', () => ({
     ...jobs,
     runPlanJob: (job: import('@/lib/fire/jobs').PlanJob, market: import('@/lib/fire/market').Market) => {
+      // D9's earliest stop that lasts: a detailed plan's on the shorter history too.
+      if (job.kind === 'earliest') return jobs.runPlanJob(job, job.detailed ? shorter : market);
       if (!job.plan.tax) return jobs.runPlanJob(job, market);
       if (job.kind !== 'grid-cell' || realGrid) return jobs.runPlanJob(job, shorter);
       const { tax: _, ...flat } = job.plan;

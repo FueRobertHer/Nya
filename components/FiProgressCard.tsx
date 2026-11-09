@@ -13,10 +13,12 @@
 // assets, workplace plan contributions) and works the figures out with the
 // same functions (lib/fire/plan-figures.ts planFigures, with the plan's items
 // counted as the Plan counts them, and lib/fire/path.ts planPath for
-// where it runs out), so Home and the Plan always agree. Never a simulation:
-// the engine's code stays out of Home's
-// bundle (components/FiProgressLoader.tsx loads this after Home paints), and
-// nothing here runs it.
+// where it runs out), so Home and the Plan always agree. Never a simulation
+// here: the engine's code stays out of Home's bundle
+// (components/FiProgressLoader.tsx loads this after Home paints). A plan with
+// `lastsIn` (D9) answers with the earliest stop that lasts, which only the
+// simulator finds: for such a plan alone, Home loads components/plan-lasting.ts
+// and the page's store starts the simulator's worker (useLastingOnHome).
 //
 // WITH NO PLAN SAVED it shows what the Plan's defaults give (a 4% withdrawal
 // rate, a 5% real return), says so, and links to the Plan tab: the FI number
@@ -49,13 +51,13 @@ import type { Txn } from './MonthBreakdown';
 import { leftOutOf } from '@/lib/fire/child-accounts';
 import { planAccountsOf, planId, usePlanInputs, useSharedPlanInputs, workplacePlansOf, type PlanInputs } from './plan-inputs';
 import { createPlanInputsStore, type PlanInputsCopy, type PlanInputsStore } from '@/lib/plan-inputs-store';
-import { PAYROLL_NOTE, dayName, fiHeadline, pct, progressText, savingsRateText, wholeMoney } from './plan-text';
+import { PAYROLL_NOTE, asksLasting, dayName, fiHeadline, pct, progressText, savingsRateText, wholeMoney } from './plan-text';
 import { projectFrom, type PlanCore } from '@/lib/fire/plan';
 import { basePlanOf, isStoredPlan, type StoredPlan } from '@/lib/fire/plan-v2';
 import { planFigures } from '@/lib/fire/plan-figures';
 import { IN_WALK } from '@/lib/fire/compile';
 import type { BasisHolding } from '@/lib/fire/buckets-today';
-import { detailAttention, useDetailOnHome, useSettingsRead } from './plan-detailed-home';
+import { detailAttention, useDetailOnHome, useLastingOnHome, useSettingsRead } from './plan-detailed-home';
 import type { FigureNote } from './plan-figure-notes';
 import { planPath } from '@/lib/fire/path';
 import { shortText } from './plan-scenario-text';
@@ -152,6 +154,8 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
   // A detailed plan works its answer out as the Plan does; a flat plan's is its flat
   // figures, so Home loads none of it.
   const worked = detailedOn && measured.currency === 'USD' && plan.age !== null;
+  // D9: the earliest stop that lasts, from the simulator's worker.
+  const lasts = asksLasting(plan, flat);
   const settings = useSettingsRead(worked);
   const deep = useDetailOnHome(worked, {
     plan,
@@ -168,8 +172,11 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
     ids: worked ? planAccountsOf(institutions).map(planId) : NO_IDS,
     paid: inputs.flows?.paid ?? 0,
     calendarYear: Number(inputs.today.slice(0, 4)),
+    handOff: lasts,
   });
-  const shown = deep?.figures ?? flat;
+  const lasting = useLastingOnHome(lasts, { plan, measured: measuredInputs(inputs), count, flat, input: worked ? (deep?.input ?? null) : null, held: worked && !deep?.input && !deep?.failed });
+  const deeper = lasting && !(worked && deep?.failed) ? lasting : deep;
+  const shown = deeper?.figures ?? flat;
   // Null while they aren't known, so coming back to Home keeps the rows it had.
   const notes = useMemo(() => {
     if (!shared.factsKnown || !loaded || typeof loaded !== 'object') return null;
@@ -209,8 +216,9 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
       inputs={inputs}
       onOpenPlan={onOpenPlan}
       walk={planned ? { short: planned.short && shortText(planned.short, plan.age, (n) => wholeMoney(n, figures.currency)), runsOutAt: planned.runsOutAt } : { short: null, runsOutAt: null, refused: true }}
-      working={deep?.working ?? false}
-      failed={deep?.failed ?? false}
+      working={deeper?.working ?? false}
+      failed={deeper?.failed ?? false}
+      lasting={!('refused' in shown) && shown.resolution.searched === 'lasts'}
       taxAfterStop={'refused' in shown ? null : (shown.shares?.t ?? null)}
     />
   );
@@ -244,6 +252,7 @@ export function FiProgressView({
   walk = null,
   working = false,
   failed = false,
+  lasting = false,
   taxAfterStop = null,
 }: {
   figures: FiFigures;
@@ -269,6 +278,8 @@ export function FiProgressView({
   working?: boolean;
   /** It couldn't be: the Plan tab can try again. */
   failed?: boolean;
+  /** The answer is the earliest stop that lasts (D9). */
+  lasting?: boolean;
 }) {
   const { view, savingsRate, currency, currencyNote, convertedNote } = figures;
   // Without a home currency, a figure that would rest on a part of what it
@@ -369,7 +380,7 @@ export function FiProgressView({
   const from = walk ? null : projectFrom(plan, view);
   const runsOut = view.yearsToFi === 0 && from !== null && plan.age !== null ? projectionShort(from.assets, from.savings, plan.realReturn, from.years) : null;
   const runsOutAt = walk ? walk.runsOutAt : runsOut && plan.age !== null ? plan.age + runsOut.year : null;
-  const head = fiHeadline(view, { age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi }, { noDate: !!walk?.short, runsOutAt, saving: (view.savings.value ?? 0) > 0 });
+  const head = fiHeadline(view, { age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi, lasting }, { noDate: !!walk?.short, runsOutAt, saving: (view.savings.value ?? 0) > 0 });
   const there = view.progress !== null ? progressText(view.progress) : null;
   const rate = savingsRate !== null ? `${savingsRateText(savingsRate)} savings rate, ${inputs.flows?.scaled ? `since ${dayName(inputs.flows.from)}` : 'last 12 months'}` : null;
   const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
