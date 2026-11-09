@@ -162,14 +162,15 @@ describe('what counts, by the saved plan’s rules', () => {
 });
 
 describe('a child’s accounts (D7)', () => {
-  const { flagsStore } = flagParts;
   const AT = '2026-10-01T00:00:00.000Z';
   const facts = (countAnyway: string[]) =>
     planFactsStore.set(ctx, { version: 2, main: 'main', ...factsOf(DEFAULT_PLAN_V2), tax: { ...DEFAULT_TAX_FACTS, countAnyway } });
   const college = { ...acct('college'), subtype: '529' };
 
   test('out with no switch: the retired one, stored off from before, changes nothing', async () => {
-    await flagsStore.update('plan-child-accounts' as never, () => ({ on: 'nobody', containers: [], updatedAt: AT }) as never, 'local development', Date.parse(AT));
+    // Planted as the release before left it: this release's store refuses a key
+    // it doesn't know, and reads past one.
+    await fake.hset(testKey('flags:values'), { 'plan-child-accounts': JSON.stringify({ on: 'nobody', containers: [], updatedAt: AT }) });
     flagParts.flagCache.forget();
     await saved('2026-10-01');
     await known('college', '2026-10-01', '529', 'investment', '529');

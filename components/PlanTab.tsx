@@ -121,7 +121,6 @@ import {
   type EnginePlan,
   type FirePlan,
   type FiView,
-  type Measured,
   type Missing,
   type PlanCore,
   type Repair,
@@ -799,10 +798,10 @@ export default function PlanTab({
   );
   /** Every plan's figures, by one flow (components/plan-detailed.ts), so a preview
    *  agrees with the answer it would save. A flat plan costs what it always did. */
-  const figuresFor = (slot: string, p: FirePlanV2, tax: TaxChoices | null, m: Measured = measured, c: Count = count): DetailedAnswer => {
-    const flat = planFigures(p, m, { count: c });
+  const figuresFor = (slot: string, p: FirePlanV2, tax: TaxChoices | null): DetailedAnswer => {
+    const flat = planFigures(p, measured, { count });
     const input = inputOf(p, tax);
-    if (input) return detailedRun(slot, p, m, c, input, flat);
+    if (input) return detailedRun(slot, p, measured, count, input, flat);
     // What it rests on hasn't settled: a detailed plan's answer isn't in yet.
     return { figures: flat, working: detailHeld && p.age !== null && !('refused' in flat), failed: false };
   };
