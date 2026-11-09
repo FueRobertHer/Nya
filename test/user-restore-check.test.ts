@@ -53,6 +53,16 @@ describe('closed by the store’s own check', () => {
     expect(unknownField(check, later, {})).toBe('rows[].later_field');
   });
 
+  test('a plan’s lastsIn (D9), held only while set, is a field this release knows', async () => {
+    const plans = declaredStore('fire-plans')!;
+    const { DEFAULT_PLAN_V2 } = await import('@/lib/fire/plan-v2');
+    const entry = (plan: object) => ({ name: 'Your plan', plan, tax: null, currency: null, createdAt: '2026-11-08T00:00:00.000Z', updatedAt: '2026-11-08T00:00:00.000Z' });
+    const check = (v: unknown) => plans.check(v);
+    expect(check(entry({ ...DEFAULT_PLAN_V2, lastsIn: 0.9 }))).not.toBeNull();
+    expect(unknownField(check, entry({ ...DEFAULT_PLAN_V2, lastsIn: 0.9 }), {})).toBeNull();
+    expect(unknownField(check, entry({ ...DEFAULT_PLAN_V2 }), {})).toBeNull();
+  });
+
   test('each kind of row is looked at once, on a book of that one row', () => {
     let calls = 0;
     const check = (v: unknown) => {

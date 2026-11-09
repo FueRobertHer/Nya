@@ -8,14 +8,20 @@
 // queue, so a preview typed through ten drafts runs the first and the last, never all.
 //
 // No React here, so it can be tested on its own.
+//
+// D9's earliest stop that lasts (lib/fire/earliest.ts) has its own one (planLasting),
+// on the simulator's worker, since it runs Will it last? at each stop it tries: one
+// per page too, so Home and the Plan ask once, and nothing the Plan tab's own runner
+// does (Try again, leaving the tab) stops it.
 
+import type { EarliestJob, PlanJob, PlanJobResult } from '@/lib/fire/jobs';
 import type { SearchJob, SearchResult } from '@/lib/fire/search-job';
 import type { TuneJob, TuneResult } from '@/lib/fire/tune-job';
 import { createPlanRunner, type JobFailure, type WorkerLike } from './plan-runner';
 
 const MAX_KEPT = 16;
 
-export type PlanSearch<J extends SearchJob = SearchJob, R extends { ok: boolean } = SearchResult> = {
+export type PlanSearch<J = SearchJob, R extends { ok: boolean } = SearchResult> = {
   /** The job's answer, or null while it is worked out. Safe in a render: a job is
    *  asked for once, whoever and however often asks. */
   answer(slot: string, job: J): R | JobFailure | null;
@@ -32,8 +38,17 @@ export type PlanSearch<J extends SearchJob = SearchJob, R extends { ok: boolean 
  *  a year holds one set of them. */
 export const searchKey = ({ plan, measured, count, detailed }: SearchJob): string => JSON.stringify([plan, measured, count, { ...detailed, law: undefined }]);
 
-export function createPlanSearch<J extends SearchJob = SearchJob, R extends { ok: boolean } = SearchResult>(opts: { startWorker: () => WorkerLike<R> | null; runHere: (job: J) => Promise<R> }): PlanSearch<J, R> {
+/** What makes one earliest stop job another: its method too. */
+export const lastingKey = ({ method, plan, measured, count, detailed }: EarliestJob): string => JSON.stringify([method, plan, measured, count, detailed && { ...detailed, law: undefined }]);
+
+export function createPlanSearch<J = SearchJob, R extends { ok: boolean } = SearchResult>(opts: {
+  startWorker: () => WorkerLike<R> | null;
+  runHere: (job: J) => Promise<R>;
+  /** What makes one job another; searchKey by default. */
+  key?: (job: J) => string;
+}): PlanSearch<J, R> {
   const runner = createPlanRunner<J, R>(opts);
+  const keyOf = opts.key ?? ((job: J) => searchKey(job as SearchJob));
   type Kept = { controller: AbortController; result: R | JobFailure | null };
   const kept = new Map<string, Kept>();
   const slots = new Map<string, string>();
@@ -66,7 +81,7 @@ export function createPlanSearch<J extends SearchJob = SearchJob, R extends { ok
 
   return {
     answer(slot, job) {
-      const key = searchKey(job);
+      const key = keyOf(job);
       const was = slots.get(slot);
       if (was !== key) {
         slots.set(slot, key);
@@ -118,6 +133,21 @@ export function planSearch(): PlanSearch {
   }));
 }
 
+let sharedLasting: PlanSearch<EarliestJob, PlanJobResult> | null = null;
+
+/** The page's one for D9's earliest stop that lasts: a worker of the simulator's
+ *  script (the market history in it), started only by the first plan that asks. */
+export function planLasting(): PlanSearch<EarliestJob, PlanJobResult> {
+  return (sharedLasting ??= createPlanSearch<EarliestJob, PlanJobResult>({
+    startWorker: () => (typeof Worker === 'undefined' ? null : (new Worker(new URL('../lib/fire/plan.worker.ts', import.meta.url)) as unknown as WorkerLike<PlanJobResult>)),
+    runHere: async (job: PlanJob) => {
+      const [{ runPlanJob }, { usMarket }] = await Promise.all([import('@/lib/fire/jobs'), import('@/lib/fire/us-market')]);
+      return runPlanJob(job, usMarket());
+    },
+    key: lastingKey,
+  }));
+}
+
 let sharedTune: PlanSearch<TuneJob, TuneResult> | null = null;
 
 /** The page's one for Tune to a goal: a second thread of the same script, started only
@@ -129,5 +159,6 @@ export function planTune(): PlanSearch<TuneJob, TuneResult> {
       const { runTuneJob } = await import('@/lib/fire/tune-job');
       return runTuneJob(job);
     },
+    key: (job) => JSON.stringify([searchKey(job), job.resolved ?? null]),
   }));
 }
