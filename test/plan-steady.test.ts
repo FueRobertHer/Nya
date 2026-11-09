@@ -21,7 +21,7 @@ const G = 0.05;
 const TARGET = 1_000_000;
 
 const when = (anchor: Anchor, offset = 0) => ({ anchor, offset });
-/** A cost paid once, a home's, which counts in the walk whatever D15's switch. */
+/** A cost paid once, a home's, which counts in the walk with or without a plan's one-offs and income. */
 const cost = (id: string, from: ReturnType<typeof when>, amount: number): PlanItem => ({ ...itemFromExpense({ id, label: id, amount: 0, atAge: 50 }), kind: 'home', from, once: amount, yearly: 0 });
 /** More spent a year, from `from` until `until`. */
 const spend = (id: string, from: ReturnType<typeof when>, yearly: number, until: PlanItem['until'] = null): PlanItem => ({ ...itemFromExpense({ id, label: id, amount: 0, atAge: 50 }), kind: 'spending', from, until, once: null, yearly });

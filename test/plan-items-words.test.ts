@@ -215,10 +215,9 @@ describe('the points', () => {
 });
 
 describe('where it counts', () => {
-  test('by D15’s switch', () => {
-    expect(whereItCountsText(50, true)).toEqual(['Your FI date counts costs, windfalls, changes in pay, work that starts before you stop and other money in, until you reach it.', 'Will it last? counts costs, windfalls and income, from 50, where it starts.']);
-    expect(whereItCountsText(null, false)[0]).toContain('Other costs and income don’t count there yet.');
-    expect(whereItCountsText(null, false)[1]).toBe('Will it last? counts costs, windfalls and income, from where it starts.');
+  test('one line for each place, the FI date counting one-offs and income (D15)', () => {
+    expect(whereItCountsText(50)).toEqual(['Your FI date counts costs, windfalls, changes in pay, work that starts before you stop and other money in, until you reach it.', 'Will it last? counts costs, windfalls and income, from 50, where it starts.']);
+    expect(whereItCountsText(null)[1]).toBe('Will it last? counts costs, windfalls and income, from where it starts.');
   });
 
   test('part-time before Will it last? starts, by what it replaces and the start', () => {
@@ -326,7 +325,7 @@ describe('what is possible', () => {
     expect(preview(mk('p', 'pay', at(48), { yearly: 1_000 })).lines).toContain('It starts after you reach FI, and a change in pay ends when you stop, so it counts in neither your FI date nor Will it last?');
   });
 
-  test('before FI with the switch on, the row and the sheet both say the FI date', () => {
+  test('before FI, as the app counts, the row and the sheet both say the FI date', () => {
     const p = preview(mk('c', 'one-off', at(44), { once: 1_000 }), ON);
     expect(p.warnings).toEqual(['Before 50, where Will it last? starts, so it counts in your FI date, not in Will it last?']);
     expect(preview(mk('c', 'one-off', at(44), { once: 1_000 }), OFF).warnings).toEqual(['Before 50, where Will it last? starts, so it isn’t counted anywhere.']);
@@ -347,12 +346,9 @@ describe('what is possible', () => {
     expect(preview(rent, ON).cautions[0]).toContain('In your FI date after');
   });
 
-  test('a kind’s help says the FI date only with the switch on', () => {
-    for (const id of ['cost', 'social-security', 'pension', 'other-income']) {
-      expect(templateHelp(id, true)).toContain('and in your FI date before then.');
-      expect(templateHelp(id, false)).toEndWith('Counted in Will it last? from where it starts.');
-    }
-    expect(templateHelp('nothing', false)).toBeUndefined();
+  test('a kind’s help says it counts in the FI date before Will it last? starts', () => {
+    for (const id of ['cost', 'social-security', 'pension', 'other-income']) expect(templateHelp(id)).toContain('and in your FI date before then.');
+    expect(templateHelp('nothing')).toBeUndefined();
   });
 
   test('what reaches Will it last?: its start, a repeat, or years that run on past it', () => {

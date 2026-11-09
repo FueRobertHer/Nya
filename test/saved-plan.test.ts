@@ -111,7 +111,7 @@ describe('where the saved plan has you on a day', () => {
 
 describe('a saved plan’s one-offs and income on its line', () => {
   const start = { day: '2024-10-26', total: 100_000 };
-  const walk = (over: Partial<SavedItems['walk']>): SavedItems => ({ from: '2024-10-26', age: 35, walk: { moneyIn: [], costs: [], spans: [], ...over }, counted: [] });
+  const walk = (over: Partial<SavedItems['walk']>): SavedItems => ({ from: '2024-10-26', age: 35, walk: { moneyIn: [], costs: [], spans: [], ...over } });
 
   test('by hand: a cost at the start of its year, grown from then', () => {
     // 164,651.875 four years on (above), less 20,000 taken two years in and
@@ -137,12 +137,11 @@ describe('a saved plan’s one-offs and income on its line', () => {
     expect(plannedAt(flat, start, '2028-10-26', walk({ spans: [{ from: 3, to: null, delta: 5_000 }] }))).toBeCloseTo(140_000 + 5_000, 6);
   });
 
-  test('placed once from the saved copy, with D15’s switch: one-offs and income only with it on', () => {
+  test('placed once from the saved copy, one-offs and income in the walk as the app counts them (D15)', () => {
     const saved = { ...SAVED, plan: { ...PLAN, expenses: [{ id: 'roof', label: 'Roof', amount: 20_000, atAge: 37 }] } };
     expect(resolveSaved(saved, start, 40_000, { planInWalk: false })).toBeNull();
     const on = resolveSaved(saved, start, 40_000, { planInWalk: true });
-    expect(on?.walk.costs).toEqual([{ year: 2, amount: 20_000 }]);
-    expect(on?.counted.map((c) => [c.item.label, c.ages])).toEqual([['Roof', { start: 37, end: null }]]);
+    expect(on).toEqual({ from: SAVED.day, age: 35, walk: expect.objectContaining({ costs: [{ year: 2, amount: 20_000 }] }) });
     expect(resolveSaved(saved, start, 40_000, { planInWalk: true })).toBe(on);
     // No age: nothing placed, a steady line as before.
     expect(resolveSaved({ ...saved, rev: 'r2', plan: { ...saved.plan, age: null } }, start, 40_000, { planInWalk: true })).toBeNull();

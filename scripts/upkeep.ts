@@ -21,7 +21,7 @@
 // and 2 on an argument it doesn't know.
 
 import { writeFileSync } from 'node:fs';
-import { FLAG_KEYS, flagDef } from '@/lib/flags';
+import { FLAG_KEYS, flagDef, type FlagDef } from '@/lib/flags';
 import { lawDue, taxCalculatorDue, type LawDue } from '@/lib/law-card';
 import { LAST_KNOWN_YEAR } from '@/test/fixtures/taxcalc/pin';
 
@@ -33,13 +33,19 @@ export type LawItem = LawDue & { kind: 'law' };
 
 export type UpkeepItem = SwitchItem | LawItem;
 
+/** A switch as the list reads it. */
+export type ListedSwitch = { key: string; def: FlagDef };
+
+/** The registry's switches, in its order. */
+const REGISTRY: readonly ListedSwitch[] = FLAG_KEYS.map((key) => ({ key, def: flagDef(key) }));
+
 /** What is due on `today` (a UTC day, YYYY-MM-DD): first the release flags
  *  whose removal date is before it, the longest overdue first (a flag is due
- *  the day after its date, and ops flags have none), then the tax law tables. */
-export function upkeepItems(today: string): UpkeepItem[] {
+ *  the day after its date, and ops flags have none), then the tax law tables.
+ *  `flags` is the registry's, but for a test. */
+export function upkeepItems(today: string, flags: readonly ListedSwitch[] = REGISTRY): UpkeepItem[] {
   const switches: SwitchItem[] = [];
-  for (const key of FLAG_KEYS) {
-    const def = flagDef(key);
+  for (const { key, def } of flags) {
     if (def.kind === 'release' && def.removeBy < today) switches.push({ kind: 'switch', key, name: def.name, about: def.about, removeBy: def.removeBy });
   }
   switches.sort((a, b) => a.removeBy.localeCompare(b.removeBy) || a.key.localeCompare(b.key));

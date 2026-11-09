@@ -93,7 +93,6 @@ import {
   walkWords,
   EVENTS_WORDS,
 } from './plan-text';
-import { childMovedText, fiMovedText, stillNew } from './plan-moved';
 import { Hero } from './Hero';
 import { createWholeListStore, initialListState, type ListState, type ListStatus } from '@/lib/whole-list-store';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
@@ -122,7 +121,6 @@ import {
   type EnginePlan,
   type FirePlan,
   type FiView,
-  type Measured,
   type Missing,
   type PlanCore,
   type Repair,
@@ -131,7 +129,7 @@ import { basePlanOf, DEFAULT_PLAN_V2, isStoredPlan, NEW_PLAN_START, parsePlanV2,
 import { MAX_FIRE_PLANS, entryHoldsAmounts, factsOf, withFacts, type Facts } from '@/lib/fire/copies';
 import type { TaxChoices } from '@/lib/fire/tax-choices';
 import { withItem, type PlanItem } from '@/lib/fire/items';
-import type { Count, ItemAges, ItemNote } from '@/lib/fire/compile';
+import { IN_WALK, type Count, type ItemAges, type ItemNote } from '@/lib/fire/compile';
 import type { GridCell, SimResult } from '@/lib/fire/simulate';
 import { canRunOut } from '@/lib/fire/rules';
 import type { PlanJob } from '@/lib/fire/jobs';
@@ -345,23 +343,6 @@ export type PlanTabProps = {
   /** The copy of the Plan's inputs the tab shares with Home's FI line
    *  (components/Dashboard.tsx); left out, the tab keeps its own. */
   planInputs?: PlanInputsStore;
-  /** D15's switch (the flag 'plan-items-in-fi'): the plan's one-offs and
-   *  income count in the walk to its FI date. */
-  planInWalk?: boolean;
-  /** The last day D15's change is new (lib/flag-read.ts newUntil), as
-   *  YYYY-MM-DD: until then Your path and Progress say what it moved. */
-  newUntil?: string | null;
-  /** Got it was tapped on that line this session (kept by the dashboard, so
-   *  it stays hidden across tabs), and tapping it. */
-  movedSeen?: boolean;
-  onMovedSeen?: () => void;
-  /** D7's switch (the flag 'plan-child-accounts'): accounts for a child's
-   *  education are out of invested assets unless counted. */
-  childOut?: boolean;
-  /** The last day D7's change is new, and its own Got it, as D15's above. */
-  childNewUntil?: string | null;
-  childMovedSeen?: boolean;
-  onChildMovedSeen?: () => void;
   /** Your tags, for what already pays for coverage (a tag is held by its id). */
   tags?: readonly { id: string; name: string }[];
 };
@@ -390,17 +371,9 @@ export default function PlanTab({
   landing = null,
   onLanded,
   planInputs: sharedInputs,
-  planInWalk = false,
-  newUntil = null,
-  movedSeen = false,
-  onMovedSeen,
-  childOut = false,
-  childNewUntil = null,
-  childMovedSeen = false,
-  onChildMovedSeen,
   tags = NO_TAGS,
 }: PlanTabProps) {
-  const count: Count = useMemo(() => ({ planInWalk }), [planInWalk]);
+  const count: Count = IN_WALK;
   const [state, setState] = useState<ListState<StoredPlan | null>>(initialListState<StoredPlan | null>(null));
   // The plan as the server last confirmed it, and the currency its typed
   // figures are in as the route answered with it (lib/fire/plan-currency.ts):
@@ -437,7 +410,7 @@ export default function PlanTab({
   const inputsRef = useRef(planInputs);
   inputsRef.current = planInputs;
   const plansRef = useRef<string[]>([]);
-  plansRef.current = plansAskedFor(institutions, childOut).map(planId);
+  plansRef.current = plansAskedFor(institutions).map(planId);
   const store = useMemo(
     () =>
       createWholeListStore<StoredPlan | null>({
@@ -572,8 +545,8 @@ export default function PlanTab({
   // cash withdrawals went on (lib/fire/inputs.ts trailingFlows), and names
   // them for the label. The workplace plans' contributions come from the
   // shared copy.
-  const shared = useSharedPlanInputs(planInputs, institutions, childOut);
-  const leaveOut = useMemo(() => leftOutOf(childOut, shared.taxFacts.countAnyway), [childOut, shared.taxFacts.countAnyway]);
+  const shared = useSharedPlanInputs(planInputs, institutions);
+  const leaveOut = useMemo(() => leftOutOf(shared.taxFacts.countAnyway), [shared.taxFacts.countAnyway]);
   // The detailed tax model (lib/fire/plan-detail.ts): said on, and allowed now.
   const detailedOn = shared.factsKnown && shared.taxFacts.model === 'detailed';
   // The opt-in is open: what it would come to is shown before anything is saved.
@@ -825,10 +798,10 @@ export default function PlanTab({
   );
   /** Every plan's figures, by one flow (components/plan-detailed.ts), so a preview
    *  agrees with the answer it would save. A flat plan costs what it always did. */
-  const figuresFor = (slot: string, p: FirePlanV2, tax: TaxChoices | null, m: Measured = measured, c: Count = count): DetailedAnswer => {
-    const flat = planFigures(p, m, { count: c });
+  const figuresFor = (slot: string, p: FirePlanV2, tax: TaxChoices | null): DetailedAnswer => {
+    const flat = planFigures(p, measured, { count });
     const input = inputOf(p, tax);
-    if (input) return detailedRun(slot, p, m, c, input, flat);
+    if (input) return detailedRun(slot, p, measured, count, input, flat);
     // What it rests on hasn't settled: a detailed plan's answer isn't in yet.
     return { figures: flat, working: detailHeld && p.age !== null && !('refused' in flat), failed: false };
   };
@@ -1267,31 +1240,17 @@ export default function PlanTab({
   };
   // The plan saved as your plan and what was recorded since (rollout 8e), for
   // the Progress card and, with the Plan shown, the chart's lines before today.
-  const progress = useProgress(institutions, childOut ? shared.taxFacts.countAnyway.join(',') : '');
+  const progress = useProgress(institutions, shared.taxFacts.countAnyway.join(','));
   const progressSaved = progress.savedState.kind === 'ready' ? progress.savedState.saved : null;
   // Only where both are of one thing: the saved plan's currency and include
   // cash are the path's (the Progress card says when they changed).
   const progressSeries = progress.series;
   const todayUtc = new Date().toISOString().slice(0, 10);
   // The saved plan's items on its own steady path (lib/fire/plan-figures.ts
-  // resolveSaved), for the card's line and the chart's: with the switch as
-  // it is, and off, for the line that says what it moved.
+  // resolveSaved), for the card's line and the chart's.
   const anchor = progressSeries?.kind === 'ready' ? progressSeries.answer.anchor : null;
   const savedStart = anchor && anchor.total !== null ? { day: anchor.date, total: anchor.total } : null;
-  const savedOn = progressSaved && savedStart ? resolveSaved(progressSaved, savedStart, measured.spending, count) : null;
-  const savedItems = { on: savedOn, off: progressSaved && savedStart && planInWalk ? resolveSaved(progressSaved, savedStart, measured.spending, { planInWalk: false }) : savedOn };
-  // D15's line while new (components/plan-moved.ts): what counting the
-  // plan's one-offs and income moved, on the Plan's answer and Progress's
-  // line, until Got it (one for both).
-  const movedNew = planInWalk && !movedSeen && stillNew(newUntil, todayUtc);
-  const offFigures = movedNew && entry === null && baseFigures ? figuresFor('moved', basePlan, yourChoices, measured, { planInWalk: false }).figures : null;
-  const movedText = offFigures && baseFigures && !('refused' in offFigures) ? fiMovedText(offFigures, baseFigures) : null;
-  // D7's the same way, with its own Got it: the plan's figures with a child's
-  // accounts counted again, on the Plan's answer alone, since a saved plan's
-  // Progress line leaves them out at both its ends.
-  const childMovedNew = childOut && !childMovedSeen && entry === null && stillNew(childNewUntil, todayUtc) && (assets.childAccounts?.length ?? 0) > 0;
-  const childOffFigures = childMovedNew && baseFigures ? figuresFor('child-moved', basePlan, yourChoices, measuredInputs({ ...inputs, child: null, workplace: inputs.workplaceCounted, assets: investedAssets(institutions, basePlan.includeCash, balanceFx, Date.now(), ownCurrency) })).figures : null;
-  const childMoved = childOffFigures && baseFigures && !('refused' in childOffFigures) ? childMovedText(childOffFigures, baseFigures) : null;
+  const savedItems = progressSaved && savedStart ? resolveSaved(progressSaved, savedStart, measured.spending, count) : null;
   const overlay = useMemo(
     () =>
       entry === null &&
@@ -1300,9 +1259,9 @@ export default function PlanTab({
       basePlan.age !== null &&
       progressSeries.answer.currency === displayCurrency &&
       progressSaved.plan.includeCash === basePlan.includeCash
-        ? progressOverlay(progressSaved, progressSeries.answer, basePlan.age, todayUtc, savedItems.on)
+        ? progressOverlay(progressSaved, progressSeries.answer, basePlan.age, todayUtc, savedItems)
         : null,
-    [entry, progressSaved, progressSeries, basePlan.age, basePlan.includeCash, displayCurrency, todayUtc, savedItems.on]
+    [entry, progressSaved, progressSeries, basePlan.age, basePlan.includeCash, displayCurrency, todayUtc, savedItems]
   );
   // Why "This is my plan" can't save now: as the Plan's own saves wait.
   const progressBlocked =
@@ -1338,7 +1297,6 @@ export default function PlanTab({
       asOf: balancesAsOf ? fmtAsOf(balancesAsOf) : null,
       reading: yearRows.some((id) => !rows[id] || rows[id].pending),
       partner: plan.partnerAge !== null,
-      childOut,
       tax: shared.taxFacts,
       chosen: overridesOf(allocation.settings.value ?? null).buckets,
       level: figureLevel,
@@ -1371,7 +1329,7 @@ export default function PlanTab({
     const projected = projectMix(mixToday(today, view.assets.value), { savings: view.savings.value ?? 0, split: split.shares, realReturn: plan.realReturn, inflation: detailedOn ? ((entry ? entry.tax : yourChoices)?.inflation ?? DEFAULT_INFLATION) : DEFAULT_INFLATION, walk: shown.walk, years: Math.max(0, startsAt - plan.age) });
     return projected && mixLine(startsAt, mixShares(projected));
   };
-  const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, copy: copyName, paused, planInWalk, childOut };
+  const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, copy: copyName, paused };
 
   // What each figure the plan shown rests on says, worked out once for the
   // rows under the FI card, their sheets' Why? and Drawdown's notice
@@ -1905,7 +1863,6 @@ export default function PlanTab({
       editable={timelineEditable}
       paused={timelinePaused}
       money={money}
-      planInWalk={planInWalk}
       savings={view.savings.value}
       onSave={saveTimeline}
       alsoFor={(id) => itemChoices(alsoTargets, id, money)}
@@ -2004,10 +1961,6 @@ export default function PlanTab({
               walked={shown?.walked ?? false}
               walkedSavings={shown?.walkedSavings ?? null}
               walkFrom={shown?.walkFrom}
-              moved={movedText}
-              onMovedSeen={onMovedSeen}
-              childMoved={childMoved}
-              onChildMovedSeen={onChildMovedSeen}
               fiShort={shown?.short ? shortText(shown.short, plan.age, money) : null}
               stopShort={
                 stopShort && view.stopAge !== null
@@ -2084,9 +2037,6 @@ export default function PlanTab({
             blocked={progressBlocked}
             copyOpen={entry !== null}
             items={savedItems}
-            moved={movedNew}
-            onMovedSeen={onMovedSeen}
-            childOut={childOut}
             flatLine={progressFlatLine}
           />
         )}
@@ -2545,10 +2495,6 @@ export function FiCard({
   walked = false,
   walkedSavings = null,
   walkFrom = { items: false, events: true },
-  moved = null,
-  onMovedSeen,
-  childMoved = null,
-  onChildMovedSeen,
   fiShort = null,
   stopShort = null,
   stopWalked = false,
@@ -2591,13 +2537,6 @@ export function FiCard({
   /** What moved the walk (lib/fire/plan-figures.ts walkFrom), for its words;
    *  left out, the plan's items. */
   walkFrom?: { items: boolean; events: boolean; tax?: boolean };
-  /** D15's line while new (components/plan-moved.ts fiMovedText), under the
-   *  answer's lines with Got it, which hides it for the session. */
-  moved?: string | null;
-  onMovedSeen?: () => void;
-  /** D7's line while new (childMovedText), the same way with its own Got it. */
-  childMoved?: string | null;
-  onChildMovedSeen?: () => void;
   /** Why there is no FI date: a cost the walk can't pay. */
   fiShort?: string | null;
   /** Why there is no balance at the stop age: the walk can't get there. */
@@ -2740,7 +2679,7 @@ export function FiCard({
       figure={<Masked>{head.headline}</Masked>}
       figureClass="plan-answer"
       line={
-        (head.against || howLine || asks || moved || childMoved) && (
+        (head.against || howLine || asks) && (
           <div className="stack tight plan-answer-lines">
             {head.against && (
               <p className="helper">
@@ -2751,27 +2690,6 @@ export function FiCard({
               <p className="helper">
                 <Masked>{howLine}</Masked>
               </p>
-            )}
-            {/* Ages and names only, never an amount. */}
-            {moved && (
-              <Notice level="info">
-                {moved}
-                <div className="btn-row">
-                  <button type="button" className="btn ghost" onClick={onMovedSeen}>
-                    Got it
-                  </button>
-                </div>
-              </Notice>
-            )}
-            {childMoved && (
-              <Notice level="info">
-                {childMoved}
-                <div className="btn-row">
-                  <button type="button" className="btn ghost" onClick={onChildMovedSeen}>
-                    Got it
-                  </button>
-                </div>
-              </Notice>
             )}
             {/* What the answer still needs from you: a line under it that
                 opens the Household sheet, never a full-width button. */}

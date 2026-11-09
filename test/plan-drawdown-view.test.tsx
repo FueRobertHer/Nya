@@ -44,7 +44,7 @@ describe('Progress, on a plan a year’s tax moves', () => {
     answers['GET /api/saved-plan'] = () => Response.json({ saved, problem: null });
     const k = { account_id: 'k', name: '401(k)', type: 'investment', subtype: '401k', balance: 300_000, currency: 'USD' };
     const institutions = [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [k] }];
-    const tab = await detailed(plan, { institutions, planInWalk: true });
+    const tab = await detailed(plan, { institutions });
     await pick(tab.container, 'Your path');
     const progress = tab.container.findAll((e) => e.getAttribute('aria-labelledby') === 'plan-progress-title')[0];
     expect(progress.textContent).toMatch(/Your saved plan’s line takes no tax out before you stop, so from 45 it runs \$[\d,]+ above Your path\./);
@@ -56,7 +56,7 @@ describe('while what a plan’s years rest on is out', () => {
   const home = { id: 'home', label: 'Home', kind: 'one-off', from: { anchor: { at: 'age', age: 45 }, offset: 0 }, until: null, once: 200_000, yearly: null, replaces: null, every: null, times: null, inflationAdjusted: true, owner: null, beforeTax: false };
   const moved = { ...PLAN, items: [home] } as typeof PLAN;
   const k = { account_id: 'k', name: '401(k)', type: 'investment', subtype: '401k', balance: 300_000, currency: 'USD' };
-  const props = { institutions: [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [k] }], planInWalk: true } as never;
+  const props = { institutions: [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [k] }] } as never;
   /** Holds what `path` asks for, outside the page's own count, until it is let go. */
   const holding = async (path: string, run: (letGo: () => void) => Promise<void>) => {
     const real = globalThis.fetch;
@@ -110,12 +110,12 @@ describe('while what a plan’s years rest on is out', () => {
 
   test('with no balances in yet, a plan the drawdown moves waits for them', async () => {
     await (await detailed(moved, props)).unmount();
-    const tab = await render({ ...WITH_BALANCES, planInWalk: true, institutions: [], balancesAsOf: null });
+    const tab = await render({ ...WITH_BALANCES, institutions: [], balancesAsOf: null });
     expect(tab.said()).toContain('Working it out');
     expect(tab.text()).not.toContain('Year by year, at');
     await tab.unmount();
     // Balances that couldn't be had don't hold it for good.
-    const failed = await render({ ...WITH_BALANCES, planInWalk: true, institutions: [], balancesAsOf: null, balancesFailed: true });
+    const failed = await render({ ...WITH_BALANCES, institutions: [], balancesAsOf: null, balancesFailed: true });
     expect(failed.said()).not.toContain('Working it out');
     expect(failed.text()).toContain('Year by year, at');
     await failed.unmount();
@@ -252,7 +252,7 @@ describe('while what a plan’s years rest on is out', () => {
 describe('a rule that takes a share of what is there', () => {
   test('doesn’t say it can’t run out', async () => {
     const k = { account_id: 'k', name: '401(k)', type: 'investment', subtype: '401k', balance: 300_000, currency: 'USD' };
-    const props = { institutions: [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [k] }], planInWalk: true } as never;
+    const props = { institutions: [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [k] }] } as never;
     const tab = await detailed({ ...PLAN, spending: 40_000, rule: 'percent', start: 'at-stop' } as typeof PLAN, props);
     await pick(tab.container, 'Drawdown');
     await page.settle(800);
@@ -288,7 +288,7 @@ describe('a plan whose years can’t be worked out', () => {
     try {
       const home = { id: 'home', label: 'Home', kind: 'one-off', from: { anchor: { at: 'age', age: 45 }, offset: 0 }, until: null, once: 200_000, yearly: null, replaces: null, every: null, times: null, inflationAdjusted: true, owner: null, beforeTax: false };
       const k = { account_id: 'k', name: '401(k)', type: 'investment', subtype: '401k', balance: 300_000, currency: 'USD' };
-      const tab = await detailed({ ...PLAN, stopAtFi: true, items: [home] } as typeof PLAN, { institutions: [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [k] }], planInWalk: true } as never);
+      const tab = await detailed({ ...PLAN, stopAtFi: true, items: [home] } as typeof PLAN, { institutions: [{ name: 'Fidelity', item_id: 'i1', error: false, staleAsOf: null, staleAsOfAt: null, missing: 0, accounts: [k] }] } as never);
       expect(tab.text()).not.toContain('Year by year, at');
       expect(button(tab.container, 'Try again')).not.toBeNull();
       await tab.unmount();

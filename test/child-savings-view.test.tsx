@@ -5,8 +5,8 @@ import { simulateOnPage } from './plan-on-page';
 // What a bank paid into a 529 leaves Annual savings on the screens, as a person
 // sees it (react-dom/client over test/mini-dom.ts): the Plan's row and its Why, and
 // Home's line, which waits for the account's row rather than move a moment later.
-// With the flag off nothing more is asked for and nothing moves. Every request is
-// answered here, by path.
+// No switch is passed: since the flag's cleanup it holds for everyone. Every
+// request is answered here, by path.
 
 const dom = installDom();
 const realFetch = globalThis.fetch;
@@ -25,9 +25,6 @@ const { createPlanInputsStore } = await import('@/lib/plan-inputs-store');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { DEFAULT_TAX_FACTS } = await import('@/lib/fire/tax-facts');
 const { localDate } = await import('@/lib/local-date');
-const { planOf } = await import('@/lib/fire/plan-v2');
-const { planFigures } = await import('@/lib/fire/plan-figures');
-type PlanFigures = import('@/lib/fire/plan-figures').PlanFigures;
 type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
 type Txn = import('@/components/MonthBreakdown').Txn;
 
@@ -84,7 +81,7 @@ const hasClass = (e: FakeElement, cls: string) => (e.getAttribute('class') ?? ''
 
 async function plan(props: Partial<PlanTabProps>, opts: Parameters<typeof serve>[0] = {}) {
   const asked = serve(opts);
-  const all: PlanTabProps = { txns: YEAR, txnsLoading: false, txnNotes: [], institutions, balancesAsOf: null, currency: 'USD', holdings: [], planInWalk: false, newUntil: null, onMovedSeen: () => {}, ...props };
+  const all: PlanTabProps = { txns: YEAR, txnsLoading: false, txnNotes: [], institutions, balancesAsOf: null, currency: 'USD', holdings: [], ...props };
   const container = dom.document.createElement('div');
   dom.document.body.appendChild(container);
   const root = createRoot(container as unknown as Element);
@@ -95,8 +92,8 @@ async function plan(props: Partial<PlanTabProps>, opts: Parameters<typeof serve>
 }
 
 describe('the Plan', () => {
-  test('with the flag on, what the bank sent leaves Annual savings and its rate', async () => {
-    const tab = await plan({ childOut: true });
+  test('what the bank sent leaves Annual savings and its rate', async () => {
+    const tab = await plan({});
     expect(tab.text).toContain('$21,599');
     // $5,000 x 12 earned; $21,599 of it saved.
     expect(tab.text).toContain('36% savings rate');
@@ -105,21 +102,14 @@ describe('the Plan', () => {
   });
 
   test('counted in your plan, it stays in Annual savings', async () => {
-    const tab = await plan({ childOut: true }, { facts: { ...DEFAULT_TAX_FACTS, countAnyway: ['c'] } });
+    const tab = await plan({}, { facts: { ...DEFAULT_TAX_FACTS, countAnyway: ['c'] } });
     expect(tab.text).toContain('$24,599');
-    await tab.unmount();
-  });
-
-  test('with the flag off, nothing moves and nothing more is asked for', async () => {
-    const tab = await plan({ childOut: false });
-    expect(tab.text).toContain('$24,599');
-    expect(tab.asked.every((q) => !q.includes('plan='))).toBe(true);
     await tab.unmount();
   });
 
   test('money that went in with no transfer to match stays out of the sum', async () => {
     const gift = { ...ROW, contributions_12m: 10_000, contributions_12m_rows: [{ date: daysAgo(200), amount: 10_000 }] };
-    const tab = await plan({ childOut: true }, { row: gift });
+    const tab = await plan({}, { row: gift });
     expect(tab.text).toContain('$24,599');
     expect(tab.all()).toContain('$10,000 went into Ascensus College with no transfer Nya could match in your accounts, so nothing is taken off for it.');
     await tab.unmount();
@@ -141,7 +131,7 @@ describe('the Plan', () => {
     const container = dom.document.createElement('div');
     dom.document.body.appendChild(container);
     const root = createRoot(container as unknown as Element);
-    const all: PlanTabProps = { txns: toFunds, txnsLoading: false, txnNotes: [], institutions: both, balancesAsOf: null, currency: 'USD', holdings: [], planInWalk: false, newUntil: null, onMovedSeen: () => {}, childOut: true };
+    const all: PlanTabProps = { txns: toFunds, txnsLoading: false, txnNotes: [], institutions: both, balancesAsOf: null, currency: 'USD', holdings: [] };
     await act(async () => root.render(<PlanTab {...all} />));
     await settle();
     const row = container.findAll((e) => hasClass(e, 'list-row') && e.textContent.includes('Annual savings'))[0];
@@ -151,45 +141,8 @@ describe('the Plan', () => {
     await act(async () => root.unmount());
   });
 
-  test('what leaving it out moved counts the savings too', async () => {
-    const figures = (assets: number, savings: number) => planFigures(planOf(PLAN), { spending: 35_401, savings, assets }, { count: { planInWalk: false } }) as PlanFigures;
-    const before = Math.round(figures(340_000, 24_599).view.fiAge as number);
-    const now = Math.round(figures(300_000, 21_599).view.fiAge as number);
-    // Only the savings, of the two, tells the line's "before" from one that forgot them.
-    expect(Math.round(figures(340_000, 21_599).view.fiAge as number)).not.toBe(before);
-    const tab = await plan({ childOut: true, childNewUntil: '9999-12-31' });
-    expect(tab.all()).toContain(`Your FI date moved from ${before} to ${now}: accounts for a child’s education are now left out.`);
-    await tab.unmount();
-  });
-
-  test('the moved line’s before matches a workplace plan’s rows as it would with the 529 counted', async () => {
-    // $1,500 a month into each of a 401(k) and a 529 with a $1 balance, and one
-    // $1,500 transfer a month: Annual savings is the same either way, so nothing moved.
-    const big = YEAR.map((t) => (t.category === 'transfer out' ? { ...t, amount: 1_500, subcategory: 'investment and retirement funds' } : t));
-    const rows = { contributions_12m: 18_000, contributions_12m_rows: PAID.map((date) => ({ date, amount: 1_500 })) };
-    const K401 = { account_id: 'k', name: '401(k)', type: 'investment', subtype: '401k', balance: 100_000, currency: 'USD' };
-    const both = [{ ...institutions[0], accounts: [BROKER, { ...COLLEGE, balance: 1 }, K401] }] as unknown as PlanTabProps['institutions'];
-    serve();
-    const answered = globalThis.fetch;
-    (globalThis as { fetch: unknown }).fetch = async (url: string, init?: RequestInit) => {
-      const res = await answered(url, init);
-      if (!String(url).startsWith('/api/plan-inputs')) return res;
-      const body = (await res.json()) as { plans: { id: string }[] };
-      return new Response(JSON.stringify({ ...body, plans: body.plans.map((p) => ({ ...ROW, ...rows, id: p.id })) }), { status: 200, headers: { 'content-type': 'application/json' } });
-    };
-    const container = dom.document.createElement('div');
-    dom.document.body.appendChild(container);
-    const root = createRoot(container as unknown as Element);
-    const all: PlanTabProps = { txns: big, txnsLoading: false, txnNotes: [], institutions: both, balancesAsOf: null, currency: 'USD', holdings: [], planInWalk: false, newUntil: null, onMovedSeen: () => {}, childOut: true, childNewUntil: '9999-12-31' };
-    await act(async () => root.render(<PlanTab {...all} />));
-    await settle();
-    expect(container.textContent).toContain('Annual savings');
-    expect(container.textContent).not.toContain('Your FI date moved');
-    await act(async () => root.unmount());
-  });
-
   test('a row that can’t be had says the figure may be high', async () => {
-    const tab = await plan({ childOut: true }, { row: { id: 'i:c', failed: true } });
+    const tab = await plan({}, { row: { id: 'i:c', failed: true } });
     expect(tab.text).toContain('$24,599');
     expect(tab.all()).toContain('What went into Ascensus College couldn’t be measured'.replace('’', "'"));
     await tab.unmount();
@@ -197,8 +150,8 @@ describe('the Plan', () => {
 });
 
 describe('Home', () => {
-  const home = (store: ReturnType<typeof createPlanInputsStore>, childOut: boolean) =>
-    ({ txns: YEAR, txnsLoading: false, txnNotes: [], institutions, currency: 'USD', onOpenPlan: () => {}, planInputs: store, childOut }) as unknown as React.ComponentProps<typeof FiProgressCard>;
+  const home = (store: ReturnType<typeof createPlanInputsStore>) =>
+    ({ txns: YEAR, txnsLoading: false, txnNotes: [], institutions, currency: 'USD', onOpenPlan: () => {}, planInputs: store }) as unknown as React.ComponentProps<typeof FiProgressCard>;
 
   test('waits for the 529’s row, so the line never shows a rate that moves a moment later', async () => {
     const asked = serve();
@@ -219,7 +172,7 @@ describe('Home', () => {
     const container = dom.document.createElement('div');
     dom.document.body.appendChild(container);
     const root = createRoot(container as unknown as Element);
-    await act(async () => root.render(<FiProgressCard {...home(store, true)} />));
+    await act(async () => root.render(<FiProgressCard {...home(store)} />));
     await settle();
     expect(container.textContent).toBe('');
     open();
@@ -228,19 +181,6 @@ describe('Home', () => {
     // And its words say what the rate is now.
     expect(container.textContent).toContain('less what your bank paid into accounts for a child’s education');
     expect(asked.some((q) => q.includes('sync=1') && q.includes('plan=i%3Ac'))).toBe(true);
-    await act(async () => root.unmount());
-  });
-
-  test('with the flag off, says the rate as it was', async () => {
-    serve();
-    const store = createPlanInputsStore();
-    const container = dom.document.createElement('div');
-    dom.document.body.appendChild(container);
-    const root = createRoot(container as unknown as Element);
-    await act(async () => root.render(<FiProgressCard {...home(store, false)} />));
-    await settle();
-    expect(container.textContent).toContain('41% savings rate');
-    expect(container.textContent).not.toContain('a child’s education');
     await act(async () => root.unmount());
   });
 });

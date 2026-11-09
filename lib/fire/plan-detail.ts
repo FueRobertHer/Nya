@@ -154,7 +154,7 @@ export function detailWork(input: DetailedInput): DetailWork {
     const years = endAge - age;
     if (plan.age === null || spendingNow === null || !(balance > 0) || years < 1) return null;
     const at: CompileAt = { age: plan.age, startAge: age, stop: age, years, taxRate: plan.taxRate };
-    // Only the simulation's parts are read here, so the walk's switch is off.
+    // Only the simulation's parts are read here, so nothing goes in the walk.
     const items = compileItems(plan.items, f.resolution.ages, at, { planInWalk: false });
     const lasting = items.lasting.reduce((s, x) => s + x.amount, 0);
     const paid = f.view.spending.source === 'measured' ? input.paidToday : 0;
@@ -274,7 +274,7 @@ export function detailWork(input: DetailedInput): DetailWork {
       const { t, h, rate } = start.drawn;
       const { ages, perRun } = f.resolution;
       const at: CompileAt = { age: plan.age, startAge: first, stop: first, years: end - first, taxRate: t };
-      // Only the simulation's parts are read here, so the walk's switch is off.
+      // Only the simulation's parts are read here, so nothing goes in the walk.
       const fixed = compileItems(plan.items, ages.map((x, i) => (perRun?.edges[i] ? null : x)), at, { planInWalk: false });
       const tax: SimTax = {
         startAge: first,

@@ -320,13 +320,13 @@ describe('the plan’s mix, with a child’s accounts out (D7)', () => {
   });
 
   test('on: the mix is of what the plan counts, and Portfolio’s own view still shows them all', () => {
-    const { mix, alloc: all } = stateWith(leftOutOf(true, []));
+    const { mix, alloc: all } = stateWith(leftOutOf([]));
     expect(mix.whole).toBe(75_000);
     expect(all.total).toBe(100_000);
   });
 
   test('on, with one counted anyway: back in the mix', () => {
-    expect(stateWith(leftOutOf(true, ['college'])).mix.whole).toBe(100_000);
+    expect(stateWith(leftOutOf(['college'])).mix.whole).toBe(100_000);
   });
 });
 
