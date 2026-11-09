@@ -45,7 +45,7 @@ const who = (container: string | null, opts: { demo?: boolean; admin?: boolean }
 });
 
 describe('the registry', () => {
-  test('names the eight moved switches by their variables, and the Plan’s two with none', () => {
+  test('names every switch by the variable it was moved from', () => {
     const named = Object.fromEntries(flags.FLAG_KEYS.map((k) => [k, 'variable' in flags.FLAGS[k] ? (flags.FLAGS[k] as { variable: string }).variable : null]));
     expect(named).toEqual({
       restore: 'RESTORE_ENABLED',
@@ -53,8 +53,6 @@ describe('the registry', () => {
       lunchflow: 'LUNCHFLOW_ENABLED',
       'brokerage-link': 'PLAID_BROKERAGE_LINK',
       'api-writes': 'API_WRITES_ENABLED',
-      'plan-items-in-fi': null,
-      'plan-child-accounts': null,
       csp: 'CSP_MODE',
       ops: 'OPS_ENABLED',
       'sign-in': 'CLERK_ALLOWED_USER_IDS',
@@ -67,15 +65,13 @@ describe('the registry', () => {
       expect([key, def.about.length > 10 && def.offMeans.length > 10]).toEqual([key, true]);
       if (def.kind === 'release') expect([key, /^\d{4}-\d{2}-\d{2}$/.test(def.removeBy) && Number.isFinite(Date.parse(def.removeBy))]).toEqual([key, true]);
     }
-    expect(flags.flagDef('plan-items-in-fi')).toMatchObject({ kind: 'release', removeBy: '2027-04-30', value: 'audience' });
-    expect(flags.flagDef('plan-child-accounts')).toMatchObject({ kind: 'release', removeBy: '2027-04-30', value: 'audience' });
   });
 
   test('every flag has a short plain name of its own, as the admin page titles it', () => {
     const names = flags.FLAG_KEYS.map((k) => flags.flagDef(k).name);
     for (const [i, name] of names.entries()) expect([flags.FLAG_KEYS[i], name.length > 0 && name.length <= 40 && !/[\u2013\u2014]/.test(name)]).toEqual([flags.FLAG_KEYS[i], true]);
     expect(new Set(names).size).toBe(names.length);
-    expect(flags.flagDef('plan-child-accounts').name).toBe('Child’s accounts out of invested assets');
+    expect(flags.flagDef('lunchflow').name).toBe('Lunch Flow');
   });
 
   test('defaults reproduce each variable unset, in every environment', () => {
@@ -190,8 +186,8 @@ describe('reading them', () => {
     ];
     for (const [value, w, on] of cases) {
       fake.reset();
-      await store('plan-child-accounts', value);
-      expect([value, w.container, await read.flagOnFresh('plan-child-accounts', w)]).toEqual([value, w.container, on]);
+      await store('lunchflow', value);
+      expect([value, w.container, await read.flagOnFresh('lunchflow', w)]).toEqual([value, w.container, on]);
     }
   });
 
@@ -345,10 +341,10 @@ describe('the cache', () => {
   });
 
   test('a page’s flags: booleans for the audience flags only', async () => {
-    await store('plan-child-accounts', audience('nobody', [C1]));
+    await store('lunchflow', audience('nobody', [C1]));
     await store('sign-in', { ids: ['user_a'], emails: [], updatedAt: AT });
     const sent = await read.clientFlags(who(C1));
-    expect(sent).toEqual({ restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-items-in-fi': false, 'plan-child-accounts': true });
+    expect(sent).toEqual({ restore: false, 'restore-carry-on': false, lunchflow: true, 'brokerage-link': false, 'api-writes': false });
   });
 });
 

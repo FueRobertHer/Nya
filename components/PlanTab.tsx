@@ -437,7 +437,7 @@ export default function PlanTab({
   const inputsRef = useRef(planInputs);
   inputsRef.current = planInputs;
   const plansRef = useRef<string[]>([]);
-  plansRef.current = plansAskedFor(institutions, childOut).map(planId);
+  plansRef.current = plansAskedFor(institutions).map(planId);
   const store = useMemo(
     () =>
       createWholeListStore<StoredPlan | null>({
@@ -572,8 +572,8 @@ export default function PlanTab({
   // cash withdrawals went on (lib/fire/inputs.ts trailingFlows), and names
   // them for the label. The workplace plans' contributions come from the
   // shared copy.
-  const shared = useSharedPlanInputs(planInputs, institutions, childOut);
-  const leaveOut = useMemo(() => leftOutOf(childOut, shared.taxFacts.countAnyway), [childOut, shared.taxFacts.countAnyway]);
+  const shared = useSharedPlanInputs(planInputs, institutions);
+  const leaveOut = useMemo(() => leftOutOf(shared.taxFacts.countAnyway), [shared.taxFacts.countAnyway]);
   // The detailed tax model (lib/fire/plan-detail.ts): said on, and allowed now.
   const detailedOn = shared.factsKnown && shared.taxFacts.model === 'detailed';
   // The opt-in is open: what it would come to is shown before anything is saved.
@@ -1267,7 +1267,7 @@ export default function PlanTab({
   };
   // The plan saved as your plan and what was recorded since (rollout 8e), for
   // the Progress card and, with the Plan shown, the chart's lines before today.
-  const progress = useProgress(institutions, childOut ? shared.taxFacts.countAnyway.join(',') : '');
+  const progress = useProgress(institutions, shared.taxFacts.countAnyway.join(','));
   const progressSaved = progress.savedState.kind === 'ready' ? progress.savedState.saved : null;
   // Only where both are of one thing: the saved plan's currency and include
   // cash are the path's (the Progress card says when they changed).
@@ -1338,7 +1338,6 @@ export default function PlanTab({
       asOf: balancesAsOf ? fmtAsOf(balancesAsOf) : null,
       reading: yearRows.some((id) => !rows[id] || rows[id].pending),
       partner: plan.partnerAge !== null,
-      childOut,
       tax: shared.taxFacts,
       chosen: overridesOf(allocation.settings.value ?? null).buckets,
       level: figureLevel,
@@ -2086,7 +2085,6 @@ export default function PlanTab({
             items={savedItems}
             moved={movedNew}
             onMovedSeen={onMovedSeen}
-            childOut={childOut}
             flatLine={progressFlatLine}
           />
         )}

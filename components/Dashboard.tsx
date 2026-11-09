@@ -286,7 +286,7 @@ const TAB_LABELS: Record<Tab, string> = {
 };
 
 /** Every feature switch off: what a page sent without them (a test) shows. */
-const NO_FLAGS: ClientFlags = { restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false, 'plan-items-in-fi': false, 'plan-child-accounts': false };
+const NO_FLAGS: ClientFlags = { restore: false, 'restore-carry-on': false, lunchflow: false, 'brokerage-link': false, 'api-writes': false };
 
 export default function Dashboard({
   clerk = false,
@@ -2539,8 +2539,6 @@ export default function Dashboard({
                         txnFx={txnFx}
                         balanceFx={base?.fx ?? null}
                         planInputs={planInputs}
-                        planInWalk={flags['plan-items-in-fi']}
-                        childOut={flags['plan-child-accounts']}
                         holdings={planHoldings}
                         onAttention={onPlanNotes}
                         onOpenPlan={openPlan}
@@ -2897,11 +2895,9 @@ export default function Dashboard({
                   landing={planLanding}
                   onLanded={() => setPlanLanding(null)}
                   planInputs={planInputs}
-                  planInWalk={flags['plan-items-in-fi']}
                   newUntil={newUntil}
                   movedSeen={planMovedSeen}
                   onMovedSeen={() => setPlanMovedSeen(true)}
-                  childOut={flags['plan-child-accounts']}
                   childNewUntil={childNewUntil}
                   childMovedSeen={childMovedSeen}
                   onChildMovedSeen={() => setChildMovedSeen(true)}

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { formatItems, reportMarkdown, upkeepItems, type SwitchItem, type UpkeepItem } from '@/scripts/upkeep';
+import { formatItems, reportMarkdown, upkeepItems, type ListedSwitch, type SwitchItem, type UpkeepItem } from '@/scripts/upkeep';
 import { FLAG_KEYS, flagDef } from '@/lib/flags';
 
 // The weekly upkeep list (scripts/upkeep.ts): the release feature switches
@@ -10,27 +10,35 @@ import { FLAG_KEYS, flagDef } from '@/lib/flags';
 // (test/law-card.test.tsx), in a report for the Upkeep issue, from the
 // repository alone.
 
-const releases = FLAG_KEYS.flatMap((key) => {
-  const def = flagDef(key);
-  return def.kind === 'release' ? [{ key, removeBy: def.removeBy }] : [];
+// The registry has no release switch today (the Plan's last two went with
+// their cleanup), so the list is read on these, beside the registry's own.
+const release = (key: string, removeBy: string): ListedSwitch => ({
+  key,
+  def: { kind: 'release', removeBy, value: 'audience', name: `Switch ${key}`, about: `What ${key} turns on.`, offMeans: 'It goes off.', defaults: { development: 'nobody', preview: 'nobody', production: 'nobody' } },
 });
-const switchesDue = (today: string) => upkeepItems(today).filter((i): i is SwitchItem => i.kind === 'switch');
+const releases = [release('sooner', '2027-04-30'), release('later', '2027-06-30'), release('also-sooner', '2027-04-30')];
+const WITH_RELEASES: ListedSwitch[] = [...FLAG_KEYS.map((key) => ({ key, def: flagDef(key) })), ...releases];
+const switchesDue = (today: string, flags?: ListedSwitch[]) => upkeepItems(today, flags).filter((i): i is SwitchItem => i.kind === 'switch');
 const dayAfter = (day: string) => new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 
 describe('what is due', () => {
   test('a release switch is due the day after its date, not on it', () => {
-    const { key, removeBy } = releases[0];
-    expect(upkeepItems(removeBy).map((i) => i.key)).not.toContain(key);
-    expect(upkeepItems(dayAfter(removeBy)).map((i) => i.key)).toContain(key);
+    const { key, def } = releases[0];
+    const removeBy = def.kind === 'release' ? def.removeBy : '';
+    expect(upkeepItems(removeBy, WITH_RELEASES).map((i) => i.key)).not.toContain(key);
+    expect(upkeepItems(dayAfter(removeBy), WITH_RELEASES).map((i) => i.key)).toContain(key);
   });
 
   test('every release switch, the longest overdue first, and never an ops switch', () => {
-    const items = switchesDue('9999-12-31');
-    expect(items.map((i) => i.key).sort()).toEqual(releases.map((r) => r.key).sort());
+    const items = switchesDue('9999-12-31', WITH_RELEASES);
+    expect(items.map((i) => i.key)).toEqual(['also-sooner', 'sooner', 'later']);
     for (const key of ['csp', 'ops', 'sign-in']) expect(items.map((i) => i.key)).not.toContain(key);
-    const dates = items.map((i) => i.removeBy);
-    expect(dates).toEqual([...dates].sort());
-    expect(items[0]).toEqual({ kind: 'switch', key: items[0].key, name: flagDef(items[0].key as never).name, about: flagDef(items[0].key as never).about, removeBy: items[0].removeBy });
+    expect(items[0]).toEqual({ kind: 'switch', key: 'also-sooner', name: 'Switch also-sooner', about: 'What also-sooner turns on.', removeBy: '2027-04-30' });
+  });
+
+  test('the registry: no switch is ever due, the Plan’s two taken away', () => {
+    expect(switchesDue('9999-12-31')).toEqual([]);
+    for (const key of ['plan-items-in-fi', 'plan-child-accounts']) expect(upkeepItems('2027-05-01').map((i) => i.key)).not.toContain(key);
   });
 
   test('nothing, before any date', () => {
@@ -42,7 +50,7 @@ describe('what is due', () => {
 
 describe('the report', () => {
   test('names each switch due, and the two ways to clear it, with no day in it so the issue stays quiet', () => {
-    const items: SwitchItem[] = [...switchesDue('9999-12-31'), { kind: 'switch', key: 'later', name: 'A later switch', about: 'What it turns on.', removeBy: '2099-01-01' }];
+    const items: SwitchItem[] = [...switchesDue('9999-12-31', WITH_RELEASES), { kind: 'switch', key: 'latest', name: 'A later switch', about: 'What it turns on.', removeBy: '2099-01-01' }];
     const report = reportMarkdown(items);
     expect(report).toStartWith(`${items.length} release feature switches are past the dates they were to be removed by:`);
     for (const i of items) expect(report).toContain(`- **${i.name}** (\`${i.key}\`), remove by ${i.removeBy}. ${i.about}`);
