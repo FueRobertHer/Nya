@@ -99,7 +99,7 @@ const WITHOUT_WORDS: Readonly<Record<string, string | ((n: number) => string)>> 
   'carried-imported-twins': (n) => `which imported transactions of ${n} earlier ${n === 1 ? 'account were' : 'accounts were'} the bank’s: once linked again, they may count beside the bank’s`,
   'restored-investment-transactions': (n) => `${n} ${n === 1 ? 'record' : 'records'} of investment transactions from an earlier restore`,
   'goal-plans': (n) => `the plans of ${n} ${n === 1 ? 'goal' : 'goals'}`,
-  'money-in-out': (n) => `the money in and out you set for ${n} investment ${n === 1 ? 'account' : 'accounts'}: ${n === 1 ? 'its' : 'their'} growth counts from the first recorded day`,
+  'money-in-out': (n) => `the money in and out you set for ${n} investment ${n === 1 ? 'account' : 'accounts'}: ${n === 1 ? 'its' : 'their'} returns count from the first recorded day`,
   'app-imports': (n) => `the record of ${n} ${n === 1 ? 'import' : 'imports'} from another app: ${n === 1 ? 'its' : 'their'} transactions come back, but can’t be undone as one import`,
   'user-restore': 'the record of the restore the other copy had',
   budgets: 'your budgets: the restored copy has none',

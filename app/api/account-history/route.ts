@@ -15,7 +15,7 @@ import type { Ctx } from '@/lib/containers';
 //
 // `ids` (comma-separated, up to MAX_IDS) answers several accounts from one
 // read, `{ histories: { [id]: points } }`, each joined through its own links
-// as `id` is: Accounts > Summary reads every investment account at once, and
+// as `id` is: Accounts > Investments reads every investment account at once, and
 // one read opens each stored day once (lib/history.ts getAccountHistories).
 // It takes no `with`.
 

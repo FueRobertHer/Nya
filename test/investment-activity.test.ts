@@ -4,7 +4,7 @@ import { dailyFlows, type InvestmentTxn } from '@/lib/investments';
 import type { InvSync } from '@/lib/invstore';
 
 // The flows the activity serves (lib/investment-activity.ts): the chart's
-// line, its readout, the sheet's figures and Accounts > Summary all count
+// line, its readout, the sheet's figures and Accounts > Investments all count
 // from them, so a move must already be out of them.
 
 let n = 0;

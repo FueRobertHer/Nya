@@ -59,10 +59,10 @@ function figures(over: Partial<Target> = {}, props: Partial<React.ComponentProps
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
 describe('the figures', () => {
-  test('set: money in, money out, net and growth so far, and where they come from', () => {
+  test('set: money in, money out, net and returns, and where they come from', () => {
     const html = figures();
     expect(text(html)).toBe(
-      'Since you started Money in $154,000.00 Money out $12,000.00 Net $142,000.00 Growth so far +$42,520.40 From your totals for Oct 15, and $2,000.00 in since. Change money in and out'
+      'All-time performance Money in $154,000.00 Money out $12,000.00 Net $142,000.00 Returns +$42,520.40 From your totals for Oct 15, and $2,000.00 in since. Change money in and out'
     );
     // A gain is green.
     expect(html).toContain('<span class="stat-value money inflow">');
@@ -72,25 +72,25 @@ describe('the figures', () => {
     const ira = { in: 120_000, out: 138_000, as_of: '2026-09-30', currency: 'USD', set_at: '2026-10-01T00:00:00.000Z' };
     const withdrawals = ['2026-10-01', '2026-11-01'].map((date) => ({ date, amount: -4000 }));
     expect(text(figures({ totals: ira, flows: withdrawals }, { balance: 115_846.2 }))).toBe(
-      'Since you started Money in $120,000.00 Money out $146,000.00 Net −$26,000.00 Growth so far +$141,846.20 From your totals for Sep 30, and $8,000.00 out since. Change money in and out'
+      'All-time performance Money in $120,000.00 Money out $146,000.00 Net −$26,000.00 Returns +$141,846.20 From your totals for Sep 30, and $8,000.00 out since. Change money in and out'
     );
     const loss = figures({ totals: { ...TOTALS, in: 200_000 } });
-    expect(text(loss)).toContain('Growth so far −$5,479.60');
+    expect(text(loss)).toContain('Returns −$5,479.60');
     expect(loss).not.toContain('inflow');
   });
 
   test('activity known only to an earlier day: measured there, and the label says to when', () => {
-    expect(text(figures({}, { flowsTo: '2026-11-01' }))).toStartWith('Since you started, to Nov 2 Money in $154,000.00 Money out $12,000.00 Net $142,000.00 Growth so far +$41,000.00');
+    expect(text(figures({}, { flowsTo: '2026-11-01' }))).toStartWith('All-time performance, to Nov 2 Money in $154,000.00 Money out $12,000.00 Net $142,000.00 Returns +$41,000.00');
   });
 
-  test('no balance to measure: growth so far is a dash', () => {
-    expect(text(figures({}, { balance: null }))).toContain('Growth so far --');
+  test('no balance to measure: returns are a dash', () => {
+    expect(text(figures({}, { balance: null }))).toContain('Returns --');
   });
 
   // The chart starts its line with each range, so no one day is named.
-  test('none set: what setting them shows, and where growth counts from for now', () => {
+  test('none set: what setting them shows, and where returns count from for now', () => {
     expect(text(figures({ totals: null }))).toBe(
-      'Set your money in and out to see your growth since you started. For now, growth counts from the start of the range shown. Set money in and out'
+      'Set your money in and out to see your all-time returns. For now, returns count from the start of the range shown. Set money in and out'
     );
   });
 
@@ -98,14 +98,14 @@ describe('the figures', () => {
     const html = figures({ totals: { ...TOTALS, as_of: '2026-05-01' } });
     expect(html).toContain('notice info');
     expect(text(html)).toBe(
-      'Note: Change money in and out to see your growth since you started again: your totals are for May 1, and Nya’s activity for this account now starts Jun 1. For now, growth counts from the start of the range shown. Change money in and out'
+      'Note: Change money in and out to see your all-time returns again: your totals are for May 1, and Nya’s activity for this account now starts Jun 1. For now, returns count from the start of the range shown. Change money in and out'
     );
   });
 
   test('totals that can’t be read: a caution, and nothing to change them with', () => {
     const html = figures({ totals: null }, { unreadable: true });
     expect(html).toContain('notice caution');
-    expect(text(html)).toBe('Caution: Your money in and out for this account can’t be read just now, so its growth counts from the start of the range shown.');
+    expect(text(html)).toBe('Caution: Your money in and out for this account can’t be read just now, so its returns count from the start of the range shown.');
   });
 
   test('the button opens the form on the account', () => {

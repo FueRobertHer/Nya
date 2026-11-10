@@ -6,7 +6,7 @@ import { availableRanges, sliceRange, type RangeKey } from '@/lib/chart-range';
 import { formatDay, formatMoney, MINUS, roundsToNothing } from '@/lib/format';
 import { contributionBaseline, rangeSplit, type BalancePoint, type Flow, type RangeSplit, type Totals } from '@/lib/growth';
 
-// Accounts > Summary adds up each investment account's range from rangeSplit,
+// Accounts > Investments adds up each investment account's range from rangeSplit,
 // so it must say what the account's own chart says for that range: the same
 // days, the same money in and out, the same growth. These render the chart
 // with the sheet's own grey line (components/AccountSparkline.tsx) and read
@@ -39,7 +39,7 @@ function readoutFor(shown: BalancePoint[], s: RangeSplit): string {
   const parts = [
     ...(roundsToNothing(s.in, null) ? [] : [`${formatMoney(s.in)} in`]),
     ...(roundsToNothing(s.out, null) ? [] : [`${formatMoney(s.out)} out`]),
-    `${signed(s.growth)} growth`,
+    `${signed(s.growth)} returns`,
   ];
   const from = `${formatDay(s.from)} to ${formatDay(s.to)}: `;
   if (s.from === shown[0].date && s.to === shown[shown.length - 1].date) return from + parts.join(' · ');

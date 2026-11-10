@@ -253,7 +253,7 @@ function MoneyInOutForm({ open, target, onClose, onDone }: { open: boolean; targ
           </div>
         )}
         <Why>
-          From these, Nya works out your money in and out on each day it has activity for: it takes off what moved between that day and this one, and adds what moves after, so new contributions and withdrawals count as they happen. Dividends, interest and fees are growth, not money in or out. Your brokerage may call these contributions and withdrawals, or deposits and withdrawals. If it shows only a net, enter it as money in (or as money out, if more came out) and leave the other empty: your net and growth stay right, though money in and out won’t be the real totals. These aren’t your cost basis, which grows with reinvested dividends, nor the Plan’s Roth figure, which leaves out conversions.
+          From these, Nya works out your money in and out on each day it has activity for: it takes off what moved between that day and this one, and adds what moves after, so new contributions and withdrawals count as they happen. Dividends, interest and fees count in your returns, not as money in or out. Your brokerage may call these contributions and withdrawals, or deposits and withdrawals. If it shows only a net, enter it as money in (or as money out, if more came out) and leave the other empty: your net and returns stay right, though money in and out won’t be the real totals. These aren’t your cost basis, which grows with reinvested dividends, nor the Plan’s Roth figure, which leaves out conversions.
         </Why>
       </form>
     </Sheet>

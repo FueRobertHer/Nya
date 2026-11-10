@@ -57,7 +57,7 @@ type Payload = InvestmentActivityPayload;
 // the server's own 15-minute cache covers the rest. A failure is dropped at
 // once so the next mount retries, and so is an answer that the activity is
 // still loading on another request, which the server doesn't keep either: a
-// Refresh then asks again, as Accounts > Summary says to.
+// Refresh then asks again, as Accounts > Investments says to.
 const REUSE_MS = 60_000;
 const inflight = new Map<string, { at: number; promise: Promise<Payload> }>();
 

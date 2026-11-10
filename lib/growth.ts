@@ -2,7 +2,7 @@
 //
 // Splits an investment account's balance change into money in, money out and
 // growth, for the second line on its chart, the figures on its sheet, and
-// Accounts > Summary, which adds up each account's range (rangeSplit).
+// Accounts > Investments, which adds up each account's range (rangeSplit).
 //
 // The line is the balance on a starting day plus every flow across the account
 // boundary since (lib/investments.ts externalFlow: contributions, rollovers and
@@ -30,7 +30,7 @@
 // MOVE_DAYS of each other is a move. In one account its legs are taken out of
 // the flows where the activity is built (withoutMoves, lib/investment-
 // activity.ts), so the line, its readout and the sheet's figures never see
-// them; between accounts, Accounts > Summary takes them off its totals
+// them; between accounts, Accounts > Investments takes them off its totals
 // (movedBetween), as each account's own figures rightly show its leg.
 //
 // Imports nothing but a pure date helper: the chart is a client component.
@@ -182,7 +182,7 @@ export type RangeSplit = { from: string; to: string; in: number; out: number; gr
 /**
  * The account chart's readout for a range with nothing scrubbed
  * (components/NetWorthChart.tsx splitBetween, from the grey line's first day
- * to the last real day it reaches), for Accounts > Summary to add up across
+ * to the last real day it reaches), for Accounts > Investments to add up across
  * accounts. `shown` is the range's points (lib/chart-range.ts sliceRange,
  * which ends on the account's own last point); the rest are
  * contributionBaseline's. Null where the chart has no split for the range:
@@ -291,7 +291,7 @@ export function withoutMoves(flows: readonly Flow[]): { flows: Flow[]; moves: Mo
 /**
  * What moved between accounts, each given as the flows it counted: money one
  * account's figures have going out and another's coming in, paired as moves
- * are. Accounts > Summary takes it off its money in and its money out alike,
+ * are. Accounts > Investments takes it off its money in and its money out alike,
  * so its net is unchanged.
  */
 export function movedBetween(accounts: readonly (readonly Flow[])[]): number {
@@ -300,8 +300,8 @@ export function movedBetween(accounts: readonly (readonly Flow[])[]): number {
 }
 
 /**
- * The sheet's Since you started figures: money in, money out and the net by
- * the measuring day, and growth so far, the balance less that net. Measured
+ * The sheet's All-time performance figures: money in, money out and the net by
+ * the measuring day, and all-time returns, the balance less that net. Measured
  * today on the live balance while the activity is known to yesterday or
  * later; otherwise on the last recorded balance up to the day after the
  * activity ends (`to` names that day), since money that moved after it isn't

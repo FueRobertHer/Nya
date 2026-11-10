@@ -1,9 +1,9 @@
 // lib/growth-summary.ts
 //
-// Accounts > Summary's numbers (components/InvestmentGrowth.tsx): each linked
+// Accounts > Investments' numbers (components/InvestmentGrowth.tsx): each linked
 // investment account's money in, money out and growth over a range, by its own
 // chart's rule (lib/growth.ts rangeSplit), added up for each currency on its
-// own, never converted; and Since you started for a currency once every
+// own, never converted; and All-time performance for a currency once every
 // account in it has totals Nya can carry (sinceStarted). Money one account
 // sent another is a move, not money in or out across them: it is taken off
 // the totals (movedBetween), not off the rows, which keep their own sheet's
@@ -80,7 +80,7 @@ export type GrowthRow<A extends GrowthAccount = GrowthAccount> = {
   to: Edge | null;
   /** Its totals, for an account that is counted. */
   totals: TotalsState | null;
-  /** Its Since you started figures, when its totals can be carried. */
+  /** Its All-time performance figures, when its totals can be carried. */
   since: Since | null;
   /** The last day its activity is known to. */
   flowsTo: string | null;
@@ -105,11 +105,11 @@ export type CurrencyGroup<A extends GrowthAccount = GrowthAccount> = {
   busy: GrowthRow<A>[];
   /** Counted accounts with nothing to count in this range. */
   uncounted: GrowthRow<A>[];
-  /** Since you started across the counted accounts, once every one has
+  /** All-time performance across the counted accounts, once every one has
    *  totals that can be carried and a balance to measure. */
   since: Figures | null;
   /** What moved between these accounts after each one's totals' day: taken
-   *  off Since you started as `moved` is off the range's figures. */
+   *  off All-time performance as `moved` is off the range's figures. */
   sinceMoved: number;
   /** Counted accounts whose totals aren't set, or are set for a day before
    *  the activity Nya now has. */
@@ -117,7 +117,7 @@ export type CurrencyGroup<A extends GrowthAccount = GrowthAccount> = {
   /** Counted accounts whose totals couldn't be read. */
   unreadable: GrowthRow<A>[];
   /** Counted accounts whose totals are set but which have no balance to
-   *  measure growth so far by just now: no live balance, or, for one whose
+   *  measure all-time returns by just now: no live balance, or, for one whose
    *  activity stops early, no recorded day at its end. */
   unmeasured: GrowthRow<A>[];
 };

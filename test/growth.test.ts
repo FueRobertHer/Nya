@@ -149,7 +149,7 @@ describe('money in and out carried from totals', () => {
 });
 
 describe('sinceStarted', () => {
-  test('the mocks’ figures: net today, and growth so far against the balance', () => {
+  test('the mocks’ figures: net today, and all-time returns against the balance', () => {
     expect(sinceStarted(vanguard, monthly, '2026-11-10', 184_520.4, null, NOW)).toEqual({
       in: 154_000,
       out: 12_000,

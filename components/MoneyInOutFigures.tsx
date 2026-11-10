@@ -6,11 +6,11 @@
 // activity (with the totals the person set, lib/money-in-out.ts) and its
 // balance history.
 //
-//   - Totals set and carried (lib/growth.ts usableTotals): Since you started,
-//     Money in, Money out, Net and Growth so far, where they come from, and
-//     Change money in and out.
-//   - None set: one line saying what setting them shows, and that growth
-//     counts from the start of the range shown for now (the chart's own
+//   - Totals set and carried (lib/growth.ts usableTotals): All-time
+//     performance, Money in, Money out, Net and Returns, where they come from,
+//     and Change money in and out.
+//   - None set: one line saying what setting them shows, and that returns
+//     count from the start of the range shown for now (the chart's own
 //     explanations name the day), with Set money in and out (its one place).
 //   - Set but no longer carried (their day is before the activity Nya now
 //     has for the account): an information notice saying so, since no figure
@@ -49,7 +49,7 @@ function movedWords(m: { in: number; out: number }, currency: string | null): st
 
 /** What the chart does without totals: the line starts with each range
  *  (lib/growth.ts contributionBaseline), so no one day can be named here. */
-const FOR_NOW = 'For now, growth counts from the start of the range shown.';
+const FOR_NOW = 'For now, returns count from the start of the range shown.';
 
 export default function MoneyInOutFigures({
   target,
@@ -83,7 +83,7 @@ export default function MoneyInOutFigures({
   if (unreadable) {
     return (
       <Notice level="caution" role="status">
-        Your money in and out for this account can’t be read just now, so its growth counts from the start of the range shown.
+        Your money in and out for this account can’t be read just now, so its returns count from the start of the range shown.
       </Notice>
     );
   }
@@ -91,7 +91,7 @@ export default function MoneyInOutFigures({
   if (!totals) {
     return (
       <div className="stack tight">
-        <p className="helper">Set your money in and out to see your growth since you started. {FOR_NOW}</p>
+        <p className="helper">Set your money in and out to see your all-time returns. {FOR_NOW}</p>
         {edit('Set money in and out')}
       </div>
     );
@@ -101,7 +101,7 @@ export default function MoneyInOutFigures({
     return (
       <div className="stack tight">
         <Notice level="info">
-          Change money in and out to see your growth since you started again: your totals are for {day(totals.as_of)}, and Nya’s activity for this account now starts {day(flows_from)}. {FOR_NOW}
+          Change money in and out to see your all-time returns again: your totals are for {day(totals.as_of)}, and Nya’s activity for this account now starts {day(flows_from)}. {FOR_NOW}
         </Notice>
         {edit('Change money in and out')}
       </div>
@@ -112,7 +112,7 @@ export default function MoneyInOutFigures({
   const moved = movedWords(f.since, currency);
   return (
     <div className="stack tight">
-      <h3 className="section-label">{f.to ? `Since you started, to ${formatDay(f.to)}` : 'Since you started'}</h3>
+      <h3 className="section-label">{f.to ? `All-time performance, to ${formatDay(f.to)}` : 'All-time performance'}</h3>
       <ul className="stat-strip" role="list">
         <li className="stat">
           <span className="stat-label">Money in</span>
@@ -133,7 +133,7 @@ export default function MoneyInOutFigures({
           </span>
         </li>
         <li className="stat">
-          <span className="stat-label">Growth so far</span>
+          <span className="stat-label">Returns</span>
           {f.growth === null ? (
             <span className="stat-value money">--</span>
           ) : (

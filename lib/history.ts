@@ -633,7 +633,7 @@ export async function getAccountHistory(ctx: Ctx,
 }
 
 /**
- * getAccountHistory for several accounts at once (Accounts > Summary, which
+ * getAccountHistory for several accounts at once (Accounts > Investments, which
  * reads every investment account): the four layers are read once and each
  * stored map is opened once, whichever accounts it names, where a read per
  * account would decrypt the whole history again for each. Each account's
