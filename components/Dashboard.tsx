@@ -52,6 +52,8 @@ import MoneyInOutSheet from './MoneyInOutSheet';
 import type { MoneyInOutTarget } from './MoneyInOutFigures';
 import AccountsStatus from './AccountsStatus';
 import AccountsSummary from './AccountsSummary';
+import AccountsSegments, { accountsPanelId, accountsTabId, type AccountsSegment } from './AccountsSegments';
+import InvestmentGrowth from './InvestmentGrowth';
 import { CollapsibleHeader } from './Collapsible';
 import { RedirectChoices } from './ConnectRedirect';
 import type { LinkKind } from '@/lib/item-products';
@@ -344,6 +346,21 @@ export default function Dashboard({
   const [activitySegment, setActivitySegment] = useState<ActivitySegment>('transactions');
   // Budgets' segment, kept the same way.
   const [budgetsSegment, setBudgetsSegment] = useState<BudgetsSegment>('month');
+  // Accounts' view (components/AccountsSegments.tsx), kept the same way.
+  // Summary is mounted from the first time it is shown, so it keeps its
+  // range while hidden.
+  const [accountsSegment, setAccountsSegment] = useState<AccountsSegment>('accounts');
+  const [summaryShown, setSummaryShown] = useState(false);
+  const chooseAccountsSegment = useCallback((s: AccountsSegment) => {
+    setAccountsSegment(s);
+    if (s === 'summary') setSummaryShown(true);
+  }, []);
+  /** The Accounts tab on its Accounts view, where a link into the tab lands:
+   *  the cards and notices it focuses are there. */
+  const openAccounts = useCallback(() => {
+    setTab('accounts');
+    setAccountsSegment('accounts');
+  }, []);
   // And the Plan's, null until it has decided where it opens (Drawdown once
   // the stop age has come, components/PlanBar.tsx openingSegment).
   const [planSegment, setPlanSegment] = useState<PlanSegment | null>(null);
@@ -1029,6 +1046,10 @@ export default function Dashboard({
   // An investment account's money in and out (components/MoneyInOutSheet.tsx),
   // opened from its sheet, which comes back once they are saved or cleared.
   const [moneyTarget, setMoneyTarget] = useState<MoneyInOutTarget | null>(null);
+  // Opened from Accounts > Summary rather than the sheet: it goes back there,
+  // which loads the account again (components/InvestmentActivity.tsx
+  // onMoneyInOutSaved).
+  const moneyFromSummary = useRef(false);
   // Switching from another app (components/MigrationSheet.tsx): accounts it
   // makes change net worth, and its rows join the Activity tab.
   const [migrationOpen, setMigrationOpen] = useState(false);
@@ -1714,6 +1735,8 @@ export default function Dashboard({
       openConnections();
       return;
     }
+    // Its card is in the Accounts view, which a click shows before the frame.
+    setAccountsSegment('accounts');
     const id = cardHeadingId(target.item_id);
     requestAnimationFrame(() => {
       const heading = document.getElementById(id);
@@ -2276,12 +2299,12 @@ export default function Dashboard({
           return;
         case 'accounts':
           window.scrollTo(0, 0);
-          setTab('accounts');
+          openAccounts();
           focus(go.focus, 'accounts', null);
           return;
         case 'card':
           window.scrollTo(0, 0);
-          setTab('accounts');
+          openAccounts();
           focus(cardHeadingId(go.item_id), 'accounts', null);
           return;
         case 'connections':
@@ -2314,7 +2337,7 @@ export default function Dashboard({
           return;
       }
     },
-    [tab, openConnections, openRestore, openPlan, resetViewMonth]
+    [tab, openConnections, openRestore, openPlan, openAccounts, resetViewMonth]
   );
 
   // What qualifies the Home total, under it (components/TotalCaveats.tsx),
@@ -2404,7 +2427,7 @@ export default function Dashboard({
             settings ? (
               <SettingsSkeleton view={settings} sharing={clerk} admin={admin} />
             ) : (
-              <TabSkeleton tab={tab} segments={{ activity: activitySegment, budgets: budgetsSegment, plan: planSegment }} />
+              <TabSkeleton tab={tab} segments={{ accounts: accountsSegment, activity: activitySegment, budgets: budgetsSegment, plan: planSegment }} />
             )
           ) : settings ? (
             <SettingsScreen view={settings} sections={settingsSections} onView={setSettings} onClose={closeSettings} />
@@ -2566,169 +2589,205 @@ export default function Dashboard({
                       Add account
                     </button>
                   </div>
-                  <AccountsSummary institutions={sortedInstitutions} fx={base?.fx ?? null} main={accountCurrency} />
-                  {error && (
-                    <Notice level="critical" role="alert">
-                      {error}
-                    </Notice>
-                  )}
-                  {lifecycleRepair}
-                  {lifecycle.problem && (
-                    <Notice level="critical" role="alert">
-                      {lifecycle.problem}
-                    </Notice>
-                  )}
-                  {/* What couldn't be read about every connection, said once
-                      for the tab: a card can't say what is missing from it. */}
-                  {healthUnavailable ? (
-                    // Also where Home's row about it lands (components/attention.ts).
-                    <div className="notice caution" id="health-unread" tabIndex={-1}>
-                      {CAUTION}
-                      <p>
-                        <LevelWord level="caution" />
-                        Plaid&apos;s warnings and the last sync times couldn&apos;t be read just now, so a connection that is about to end may not say so here.
-                      </p>
-                    </div>
-                  ) : (
-                    unreadConnections > 0 && (
-                      <div className="notice caution">
+                  <AccountsSegments segment={accountsSegment} onSegment={chooseAccountsSegment} />
+                  <div
+                    className="accounts-panel"
+                    id={accountsPanelId('accounts')}
+                    role="tabpanel"
+                    aria-labelledby={accountsTabId('accounts')}
+                    hidden={accountsSegment !== 'accounts'}
+                  >
+                    <AccountsSummary institutions={sortedInstitutions} fx={base?.fx ?? null} main={accountCurrency} />
+                    {error && (
+                      <Notice level="critical" role="alert">
+                        {error}
+                      </Notice>
+                    )}
+                    {lifecycleRepair}
+                    {lifecycle.problem && (
+                      <Notice level="critical" role="alert">
+                        {lifecycle.problem}
+                      </Notice>
+                    )}
+                    {/* What couldn't be read about every connection, said once
+                        for the tab: a card can't say what is missing from it. */}
+                    {healthUnavailable ? (
+                      // Also where Home's row about it lands (components/attention.ts).
+                      <div className="notice caution" id="health-unread" tabIndex={-1}>
                         {CAUTION}
                         <p>
                           <LevelWord level="caution" />
-                          {`Some of what Nya keeps about ${unreadConnections === 1 ? 'one connection' : `${unreadConnections} connections`} couldn't be read, so a warning that one is about to end may be missing here.`}
+                          Plaid&apos;s warnings and the last sync times couldn&apos;t be read just now, so a connection that is about to end may not say so here.
                         </p>
                       </div>
-                    )
-                  )}
-                  {connectors.error && (
-                    // Also where Home's row about it lands (components/attention.ts).
-                    <div className="notice critical" id="connectors-unread" tabIndex={-1}>
-                      {ALERT}
-                      <p>
-                        <LevelWord level="critical" />
-                        Your own sync’s connections couldn’t be loaded: {connectors.error}
-                      </p>
-                    </div>
-                  )}
-                  {/* Connections with no card here (every account hidden, or
-                      none chosen yet) that need attention, in Settings. */}
-                  {cardlessWorst && (
-                    <div className={`notice ${cardlessWorst}`}>
-                      {levelIcon(cardlessWorst)}
-                      <div className="stack tight">
-                        <LevelWord level={cardlessWorst} />
+                    ) : (
+                      unreadConnections > 0 && (
+                        <div className="notice caution">
+                          {CAUTION}
+                          <p>
+                            <LevelWord level="caution" />
+                            {`Some of what Nya keeps about ${unreadConnections === 1 ? 'one connection' : `${unreadConnections} connections`} couldn't be read, so a warning that one is about to end may be missing here.`}
+                          </p>
+                        </div>
+                      )
+                    )}
+                    {connectors.error && (
+                      // Also where Home's row about it lands (components/attention.ts).
+                      <div className="notice critical" id="connectors-unread" tabIndex={-1}>
+                        {ALERT}
                         <p>
-                          {cardlessCount === 1
-                            ? 'A connection with no card here needs attention: its accounts are hidden or not chosen yet.'
-                            : `${cardlessCount} connections with no card here need attention: their accounts are hidden or not chosen yet.`}
+                          <LevelWord level="critical" />
+                          Your own sync’s connections couldn’t be loaded: {connectors.error}
                         </p>
-                        <div className="btn-row">
-                          <button className="btn secondary" onClick={openConnections}>
-                            Open Settings, Connections
-                          </button>
+                      </div>
+                    )}
+                    {/* Connections with no card here (every account hidden, or
+                        none chosen yet) that need attention, in Settings. */}
+                    {cardlessWorst && (
+                      <div className={`notice ${cardlessWorst}`}>
+                        {levelIcon(cardlessWorst)}
+                        <div className="stack tight">
+                          <LevelWord level={cardlessWorst} />
+                          <p>
+                            {cardlessCount === 1
+                              ? 'A connection with no card here needs attention: its accounts are hidden or not chosen yet.'
+                              : `${cardlessCount} connections with no card here need attention: their accounts are hidden or not chosen yet.`}
+                          </p>
+                          <div className="btn-row">
+                            <button className="btn secondary" onClick={openConnections}>
+                              Open Settings, Connections
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  {sortedInstitutions.map((inst) => (
-                    <InstitutionCard
-                      key={inst.item_id}
-                      inst={inst}
-                      institutions={institutions}
-                      base={base}
-                      shownCurrency={shownCurrency}
-                      connecting={connecting}
-                      expandedHoldings={expandedHoldings}
-                      unallowedIds={unallowedIds}
-                      lifecycle={lifecycle}
-                      place={places.get(inst.item_id) ?? null}
-                      requestsLeft={connectors.data?.requests?.left ?? null}
-                      onOpenAccount={(account_id) => setAccountOpen({ item_id: inst.item_id, account_id })}
-                      toggleHoldings={toggleHoldings}
-                      onDetails={(i) => setDetailsFor(i.item_id)}
-                      onRemove={removeConnection}
-                      onConnector={setConnectorAsk}
-                      startReconnect={startReconnect}
-                      startAllowTransactions={startAllowTransactions}
-                      startEnableLiabilities={startEnableLiabilities}
-                      startManageAccounts={startManageAccounts}
-                    />
-                  ))}
-
-                  {hiddenAccounts.length > 0 && (
-                    <section className="card stack">
-                      <CollapsibleHeader
-                        title="Hidden"
-                        count={hiddenAccounts.length}
-                        open={hiddenExpanded}
-                        onToggle={() => setHiddenExpanded((v) => !v)}
-                        controls="hidden-accounts"
+                    {sortedInstitutions.map((inst) => (
+                      <InstitutionCard
+                        key={inst.item_id}
+                        inst={inst}
+                        institutions={institutions}
+                        base={base}
+                        shownCurrency={shownCurrency}
+                        connecting={connecting}
+                        expandedHoldings={expandedHoldings}
+                        unallowedIds={unallowedIds}
+                        lifecycle={lifecycle}
+                        place={places.get(inst.item_id) ?? null}
+                        requestsLeft={connectors.data?.requests?.left ?? null}
+                        onOpenAccount={(account_id) => setAccountOpen({ item_id: inst.item_id, account_id })}
+                        toggleHoldings={toggleHoldings}
+                        onDetails={(i) => setDetailsFor(i.item_id)}
+                        onRemove={removeConnection}
+                        onConnector={setConnectorAsk}
+                        startReconnect={startReconnect}
+                        startAllowTransactions={startAllowTransactions}
+                        startEnableLiabilities={startEnableLiabilities}
+                        startManageAccounts={startManageAccounts}
                       />
-                      {hiddenExpanded && (
-                        <>
-                          <p className="helper">
-                            These accounts still sync, but are left out of net worth, transactions,
-                            budgets and insights, on every day, past ones too. Unhiding restores their
-                            history in full. To stop counting one only from a day on, unhide it, then open
-                            it, use Mark as closed… and choose Stop following: every day before then still counts.
-                          </p>
-                          {/* Each row's Unhide sits beside its text, not inside
-                              a control. */}
-                          <ul id="hidden-accounts" className="list-rows">
-                            {hiddenAccounts.map(({ account, institution_name, resolved }) => (
-                              <li key={account.account_id} className="list-row">
-                                <span className="list-row-text">
-                                  <span className="list-row-title">{account.name}</span>
-                                  <span className="list-row-sub">
-                                    {[institution_name, kindWords(account)].filter(Boolean).join(' · ')}
+                    ))}
+
+                    {hiddenAccounts.length > 0 && (
+                      <section className="card stack">
+                        <CollapsibleHeader
+                          title="Hidden"
+                          count={hiddenAccounts.length}
+                          open={hiddenExpanded}
+                          onToggle={() => setHiddenExpanded((v) => !v)}
+                          controls="hidden-accounts"
+                        />
+                        {hiddenExpanded && (
+                          <>
+                            <p className="helper">
+                              These accounts still sync, but are left out of net worth, transactions,
+                              budgets and insights, on every day, past ones too. Unhiding restores their
+                              history in full. To stop counting one only from a day on, unhide it, then open
+                              it, use Mark as closed… and choose Stop following: every day before then still counts.
+                            </p>
+                            {/* Each row's Unhide sits beside its text, not inside
+                                a control. */}
+                            <ul id="hidden-accounts" className="list-rows">
+                              {hiddenAccounts.map(({ account, institution_name, resolved }) => (
+                                <li key={account.account_id} className="list-row">
+                                  <span className="list-row-text">
+                                    <span className="list-row-title">{account.name}</span>
+                                    <span className="list-row-sub">
+                                      {[institution_name, kindWords(account)].filter(Boolean).join(' · ')}
+                                    </span>
                                   </span>
-                                </span>
-                                {/* An unresolved account has no balance to
-                                    show; "--" beats a misleading $0.00. */}
-                                <span className="list-row-value">
-                                  <Masked>{resolved ? fmt(signedBalance(account), account.currency) : '--'}</Masked>
-                                </span>
-                                <button
-                                  className="btn ghost"
-                                  disabled={togglingHidden !== null}
-                                  onClick={() => toggleHidden(account.account_id, false)}
-                                >
-                                  {togglingHidden === account.account_id ? 'Unhiding…' : 'Unhide'}
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        </>
-                      )}
-                    </section>
-                  )}
+                                  {/* An unresolved account has no balance to
+                                      show; "--" beats a misleading $0.00. */}
+                                  <span className="list-row-value">
+                                    <Masked>{resolved ? fmt(signedBalance(account), account.currency) : '--'}</Masked>
+                                  </span>
+                                  <button
+                                    className="btn ghost"
+                                    disabled={togglingHidden !== null}
+                                    onClick={() => toggleHidden(account.account_id, false)}
+                                  >
+                                    {togglingHidden === account.account_id ? 'Unhiding…' : 'Unhide'}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          </>
+                        )}
+                      </section>
+                    )}
 
-                  {/* Accounts that ended (#50), from the
-                      stored set, with when each ended, to change or reopen. */}
-                  <EndedAccounts
-                    ended={ended}
-                    hidden={hiddenIds}
-                    busy={lifecycle.busy}
-                    onOpen={lifecycle.open}
-                    onReopen={lifecycle.reopen}
-                    onStillOpen={lifecycle.stillOpen}
-                    onImportHistory={(e) =>
-                      setHistoryTarget({
-                        account_id: e.account_id,
-                        name: e.label.name || 'Account',
-                        institution_name: e.label.institution,
-                        type: e.type ?? 'other',
-                        currency: null,
-                      })
-                    }
-                    importable={new Set(institutions.filter((i) => !i.manual).map((i) => i.item_id))}
-                  />
+                    {/* Accounts that ended (#50), from the
+                        stored set, with when each ended, to change or reopen. */}
+                    <EndedAccounts
+                      ended={ended}
+                      hidden={hiddenIds}
+                      busy={lifecycle.busy}
+                      onOpen={lifecycle.open}
+                      onReopen={lifecycle.reopen}
+                      onStillOpen={lifecycle.stillOpen}
+                      onImportHistory={(e) =>
+                        setHistoryTarget({
+                          account_id: e.account_id,
+                          name: e.label.name || 'Account',
+                          institution_name: e.label.institution,
+                          type: e.type ?? 'other',
+                          currency: null,
+                        })
+                      }
+                      importable={new Set(institutions.filter((i) => !i.manual).map((i) => i.item_id))}
+                    />
 
-                  {/* What others share with me, whenever there is some; last,
-                      so my own accounts don't move when it arrives. What I
-                      share is in the Sharing drawer. */}
-                  {clerk && <SharedWithMe refreshKey={reloadKey} viewer={viewer} />}
+                    {/* What others share with me, whenever there is some; last,
+                        so my own accounts don't move when it arrives. What I
+                        share is in the Sharing drawer. */}
+                    {clerk && <SharedWithMe refreshKey={reloadKey} viewer={viewer} />}
+                  </div>
+                  {/* What the accounts did together (components/InvestmentGrowth.tsx),
+                      from the first time it is shown. */}
+                  <div
+                    className="accounts-panel"
+                    id={accountsPanelId('summary')}
+                    role="tabpanel"
+                    aria-labelledby={accountsTabId('summary')}
+                    hidden={accountsSegment !== 'summary'}
+                  >
+                    {error && (
+                      <Notice level="critical" role="alert">
+                        {error}
+                      </Notice>
+                    )}
+                    {summaryShown && (
+                      <InvestmentGrowth
+                        institutions={sortedInstitutions}
+                        main={accountCurrency}
+                        refreshKey={reloadKey}
+                        onOpenAccount={(item_id, account_id) => setAccountOpen({ item_id, account_id })}
+                        onMoneyInOut={(target) => {
+                          moneyFromSummary.current = true;
+                          setMoneyTarget(target);
+                        }}
+                      />
+                    )}
+                  </div>
                 </>
               )}
 
@@ -3179,7 +3238,7 @@ export default function Dashboard({
         onClose={() => setMoneyTarget(null)}
         onDone={() => {
           setMoneyTarget(null);
-          if (moneyTarget) setAccountOpen({ item_id: moneyTarget.item_id, account_id: moneyTarget.account_id });
+          if (moneyTarget && !moneyFromSummary.current) setAccountOpen({ item_id: moneyTarget.item_id, account_id: moneyTarget.account_id });
         }}
       />
       <AccountSheet
@@ -3197,7 +3256,10 @@ export default function Dashboard({
         onAddTransaction={(account_id) => txnEdits.openAdd(account_id)}
         onImport={(account_id) => setImportTarget({ account_id })}
         onImportHistory={setHistoryTarget}
-        onMoneyInOut={setMoneyTarget}
+        onMoneyInOut={(target) => {
+          moneyFromSummary.current = false;
+          setMoneyTarget(target);
+        }}
         onDelete={(account) => {
           setManualError('');
           setManualDeleteTarget(account);

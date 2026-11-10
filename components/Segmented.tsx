@@ -2,10 +2,10 @@
 
 // The underline switch (.segmented) for a value or a few views of one thing.
 // Setting a value it is a radio group; switching views (`tabs`) it is a
-// tablist whose tabs control one panel. Either way it is one tab stop: the
-// arrow keys (up and left back, down and right on), Home and End move
-// between the items and choose as they go, as Activity's and Budgets' bars
-// do (components/ActivityBar.tsx).
+// tablist whose tabs control one panel, or each its own. Either way it is one
+// tab stop: the arrow keys (up and left back, down and right on), Home and
+// End move between the items and choose as they go, as Activity's and
+// Budgets' bars do (components/ActivityBar.tsx).
 
 import { useRef, type KeyboardEvent } from 'react';
 import { segmentKey } from './ActivityBar';
@@ -31,8 +31,9 @@ export function Segmented<T extends string | number>({
   /** A chart's range: smaller labels, narrower items (.segmented.compact). */
   compact?: boolean;
   disabled?: boolean;
-  /** Switching views: each tab's id, and the id of the panel they control. */
-  tabs?: { id: (v: T) => string; panel: string };
+  /** Switching views: each tab's id, and the id of the panel they control,
+   *  one for all of them or each tab's own. */
+  tabs?: { id: (v: T) => string; panel: string | ((v: T) => string) };
   className?: string;
 }) {
   const buttons = useRef<(HTMLButtonElement | null)[]>([]);
@@ -67,7 +68,7 @@ export function Segmented<T extends string | number>({
           type="button"
           role={tabs ? 'tab' : 'radio'}
           id={tabs?.id(v)}
-          aria-controls={tabs?.panel}
+          aria-controls={typeof tabs?.panel === 'function' ? tabs.panel(v) : tabs?.panel}
           aria-selected={tabs ? v === value : undefined}
           aria-checked={tabs ? undefined : v === value}
           aria-label={name}
