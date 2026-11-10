@@ -41,6 +41,7 @@ import './inventory-limit';
 import './lifecycle';
 import './manual-txns';
 import './migration/store';
+import './money-in-out-store';
 import './nightly-run-limit';
 import './plan-copies';
 import './planned-store';

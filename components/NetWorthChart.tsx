@@ -62,7 +62,7 @@
 // the finger.
 
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { formatDay, formatMoney, MINUS, onDay, spoken } from '@/lib/format';
+import { formatDay, formatMoney, MINUS, onDay, roundsToNothing, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { Segmented } from './Segmented';
 import { MIN_LABEL_GAP as LABEL_GAP, labelWidth, useDrawnWidth } from './drawn-width';
@@ -79,7 +79,10 @@ import {
 } from '@/lib/chart-range';
 
 export type HistoryPoint = { date: string; value: number; estimated?: boolean };
-type Baseline = { date: string; value: number }[] | null;
+/** The grey line by date (lib/growth.ts BaselinePoint): its value, and the
+ *  money in and out it holds, whose changes between two points say what
+ *  moved between them. */
+type Baseline = { date: string; value: number; in: number; out: number }[] | null;
 /** A note on the timeline: its day, and what it says. */
 export type ChartNote = { date: string; text: string };
 
@@ -109,7 +112,7 @@ const AXIS_GAP = 2 * LABEL_GAP;
 // net-worth total, which has none of its own) formats as "$", as it always
 // did; Home's hero passes the currency its figure is in.
 
-// Signed, for money added and growth: "+$1,200.00" / "−$80.00".
+// Signed, for growth and a change: "+$1,200.00" / "−$80.00".
 function signed(n: number, currency?: string | null): string {
   return (n < 0 ? MINUS : '+') + formatMoney(Math.abs(n), currency);
 }
@@ -141,6 +144,7 @@ export default function NetWorthChart({
   points: allPoints,
   label = 'Net worth',
   baselineFor,
+  baselineFrom = null,
   currency,
   rangeSet = 'balance',
   initialRange: forcedRange,
@@ -153,11 +157,15 @@ export default function NetWorthChart({
   label?: string;
   /** ISO currency of the series (an account's), for every figure the chart prints. */
   currency?: string | null;
-  /** The balance at the start of the points given plus money added since, by
+  /** The balance at the start of the points given plus net money in since, by
    *  date (lib/growth.ts), drawn as a thin grey line; the balance above it is
    *  growth. Called with the points of the selected range, so the split counts
    *  from the range's start. Must be stable (useCallback). */
   baselineFor?: ((points: HistoryPoint[]) => Baseline) | null;
+  /** The day of the money in and out totals the line is carried from, when it
+   *  is the account's net money in on each day rather than a balance plus
+   *  what moved since (lib/growth.ts usableTotals). */
+  baselineFrom?: string | null;
   /** Which ranges to offer: months for balances, years for investments. */
   rangeSet?: RangeSet;
   /** Open on this range instead of the set's usual one (a preview shows All). */
@@ -252,9 +260,17 @@ export default function NetWorthChart({
     const ts = points.map((p) => new Date(`${p.date}T00:00:00Z`).getTime());
     const vals = points.map((p) => p.value);
     // Aligned to the balance points by date; null before the baseline starts.
-    const byDate = new Map((baseline ?? []).map((b) => [b.date, b.value] as const));
-    const base = points.map((p) => byDate.get(p.date) ?? null);
-    const inRange = [...vals, ...base.filter((b): b is number => b !== null)];
+    const byDate = new Map((baseline ?? []).map((b) => [b.date, b] as const));
+    const base = points.map((p) => byDate.get(p.date)?.value ?? null);
+    const baseIn = points.map((p) => byDate.get(p.date)?.in ?? null);
+    const baseOut = points.map((p) => byDate.get(p.date)?.out ?? null);
+    // The line is drawn only at zero and above: below it, more has come out
+    // than gone in, and the scale goes no lower than zero for that. Where it
+    // reaches zero the plot's floor is zero, so it lands on the floor.
+    const known = base.filter((b): b is number => b !== null);
+    const drawn = known.some((b) => b >= 0);
+    const touchesZero = drawn && known.some((b) => b <= 0);
+    const inRange = [...vals, ...(drawn ? known.map((b) => Math.max(0, b)) : [])];
     const minT = ts[0];
     const maxT = ts[ts.length - 1];
     let lo = Math.min(...inRange);
@@ -268,6 +284,7 @@ export default function NetWorthChart({
     const padV = (hi - lo) * 0.06;
     lo -= padV;
     hi += padV;
+    if (touchesZero && Math.min(...vals) >= 0) lo = 0;
 
     const { left, right, top, bottom } = frame;
     const spanT = maxT - minT || 1;
@@ -303,14 +320,28 @@ export default function NetWorthChart({
       else runs.push({ est, d: `M${pt(i - 1)}L${pt(i)}` });
     }
 
-    // One path: the baseline has a value for every point from its start on.
+    // The baseline has a value for every point from its start to its end,
+    // which can be before the last point (the activity known only to an
+    // earlier day). Drawn at zero and above only: a stretch below zero ends
+    // where the line crosses zero, and one that comes back starts again there.
     const baseStart = base.findIndex((b) => b !== null);
-    const basePath =
-      baseStart < 0
-        ? ''
-        : base
-            .map((b, i) => (b === null ? '' : `${i === baseStart ? 'M' : 'L'}${xs[i].toFixed(1)},${y(b).toFixed(1)}`))
-            .join('');
+    let baseEnd = base.length - 1;
+    while (baseEnd >= 0 && base[baseEnd] === null) baseEnd--;
+    let basePath = '';
+    if (baseStart >= 0) {
+      const at = (px: number, v: number) => `${px.toFixed(1)},${y(v).toFixed(1)}`;
+      for (let i = baseStart; i <= baseEnd; i++) {
+        const b = base[i] as number;
+        if (i === baseStart) {
+          if (b >= 0) basePath += `M${at(xs[i], b)}`;
+          continue;
+        }
+        const prev = base[i - 1] as number;
+        if (prev >= 0 && b >= 0) basePath += `L${at(xs[i], b)}`;
+        else if (prev >= 0) basePath += `L${at(xs[i - 1] + ((xs[i] - xs[i - 1]) * prev) / (prev - b), 0)}`;
+        else if (b >= 0) basePath += `M${at(xs[i - 1] + ((xs[i] - xs[i - 1]) * -prev) / (b - prev), 0)}L${at(xs[i], b)}`;
+      }
+    }
 
     // Time axis: 12px labels at recognisable dates, each kept inside the
     // frame's inset (the hero's page gutter; a card's own box), anchored so
@@ -360,7 +391,7 @@ export default function NetWorthChart({
     const outline = points.map((_, i) => `${i === 0 ? 'M' : 'L'}${pt(i)}`).join('');
     const baseY = H - bottom;
     const area = `${outline}L${xs[xs.length - 1].toFixed(1)},${baseY}L${xs[0].toFixed(1)},${baseY}Z`;
-    return { vals, xs, y, runs, uniform, area, baseY, xTicks, hasGap, base, basePath, baseStart };
+    return { vals, xs, y, runs, uniform, area, baseY, xTicks, hasGap, base, baseIn, baseOut, basePath, baseStart, baseEnd };
   }, [points, baseline, frame, W, H]);
 
   // The notes in the range, a day each (several notes on one day join), each
@@ -381,7 +412,7 @@ export default function NetWorthChart({
     return here.length > 0 ? here.map((m) => m.text).join('; ') : null;
   };
 
-  const { vals, xs, y, runs, uniform, area, baseY, xTicks, hasGap, base, basePath, baseStart } = geo;
+  const { vals, xs, y, runs, uniform, area, baseY, xTicks, hasGap, base, baseIn, baseOut, basePath, baseStart, baseEnd } = geo;
   const last = points.length - 1;
   const hasEstimated = points.some((p) => p.estimated) || hasGap;
   // Dates carry the year outside this one (formatDay), so "Mar 3" is never
@@ -400,25 +431,30 @@ export default function NetWorthChart({
   }
 
   /**
-   * Money added and growth from the baseline's start to point i, or null.
+   * Money in, money out and growth between two points, or null. From the
+   * baseline's start to a point says what the line counts from there: with
+   * totals, the gap above the line is growth since the account started, so
+   * a point's own gap is not the range's.
    *
    * Null on an estimated point: that value is the balance walked back from
    * whenever backfill last ran, with no market movement in it, so "growth"
    * there would be whatever the walk left behind. The summary with nothing
    * scrubbed uses the last REAL point for the same reason.
    */
-  function split(i: number): { added: number; growth: number } | null {
-    const b = base[i];
-    if (b === null || baseStart < 0 || points[i].estimated) return null;
-    return { added: b - (base[baseStart] as number), growth: vals[i] - b };
-  }
-  /** The same between two points, for a measurement. */
-  function splitBetween(i: number, j: number): { added: number; growth: number } | null {
+  function splitBetween(i: number, j: number): { in: number; out: number; growth: number } | null {
     const bi = base[i];
     const bj = base[j];
     if (bi === null || bj === null || points[i].estimated || points[j].estimated) return null;
-    const added = bj - bi;
-    return { added, growth: vals[j] - vals[i] - added };
+    return { in: (baseIn[j] as number) - (baseIn[i] as number), out: (baseOut[j] as number) - (baseOut[i] as number), growth: vals[j] - vals[i] - (bj - bi) };
+  }
+  /** Its parts as the readout says them, those that round to nothing left
+   *  out but growth: "$8,000.00 in", "$500.00 out", "+$6,312.75 growth". */
+  function splitParts(s: { in: number; out: number; growth: number }): string[] {
+    return [
+      ...(roundsToNothing(s.in, currency ?? null) ? [] : [`${formatMoney(s.in, currency)} in`]),
+      ...(roundsToNothing(s.out, currency ?? null) ? [] : [`${formatMoney(s.out, currency)} out`]),
+      `${signed(s.growth, currency)} growth`,
+    ];
   }
   /** "+$2,340.00 (+4.1%)", marked approximate when it starts or ends on an
    *  estimate. No percentage for a debt or an investment (see `owed`), or
@@ -439,19 +475,45 @@ export default function NetWorthChart({
   let splitText = '';
   if (measure) {
     const s = splitBetween(measure[0], measure[1]);
-    if (s) splitText = `${signed(s.added, currency)} added · ${signed(s.growth, currency)} growth`;
+    if (s) splitText = splitParts(s).join(' · ');
+  } else if (active !== null) {
+    const s = baseStart >= 0 && active >= baseStart ? splitBetween(baseStart, active) : null;
+    if (s) splitText = splitParts(s).join(' · ');
   } else {
-    const s = split(active ?? lastReal);
+    const s = baseStart >= 0 ? splitBetween(baseStart, lastReal) : null;
     if (s) {
-      splitText =
-        (active === null ? `${day(baseStart)} to ${day(lastReal)}: ` : '') +
-        `${signed(s.added, currency)} added · ${signed(s.growth, currency)} growth`;
+      const from = `${day(baseStart)} to ${day(lastReal)}: `;
+      // Counted over a shorter stretch than the range, the parts can't add up
+      // to the range's change above, so that stretch's own change leads.
+      if (baseStart > 0 || lastReal < last) {
+        const parts = splitParts(s);
+        const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+        splitText = `${from}${signed(vals[lastReal] - vals[baseStart], currency)}, with ${list}`;
+      } else splitText = `${from}${splitParts(s).join(' · ')}`;
     }
   }
 
   const info: string[] = [];
   if (baseStart >= 0) {
-    info.push(`Grey line: the balance ${onDay(dayIn(baseStart))} plus money added since. The gap above it is growth.`);
+    // Below zero the line isn't drawn (see geo): said, with the day it
+    // stopped when it went below once and stayed there.
+    const shown = base.slice(baseStart, baseEnd + 1) as number[];
+    const below = shown.findIndex((b) => b < 0);
+    const stays = below > 0 && shown.slice(below).every((b) => b < 0);
+    const firstRecorded = points.slice(0, baseStart).every((p) => p.estimated);
+    const none = !shown.some((b) => b >= 0);
+    const more = baselineFrom ? 'more had come out than gone in' : `more had come out than the balance ${onDay(dayIn(baseStart))} and money in since`;
+    if (none) info.push(`No grey line for this range: all through it, ${more}${baselineFrom ? ', so your net was below zero' : ''}.`);
+    else {
+      info.push(
+        baselineFrom
+          ? `Grey line: your net money in (in less out) by each day, from your totals for ${fmtDay(baselineFrom, true)}. The gap above it is your growth so far.`
+          : `Grey line: the balance ${onDay(dayIn(baseStart))} plus net money in since. The gap above it is growth.`
+      );
+      if (stays) info.push(`It stops at zero ${onDay(dayIn(baseStart + below))}: from then on, ${more}.`);
+      else if (below >= 0) info.push(`It stops at zero on the days ${more}.`);
+    }
+    if (baselineFrom && baseStart > 0) info.push(`Money in, out and growth for the range count from ${dayIn(baseStart)}${firstRecorded ? ', the first recorded day' : ''}.`);
   }
   if (uniform) info.push(`${estimatedWords} No stretch of this range is recorded, so the line is solid.`);
   else if (hasEstimated) info.push('Dashed: estimated, from transactions or across days with no data.');

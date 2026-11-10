@@ -17,6 +17,8 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
   - [Connection health](#connection-health)
   - [Reconnect soon](#reconnect-soon)
   - [Email notices](#email-notices)
+- [Growth on an investment account](#growth-on-an-investment-account)
+  - [Money in and out](#money-in-and-out)
 - [Manual accounts](#manual-accounts)
 - [Bring your own sync](#bring-your-own-sync)
 - [Importing files](#importing-files)
@@ -86,7 +88,7 @@ Sometimes a connection has to be removed and added again (it broke badly, the ba
 
 Instead, **Settings** (under **Connections**, in **Reconnected accounts**) offers to link each new account to the one it replaces, with the evidence and a chart preview. Home's **Needs attention** says so too ("Chase Checking ••4821 may continue an earlier account") and opens that card, until you link it or say it is not the same. Nothing is linked until you say so. Once linked:
 
-- its **balance history** continues from the old account's, and so does the record of what an investment account held each day;
+- its **balance history** continues from the old account's, and so do the record of what an investment account held each day and its [money in and out](#money-in-and-out);
 - if you had **hidden** the old account, the new one is hidden too (a hidden account stays hidden after you disconnect it, listed as disconnected in the Hidden card, where you can still unhide it);
 - **categories you set** on the old account's transactions show on the same transactions under the new account (matched by date, amount and the bank's own description of the transaction), and the link says how many carried over. A category you set on a new transaction wins. Two identical transactions on the same day that you categorized differently (or only one of) can't be told apart, so they carry nothing;
 - transactions you **excluded** from budgets and reports are excluded again, matched the same way, and ones you put back stay put back (a rule doesn't hide them). Excluding or including a new transaction yourself wins, and two identical transactions you excluded only one of carry nothing;
@@ -312,6 +314,22 @@ When a connection breaks, the daily snapshot sends one email, and one reminder a
 Email is sent through [Resend](https://resend.com) and needs `RESEND_API_KEY` and `MAIL_FROM` ([deployment.md](deployment.md#email-notices)). Without them nothing is sent, the log says so once, and the connection's card is the only place a broken connection shows. A download of your data and a new API token each send an email of their own, to the same address ([below](#downloading-your-data)). So does the [weekly summary](#the-weekly-summary), if you turn it on.
 
 Only Plaid connections are emailed about. A problem with a bank SimpleFIN or Lunch Flow feeds shows on its card on the Accounts tab and under the Home total, but sends no email yet.
+
+## Growth on an investment account
+
+An investment account's sheet charts its balance with a thin grey line under it. Unless you have set its money in and out, the line is the balance on the range's first day plus the money that went in since, less what came out: contributions, rollovers and transfers in; withdrawals and transfers out. The gap above it is growth: market movement and dividends, less fees. The readout splits the range's change the same way ("Jan 1 to Today: $8,000.00 in · +$6,312.75 growth"), each part that moved and growth always. The line starts on a recorded day with no money moving in the three days before it, since a contribution may not be in that day's balance yet and would be counted as growth for good, and never in an estimated stretch, which has no market movement in it. It stops where Nya's activity for the account ends: money moved after that isn't known yet.
+
+### Money in and out
+
+Growth over a range says nothing of growth since the account started, which needs what went in and came out before Nya had the account's activity. So the sheet offers **Set money in and out**: the two totals your brokerage shows (often as contributions and withdrawals) and the day they are for. Nya carries them through the activity it has, taking off what moved between a day and theirs and adding what moved after, so each new contribution or withdrawal counts as it happens and they never need setting again. Then:
+
+- The sheet shows **Since you started**: money in, money out, the net (in less out) and **Growth so far** (the balance less the net), and where they come from ("From your totals for Oct 15, and $2,000.00 in since"). While the activity is known only to an earlier day, they are measured on that day's balance, and the heading says so.
+- The grey line is your net money in on each day, so on any range the gap above it is your growth so far. The readout still says what moved in the range and its growth; when the line starts after the range does, that stretch's own change leads ("Jul 12 to Today: +$14,312.75, with $8,000.00 in and +$6,312.75 growth").
+- When more has come out than went in, the net is below zero and growth so far is more than the balance. The line stops at zero, the chart's floor, and the chart's explanations say from when; a range below zero all through has no line, and says why.
+
+Both are positive amounts, and an empty one counts as $0.00, so a brokerage that shows only a net goes in as money in (or money out) alone: the net and growth stay right. As you type, the form says the net; cautions when money in is less than what Nya has seen go in by the day (it may leave out transfers, rollovers or an employer's match, or be a net, which saves as it is); names money that moved in the few days up to the day, which a brokerage's figures may not show yet; and takes a day only from the start of Nya's activity for the account. They aren't your cost basis, which grows with reinvested dividends, nor the Plan's Roth contributions, which leave out conversions.
+
+They belong to the account, not to one connection: linked to an account it replaces ([above](#removing-an-institution-and-adding-it-back)), it keeps them, the ones set on its own id first, then the newest; a link that is paused carries nothing. They stay with an account that has ended and go when it is forgotten. If Nya's activity for the account comes to start after their day (an institution that keeps less history now), they can't be carried: the sheet says so, with **Change money in and out**, and growth counts from the start of each range again. They are in the download and on Your data, and never shown to someone you share with. Only a linked investment account has them, since a manual account has no activity to carry them through.
 
 ## Manual accounts
 
