@@ -24,6 +24,15 @@
 // booked as a transfer out and a transfer in on one day nets away: a day's
 // net is money in when above zero, money out when below.
 //
+// MOVES. Money that leaves and comes back is neither: an exchange whose two
+// legs land on different days, a sweep, a transfer between two of the
+// person's investment accounts. Out and in of the same amount within
+// MOVE_DAYS of each other is a move. In one account its legs are taken out of
+// the flows where the activity is built (withoutMoves, lib/investment-
+// activity.ts), so the line, its readout and the sheet's figures never see
+// them; between accounts, Accounts > Summary takes them off its totals
+// (movedBetween), as each account's own figures rightly show its leg.
+//
 // Imports nothing but a pure date helper: the chart is a client component.
 
 import { latestAsOf } from './money-in-out';
@@ -109,6 +118,11 @@ export function movedSince(totals: Totals, flows: readonly Flow[], day: string):
  * unambiguous, and only falls back to the first real point when every candidate
  * has one (an account contributing every few days).
  *
+ * Nor does it start between the two legs of a move (`moves`, from
+ * withoutMoves): a move's legs are out of the flows, and a balance that
+ * really dipped between them (money sent out and back) would read the
+ * return as growth from such a start.
+ *
  * With `totals` that can be carried (usableTotals) the value is the net money
  * in on each day instead (moneyInOutOn), from the same start: growth measured
  * across the estimated stretch would still be the walk's fiction.
@@ -122,7 +136,9 @@ export function contributionBaseline(
   /** Last date the flows are known complete for. Past it a contribution may
    *  simply not be known yet, and would read as growth, so the line stops. */
   flowsTo?: string | null,
-  totals?: Totals | null
+  totals?: Totals | null,
+  /** The moves taken out of `flows` (withoutMoves). */
+  moves?: readonly Move[] | null
 ): BaselinePoint[] | null {
   if (!flows || !flowsFrom) return null;
   if (flowsTo) points = points.filter((p) => p.date <= flowsTo);
@@ -131,7 +147,9 @@ export function contributionBaseline(
   if (candidates.length === 0) return null;
   const settled = (date: string) => {
     const from = shiftDays(date, -SETTLE_DAYS);
-    return !sorted.some((f) => f.date >= from && f.date < date);
+    // A leg counts from the day after its date: from `date` on, one leg is
+    // in the balance and the other isn't.
+    return !sorted.some((f) => f.date >= from && f.date < date) && !(moves ?? []).some((m) => m.from < date && date <= m.to);
   };
   const start = candidates.find((p) => settled(p.date)) ?? candidates[0];
   const carried = usableTotals(totals, flowsFrom) ? totals : null;
@@ -180,9 +198,10 @@ export function rangeSplit(
   flows: readonly Flow[] | null | undefined,
   flowsFrom: string | null | undefined,
   flowsTo?: string | null,
-  totals?: Totals | null
+  totals?: Totals | null,
+  moves?: readonly Move[] | null
 ): RangeSplit | null {
-  const line = contributionBaseline(shown, flows, flowsFrom, flowsTo, totals);
+  const line = contributionBaseline(shown, flows, flowsFrom, flowsTo, totals, moves);
   if (!line || line.length === 0) return null;
   const real = new Map(shown.filter((p) => !p.estimated).map((p) => [p.date, p.value] as const));
   const start = line[0];
@@ -201,6 +220,83 @@ export function rangeSplit(
 /** A YYYY-MM-DD date moved by whole UTC days. */
 function shiftDays(date: string, days: number): string {
   return new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** How many days apart money out and the same money in can be and still be
+ *  one move: long enough for an exchange's buy to settle after its sell, or a
+ *  transfer between institutions to arrive. */
+export const MOVE_DAYS = 5;
+
+/**
+ * The legs that pair into moves: each money out with money in of the same
+ * amount, to the cent, no more than MOVE_DAYS from it, when `pairs` lets
+ * their owners pair. Nearest first, so of two candidates the closer one is
+ * the other leg; then the earlier. Returns each pair's two indexes, out
+ * first.
+ */
+function pairMoves(legs: readonly (Flow & { owner: number })[], pairs: (out: number, inn: number) => boolean): [number, number][] {
+  const ins = new Map<number, number[]>();
+  legs.forEach((l, i) => {
+    if (l.amount <= 0) return;
+    const key = Math.round(l.amount * 100);
+    (ins.get(key) ?? ins.set(key, []).get(key)!).push(i);
+  });
+  const dayOf = (d: string) => Math.round(Date.parse(`${d}T00:00:00Z`) / 86_400_000);
+  const candidates: { out: number; inn: number; gap: number }[] = [];
+  legs.forEach((l, out) => {
+    if (l.amount >= 0) return;
+    for (const inn of ins.get(Math.round(-l.amount * 100)) ?? []) {
+      const gap = Math.abs(dayOf(legs[inn].date) - dayOf(l.date));
+      if (gap <= MOVE_DAYS && pairs(l.owner, legs[inn].owner)) candidates.push({ out, inn, gap });
+    }
+  });
+  const first = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  candidates.sort((a, b) => a.gap - b.gap || first(legs[a.out].date, legs[b.out].date) || first(legs[a.inn].date, legs[b.inn].date));
+  const used = new Set<number>();
+  const found: [number, number][] = [];
+  for (const c of candidates) {
+    if (used.has(c.out) || used.has(c.inn)) continue;
+    used.add(c.out);
+    used.add(c.inn);
+    found.push([c.out, c.inn]);
+  }
+  return found;
+}
+
+/** A move inside one account: the days of its two legs, the earlier first. */
+export type Move = { from: string; to: string };
+
+/**
+ * One account's daily flows without the moves inside it (see the header):
+ * what's left is money that came in from outside its investments, or went
+ * out of them. A leg whose other half is outside the flows' window stays.
+ * The moves are kept as the days they span, so the line never starts
+ * between two legs (contributionBaseline).
+ */
+export function withoutMoves(flows: readonly Flow[]): { flows: Flow[]; moves: Move[] } {
+  const found = pairMoves(
+    flows.map((f) => ({ ...f, owner: 0 })),
+    () => true
+  );
+  const paired = new Set(found.flat());
+  const moves = found
+    .map(([out, inn]): Move => {
+      const [from, to] = [flows[out].date, flows[inn].date].sort();
+      return { from, to };
+    })
+    .sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : a.to < b.to ? -1 : a.to > b.to ? 1 : 0));
+  return { flows: flows.filter((_, i) => !paired.has(i)), moves };
+}
+
+/**
+ * What moved between accounts, each given as the flows it counted: money one
+ * account's figures have going out and another's coming in, paired as moves
+ * are. Accounts > Summary takes it off its money in and its money out alike,
+ * so its net is unchanged.
+ */
+export function movedBetween(accounts: readonly (readonly Flow[])[]): number {
+  const legs = accounts.flatMap((flows, owner) => flows.map((f) => ({ ...f, owner })));
+  return cents(pairMoves(legs, (out, inn) => out !== inn).reduce((t, [, inn]) => t + legs[inn].amount, 0));
 }
 
 /**

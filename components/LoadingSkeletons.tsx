@@ -175,19 +175,22 @@ export function LinesSkeleton({ status, lines }: { status: string; lines: number
 /** A card of rows while they load, its title still to come: what a segment
  *  without a skeleton of its own shows (Budgets' Goals, Activity's Shared),
  *  and a Settings card while its code is on its way
- *  (components/SettingsCardsLoader.tsx). */
-export function CardSkeleton({ label }: { label: string }) {
+ *  (components/SettingsCardsLoader.tsx). `cards` draws that many, said as
+ *  one thing loading (Accounts' Summary has two). */
+export function CardSkeleton({ label, cards = 1 }: { label: string; cards?: number }) {
   useInStep();
   return (
     <div aria-busy="true">
-      <section className="card stack" aria-hidden="true">
-        <div className="card-header">
-          <h3>
-            <span className="skeleton rows-skeleton-title" />
-          </h3>
-        </div>
-        <RowsSkeleton count={3} />
-      </section>
+      {Array.from({ length: cards }, (_, i) => (
+        <section key={i} className="card stack" aria-hidden="true">
+          <div className="card-header">
+            <h3>
+              <span className="skeleton rows-skeleton-title" />
+            </h3>
+          </div>
+          <RowsSkeleton count={3} />
+        </section>
+      ))}
       <Status label={label} />
     </div>
   );
@@ -440,7 +443,7 @@ export function DeleteAccountSkeleton() {
  *  their rows. Two kinds (cash and credit) is the common case, one row on a
  *  phone; with three or more a second row of figures still comes in when the
  *  accounts do, and with one kind, or none, the strip goes. On Summary, its
- *  card still to come. */
+ *  two cards still to come. */
 export function AccountsSkeleton({ segment = 'accounts' }: { segment?: AccountsSegment }) {
   useInStep();
   const bar = (
@@ -462,7 +465,7 @@ export function AccountsSkeleton({ segment = 'accounts' }: { segment?: AccountsS
     return (
       <>
         {bar}
-        <CardSkeleton label="Loading investment growth" />
+        <CardSkeleton label="Loading investment growth" cards={2} />
       </>
     );
   }

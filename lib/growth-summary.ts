@@ -4,8 +4,10 @@
 // investment account's money in, money out and growth over a range, by its own
 // chart's rule (lib/growth.ts rangeSplit), added up for each currency on its
 // own, never converted; and Since you started for a currency once every
-// account in it has totals Nya can carry (sinceStarted). Pure: the card loads,
-// this counts, and the card says it.
+// account in it has totals Nya can carry (sinceStarted). Money one account
+// sent another is a move, not money in or out across them: it is taken off
+// the totals (movedBetween), not off the rows, which keep their own sheet's
+// figures. Pure: the card loads, this counts, and the card says it.
 //
 // What it can't count is kept apart, never folded into a figure: an account
 // whose activity is loading, couldn't be loaded or is still being fetched by
@@ -13,7 +15,7 @@
 // nothing to count in the range chosen.
 
 import { LATE_START_DAYS, availableRanges, initialRange, rangeLabel, rangeStart, type RangeKey } from './chart-range';
-import { rangeSplit, sinceStarted, usableTotals, type BalancePoint, type Flow, type RangeSplit } from './growth';
+import { movedBetween, rangeSplit, sinceStarted, usableTotals, type BalancePoint, type Flow, type Move, type RangeSplit } from './growth';
 import type { MoneyInOut } from './money-in-out';
 
 /** The note the activity carries while another request is making the
@@ -25,6 +27,7 @@ export const ACTIVITY_STILL_LOADING = 'Investment activity is still loading';
  *  this reads. */
 export type GrowthActivity = {
   flows?: Flow[] | null;
+  moves?: Move[] | null;
   flows_from?: string | null;
   flows_to?: string | null;
   note: string | null;
@@ -94,6 +97,9 @@ export type CurrencyGroup<A extends GrowthAccount = GrowthAccount> = {
   /** The range's figures across the counted accounts, or null while loading
    *  or with nothing to count. */
   figures: Figures | null;
+  /** What moved between these accounts in the range: taken off the figures'
+   *  money in and money out alike, so their net is the rows'. */
+  moved: number;
   /** Accounts the figures are short of. */
   failed: GrowthRow<A>[];
   busy: GrowthRow<A>[];
@@ -102,6 +108,9 @@ export type CurrencyGroup<A extends GrowthAccount = GrowthAccount> = {
   /** Since you started across the counted accounts, once every one has
    *  totals that can be carried and a balance to measure. */
   since: Figures | null;
+  /** What moved between these accounts after each one's totals' day: taken
+   *  off Since you started as `moved` is off the range's figures. */
+  sinceMoved: number;
   /** Counted accounts whose totals aren't set, or are set for a day before
    *  the activity Nya now has. */
   missing: GrowthRow<A>[];
@@ -145,11 +154,17 @@ function totalsOf(a: GrowthActivity): TotalsState {
   return usableTotals(a.money_in_out, a.flows_from) ? 'set' : 'outdated';
 }
 
-const sum = (rows: readonly { in: number; out: number; growth: number }[]): Figures => {
-  const inn = cents(rows.reduce((t, r) => t + r.in, 0));
-  const out = cents(rows.reduce((t, r) => t + r.out, 0));
+/** The rows added up, less what moved between them, off money in and money
+ *  out alike. */
+const sum = (rows: readonly { in: number; out: number; growth: number }[], moved = 0): Figures => {
+  const inn = cents(rows.reduce((t, r) => t + r.in, 0) - moved);
+  const out = cents(rows.reduce((t, r) => t + r.out, 0) - moved);
   return { in: inn, out, net: cents(inn - out), growth: cents(rows.reduce((t, r) => t + r.growth, 0)) };
 };
+
+/** The flows dated from `from` up to, not including, `to`: those a stretch
+ *  between two points counts (a flow counts from the day after its date). */
+const between = (flows: readonly Flow[], from: string, to: string) => flows.filter((f) => f.date >= from && f.date < to);
 
 /**
  * The card's figures for `accounts` (in the order the tab lists them) over
@@ -164,8 +179,19 @@ export function summarizeGrowth<A extends GrowthAccount>(
   now: number = Date.now()
 ): GrowthSummary<A> {
   // The ranges are offered as each account's chart offers them, over every
-  // day any of them has: one account with five years makes 5Y worth having.
-  const days = [...new Set(accounts.flatMap((a) => (a.points ?? []).map((p) => p.date)))].sort().map((date) => ({ date }));
+  // day any of them has recorded: one account with five years makes 5Y worth
+  // having. Recorded, not estimated: the figures count only from a recorded
+  // day (contributionBaseline), so a range reaching back into estimates
+  // would be counted from where the record starts, under a name ("Year to
+  // date") for days it never counted.
+  const days = [...new Set(accounts.flatMap((a) => (a.points ?? []).flatMap((p) => (p.estimated ? [] : [p.date]))))]
+    .sort()
+    .map((date) => ({ date }));
+  const today = new Date(now).toISOString().slice(0, 10);
+  // Each counted account's flows inside what its figures count, for the
+  // moves between accounts: the range's split, and since its totals' day.
+  const rangeFlows = new Map<GrowthRow<A>, Flow[]>();
+  const sinceFlows = new Map<GrowthRow<A>, Flow[]>();
   const last = days.length ? days[days.length - 1].date : null;
   const ranges = availableRanges(days, 'investment');
   const range = picked && ranges.includes(picked) ? picked : last ? initialRange(ranges, 'investment', last) : 'ALL';
@@ -184,6 +210,11 @@ export function summarizeGrowth<A extends GrowthAccount>(
     if (row.totals === 'set' && totals) {
       const s = sinceStarted(totals, a.flows!, a.flows_to, account.balance, account.points, now);
       row.since = { in: s.in, out: s.out, net: s.net, growth: s.growth, to: s.to };
+      // What it adds to the totals: after their day, before the measuring one.
+      sinceFlows.set(
+        row,
+        a.flows!.filter((f) => f.date > totals.as_of && f.date < (s.to ?? today))
+      );
     }
     if (!account.points) return row;
     // Its range ends on its own last day, as on its sheet, unless that day is
@@ -194,9 +225,10 @@ export function summarizeGrowth<A extends GrowthAccount>(
     const own = account.points[account.points.length - 1]?.date;
     if (!own || (start !== null && own < start)) return row;
     const shown = start === null ? account.points : account.points.filter((p) => p.date >= start);
-    row.split = rangeSplit(shown, a.flows, a.flows_from, a.flows_to, totals);
+    row.split = rangeSplit(shown, a.flows, a.flows_from, a.flows_to, totals, a.moves);
     if (!row.split) return row;
     const split = row.split;
+    rangeFlows.set(row, between(a.flows!, split.from, split.to));
     if (start !== null && daysBetween(start, split.from) > LATE_START_DAYS) {
       row.from = { day: split.from, cause: shown.some((p) => !p.estimated && p.date < split.from) ? 'activity' : 'recorded' };
     }
@@ -244,15 +276,20 @@ export function summarizeGrowth<A extends GrowthAccount>(
       busy.length === 0 &&
       counted.length > 0 &&
       counted.every((r) => r.totals === 'set' && r.since && r.since.growth !== null);
+    const figures = !loading && split.length > 0;
+    const moved = figures ? movedBetween(counted.map((r) => rangeFlows.get(r) ?? [])) : 0;
+    const sinceMoved = ready ? movedBetween(counted.map((r) => sinceFlows.get(r) ?? [])) : 0;
     return {
       currency,
       rows: list,
       loading,
-      figures: loading || split.length === 0 ? null : sum(split),
+      figures: figures ? sum(split, moved) : null,
+      moved,
       failed,
       busy,
       uncounted: loading ? [] : counted.filter((r) => !r.split),
-      since: ready ? sum(counted.map((r) => ({ in: r.since!.in, out: r.since!.out, growth: r.since!.growth! }))) : null,
+      since: ready ? sum(counted.map((r) => ({ in: r.since!.in, out: r.since!.out, growth: r.since!.growth! })), sinceMoved) : null,
+      sinceMoved,
       missing: counted.filter((r) => r.totals === 'unset' || r.totals === 'outdated'),
       unreadable: counted.filter((r) => r.totals === 'unreadable'),
       unmeasured: counted.filter((r) => r.totals === 'set' && r.since?.growth === null),

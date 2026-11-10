@@ -1,12 +1,15 @@
 'use client';
 
-// Accounts > Summary's Investment growth card (docs/design/information-
-// architecture.md#accounts): what the linked investment accounts did over a
-// range, each and together, from their own recorded balances and activity.
-// For each currency on its own, never converted: Money in, Money out, Net and
-// Growth over the range, then Since you started once every account in it has
-// money in and out Nya can carry, then a row for each account, which opens
-// its sheet. The numbers are lib/growth-summary.ts's.
+// Accounts > Summary's two cards (docs/design/information-architecture.md
+// #accounts): what the linked investment accounts did, together and each,
+// from their own recorded balances and activity. For each currency on its
+// own, never converted:
+//   - Since you started, which no range changes: Money in, Money out, Net and
+//     Growth so far, once every account has money in and out Nya can carry,
+//     else what to set;
+//   - Investment growth: the same four over a range, then a row for each
+//     account, which opens its sheet.
+// The numbers are lib/growth-summary.ts's.
 //
 // It loads every account's balance history in one read (app/api/
 // account-history `ids`), and each account's activity through the cache its
@@ -17,10 +20,12 @@
 //
 // What it can't count is said, never left out quietly: an account whose
 // activity couldn't be loaded or is still loading in a critical notice under
-// the figures it is missing from; manual and SimpleFIN or Lunch Flow
-// accounts, which have no investment activity, in an information notice.
+// the figures it is missing from, and in Since you started, which waits for
+// it; manual and SimpleFIN or Lunch Flow accounts, which have no investment
+// activity, in an information notice. Money moved between the accounts is
+// taken off both cards' totals, and said under them.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { currencyPlural, formatDay, formatMoney, roundsToNothing, signedMoney } from '@/lib/format';
 import { isInvestmentType } from '@/lib/balance';
 import { RANGE_TEXT, type RangeKey } from '@/lib/chart-range';
@@ -97,7 +102,9 @@ export default function InvestmentGrowth({
   const [historyFailed, setHistoryFailed] = useState(false);
   const [activities, setActivities] = useState<Record<string, ActivityState>>({});
   const [picked, setPicked] = useState<RangeKey | null>(null);
-  const headingRef = useRef<HTMLHeadingElement>(null);
+  // Since you started's heading: where focus goes after a save from its Set
+  // button, which the save usually takes away.
+  const sinceRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     const ids = keys ? keys.split('\n').map((k) => k.slice(k.indexOf(':') + 1)) : [];
@@ -181,52 +188,69 @@ export default function InvestmentGrowth({
     </Notice>
   );
 
+  const several = s.groups.length > 1;
+  const unconverted = several && <p className="helper">Each currency is added up on its own: nothing here is converted.</p>;
+
   return (
-    <section className="card stack" aria-labelledby="investment-growth-title">
-      <div className="card-header">
-        <h2 id="investment-growth-title" tabIndex={-1} ref={headingRef}>
-          Investment growth
-        </h2>
-      </div>
-      {accounts.length === 0 ? (
-        <>
-          <p className="empty-note">Linked investment accounts show their growth here.</p>
-          {notCountedNotice}
-        </>
-      ) : (
-        <>
-          {s.ranges.length > 1 && (
-            <Segmented compact label="Time range" value={s.range} onChange={setPicked} options={s.ranges.map((key) => [key, RANGE_TEXT[key]] as const)} />
-          )}
-          {historyFailed && (
-            <Notice level="critical" role="alert">
-              The accounts’ balance history couldn’t be loaded just now, so their growth over a range can’t be worked out. Refresh to try again.
-            </Notice>
-          )}
-          {s.groups.map((g, i) => (
-            <Group
-              key={g.currency}
-              group={g}
-              label={s.groups.length > 1 ? `${currencyPlural(g.currency)}, ${s.label.charAt(0).toLowerCase()}${s.label.slice(1)}` : s.label}
-              figures={!historyFailed}
-              headingRef={headingRef}
-              onOpenAccount={onOpenAccount}
-              onMoneyInOut={onMoneyInOut}
-            >
-              {i === 0 && (
-                <>
-                  {notCountedNotice}
-                  <Why>
-                    Money in and money out are what went in and came out over the range, rollovers and transfers included, and net is the one less the other. Growth is the change in value less the net: dividends and interest count, fees come off. Since you started counts from the money in and out you gave for each account, and growth so far is their value today less the net.
-                  </Why>
-                </>
-              )}
-            </Group>
+    <>
+      {accounts.length > 0 && (
+        <section className="card stack" aria-labelledby="since-started-title">
+          <div className="card-header">
+            <h2 id="since-started-title" tabIndex={-1} ref={sinceRef}>
+              Since you started
+            </h2>
+          </div>
+          {s.groups.map((g) => (
+            <SinceGroup key={g.currency} group={g} label={several ? currencyPlural(g.currency) : null} backTo={() => sinceRef.current} onMoneyInOut={onMoneyInOut} />
           ))}
-          {s.groups.length > 1 && <p className="helper">Each currency is added up on its own: nothing here is converted.</p>}
-        </>
+          {unconverted}
+          <Why>
+            Since you started counts from the money in and out you gave for each account, carried through the activity Nya has had since. Growth so far is their value today less the net.
+          </Why>
+        </section>
       )}
-    </section>
+      <section className="card stack" aria-labelledby="investment-growth-title">
+        <div className="card-header">
+          <h2 id="investment-growth-title">Investment growth</h2>
+        </div>
+        {accounts.length === 0 ? (
+          <>
+            <p className="empty-note">Linked investment accounts show their growth here.</p>
+            {notCountedNotice}
+          </>
+        ) : (
+          <>
+            {s.ranges.length > 1 && (
+              <Segmented compact label="Time range" value={s.range} onChange={setPicked} options={s.ranges.map((key) => [key, RANGE_TEXT[key]] as const)} />
+            )}
+            {historyFailed && (
+              <Notice level="critical" role="alert">
+                The accounts’ balance history couldn’t be loaded just now, so their growth over a range can’t be worked out. Refresh to try again.
+              </Notice>
+            )}
+            {s.groups.map((g, i) => (
+              <Group
+                key={g.currency}
+                group={g}
+                label={several ? `${currencyPlural(g.currency)}, ${s.label.charAt(0).toLowerCase()}${s.label.slice(1)}` : s.label}
+                figures={!historyFailed}
+                onOpenAccount={onOpenAccount}
+              >
+                {i === 0 && (
+                  <>
+                    {notCountedNotice}
+                    <Why>
+                      Money in and money out are what went in and came out over the range, rollovers and transfers included, and net is the one less the other. Money that left and came back within five days is a move, neither in nor out: a fund exchange, a sweep, a transfer between these accounts. Growth is the change in value less the net: dividends and interest count, fees come off.
+                    </Why>
+                  </>
+                )}
+              </Group>
+            ))}
+            {unconverted}
+          </>
+        )}
+      </section>
+    </>
   );
 }
 
@@ -265,10 +289,10 @@ function Strip({ f, currency, growth = 'Growth' }: { f: Figures; currency: strin
 }
 
 /** The strip's place while the activity loads. */
-function StripSkeleton() {
+function StripSkeleton({ growth = 'Growth' }: { growth?: string }) {
   return (
     <ul className="stat-strip" aria-hidden="true">
-      {['Money in', 'Money out', 'Net', 'Growth'].map((label) => (
+      {['Money in', 'Money out', 'Net', growth].map((label) => (
         <li key={label} className="stat">
           <span className="stat-label">{label}</span>
           <span className="stat-value">
@@ -311,34 +335,121 @@ function missingWords(g: CurrencyGroup<Shown>): string | null {
   return null;
 }
 
+/** What the totals leave out as moves between the accounts, said with them:
+ *  the rows each show their own leg. */
+function MovedLine({ moved, currency }: { moved: number; currency: string }) {
+  if (roundsToNothing(moved, currency)) return null;
+  return (
+    <p className="helper">
+      <Masked>{`Not counted as money in or out: ${formatMoney(moved, currency)} that moved between these accounts.`}</Masked>
+    </p>
+  );
+}
+
+/** Since you started for one currency: its figures, or why they aren't
+ *  shown and what would show them. */
+function SinceGroup({
+  group: g,
+  label,
+  backTo,
+  onMoneyInOut,
+}: {
+  group: CurrencyGroup<Shown>;
+  /** The currency, when the card has several. */
+  label: string | null;
+  /** Where focus goes when the Set button is gone: the card's heading. */
+  backTo: () => HTMLElement | null;
+  onMoneyInOut: (target: MoneyInOutTarget) => void;
+}) {
+  const missing = g.loading || g.since ? null : missingWords(g);
+  const one = g.missing.length === 1 ? g.missing[0] : null;
+  const early = g.since ? g.rows.filter((r) => r.since?.to) : [];
+  const waiting = g.loading || g.since ? null : waitingWords(g);
+  const nothing = !g.loading && !g.since && !waiting && !missing && g.unmeasured.length === 0 && g.unreadable.length === 0;
+
+  return (
+    <div className="stack tight" {...(g.loading ? { role: 'status', 'aria-label': 'Loading growth so far' } : {})}>
+      {label && <h3 className="section-label">{label}</h3>}
+      {g.loading ? (
+        <StripSkeleton growth="Growth so far" />
+      ) : (
+        g.since && (
+          <>
+            <Strip f={g.since} currency={g.currency} growth="Growth so far" />
+            <MovedLine moved={g.sinceMoved} currency={g.currency} />
+            {early.map((r) => (
+              <p key={r.account.key} className="helper">
+                {`${r.account.title}’s growth so far is measured on ${day(r.since!.to!)}, as Nya has its activity only to ${day(r.flowsTo!)}.`}
+              </p>
+            ))}
+          </>
+        )
+      )}
+      {waiting && <p className="helper">{waiting}</p>}
+      {missing && (
+        <>
+          <p className="helper">{missing}</p>
+          {one && (
+            <div>
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={(e) => {
+                  focusInsteadOf(e.currentTarget, backTo);
+                  onMoneyInOut(targetFor(one));
+                }}
+              >
+                {`${one.totals === 'outdated' ? 'Change' : 'Set'} money in and out for ${one.account.title}`}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+      {!g.loading && g.unmeasured.length > 0 && (
+        <p className="helper">
+          {`Nya has no balance for ${joinNames(g.unmeasured.map((r) => r.account.title))} just now, so growth so far across these accounts isn’t shown.`}
+        </p>
+      )}
+      {!g.loading && g.unreadable.length > 0 && (
+        // Never a button here: a save would write over what is stored.
+        <Notice level="caution" role="status">
+          {`Money in and out for ${joinNames(g.unreadable.map((r) => r.account.title))} can’t be read just now, so growth so far across these accounts isn’t shown.`}
+        </Notice>
+      )}
+      {nothing && <p className="empty-note">Nothing to count yet.</p>}
+    </div>
+  );
+}
+
+/** Why Since you started waits on activity the range's figures are short of
+ *  (said in full under them). */
+function waitingWords(g: CurrencyGroup<Shown>): string | null {
+  const names = (rows: GrowthRow<Shown>[]) => joinNames(rows.map((r) => r.account.title));
+  const shown = 'Growth so far across these accounts is shown once Nya has';
+  if (g.failed.length > 0 && g.busy.length > 0)
+    return `${shown} all their activity. The activity for ${names(g.failed)} couldn’t be loaded just now; for ${names(g.busy)}, it is still loading.`;
+  if (g.failed.length > 0) return `${shown} the activity for ${names(g.failed)}: ${its(g.failed.length)} activity couldn’t be loaded just now.`;
+  if (g.busy.length > 0) return `${shown} the activity for ${names(g.busy)}: ${its(g.busy.length)} activity is still loading.`;
+  return null;
+}
+
+/** The range's figures for one currency, then a row for each account. */
 function Group({
   group: g,
   label,
   figures,
-  headingRef,
   onOpenAccount,
-  onMoneyInOut,
   children,
 }: {
   group: CurrencyGroup<Shown>;
   label: string;
   /** False when the histories couldn't be read: the card says so once. */
   figures: boolean;
-  /** The card's heading, where focus goes when nothing nearer is left. */
-  headingRef: RefObject<HTMLHeadingElement | null>;
   onOpenAccount: (item_id: string, account_id: string) => void;
-  onMoneyInOut: (target: MoneyInOutTarget) => void;
   children?: ReactNode;
 }) {
   const short = g.loading ? null : shortWords(g);
   const edges = g.loading ? [] : g.rows.flatMap((r) => edgeWords(r) ?? []);
-  const missing = g.loading || g.since ? null : missingWords(g);
-  const one = g.missing.length === 1 ? g.missing[0] : null;
-  const early = g.since ? g.rows.filter((r) => r.since?.to) : [];
-  // A save from the button below usually brings Since you started and takes
-  // the button away: focus goes to that heading then, or to the card's.
-  const sinceRef = useRef<HTMLHeadingElement>(null);
-  const backTo = () => (sinceRef.current?.isConnected ? sinceRef.current : headingRef.current);
 
   return (
     <>
@@ -348,7 +459,10 @@ function Group({
           {g.loading ? (
             <StripSkeleton />
           ) : g.figures ? (
-            <Strip f={g.figures} currency={g.currency} />
+            <>
+              <Strip f={g.figures} currency={g.currency} />
+              <MovedLine moved={g.moved} currency={g.currency} />
+            </>
           ) : (
             <p className="empty-note">Nothing to count in this range yet.</p>
           )}
@@ -371,49 +485,6 @@ function Group({
             {`${r.account.title} isn’t counted for this range: it has no recorded day in it that Nya has activity for.`}
           </p>
         ))}
-      {g.since && (
-        <div className="stack tight">
-          <h3 className="section-label" tabIndex={-1} ref={sinceRef}>
-            Since you started
-          </h3>
-          <Strip f={g.since} currency={g.currency} growth="Growth so far" />
-          {early.map((r) => (
-            <p key={r.account.key} className="helper">
-              {`${r.account.title}’s growth so far is measured on ${day(r.since!.to!)}, as Nya has its activity only to ${day(r.flowsTo!)}.`}
-            </p>
-          ))}
-        </div>
-      )}
-      {missing && (
-        <div className="stack tight">
-          <p className="helper">{missing}</p>
-          {one && (
-            <div>
-              <button
-                type="button"
-                className="btn ghost"
-                onClick={(e) => {
-                  focusInsteadOf(e.currentTarget, backTo);
-                  onMoneyInOut(targetFor(one));
-                }}
-              >
-                {`${one.totals === 'outdated' ? 'Change' : 'Set'} money in and out for ${one.account.title}`}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-      {!g.loading && g.unmeasured.length > 0 && (
-        <p className="helper">
-          {`Nya has no balance for ${joinNames(g.unmeasured.map((r) => r.account.title))} just now, so growth so far across these accounts isn’t shown.`}
-        </p>
-      )}
-      {!g.loading && g.unreadable.length > 0 && (
-        // Never a button here: a save would write over what is stored.
-        <Notice level="caution" role="status">
-          {`Money in and out for ${joinNames(g.unreadable.map((r) => r.account.title))} can’t be read just now, so growth so far across these accounts isn’t shown.`}
-        </Notice>
-      )}
       {children}
       <ul className="list-rows">
         {g.rows.map((r) => (
