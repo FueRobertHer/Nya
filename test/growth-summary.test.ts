@@ -144,3 +144,71 @@ describe('currencies', () => {
     ]);
   });
 });
+
+// Money one account sent another is a move across them: off the totals' money
+// in and money out alike, never off the rows, which keep their own sheet's.
+describe('moves between accounts', () => {
+  const totals = (inn: number) => ({ in: inn, out: 0, as_of: '2026-03-31', currency: 'USD', set_at: '2026-11-01T00:00:00.000Z' });
+  const roth = account('roth', {
+    balance: 3_100,
+    activity: ready({ flows: [{ date: '2026-04-01', amount: -7_000 }], money_in_out: totals(10_000) }),
+    points: [{ date: '2025-12-01', value: 10_000 }, { date: '2026-01-01', value: 10_000 }, { date: '2026-11-05', value: 3_100 }],
+  });
+  const brokerage = account('brokerage', {
+    balance: 8_050,
+    activity: ready({ flows: [{ date: '2026-04-03', amount: 7_000 }], money_in_out: totals(1_000) }),
+    points: [{ date: '2025-12-01', value: 1_000 }, { date: '2026-01-01', value: 1_000 }, { date: '2026-11-05', value: 8_050 }],
+  });
+
+  test('the range: off money in and out, the net and growth as they were', () => {
+    const g = sum([roth, brokerage]).groups[0];
+    expect(g.rows.map((r) => [r.split?.in, r.split?.out, r.split?.growth])).toEqual([
+      [0, 7_000, 100],
+      [7_000, 0, 50],
+    ]);
+    expect(g.moved).toBe(7_000);
+    expect(g.figures).toEqual({ in: 0, out: 0, net: 0, growth: 150 });
+  });
+
+  test('Since you started: the same, from each one’s totals’ day', () => {
+    const g = sum([roth, brokerage]).groups[0];
+    expect(g.rows.map((r) => [r.since?.in, r.since?.out])).toEqual([
+      [10_000, 7_000],
+      [8_000, 0],
+    ]);
+    expect(g.sinceMoved).toBe(7_000);
+    expect(g.since).toEqual({ in: 11_000, out: 0, net: 11_000, growth: 150 });
+  });
+
+  test('a move before the totals’ day is in them already: nothing taken off', () => {
+    const early = (a: GrowthAccount, as_of: string): GrowthAccount => {
+      const data = (a.activity as { data: GrowthActivity }).data;
+      return { ...a, activity: ready({ ...data, money_in_out: { ...data.money_in_out!, as_of } }) };
+    };
+    const g = sum([early(roth, '2026-04-05'), early(brokerage, '2026-04-05')]).groups[0];
+    expect(g.sinceMoved).toBe(0);
+    expect(g.moved).toBe(7_000);
+  });
+});
+
+// The figures count only from a recorded day (lib/growth.ts
+// contributionBaseline), so a range is offered and named by those days.
+describe('ranges', () => {
+  test('offered and named by the days Nya recorded, not by its estimates', () => {
+    const recent = account('recent', {
+      points: [
+        { date: '2025-06-01', value: 900, estimated: true },
+        { date: '2026-01-01', value: 950, estimated: true },
+        { date: '2026-08-31', value: 990, estimated: true },
+        { date: '2026-09-01', value: 1_000 },
+        { date: '2026-10-01', value: 1_010 },
+        { date: '2026-11-05', value: 1_020 },
+      ],
+    });
+    const s = sum([recent]);
+    expect(s.ranges).not.toContain('YTD');
+    expect(s.range).toBe('ALL');
+    expect(s.label).toBe('Since Sep 1');
+    expect(s.groups[0].rows[0].split).toEqual({ from: '2026-09-01', to: '2026-11-05', in: 0, out: 0, growth: 20 });
+  });
+});

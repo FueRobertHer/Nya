@@ -35,6 +35,9 @@ export type InvestmentActivityPayload = {
   /** Money crossing the account boundary per day, for the chart's added-vs-
    *  growth line. Null when unavailable or withheld (see the route). */
   flows?: { date: string; amount: number }[] | null;
+  /** The moves taken out of `flows` (lib/growth.ts withoutMoves), as the days
+   *  each spans: the line never starts between a move's two legs. */
+  moves?: { from: string; to: string }[] | null;
   flows_from?: string | null;
   /** Last date the flows are known complete for; the line stops there. */
   flows_to?: string | null;

@@ -16,6 +16,7 @@ import {
   isIncomingRollover,
 } from './investments';
 import type { InvSync } from './invstore';
+import { withoutMoves } from './growth';
 import { ACTIVITY_STILL_LOADING } from './growth-summary';
 
 const RECENT_LIMIT = 25;
@@ -56,15 +57,24 @@ export function activityFromSync(sync: InvSync, account_id: string) {
   // an institution can keep less history than was asked for, and every
   // contribution before its oldest row would read as growth. No rows at all
   // proves nothing about how far the feed reaches, so no line.
+  //
+  // Without the moves inside the account (lib/growth.ts withoutMoves): an
+  // exchange whose sell and buy land days apart is neither money in nor out,
+  // for the line, its readout, the sheet's figures and the form's checks.
+  // The moves are kept as the days they span, for where the line may start.
   const cov = sync.coverage[account_id];
   const oldest = mine.length ? mine[mine.length - 1].date : null;
   const flowsKnown = !!cov && !!oldest;
-  const flows = flowsKnown
-    ? dailyFlows(
-        mine.filter((t) => t.date >= cov!.from && t.date <= cov!.through),
-        counted
+  const split = flowsKnown
+    ? withoutMoves(
+        dailyFlows(
+          mine.filter((t) => t.date >= cov!.from && t.date <= cov!.through),
+          counted
+        )
       )
     : null;
+  const flows = split?.flows ?? null;
+  const moves = split?.moves ?? null;
   const flows_from = flowsKnown ? (oldest! > cov!.from ? oldest! : cov!.from) : null;
   const flows_to = flowsKnown ? cov!.through : null;
 
@@ -115,6 +125,7 @@ export function activityFromSync(sync: InvSync, account_id: string) {
     ytd_contributions,
     ytd_rollovers,
     flows,
+    moves,
     flows_from,
     flows_to,
     contributions_12m,
@@ -143,4 +154,12 @@ export function cacheable(sync: InvSync): boolean {
  *  contributed" or "a whole year". */
 export function hasPlanFields(cached: Record<string, unknown>): boolean {
   return 'contributions_12m_activity_from' in cached;
+}
+
+/** A cached entry whose flows have the moves inside the account taken out
+ *  (withoutMoves), which says so with its `moves`: one cached before then is
+ *  a miss, so its chart and Accounts > Summary never count an exchange's two
+ *  legs as money out and money in for the rest of its life in the cache. */
+export function hasCurrentFlows(cached: Record<string, unknown>): boolean {
+  return 'moves' in cached;
 }

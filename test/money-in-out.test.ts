@@ -156,7 +156,7 @@ describe('disconnecting and forgetting', () => {
 });
 
 describe('the activity route', () => {
-  const PAYLOAD = { txns: [], ytd_contributions: 0, ytd_rollovers: 0, flows: [], flows_from: '2026-06-01', flows_to: '2026-11-09', note: null, contributions_12m_activity_from: null };
+  const PAYLOAD = { txns: [], ytd_contributions: 0, ytd_rollovers: 0, flows: [], flows_from: '2026-06-01', flows_to: '2026-11-09', note: null, contributions_12m_activity_from: null, moves: [] };
   const get = async () => (await activity.GET(new Request('http://x/api/investment-activity?id=inv&item_id=i1'))).json();
 
   test('answers the totals fresh beside a cached payload, so a save shows at once', async () => {
