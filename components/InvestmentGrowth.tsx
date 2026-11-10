@@ -1,13 +1,13 @@
 'use client';
 
-// Accounts > Summary's two cards (docs/design/information-architecture.md
+// Accounts > Investments' two cards (docs/design/information-architecture.md
 // #accounts): what the linked investment accounts did, together and each,
 // from their own recorded balances and activity. For each currency on its
 // own, never converted:
-//   - Since you started, which no range changes: Money in, Money out, Net and
-//     Growth so far, once every account has money in and out Nya can carry,
+//   - All-time performance, which no range changes: Money in, Money out, Net
+//     and Returns, once every account has money in and out Nya can carry,
 //     else what to set;
-//   - Investment growth: the same four over a range, then a row for each
+//   - Performance by period: the same four over a range, then a row for each
 //     account, which opens its sheet.
 // The numbers are lib/growth-summary.ts's.
 //
@@ -20,7 +20,7 @@
 //
 // What it can't count is said, never left out quietly: an account whose
 // activity couldn't be loaded or is still loading in a critical notice under
-// the figures it is missing from, and in Since you started, which waits for
+// the figures it is missing from, and in All-time performance, which waits for
 // it; manual and SimpleFIN or Lunch Flow accounts, which have no investment
 // activity, in an information notice. Money moved between the accounts is
 // taken off both cards' totals, and said under them.
@@ -102,7 +102,7 @@ export default function InvestmentGrowth({
   const [historyFailed, setHistoryFailed] = useState(false);
   const [activities, setActivities] = useState<Record<string, ActivityState>>({});
   const [picked, setPicked] = useState<RangeKey | null>(null);
-  // Since you started's heading: where focus goes after a save from its Set
+  // All-time performance's heading: where focus goes after a save from its Set
   // button, which the save usually takes away.
   const sinceRef = useRef<HTMLHeadingElement>(null);
 
@@ -194,10 +194,10 @@ export default function InvestmentGrowth({
   return (
     <>
       {accounts.length > 0 && (
-        <section className="card stack" aria-labelledby="since-started-title">
+        <section className="card stack" aria-labelledby="all-time-title">
           <div className="card-header">
-            <h2 id="since-started-title" tabIndex={-1} ref={sinceRef}>
-              Since you started
+            <h2 id="all-time-title" tabIndex={-1} ref={sinceRef}>
+              All-time performance
             </h2>
           </div>
           {s.groups.map((g) => (
@@ -205,17 +205,17 @@ export default function InvestmentGrowth({
           ))}
           {unconverted}
           <Why>
-            Since you started counts from the money in and out you gave for each account, carried through the activity Nya has had since. Growth so far is their value today less the net.
+            All-time performance counts from the money in and out you gave for each account, carried through the activity Nya has had since. Returns are their value today less the net: dividends and interest count, fees come off.
           </Why>
         </section>
       )}
-      <section className="card stack" aria-labelledby="investment-growth-title">
+      <section className="card stack" aria-labelledby="by-period-title">
         <div className="card-header">
-          <h2 id="investment-growth-title">Investment growth</h2>
+          <h2 id="by-period-title">Performance by period</h2>
         </div>
         {accounts.length === 0 ? (
           <>
-            <p className="empty-note">Linked investment accounts show their growth here.</p>
+            <p className="empty-note">Linked investment accounts show their returns here.</p>
             {notCountedNotice}
           </>
         ) : (
@@ -225,7 +225,7 @@ export default function InvestmentGrowth({
             )}
             {historyFailed && (
               <Notice level="critical" role="alert">
-                The accounts’ balance history couldn’t be loaded just now, so their growth over a range can’t be worked out. Refresh to try again.
+                The accounts’ balance history couldn’t be loaded just now, so their returns over a range can’t be worked out. Refresh to try again.
               </Notice>
             )}
             {s.groups.map((g, i) => (
@@ -240,7 +240,7 @@ export default function InvestmentGrowth({
                   <>
                     {notCountedNotice}
                     <Why>
-                      Money in and money out are what went in and came out over the range, rollovers and transfers included, and net is the one less the other. Money that left and came back within five days is a move, neither in nor out: a fund exchange, a sweep, a transfer between these accounts. Growth is the change in value less the net: dividends and interest count, fees come off.
+                      Money in and money out are what went in and came out over the range, rollovers and transfers included, and net is the one less the other. Money that left and came back within five days is a move, neither in nor out: a fund exchange, a sweep, a transfer between these accounts. Returns are the change in value less the net: dividends and interest count, fees come off.
                     </Why>
                   </>
                 )}
@@ -254,8 +254,8 @@ export default function InvestmentGrowth({
   );
 }
 
-/** Money in, Money out, Net and Growth (or Growth so far), in `currency`. */
-function Strip({ f, currency, growth = 'Growth' }: { f: Figures; currency: string; growth?: string }) {
+/** Money in, Money out, Net and Returns, in `currency`. */
+function Strip({ f, currency }: { f: Figures; currency: string }) {
   return (
     <ul className="stat-strip" role="list">
       <li className="stat">
@@ -277,7 +277,7 @@ function Strip({ f, currency, growth = 'Growth' }: { f: Figures; currency: strin
         </span>
       </li>
       <li className="stat">
-        <span className="stat-label">{growth}</span>
+        <span className="stat-label">Returns</span>
         {/* A gain in green with its sign; a loss keeps the text color with
             its minus, as on an account's sheet. */}
         <span className={`stat-value money${f.growth > 0 && !roundsToNothing(f.growth, currency) ? ' inflow' : ''}`}>
@@ -289,10 +289,10 @@ function Strip({ f, currency, growth = 'Growth' }: { f: Figures; currency: strin
 }
 
 /** The strip's place while the activity loads. */
-function StripSkeleton({ growth = 'Growth' }: { growth?: string }) {
+function StripSkeleton() {
   return (
     <ul className="stat-strip" aria-hidden="true">
-      {['Money in', 'Money out', 'Net', growth].map((label) => (
+      {['Money in', 'Money out', 'Net', 'Returns'].map((label) => (
         <li key={label} className="stat">
           <span className="stat-label">{label}</span>
           <span className="stat-value">
@@ -323,11 +323,11 @@ function shortWords(g: CurrencyGroup<Shown>): string | null {
   return null;
 }
 
-/** Why Since you started isn't shown, and what would show it. */
+/** Why All-time performance isn't shown, and what would show it. */
 function missingWords(g: CurrencyGroup<Shown>): string | null {
   const unset = g.missing.filter((r) => r.totals === 'unset').map((r) => r.account.title);
   const outdated = g.missing.filter((r) => r.totals === 'outdated').map((r) => r.account.title);
-  const see = 'to see your growth so far across these accounts';
+  const see = 'to see your all-time returns across these accounts';
   if (unset.length && outdated.length) return `Set money in and out for ${joinNames(unset)}, and change them for ${joinNames(outdated)}, ${see}.`;
   if (unset.length) return `Set money in and out for ${joinNames(unset)} ${see}.`;
   if (outdated.length)
@@ -346,7 +346,7 @@ function MovedLine({ moved, currency }: { moved: number; currency: string }) {
   );
 }
 
-/** Since you started for one currency: its figures, or why they aren't
+/** All-time performance for one currency: its figures, or why they aren't
  *  shown and what would show them. */
 function SinceGroup({
   group: g,
@@ -368,18 +368,18 @@ function SinceGroup({
   const nothing = !g.loading && !g.since && !waiting && !missing && g.unmeasured.length === 0 && g.unreadable.length === 0;
 
   return (
-    <div className="stack tight" {...(g.loading ? { role: 'status', 'aria-label': 'Loading growth so far' } : {})}>
+    <div className="stack tight" {...(g.loading ? { role: 'status', 'aria-label': 'Loading all-time performance' } : {})}>
       {label && <h3 className="section-label">{label}</h3>}
       {g.loading ? (
-        <StripSkeleton growth="Growth so far" />
+        <StripSkeleton />
       ) : (
         g.since && (
           <>
-            <Strip f={g.since} currency={g.currency} growth="Growth so far" />
+            <Strip f={g.since} currency={g.currency} />
             <MovedLine moved={g.sinceMoved} currency={g.currency} />
             {early.map((r) => (
               <p key={r.account.key} className="helper">
-                {`${r.account.title}’s growth so far is measured on ${day(r.since!.to!)}, as Nya has its activity only to ${day(r.flowsTo!)}.`}
+                {`${r.account.title}’s all-time returns are measured on ${day(r.since!.to!)}, as Nya has its activity only to ${day(r.flowsTo!)}.`}
               </p>
             ))}
           </>
@@ -407,13 +407,13 @@ function SinceGroup({
       )}
       {!g.loading && g.unmeasured.length > 0 && (
         <p className="helper">
-          {`Nya has no balance for ${joinNames(g.unmeasured.map((r) => r.account.title))} just now, so growth so far across these accounts isn’t shown.`}
+          {`Nya has no balance for ${joinNames(g.unmeasured.map((r) => r.account.title))} just now, so all-time returns across these accounts aren’t shown.`}
         </p>
       )}
       {!g.loading && g.unreadable.length > 0 && (
         // Never a button here: a save would write over what is stored.
         <Notice level="caution" role="status">
-          {`Money in and out for ${joinNames(g.unreadable.map((r) => r.account.title))} can’t be read just now, so growth so far across these accounts isn’t shown.`}
+          {`Money in and out for ${joinNames(g.unreadable.map((r) => r.account.title))} can’t be read just now, so all-time returns across these accounts aren’t shown.`}
         </Notice>
       )}
       {nothing && <p className="empty-note">Nothing to count yet.</p>}
@@ -421,11 +421,11 @@ function SinceGroup({
   );
 }
 
-/** Why Since you started waits on activity the range's figures are short of
+/** Why All-time performance waits on activity the range's figures are short of
  *  (said in full under them). */
 function waitingWords(g: CurrencyGroup<Shown>): string | null {
   const names = (rows: GrowthRow<Shown>[]) => joinNames(rows.map((r) => r.account.title));
-  const shown = 'Growth so far across these accounts is shown once Nya has';
+  const shown = 'All-time returns across these accounts are shown once Nya has';
   if (g.failed.length > 0 && g.busy.length > 0)
     return `${shown} all their activity. The activity for ${names(g.failed)} couldn’t be loaded just now; for ${names(g.busy)}, it is still loading.`;
   if (g.failed.length > 0) return `${shown} the activity for ${names(g.failed)}: ${its(g.failed.length)} activity couldn’t be loaded just now.`;
@@ -531,7 +531,7 @@ function Row({ row: r, currency, loading, onOpen }: { row: GrowthRow<Shown>; cur
   let since: string | null = null;
   if (r.status === 'counted') {
     if (r.totals === 'set' && r.since) {
-      since = `Net ${money(r.since.net)}${r.since.growth === null ? '' : ` · ${signedMoney(r.since.growth, currency)} growth so far`}`;
+      since = `All time: net ${money(r.since.net)}${r.since.growth === null ? '' : ` · ${signedMoney(r.since.growth, currency)} returns`}`;
     } else if (r.totals === 'unset') since = 'No money in and out set yet';
     else if (r.totals === 'outdated') since = 'Money in and out need changing';
     else if (r.totals === 'unreadable') since = 'Money in and out can’t be read just now';
@@ -557,7 +557,7 @@ function Row({ row: r, currency, loading, onOpen }: { row: GrowthRow<Shown>; cur
       {r.split ? (
         <span className="list-row-value money growth-value">
           <Masked>{signedMoney(r.split.growth, currency)}</Masked>
-          <span className="growth-value-label">growth</span>
+          <span className="growth-value-label">returns</span>
         </span>
       ) : (
         waiting && (

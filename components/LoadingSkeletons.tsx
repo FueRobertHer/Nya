@@ -176,7 +176,7 @@ export function LinesSkeleton({ status, lines }: { status: string; lines: number
  *  without a skeleton of its own shows (Budgets' Goals, Activity's Shared),
  *  and a Settings card while its code is on its way
  *  (components/SettingsCardsLoader.tsx). `cards` draws that many, said as
- *  one thing loading (Accounts' Summary has two). */
+ *  one thing loading (Accounts' Investments has two). */
 export function CardSkeleton({ label, cards = 1 }: { label: string; cards?: number }) {
   useInStep();
   return (
@@ -442,7 +442,7 @@ export function DeleteAccountSkeleton() {
  *  two, and two institution cards (components/InstitutionCard.tsx) with
  *  their rows. Two kinds (cash and credit) is the common case, one row on a
  *  phone; with three or more a second row of figures still comes in when the
- *  accounts do, and with one kind, or none, the strip goes. On Summary, its
+ *  accounts do, and with one kind, or none, the strip goes. On Investments, its
  *  two cards still to come. */
 export function AccountsSkeleton({ segment = 'accounts' }: { segment?: AccountsSegment }) {
   useInStep();
@@ -461,11 +461,11 @@ export function AccountsSkeleton({ segment = 'accounts' }: { segment?: AccountsS
       </div>
     </>
   );
-  if (segment === 'summary') {
+  if (segment === 'investments') {
     return (
       <>
         {bar}
-        <CardSkeleton label="Loading investment growth" cards={2} />
+        <CardSkeleton label="Loading investment performance" cards={2} />
       </>
     );
   }

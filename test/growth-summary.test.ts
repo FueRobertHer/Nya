@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { summarizeGrowth, type GrowthAccount, type GrowthActivity } from '@/lib/growth-summary';
 
-// Accounts > Summary's numbers (lib/growth-summary.ts), apart from the card:
+// Accounts > Investments' numbers (lib/growth-summary.ts), apart from the card:
 // why an account counts from or to the day it does, how All names a late
 // start, what is left out, and the order of the currencies. The card's own
 // view test (test/investment-growth-view.test.tsx) covers the figures.
@@ -116,7 +116,7 @@ describe('what is left out', () => {
     expect(g.figures).toEqual({ in: 0, out: 0, net: 0, growth: 10 });
   });
 
-  test('totals set with no balance to measure by: named, and no Since you started', () => {
+  test('totals set with no balance to measure by: named, and no All-time performance', () => {
     const totals = { in: 50, out: 0, as_of: '2026-06-30', currency: 'USD', set_at: '2026-11-01T00:00:00.000Z' };
     const g = sum([account('a', { activity: ready({ money_in_out: totals }) }), account('b', { activity: ready({ money_in_out: totals }), balance: null })]).groups[0];
     expect(g.since).toBeNull();
@@ -170,7 +170,7 @@ describe('moves between accounts', () => {
     expect(g.figures).toEqual({ in: 0, out: 0, net: 0, growth: 150 });
   });
 
-  test('Since you started: the same, from each one’s totals’ day', () => {
+  test('All-time performance: the same, from each one’s totals’ day', () => {
     const g = sum([roth, brokerage]).groups[0];
     expect(g.rows.map((r) => [r.since?.in, r.since?.out])).toEqual([
       [10_000, 7_000],

@@ -267,7 +267,7 @@ describe('getAccountHistory', () => {
 });
 
 describe('getAccountHistories', () => {
-  // Accounts > Summary reads every investment account at once. Each must come
+  // Accounts > Investments reads every investment account at once. Each must come
   // out exactly as getAccountHistory resolves it alone: through every layer,
   // under its own older ids, in the order asked.
   test('answers each account as getAccountHistory does', async () => {

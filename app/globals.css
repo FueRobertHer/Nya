@@ -2460,7 +2460,7 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
   overflow-wrap: anywhere;
 }
 
-/* A gain on a figure (an account's growth so far): green with its sign, as
+/* A gain on a figure (an account's returns): green with its sign, as
    money in is on Activity. A loss keeps the text color with its minus. */
 .stat-value.inflow {
   color: var(--pos);
@@ -4538,8 +4538,8 @@ button.danger-outline {
 /* Your figures' rows (InputsCard, rollout phase 6c): the figure as the
    trailing value and, under measured savings, its savings rate as a second
    line, laid out as Budgets' amounts are (.budget-value). The same for an
-   investment's growth over a range on Accounts > Summary, with "growth"
-   under it (components/InvestmentGrowth.tsx). */
+   investment's returns over a range on Accounts > Investments, with
+   "returns" under it (components/InvestmentGrowth.tsx). */
 .plan-input-value,
 .growth-value {
   display: flex;
