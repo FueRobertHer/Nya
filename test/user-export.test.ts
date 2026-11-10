@@ -1265,6 +1265,7 @@ describe('stores built on the storage seam', () => {
       'imports',
       'income-carryover',
       'manual-transactions',
+      'money-in-out',
       'plan-facts',
       'planned-items',
       'report-settings',

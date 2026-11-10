@@ -5,6 +5,8 @@ import { activityFromSync, cacheable, hasPlanFields } from '@/lib/investment-act
 import { syncInvestments } from '@/lib/invstore';
 import { readAccountCache, writeAccountCache } from '@/lib/cache';
 import { loggable } from '@/lib/log-safe';
+import { readMoneyInOut } from '@/lib/money-in-out-store';
+import type { Ctx } from '@/lib/containers';
 
 // Recent buys, sells, dividends and fees for one investment account, plus what
 // the holder has put in this year and the per-day flows behind the chart's
@@ -21,6 +23,22 @@ import { loggable } from '@/lib/log-safe';
 //
 // What it answers is worked out in lib/investment-activity.ts, which the
 // Plan's inputs (app/api/plan-inputs) share.
+//
+// Beside it, the money in and out the person set for the account
+// (lib/money-in-out-store.ts), read fresh on every request and never cached,
+// so a change shows at once. Totals that can't be read are said in
+// `money_in_out_unreadable` rather than failing the activity, which stands on
+// its own.
+
+/** The account's money in and out, or that they can't be read. */
+async function totalsFor(ctx: Ctx, account_id: string) {
+  try {
+    return { money_in_out: await readMoneyInOut(ctx, account_id) };
+  } catch (err) {
+    console.error(loggable(err));
+    return { money_in_out: null, money_in_out_unreadable: true };
+  }
+}
 
 export async function GET(req: Request) {
   try {
@@ -42,14 +60,15 @@ export async function GET(req: Request) {
     // an empty answer under the real account's field. (The cache key carries a
     // version, so payloads with an older meaning are not reachable.)
     const cacheField = `${item_id}:${account_id}`;
+    const totals = totalsFor(ctx, account_id);
     const cached = await readAccountCache<Record<string, unknown>>(ctx, cacheField);
-    if (cached && hasPlanFields(cached)) return NextResponse.json({ ...cached, from_cache: true });
+    if (cached && hasPlanFields(cached)) return NextResponse.json({ ...cached, ...(await totals), from_cache: true });
 
     const sync = await syncInvestments(ctx, item);
     const payload = activityFromSync(sync, account_id);
     if (cacheable(sync)) await writeAccountCache(ctx, cacheField, payload);
 
-    return NextResponse.json({ ...payload, from_cache: false });
+    return NextResponse.json({ ...payload, ...(await totals), from_cache: false });
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;

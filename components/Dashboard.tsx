@@ -48,6 +48,8 @@ import { TABS, parseSettings, parseTab, settingsHref, tabHref, type Tab } from '
 import ConnectButtons, { SwitchingLink } from './ConnectButtons';
 import AddAccountSheet from './AddAccountSheet';
 import AccountSheet from './AccountSheet';
+import MoneyInOutSheet from './MoneyInOutSheet';
+import type { MoneyInOutTarget } from './MoneyInOutFigures';
 import AccountsStatus from './AccountsStatus';
 import AccountsSummary from './AccountsSummary';
 import { CollapsibleHeader } from './Collapsible';
@@ -1024,6 +1026,9 @@ export default function Dashboard({
   // its rows join the Activity tab, and the estimated history is drawn back
   // through them, so both are read again.
   const [historyTarget, setHistoryTarget] = useState<HistoryImportTarget | null>(null);
+  // An investment account's money in and out (components/MoneyInOutSheet.tsx),
+  // opened from its sheet, which comes back once they are saved or cleared.
+  const [moneyTarget, setMoneyTarget] = useState<MoneyInOutTarget | null>(null);
   // Switching from another app (components/MigrationSheet.tsx): accounts it
   // makes change net worth, and its rows join the Activity tab.
   const [migrationOpen, setMigrationOpen] = useState(false);
@@ -3169,6 +3174,14 @@ export default function Dashboard({
           void loadNetWorth();
         }}
       />
+      <MoneyInOutSheet
+        target={moneyTarget}
+        onClose={() => setMoneyTarget(null)}
+        onDone={() => {
+          setMoneyTarget(null);
+          if (moneyTarget) setAccountOpen({ item_id: moneyTarget.item_id, account_id: moneyTarget.account_id });
+        }}
+      />
       <AccountSheet
         open={!!openedAccount}
         account={shownAccount?.account ?? null}
@@ -3184,6 +3197,7 @@ export default function Dashboard({
         onAddTransaction={(account_id) => txnEdits.openAdd(account_id)}
         onImport={(account_id) => setImportTarget({ account_id })}
         onImportHistory={setHistoryTarget}
+        onMoneyInOut={setMoneyTarget}
         onDelete={(account) => {
           setManualError('');
           setManualDeleteTarget(account);

@@ -72,6 +72,7 @@ const props = (a: Account, inst: Institution, over: Partial<Props> = {}): Props 
   onAddTransaction: noop,
   onImport: noop,
   onImportHistory: noop,
+  onMoneyInOut: noop,
   onDelete: noop,
   ...over,
 });

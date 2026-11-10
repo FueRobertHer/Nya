@@ -13,6 +13,7 @@ import { readableName } from '@/lib/merchant-name';
 import { displayName } from '@/lib/categories';
 import { InvestmentActivitySkeleton } from './LoadingSkeletons';
 import { Notice } from './TotalCaveats';
+import type { MoneyInOut } from '@/lib/money-in-out';
 
 type InvestmentTxn = {
   investment_transaction_id: string;
@@ -37,6 +38,11 @@ export type InvestmentActivityPayload = {
   /** Last date the flows are known complete for; the line stops there. */
   flows_to?: string | null;
   note: string | null;
+  /** The money in and out the person set for the account (lib/money-in-out.ts),
+   *  read fresh beside the activity, or null; `money_in_out_unreadable` when
+   *  they couldn't be read. */
+  money_in_out?: MoneyInOut | null;
+  money_in_out_unreadable?: boolean;
 };
 type Payload = InvestmentActivityPayload;
 
@@ -64,6 +70,35 @@ export function loadInvestmentActivity(accountId: string, itemId: string): Promi
     if (inflight.get(key)?.promise === promise) inflight.delete(key);
   });
   return promise;
+}
+
+// Readers of an account's payload that show its money in and out
+// (AccountSparkline), told when they are saved or cleared.
+const saved = new Set<(key: string) => void>();
+
+/** Money in and out were saved (or cleared, null) for an account: the
+ *  payload in hand takes them, fresh for another REUSE_MS, and its readers
+ *  load it again. With none in hand they fetch it. */
+export function moneyInOutSaved(accountId: string, itemId: string, totals: MoneyInOut | null): void {
+  const key = `${itemId}:${accountId}`;
+  const hit = inflight.get(key);
+  if (hit) {
+    const promise = hit.promise.then((p) => ({ ...p, money_in_out: totals, money_in_out_unreadable: false }));
+    inflight.set(key, { at: Date.now(), promise });
+    promise.catch(() => {
+      if (inflight.get(key)?.promise === promise) inflight.delete(key);
+    });
+  }
+  for (const tell of saved) tell(key);
+}
+
+/** Calls `tell` with an account's key (`item:account`) when its money in and
+ *  out are saved; returns the unsubscribe, for an effect's cleanup. */
+export function onMoneyInOutSaved(tell: (key: string) => void): () => void {
+  saved.add(tell);
+  return () => {
+    saved.delete(tell);
+  };
 }
 
 function fmtDay(iso: string): string {

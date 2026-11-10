@@ -244,6 +244,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | Manual account sheet, OwedFlipNote | Add manual, Update on a row | Add account sheet, Account sheet > Update balance |
 | ManualTxnSheet, ImportSheet | Manual row buttons; Activity add card | Account sheet; the Transactions card's ⋯ on Activity |
 | HistoryImportSheet | Expanded row; ended accounts | Account sheet; Accounts that ended |
+| MoneyInOutFigures, MoneyInOutSheet | New | An investment account's sheet, under the balance and above the chart: Since you started (money in, money out, net and growth so far) once its money in and out are set, else one line with Set money in and out (its one place, not in the ⋯); the form is its own sheet, which goes back to the account's on Save, Clear or Cancel |
 | AccountLifecycle (questions, Close sheet, EndedAccounts) | Cards, Manage-only Close... | Questions on the card; Mark as closed… in the Account sheet; Accounts that ended section |
 | Hidden accounts card | Bottom of Accounts | Bottom of Accounts |
 | Disconnect sheet, DisconnectSplitsNote | Manage-only header button; ConnectionHealth | ⋯ > Disconnect...; Settings > Connections |

@@ -83,28 +83,123 @@ describe('NetWorthChart segment styles', () => {
   });
 });
 
-describe('NetWorthChart money added vs growth', () => {
+describe('NetWorthChart money in, out and growth', () => {
   const points = [
     { date: '2026-09-01', value: 1000 },
     { date: '2026-09-02', value: 1600 },
     { date: '2026-09-03', value: 1650 },
   ];
   const baseline = [
-    { date: '2026-09-01', value: 1000 },
-    { date: '2026-09-02', value: 1500 },
-    { date: '2026-09-03', value: 1500 },
+    { date: '2026-09-01', value: 1000, in: 0, out: 0 },
+    { date: '2026-09-02', value: 1500, in: 500, out: 0 },
+    { date: '2026-09-03', value: 1500, in: 500, out: 0 },
   ];
 
   test('draws the baseline and says how the change splits', () => {
     const html = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={() => baseline} />);
     expect(html).toContain('class="chart-baseline"');
-    expect(html).toContain('+$500.00 added · +$150.00 growth');
+    expect(html).toContain('Sep 1 to Sep 3: $500.00 in · +$150.00 growth');
+    expect(html).toContain('Grey line: the balance on Sep 1 plus net money in since. The gap above it is growth.');
+  });
+
+  // Each part that moved, and none that didn't: growth always.
+  test('says money out apart from money in', () => {
+    const html = renderToStaticMarkup(
+      <NetWorthChart
+        points={points}
+        baselineFor={() => [
+          { date: '2026-09-01', value: 1000, in: 0, out: 0 },
+          { date: '2026-09-02', value: 1450, in: 500, out: 50 },
+          { date: '2026-09-03', value: 1450, in: 500, out: 50 },
+        ]}
+      />
+    );
+    expect(html).toContain('Sep 1 to Sep 3: $500.00 in · $50.00 out · +$200.00 growth');
   });
 
   test('draws nothing extra without a baseline', () => {
     const html = renderToStaticMarkup(<NetWorthChart points={points} />);
     expect(html).not.toContain('chart-baseline');
     expect(html).not.toContain('growth');
+  });
+});
+
+// With the money in and out the person set (lib/money-in-out.ts), the grey
+// line is their net money in by each day: the gap above it is growth since
+// the account started, and the line stops at zero when more had come out.
+describe('NetWorthChart with money in and out set', () => {
+  const points = [
+    { date: '2026-09-01', value: 150_000 },
+    { date: '2026-09-02', value: 152_600 },
+    { date: '2026-09-03', value: 152_650 },
+  ];
+  const net = [
+    { date: '2026-09-01', value: 140_000, in: 146_000, out: 6000 },
+    { date: '2026-09-02', value: 140_500, in: 146_500, out: 6000 },
+    { date: '2026-09-03', value: 140_500, in: 146_500, out: 6000 },
+  ];
+  /** The y of each point on the grey line, and of the plot's floor. */
+  function heights(html: string): { line: number[]; floor: number } {
+    const d = html.match(/class="chart-baseline" d="([^"]*)"/)?.[1] ?? '';
+    const line = [...d.matchAll(/[ML][\d.]+,([\d.]+)/g)].map((m) => Number(m[1]));
+    const floor = Number(html.match(/,([\d.]+)Z"/)![1]);
+    return { line, floor };
+  }
+
+  test('the line is the net money in, and the range splits as it does without totals', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={() => net} baselineFrom="2026-08-15" />);
+    expect(html).toContain('class="chart-baseline"');
+    expect(html).toContain('Sep 1 to Sep 3: $500.00 in · +$2,150.00 growth');
+    expect(html).toContain('Grey line: your net money in (in less out) by each day, from your totals for Aug 15. The gap above it is your growth so far.');
+    expect(html).not.toContain('count from');
+  });
+
+  // The line starts after an estimated stretch: its parts count from there,
+  // so the stretch's own change leads.
+  test('a line that starts inside the range says where its figures count from', () => {
+    const html = renderToStaticMarkup(
+      <NetWorthChart points={[{ date: '2026-08-30', value: 149_000, estimated: true }, ...points]} baselineFor={() => net} baselineFrom="2026-08-15" />
+    );
+    expect(html).toContain('Sep 1 to Sep 3: +$2,650.00, with $500.00 in and +$2,150.00 growth');
+    expect(html).toContain('Money in, out and growth for the range count from Sep 1, the first recorded day.');
+  });
+
+  test('more out than in: the line stops at zero, on the plot’s floor, and says from when', () => {
+    const ira = [
+      { date: '2026-09-01', value: 2000, in: 100_000, out: 98_000 },
+      { date: '2026-09-02', value: -2000, in: 100_000, out: 102_000 },
+      { date: '2026-09-03', value: -2000, in: 100_000, out: 102_000 },
+    ];
+    const html = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={() => ira} baselineFrom="2026-08-15" />);
+    expect(html).toContain('It stops at zero on Sep 2: from then on, more had come out than gone in.');
+    const { line, floor } = heights(html);
+    // From Sep 1 down to zero partway to Sep 2, and no further.
+    expect(line).toHaveLength(2);
+    expect(Math.max(...line)).toBeCloseTo(floor, 1);
+  });
+
+  test('below zero all through the range: no line, and the reason', () => {
+    const below = net.map((b) => ({ ...b, value: -1000 - b.value / 1000, out: b.in + 1000 + b.value / 1000 }));
+    const html = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={() => below} baselineFrom="2026-08-15" />);
+    expect(html).not.toContain('class="chart-baseline"');
+    expect(html).toContain('No grey line for this range: all through it, more had come out than gone in, so your net was below zero.');
+    expect(html).not.toContain('Grey line:');
+  });
+
+  // The activity known only to an earlier day: the line ends with it, and
+  // what it says is about the days it has.
+  test('a line that ends before the range does draws and says only its own days', () => {
+    const ends = (values: number[]) => () => values.map((value, i) => ({ date: points[i].date, value, in: 100, out: 100 - value }));
+    const early = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={ends([140_000, 140_500])} baselineFrom="2026-08-15" />);
+    const { line, floor } = heights(early);
+    expect(line).toHaveLength(2);
+    expect(Math.max(...line)).toBeLessThan(floor);
+    const below = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={ends([-10, -20])} baselineFrom="2026-08-15" />);
+    expect(below).not.toContain('class="chart-baseline"');
+    expect(below).toContain('No grey line for this range');
+    const stays = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={ends([50, -20])} baselineFrom="2026-08-15" />);
+    expect(stays).toContain('It stops at zero on Sep 2: from then on, more had come out than gone in.');
+    expect(heights(stays).line).toHaveLength(2);
   });
 });
 
@@ -120,13 +215,15 @@ describe('NetWorthChart split on estimated points', () => {
           { date: '2026-09-03', value: 5000, estimated: true },
         ]}
         baselineFor={() => [
-          { date: '2026-09-01', value: 1000 },
-          { date: '2026-09-02', value: 1000 },
-          { date: '2026-09-03', value: 1000 },
+          { date: '2026-09-01', value: 1000, in: 0, out: 0 },
+          { date: '2026-09-02', value: 1000, in: 0, out: 0 },
+          { date: '2026-09-03', value: 1000, in: 0, out: 0 },
         ]}
       />
     );
-    expect(html).toContain('+$0.00 added · +$100.00 growth');
+    // Shorter than the range: that stretch's own change leads, so its parts
+    // add up to a figure on screen.
+    expect(html).toContain('Sep 1 to Sep 2: +$100.00, with +$100.00 growth');
     expect(html).not.toContain('+$4,000.00 growth');
   });
 });
@@ -141,8 +238,8 @@ describe('NetWorthChart currency', () => {
           { date: '2026-09-02', value: 1100 },
         ]}
         baselineFor={() => [
-          { date: '2026-09-01', value: 1000 },
-          { date: '2026-09-02', value: 1000 },
+          { date: '2026-09-01', value: 1000, in: 0, out: 0 },
+          { date: '2026-09-02', value: 1000, in: 0, out: 0 },
         ]}
       />
     );
@@ -163,12 +260,12 @@ describe('NetWorthChart when the baseline stops early', () => {
           { date: '2026-09-03', value: 1200 },
         ]}
         baselineFor={() => [
-          { date: '2026-09-01', value: 1000 },
-          { date: '2026-09-02', value: 1000 },
+          { date: '2026-09-01', value: 1000, in: 0, out: 0 },
+          { date: '2026-09-02', value: 1000, in: 0, out: 0 },
         ]}
       />
     );
-    expect(html).toContain('+$0.00 added · +$100.00 growth');
+    expect(html).toContain('Sep 1 to Sep 2: +$100.00, with +$100.00 growth');
   });
 });
 

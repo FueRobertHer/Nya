@@ -145,7 +145,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `api_tokens` | The API tokens you made, by name, with what each can do and when it was made and last used. |
 | `attachments` | The receipts and documents you attached: what each is and which transaction it is on, never the file ([below](#attachments)). |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `api-changes`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan-saved`, `fire-plans`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `plan-facts`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `api-changes`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan-saved`, `fire-plans`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `money-in-out`, `plan-facts`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
 
 ### `problems`
 
@@ -372,6 +372,20 @@ When your accounts ended (`lib/lifecycle.ts`, [features.md](features.md#accounts
 | `missed` | `[{ "from": day, "to": day, "note": id }]`: the days it was missing from its bank's answer and assumed closed, before it came back, and the id its note in [`timeline-notes`](#timeline-notes) is kept under (`missed.` and a random id). The totals saved on those days are short of it, so the app leaves them out of the chart (they stay in `net_worth_history` as saved). Any state; absent when there were none. |
 
 An entry that can't be read is named under [`problems`](#problems) by the id it is stored under, which is the account's: that account's `lifecycle` in `accounts` is then `null`, and its rows in the balances CSV have no `account_state`, although it may have ended. The notes say so, in the JSON file and in the balances CSV.
+
+#### `money-in-out`
+
+The money in and out you set for your investment accounts (`lib/money-in-out.ts`, [features.md](features.md#money-in-and-out)), as stored: one entry per account under the id it was set on. An account linked to an earlier one uses the entry on its own id, or else the newest on its links' ids, and setting or clearing removes the others, so there is at most one per account and its links. An account with no entry has none set. Each `value`:
+
+| Field | Meaning |
+| --- | --- |
+| `in` | Money in by the end of `as_of`, as you typed it: contributions, transfers and rollovers in, and an employer's match. 0 or more. |
+| `out` | Money out by the end of `as_of`: withdrawals, transfers and rollovers out, and distributions. 0 or more. |
+| `as_of` | The day they are for (`YYYY-MM-DD`). Nya carries them to each other day through the account's investment activity, so they are as typed, never moved on. |
+| `currency` | The account's currency when they were set (an ISO code), or `null` when it wasn't known. |
+| `set_at` | When they were saved. |
+
+An entry that can't be read is named under [`problems`](#problems) by the id it is stored under, and the account's sheet says its money in and out can't be read just now.
 
 #### `allocation-settings`
 
