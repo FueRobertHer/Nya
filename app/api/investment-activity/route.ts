@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { getItems } from '@/lib/storage';
-import { activityFromSync, cacheable, hasPlanFields } from '@/lib/investment-activity';
+import { activityFromSync, cacheable, hasCurrentFlows, hasPlanFields } from '@/lib/investment-activity';
 import { syncInvestments } from '@/lib/invstore';
 import { readAccountCache, writeAccountCache } from '@/lib/cache';
 import { loggable } from '@/lib/log-safe';
@@ -58,11 +58,12 @@ export async function GET(req: Request) {
 
     // Keyed on the pair, not account_id alone, so a mismatched item_id can't cache
     // an empty answer under the real account's field. (The cache key carries a
-    // version, so payloads with an older meaning are not reachable.)
+    // version, so payloads with an older meaning are not reachable, and one
+    // cached before the moves left its flows is a miss: hasCurrentFlows.)
     const cacheField = `${item_id}:${account_id}`;
     const totals = totalsFor(ctx, account_id);
     const cached = await readAccountCache<Record<string, unknown>>(ctx, cacheField);
-    if (cached && hasPlanFields(cached)) return NextResponse.json({ ...cached, ...(await totals), from_cache: true });
+    if (cached && hasPlanFields(cached) && hasCurrentFlows(cached)) return NextResponse.json({ ...cached, ...(await totals), from_cache: true });
 
     const sync = await syncInvestments(ctx, item);
     const payload = activityFromSync(sync, account_id);

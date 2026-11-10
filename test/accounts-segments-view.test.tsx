@@ -39,6 +39,9 @@ describe('the views', () => {
     const summary = renderToStaticMarkup(<TabSkeleton tab="accounts" segments={{ accounts: 'summary' }} />);
     expect(tags(summary, 'tab').map((t) => attr(t, 'aria-selected'))).toEqual(['false', 'true']);
     expect(summary).toContain('Loading investment growth');
+    // Its two cards, Since you started and Investment growth, said as one.
+    expect(summary.split('class="card stack"')).toHaveLength(3);
+    expect(summary.split('role="status"')).toHaveLength(2);
   });
 });
 

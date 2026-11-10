@@ -4,10 +4,11 @@ import { holdDay, HELD_DAY } from './held-day';
 
 holdDay();
 
-// Accounts > Summary's Investment growth card (components/InvestmentGrowth.tsx)
-// as a person sees it (react-dom/client over test/mini-dom.ts), on mocked
-// history and activity: its figures for each currency, Since you started and
-// what stands in for it, what it can't count, and how it loads.
+// Accounts > Summary's two cards (components/InvestmentGrowth.tsx), Since you
+// started and Investment growth, as a person sees them (react-dom/client over
+// test/mini-dom.ts), on mocked history and activity: their figures for each
+// currency, what stands in for Since you started, what they can't count, and
+// how they load.
 
 const dom = installDom();
 const realFetch = globalThis.fetch;
@@ -70,7 +71,15 @@ let run = 0;
 type Answer = { status?: number; note?: string | null; unreadable?: boolean; totals?: Fixture['totals']; noActivity?: boolean };
 
 function setup(
-  opts: { answers?: Record<string, Answer>; currencies?: Record<string, string>; manual?: boolean; history?: number; only?: string[]; balances?: Record<string, number | null> } = {}
+  opts: {
+    answers?: Record<string, Answer>;
+    currencies?: Record<string, string>;
+    manual?: boolean;
+    history?: number;
+    only?: string[];
+    balances?: Record<string, number | null>;
+    flows?: Record<string, Fixture['flows']>;
+  } = {}
 ) {
   run++;
   const id = (k: string) => `${k}_${run}`;
@@ -126,7 +135,7 @@ function setup(
       txns: none ? [] : [{ date: '2026-03-01' }],
       ytd_contributions: 0,
       ytd_rollovers: 0,
-      flows: none ? null : f.flows,
+      flows: none ? null : (opts.flows?.[key] ?? f.flows),
       flows_from: none ? null : f.flows_from,
       flows_to: none ? null : '2026-11-05',
       note: a.note ?? null,
@@ -180,6 +189,7 @@ describe('the card', () => {
   test('loading: a placeholder for the figures, and rows waiting on their activity', () => {
     const { host, root } = setup();
     try {
+      expect(host.findAll((e) => e.getAttribute('aria-label') === 'Loading growth so far').length).toBe(1);
       expect(host.findAll((e) => e.getAttribute('aria-label') === 'Loading investment activity').length).toBe(1);
       expect(rows(host)).toEqual(['Individual ••4421 Vanguard · Loading its activity', 'Roth IRA ••3302 Vanguard · Loading its activity', '401(k) ••8810 Fidelity · Loading its activity']);
     } finally {
@@ -216,6 +226,48 @@ describe('the card', () => {
       await pass(50);
       expect(words(host)).toContain('Since you started Money in $130,000.00 Money out $2,000.00 Net $128,000.00 Growth so far +$94,300.00');
       expect(words(host)).not.toContain('Set money in and out');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  // Two cards, so the range's switch sits with what it changes.
+  test('Since you started is a card of its own, first, and no range changes it', async () => {
+    const { host, root } = setup({ answers: { roth: { totals: { in: 20_000, out: 0, as_of: '2026-05-01' } } } });
+    try {
+      await pass(50);
+      const cards = byClass(host, 'card');
+      expect(cards.map((c) => words(c.findAll((e) => e.tagName === 'H2')[0]))).toEqual(['Since you started', 'Investment growth']);
+      const since = 'Money in $130,000.00 Money out $2,000.00 Net $128,000.00 Growth so far +$94,300.00';
+      expect(words(cards[0])).toContain(since);
+      expect(words(cards[0])).not.toContain('Year to date');
+      expect(cards[0].findAll((e) => e.getAttribute('role') === 'radiogroup')).toHaveLength(0);
+      expect(words(cards[1])).toContain('Year to date Money in $8,500.00');
+      act(() => click(cards[1].findAll((e) => e.tagName === 'BUTTON' && words(e) === 'All')[0]));
+      expect(words(cards[1])).not.toContain('Year to date');
+      expect(words(cards[0])).toContain(since);
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  // Individual sends Roth IRA $3,000 in September: on the totals, neither in
+  // nor out, so they come to what they were without it; each row keeps its leg.
+  test('money moved between the accounts: off the totals, and said; the rows keep it', async () => {
+    const { host, root } = setup({
+      answers: { roth: { totals: { in: 20_000, out: 0, as_of: '2026-05-01' } } },
+      flows: { ind: [{ date: '2026-03-01', amount: 5000 }, { date: '2026-09-10', amount: -3000 }], roth: [{ date: '2026-04-15', amount: 2000 }, { date: '2026-09-12', amount: 3000 }] },
+    });
+    try {
+      await pass(50);
+      const [since, range] = byClass(host, 'card').map(words);
+      const moved = 'Not counted as money in or out: $3,000.00 that moved between these accounts.';
+      expect(since).toContain(`Money in $130,000.00 Money out $2,000.00 Net $128,000.00 Growth so far +$94,300.00 ${moved}`);
+      expect(range).toContain(`Year to date Money in $8,500.00 Money out $500.00 Net $8,000.00 Growth +$22,500.00 ${moved}`);
+      expect(rows(host).slice(0, 2)).toEqual([
+        'Individual ••4421 Vanguard · $5,000.00 in, $3,000.00 out Net $77,000.00 · +$43,500.00 growth so far +$18,000.00 growth',
+        'Roth IRA ••3302 Vanguard · $5,000.00 in Net $23,000.00 · +$22,600.00 growth so far −$500.00 growth',
+      ]);
     } finally {
       act(() => root.unmount());
     }
@@ -271,6 +323,9 @@ describe('what the figures are short of', () => {
       // Short of an account, so no Since you started, and no button to set its totals.
       expect(words(host)).not.toContain('Since you started Money in');
       expect(words(host)).not.toContain('Set money in and out for Roth IRA');
+      expect(words(byClass(host, 'card')[0])).toContain(
+        'Growth so far across these accounts is shown once Nya has the activity for Roth IRA ••3302: its activity couldn’t be loaded just now.'
+      );
     } finally {
       act(() => root.unmount());
     }
@@ -284,6 +339,18 @@ describe('what the figures are short of', () => {
         'Critical: These figures leave out Roth IRA ••3302: its activity is still loading, so refresh in a moment.',
       ]);
       expect(rows(host)[1]).toBe('Roth IRA ••3302 Vanguard · Its activity is still loading');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  test('one failed and one still loading: Since you started gives each its reason', async () => {
+    const { host, root } = setup({ answers: { roth: { status: 500 }, k401: { note: ACTIVITY_STILL_LOADING } } });
+    try {
+      await pass(50);
+      expect(words(byClass(host, 'card')[0])).toContain(
+        'Growth so far across these accounts is shown once Nya has all their activity. The activity for Roth IRA ••3302 couldn’t be loaded just now; for 401(k) ••8810, it is still loading.'
+      );
     } finally {
       act(() => root.unmount());
     }

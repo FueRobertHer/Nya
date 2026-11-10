@@ -106,7 +106,7 @@ export default function AccountSparkline({
   // the start of the range.
   const baselineFor = useCallback(
     (shown: HistoryPoint[]) =>
-      activity ? contributionBaseline(shown, activity.flows, activity.flows_from, activity.flows_to, carried) : null,
+      activity ? contributionBaseline(shown, activity.flows, activity.flows_from, activity.flows_to, carried, activity.moves) : null,
     [activity, carried]
   );
 

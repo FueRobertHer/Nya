@@ -630,6 +630,17 @@ describe('/api/investment-activity', () => {
     expect(body.contributions_12m).toBe(500);
   });
 
+  // Its flows may hold an exchange's two legs as money out and money in.
+  test('an answer cached before moves left the flows is not served', async () => {
+    const { writeAccountCache } = await import('@/lib/cache');
+    await writeAccountCache(ctx, 'item1:ira', { txns: [], ytd_contributions: 0, flows: [], contributions_12m: 0, contributions_12m_from: null, contributions_12m_activity_from: null, note: null });
+    plaid.rows = [row('a', new Date(Date.now() - 5 * DAY).toISOString().slice(0, 10))];
+    const body = await get();
+    expect(body.from_cache).toBe(false);
+    expect(body.moves).toEqual([]);
+    expect((await get()).from_cache).toBe(true);
+  });
+
   test('during an outage it serves saved rows with a note, and caches nothing', async () => {
     plaid.rows = [row('a', '2026-09-01')];
     // Synced an hour ago, so the route's sync is due and meets the outage.
