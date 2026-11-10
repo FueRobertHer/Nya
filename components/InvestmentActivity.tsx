@@ -14,6 +14,7 @@ import { displayName } from '@/lib/categories';
 import { InvestmentActivitySkeleton } from './LoadingSkeletons';
 import { Notice } from './TotalCaveats';
 import type { MoneyInOut } from '@/lib/money-in-out';
+import { ACTIVITY_STILL_LOADING } from '@/lib/growth-summary';
 
 type InvestmentTxn = {
   investment_transaction_id: string;
@@ -51,7 +52,9 @@ type Payload = InvestmentActivityPayload;
 // separately they would miss the server cache together and cost two live
 // Plaid calls. Reused for a minute, which covers that and an expand/collapse;
 // the server's own 15-minute cache covers the rest. A failure is dropped at
-// once so the next mount retries.
+// once so the next mount retries, and so is an answer that the activity is
+// still loading on another request, which the server doesn't keep either: a
+// Refresh then asks again, as Accounts > Summary says to.
 const REUSE_MS = 60_000;
 const inflight = new Map<string, { at: number; promise: Promise<Payload> }>();
 
@@ -66,9 +69,12 @@ export function loadInvestmentActivity(accountId: string, itemId: string): Promi
     return res.json() as Promise<Payload>;
   });
   inflight.set(key, { at: Date.now(), promise });
-  promise.catch(() => {
+  const drop = () => {
     if (inflight.get(key)?.promise === promise) inflight.delete(key);
-  });
+  };
+  promise.then((p) => {
+    if (p.note?.includes(ACTIVITY_STILL_LOADING)) drop();
+  }, drop);
   return promise;
 }
 

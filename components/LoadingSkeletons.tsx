@@ -13,6 +13,7 @@ import { HideAmountsToggle } from './HideAmounts';
 import { GEAR, HeaderIcon, REFRESH } from './HeaderIcon';
 import ActivityBar, { type ActivitySegment } from './ActivityBar';
 import BudgetsBar, { type BudgetsSegment } from './BudgetsBar';
+import AccountsSegments, { type AccountsSegment } from './AccountsSegments';
 import PlanBar, { type PlanSegment } from './PlanBar';
 import MonthFigures from './MonthFigures';
 import { CollapsibleHeader } from './Collapsible';
@@ -433,15 +434,17 @@ export function DeleteAccountSkeleton() {
 }
 
 /** The Accounts tab while the accounts are on their way: its bar with Add
- *  account (unavailable until they are in), the totals by kind as a strip of
+ *  account and its two views (components/AccountsSegments.tsx), unavailable
+ *  until they are in; then, on Accounts, the totals by kind as a strip of
  *  two, and two institution cards (components/InstitutionCard.tsx) with
  *  their rows. Two kinds (cash and credit) is the common case, one row on a
  *  phone; with three or more a second row of figures still comes in when the
- *  accounts do, and with one kind, or none, the strip goes. */
-export function AccountsSkeleton() {
+ *  accounts do, and with one kind, or none, the strip goes. On Summary, its
+ *  card still to come. */
+export function AccountsSkeleton({ segment = 'accounts' }: { segment?: AccountsSegment }) {
   useInStep();
-  return (
-    <div aria-busy="true">
+  const bar = (
+    <>
       <div className="accounts-bar" inert>
         <span className="btn secondary">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -450,6 +453,22 @@ export function AccountsSkeleton() {
           Add account
         </span>
       </div>
+      <div inert>
+        <AccountsSegments segment={segment} onSegment={nothing} />
+      </div>
+    </>
+  );
+  if (segment === 'summary') {
+    return (
+      <>
+        {bar}
+        <CardSkeleton label="Loading investment growth" />
+      </>
+    );
+  }
+  return (
+    <div aria-busy="true">
+      {bar}
       <div className="card stack" aria-hidden="true">
         <ul className="stat-strip">
           {[0, 1].map((i) => (
@@ -731,11 +750,11 @@ export function TabSkeleton({
   segments = {},
 }: {
   tab: Tab;
-  segments?: { activity?: ActivitySegment; budgets?: BudgetsSegment; plan?: PlanSegment | null };
+  segments?: { accounts?: AccountsSegment; activity?: ActivitySegment; budgets?: BudgetsSegment; plan?: PlanSegment | null };
 }) {
   switch (tab) {
     case 'accounts':
-      return <AccountsSkeleton />;
+      return <AccountsSkeleton segment={segments.accounts} />;
     case 'activity':
       return <ActivitySkeleton segment={segments.activity} />;
     case 'budgets':

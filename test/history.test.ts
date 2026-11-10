@@ -21,6 +21,7 @@ const {
   replaceEstimatedFlat,
   getHistory,
   getAccountHistory,
+  getAccountHistories,
   estimatedLayerCovers,
   isBackfillDone,
   markBackfillDone,
@@ -262,6 +263,51 @@ describe('getAccountHistory', () => {
     await writeEra(['2026-01-01', '2026-01-02'], 1000, { cash: 400 }, { k401: 250 });
     expect(await getAccountHistory(ctx, 'k401')).toHaveLength(0);
     expect(await getAccountHistory(ctx, 'cash')).toHaveLength(2);
+  });
+});
+
+describe('getAccountHistories', () => {
+  // Accounts > Summary reads every investment account at once. Each must come
+  // out exactly as getAccountHistory resolves it alone: through every layer,
+  // under its own older ids, in the order asked.
+  test('answers each account as getAccountHistory does', async () => {
+    await writeEra(['2025-10-01', '2025-11-01'], 0, { cash: 400, ira: 60_000, old_ira: 1 }, { k401: 250 });
+    await replaceEstimatedExtension(ctx, [{ date: '2025-09-01', balances: { ira: 0 } }], '2025-10-01');
+    await writeAccountSnapshot('2025-12-01', { old_ira: 61_000, cash: 500 });
+    await fake.hset(ctxKey('history:accounts:partial'), {
+      '2025-12-15': await encrypt(TEST_CTX, JSON.stringify({ cash: 550 })),
+    });
+    await recordSnapshot(ctx, 0, { ira: 62_000 });
+
+    const asked = [
+      { account_id: 'ira', olderIds: ['old_ira'] },
+      { account_id: 'cash' },
+      { account_id: 'k401' },
+      { account_id: 'nobody' },
+    ];
+    const alone = [];
+    for (const a of asked) alone.push(await getAccountHistory(ctx, a.account_id, a.olderIds));
+    expect(await getAccountHistories(ctx, asked)).toEqual(alone);
+
+    // Not a parity of empties: the joined account reads every layer.
+    const ira = valuesByDate(alone[0]);
+    expect([ira['2025-09-01'], ira['2025-10-01'], ira['2025-12-01']]).toEqual([0, 60_000, 61_000]);
+    expect(valuesByDate(alone[1])['2025-12-15']).toBe(550);
+  });
+
+  test('a damaged map is a gap for every account it holds', async () => {
+    await replaceEstimatedAccounts(ctx, [{ date: '2026-01-01', balances: { a: 1, b: 2 } }]);
+    await fake.hset(ctxKey('history:accounts'), { '2026-01-01': 'not-a-ciphertext' });
+    await writeAccountSnapshot('2026-01-02', { a: 3, b: 4 });
+
+    expect(await getAccountHistories(ctx, [{ account_id: 'a' }, { account_id: 'b' }])).toEqual([
+      [{ date: '2026-01-02', value: 3 }],
+      [{ date: '2026-01-02', value: 4 }],
+    ]);
+  });
+
+  test('no accounts, no read', async () => {
+    expect(await getAccountHistories(ctx, [])).toEqual([]);
   });
 });
 

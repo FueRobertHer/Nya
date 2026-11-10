@@ -16,6 +16,7 @@ import {
   isIncomingRollover,
 } from './investments';
 import type { InvSync } from './invstore';
+import { ACTIVITY_STILL_LOADING } from './growth-summary';
 
 const RECENT_LIMIT = 25;
 
@@ -107,7 +108,7 @@ export function activityFromSync(sync: InvSync, account_id: string) {
   const fetchNote = sync.note ? (mine.length ? `${sync.note}; showing saved activity` : sync.note) : null;
   // Another sync is mid-way through the first download: nothing is saved yet,
   // and "no activity" would be wrong.
-  const loadingNote = sync.busy && mine.length === 0 ? 'Investment activity is still loading' : null;
+  const loadingNote = sync.busy && mine.length === 0 ? ACTIVITY_STILL_LOADING : null;
   const note = [fetchNote, loadingNote, sync.storeNote].filter(Boolean).join('. ') || null;
   return {
     txns: mine.slice(0, RECENT_LIMIT),
