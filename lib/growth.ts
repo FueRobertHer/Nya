@@ -1,7 +1,8 @@
 // lib/growth.ts
 //
 // Splits an investment account's balance change into money in, money out and
-// growth, for the second line on its chart and the figures on its sheet.
+// growth, for the second line on its chart, the figures on its sheet, and
+// Accounts > Summary, which adds up each account's range (rangeSplit).
 //
 // The line is the balance on a starting day plus every flow across the account
 // boundary since (lib/investments.ts externalFlow: contributions, rollovers and
@@ -115,8 +116,8 @@ export function movedSince(totals: Totals, flows: readonly Flow[], day: string):
 const SETTLE_DAYS = 3;
 
 export function contributionBaseline(
-  points: BalancePoint[],
-  flows: Flow[] | null | undefined,
+  points: readonly BalancePoint[],
+  flows: readonly Flow[] | null | undefined,
   flowsFrom: string | null | undefined,
   /** Last date the flows are known complete for. Past it a contribution may
    *  simply not be known yet, and would read as growth, so the line stops. */
@@ -154,6 +155,47 @@ export function contributionBaseline(
     out.push({ date: p.date, value: carried ? cents(i - o) : cents(start.value + i - o), in: i, out: o });
   }
   return out;
+}
+
+/** What moved over a range of an account's chart: money in, money out and
+ *  growth from `from` to `to`, both real days on its grey line. */
+export type RangeSplit = { from: string; to: string; in: number; out: number; growth: number };
+
+/**
+ * The account chart's readout for a range with nothing scrubbed
+ * (components/NetWorthChart.tsx splitBetween, from the grey line's first day
+ * to the last real day it reaches), for Accounts > Summary to add up across
+ * accounts. `shown` is the range's points (lib/chart-range.ts sliceRange,
+ * which ends on the account's own last point); the rest are
+ * contributionBaseline's. Null where the chart has no split for the range:
+ * no line in it.
+ *
+ * The line can start after the range does (its first real day inside the
+ * activity, see contributionBaseline) and end before it (the last day the
+ * activity is known to, or the last real day), so `from` and `to` say what
+ * was counted.
+ */
+export function rangeSplit(
+  shown: readonly BalancePoint[],
+  flows: readonly Flow[] | null | undefined,
+  flowsFrom: string | null | undefined,
+  flowsTo?: string | null,
+  totals?: Totals | null
+): RangeSplit | null {
+  const line = contributionBaseline(shown, flows, flowsFrom, flowsTo, totals);
+  if (!line || line.length === 0) return null;
+  const real = new Map(shown.filter((p) => !p.estimated).map((p) => [p.date, p.value] as const));
+  const start = line[0];
+  const end = [...line].reverse().find((b) => real.has(b.date));
+  // The line starts on a real day, so an end is always found; kept honest.
+  if (!end || !real.has(start.date)) return null;
+  return {
+    from: start.date,
+    to: end.date,
+    in: cents(end.in - start.in),
+    out: cents(end.out - start.out),
+    growth: cents(real.get(end.date)! - real.get(start.date)! - (end.value - start.value)),
+  };
 }
 
 /** A YYYY-MM-DD date moved by whole UTC days. */

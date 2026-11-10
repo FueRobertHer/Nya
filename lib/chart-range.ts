@@ -19,6 +19,18 @@ export const RANGE_SETS: Record<RangeSet, { keys: RangeKey[]; initial: RangeKey 
   investment: { keys: ['1M', '3M', 'YTD', '1Y', '3Y', '5Y', 'ALL'], initial: 'YTD' },
 };
 
+/** Each range's words on its switch. */
+export const RANGE_TEXT: Record<RangeKey, string> = {
+  '1M': '1M',
+  '3M': '3M',
+  '6M': '6M',
+  YTD: 'YTD',
+  '1Y': '1Y',
+  '3Y': '3Y',
+  '5Y': '5Y',
+  ALL: 'All',
+};
+
 const MONTHS: Partial<Record<RangeKey, number>> = { '1M': 1, '3M': 3, '6M': 6, '1Y': 12, '3Y': 36, '5Y': 60 };
 
 const DAY_MS = 86_400_000;
@@ -30,8 +42,9 @@ const daysBetween = (a: string, b: string) => Math.round((parse(b) - parse(a)) /
  *  it would be a one-day chart. */
 const MIN_YTD_DAYS = 14;
 /** A range whose first point comes more than this long after its start is
- *  labelled with that point's date: a gap means it covers less than its name. */
-const LATE_START_DAYS = 7;
+ *  labelled with that point's date: a gap means it covers less than its name.
+ *  Accounts > Summary names an account counted from later than this. */
+export const LATE_START_DAYS = 7;
 
 /** A YYYY-MM-DD date moved back whole calendar months, clamped to the month's
  *  last day (Mar 31 less a month is Feb 28 or 29). */

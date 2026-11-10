@@ -622,14 +622,29 @@ export async function getRealSnapshotDates(ctx: Ctx): Promise<Set<string>> {
  * one is newer. It only speaks for the accounts it names: one that leaves this
  * account out means its institution failed, not that the account was gone.
  */
-export async function getAccountHistory(ctx: Ctx, 
+export async function getAccountHistory(ctx: Ctx,
   account_id: string,
   /** Earlier ids of the SAME account (lib/links.ts), newest first. On each date
    *  the current id wins, then these in order, so history recorded before a
    *  reconnect joins up with the current id. */
   olderIds: string[] = []
 ): Promise<HistoryPoint[]> {
-  const ids = [account_id, ...olderIds.filter((id) => id !== account_id)];
+  return (await getAccountHistories(ctx, [{ account_id, olderIds }]))[0];
+}
+
+/**
+ * getAccountHistory for several accounts at once (Accounts > Summary, which
+ * reads every investment account): the four layers are read once and each
+ * stored map is opened once, whichever accounts it names, where a read per
+ * account would decrypt the whole history again for each. Each account's
+ * points are resolved exactly as getAccountHistory resolves them, in the
+ * order the accounts are given.
+ */
+export async function getAccountHistories(
+  ctx: Ctx,
+  accounts: readonly { account_id: string; olderIds?: readonly string[] }[]
+): Promise<HistoryPoint[][]> {
+  if (accounts.length === 0) return [];
   const [realMap, partialMap, estMap, extMap] = await Promise.all([
     redis().hgetall<Record<string, string>>(ACCOUNTS_HASH(ctx)),
     redis().hgetall<Record<string, string>>(ACCOUNTS_PARTIAL_HASH(ctx)),
@@ -637,47 +652,69 @@ export async function getAccountHistory(ctx: Ctx,
     redis().hgetall<Record<string, string>>(ACCOUNTS_EST_EXT_HASH(ctx)),
   ]);
 
-  /** This account's balance in one encrypted map under the first of its ids the
-   *  map names, or null when the map is unreadable or names none. */
-  async function balanceIn(blob: string | undefined): Promise<number | null> {
-    if (!blob) return null;
-    try {
-      const balances = JSON.parse(await decrypt(ctx, blob)) as Record<string, number>;
-      for (const id of ids) {
-        const value = balances[id];
-        if (typeof value === 'number' && Number.isFinite(value)) return value;
-      }
-      return null;
-    } catch {
-      return null;
+  /** One layer's map for a date, opened at most once: null when the layer has
+   *  none for the date or it can't be read. */
+  const opened = new Map<string, Promise<Record<string, number> | null>>();
+  function open(layer: string, map: Record<string, string> | null, date: string): Promise<Record<string, number> | null> {
+    const blob = map?.[date];
+    if (!blob) return Promise.resolve(null);
+    const key = `${layer}:${date}`;
+    let balances = opened.get(key);
+    if (!balances) {
+      balances = decrypt(ctx, blob)
+        .then((text) => JSON.parse(text) as Record<string, number>)
+        .catch(() => null);
+      opened.set(key, balances);
     }
+    return balances;
   }
 
-  const dates = new Set([
-    ...Object.keys(realMap ?? {}),
-    ...Object.keys(partialMap ?? {}),
-    ...Object.keys(estMap ?? {}),
-    ...Object.keys(extMap ?? {}),
-  ]);
+  /** An account's balance in one map under the first of its ids the map
+   *  names, or null when the map is unreadable or names none. */
+  function balanceIn(balances: Record<string, number> | null, ids: readonly string[]): number | null {
+    if (!balances) return null;
+    for (const id of ids) {
+      const value = balances[id];
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+    }
+    return null;
+  }
 
-  const points = await Promise.all(
-    [...dates].map(async (date): Promise<HistoryPoint | null> => {
-      const measured = await balanceIn(partialMap?.[date]);
-      if (measured !== null) return { date, value: measured };
-      if (realMap?.[date]) {
-        const real = await balanceIn(realMap[date]);
-        // A real map naming none of the account's ids is an answer (the account
-        // wasn't there), not a gap: an estimate here would show a reconstructed
-        // figure on a measured date.
-        return real === null ? null : { date, value: real };
+  const dates = [
+    ...new Set([
+      ...Object.keys(realMap ?? {}),
+      ...Object.keys(partialMap ?? {}),
+      ...Object.keys(estMap ?? {}),
+      ...Object.keys(extMap ?? {}),
+    ]),
+  ].sort();
+  const idsOf = accounts.map(({ account_id, olderIds = [] }) => [account_id, ...olderIds.filter((id) => id !== account_id)]);
+  const out: HistoryPoint[][] = accounts.map(() => []);
+
+  await Promise.all(
+    dates.map(async (date) => {
+      const [partial, real] = await Promise.all([open('partial', partialMap, date), open('real', realMap, date)]);
+      for (let i = 0; i < accounts.length; i++) {
+        const ids = idsOf[i];
+        const measured = balanceIn(partial, ids);
+        if (measured !== null) {
+          out[i].push({ date, value: measured });
+          continue;
+        }
+        if (realMap?.[date]) {
+          // A real map naming none of the account's ids is an answer (the account
+          // wasn't there), not a gap: an estimate here would show a reconstructed
+          // figure on a measured date.
+          const value = balanceIn(real, ids);
+          if (value !== null) out[i].push({ date, value });
+          continue;
+        }
+        const value = balanceIn(await open('ext', extMap, date), ids) ?? balanceIn(await open('est', estMap, date), ids);
+        if (value !== null) out[i].push({ date, value, estimated: true });
       }
-      const value = (await balanceIn(extMap?.[date])) ?? (await balanceIn(estMap?.[date]));
-      return value === null ? null : { date, value, estimated: true };
     })
   );
-  return points
-    .filter((p): p is HistoryPoint => p !== null)
-    .sort((a, b) => (a.date < b.date ? -1 : 1));
+  return out.map((points) => points.sort((a, b) => (a.date < b.date ? -1 : 1)));
 }
 
 /**

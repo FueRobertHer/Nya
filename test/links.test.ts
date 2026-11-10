@@ -671,6 +671,38 @@ describe('review follow-ups: routes', () => {
     expect(preview.points[0]).toEqual({ date: '2026-06-01', value: 1 }); // A was seen later, so it wins
   });
 
+  // Accounts > Summary reads every investment account in one request; each
+  // comes back joined through its own links, as the one-id form answers it.
+  test('several ids answer each account as one id does', async () => {
+    await rememberAccounts(ctx, [{ item_id: 'i', institution_name: 'Bank', error: null, accounts: [{ account_id: 'B', type: 'investment' }, { account_id: 'C', type: 'investment' }] } as any]);
+    await fake.hset(ctxKey('history:accounts'), {
+      '2026-06-01': await encrypt(TEST_CTX, JSON.stringify({ A: 1, C: 5 })),
+      '2026-08-01': await encrypt(TEST_CTX, JSON.stringify({ B: 4, C: 6 })),
+    });
+    await links.linkAccounts(ctx, 'A', 'B', { old_last: '2026-06-01' });
+    const { GET } = await import('@/app/api/account-history/route');
+    const one = async (id: string) => (await (await GET(new Request(`http://x/api/account-history?id=${id}`))).json()).points;
+
+    const res = await GET(new Request('http://x/api/account-history?ids=B,C,B,nobody'));
+    expect(res.status).toBe(200);
+    const { histories } = await res.json();
+    expect(Object.keys(histories)).toEqual(['B', 'C', 'nobody']);
+    expect(histories.B).toEqual(await one('B'));
+    expect(histories.B[0]).toEqual({ date: '2026-06-01', value: 1 }); // through the link
+    expect(histories.C).toEqual(await one('C'));
+    expect(histories.nobody).toEqual([]);
+  });
+
+  test('several ids refuse an empty list, too many, and an overlong id', async () => {
+    const { GET } = await import('@/app/api/account-history/route');
+    const status = async (ids: string) => (await GET(new Request(`http://x/api/account-history?ids=${ids}`))).status;
+    const list = (n: number) => Array.from({ length: n }, (_, i) => `a${i}`).join(',');
+    expect(await status(',')).toBe(400);
+    expect(await status(list(51))).toBe(400);
+    expect(await status('x'.repeat(101))).toBe(400);
+    expect(await status(list(50))).toBe(200);
+  });
+
   test('goals follow a link to the current account', async () => {
     const { setGoals } = await import('@/lib/goals');
     await setGoals(ctx, [{ id: 'g', name: 'Pay off', target: 1000, account_id: 'old', created_at: '2026-01-01' } as any]);

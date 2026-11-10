@@ -72,6 +72,7 @@ import {
   axisTickLadder,
   initialRange,
   rangeLabel,
+  RANGE_TEXT,
   sliceRange,
   touchGesture,
   type RangeKey,
@@ -122,17 +123,6 @@ function signed(n: number, currency?: string | null): string {
 function fmtDay(iso: string, sentence = false): string {
   return formatDay(iso, { sentence });
 }
-
-const RANGE_TEXT: Record<RangeKey, string> = {
-  '1M': '1M',
-  '3M': '3M',
-  '6M': '6M',
-  YTD: 'YTD',
-  '1Y': '1Y',
-  '3Y': '3Y',
-  '5Y': '5Y',
-  ALL: 'All',
-};
 
 // The hero's line draws in once a page load: the first time Home's chart is
 // shown (on its own data, after the skeleton), never again as tabs or

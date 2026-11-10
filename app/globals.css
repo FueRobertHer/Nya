@@ -3139,6 +3139,16 @@ span.meter-fill {
   height: var(--icon);
 }
 
+/* The tab's two views under that row (components/AccountsSegments.tsx), and
+   each view's panel, whose last card ends the page as the tab's did. */
+.accounts-segments {
+  margin-bottom: var(--sp-3);
+}
+
+.accounts-panel > :last-child {
+  margin-bottom: 0;
+}
+
 /* The top of an account's sheet (components/AccountSheet.tsx): its balance,
    then where it comes from. */
 .account-hero {
@@ -4527,8 +4537,11 @@ button.danger-outline {
 
 /* Your figures' rows (InputsCard, rollout phase 6c): the figure as the
    trailing value and, under measured savings, its savings rate as a second
-   line, laid out as Budgets' amounts are (.budget-value). */
-.plan-input-value {
+   line, laid out as Budgets' amounts are (.budget-value). The same for an
+   investment's growth over a range on Accounts > Summary, with "growth"
+   under it (components/InvestmentGrowth.tsx). */
+.plan-input-value,
+.growth-value {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -4537,7 +4550,8 @@ button.danger-outline {
   text-align: right;
 }
 
-.plan-input-line {
+.plan-input-line,
+.growth-value-label {
   color: var(--text-2);
   font-size: var(--fs-2);
 }

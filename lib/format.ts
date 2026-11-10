@@ -327,6 +327,20 @@ export function formatRate(rate: number, from: string, to: string): string {
   return `1 ${from} = ${new Intl.NumberFormat(undefined, { maximumSignificantDigits: 5 }).format(rate)} ${to}`;
 }
 
+/** A currency's name for many of it, in English as the app's words are:
+ *  "US dollars", "Canadian dollars", "Euros"; the code itself where Intl has
+ *  no name. Words, not an amount: no figure is written. */
+export function currencyPlural(code: string): string {
+  try {
+    const part = new Intl.NumberFormat('en', { style: 'currency', currency: code, currencyDisplay: 'name' })
+      .formatToParts(2)
+      .find((p) => p.type === 'currency');
+    return part ? part.value.charAt(0).toUpperCase() + part.value.slice(1) : code;
+  } catch {
+    return code;
+  }
+}
+
 /**
  * A day (YYYY-MM-DD, a calendar day as the bank or the person gives it) as a
  * person reads it: "Today" and "Yesterday", then "Aug 7" within the current
