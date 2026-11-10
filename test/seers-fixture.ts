@@ -167,6 +167,8 @@ export async function seedEveryKind(
   await timelineNotesStore.set(ctx, 'note1', { date: ago(20), text: 'Moved house', kind: 'user', created_at: at });
   const { lifecycleStore } = await import('@/lib/lifecycle');
   await lifecycleStore.set(ctx, 'acc_save', { lifecycle: { state: 'active' }, type: null, label: { name: '', institution: '', mask: null }, item_id: null, set_at: at } as never);
+  const { moneyInOutStore } = await import('@/lib/money-in-out-store');
+  await moneyInOutStore.set(ctx, 'acc_save', { in: 1000, out: 0, as_of: ago(20), currency: 'USD', set_at: at });
 
   // ---- A bank brought back from a download, its account linked to today's
   // checking, so its rows count as the account's own.

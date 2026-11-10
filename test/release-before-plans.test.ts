@@ -23,10 +23,11 @@ import type { PlanItem } from '@/lib/fire/items';
 // ahead: `model: 'detailed'`, each plan's choices, the household and `at-stop`.
 // And it writes `lastsIn`, your FI date as the earliest stop that lasts (D9),
 // which the release before reads and its saves keep.
-// And its restore (test/fixtures/release-before/user-restore/parts.ts) takes a
-// download this release makes, plans and all: it refuses a file with a part it
-// doesn't know, or without one of its header parts, and reads each store part
-// as the kind its own list says.
+// And its restore (test/fixtures/release-before/user-restore/parts.ts) knows
+// every part of a download this release makes, plans and all, but money in
+// and out's, new in this release (see the test): it refuses a file with a
+// part it doesn't know, or without one of its header parts, and reads each
+// store part as the kind its own list says.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -431,7 +432,12 @@ describe('a download this release makes, as the release before’s restore reads
     ok(await plans('POST', { from: MAIN_ID, name: 'Stop at 52', plan: { ...TYPED, targetAge: 52 }, currency: 'USD' }));
     const keys = Object.keys(buildUserExport(await collectUserData({ ctx, userId: null }), new Date('2026-11-04T12:00:00.000Z')));
     expect(keys).toContain('fire-plans');
-    expect(keys.filter((k) => !oParts.isKnownPart(k))).toEqual([]);
+    // But one: money in and out (lib/money-in-out-store.ts) is new in this
+    // release, and every download has its part, empty or not, so the release
+    // before refuses them all. Shipped without a reader a release ahead, since
+    // no rollback is planned (docs/operations.md). Moving the fixtures to this
+    // release's merge empties this list again.
+    expect(keys.filter((k) => !oParts.isKnownPart(k))).toEqual(['money-in-out']);
     expect(oParts.HEADER_PARTS.filter((p) => !keys.includes(p))).toEqual([]);
     const shared = Object.keys(SEAM).filter((name) => Object.hasOwn(oParts.SEAM, name));
     expect(shared.length).toBeGreaterThan(30);

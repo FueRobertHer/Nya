@@ -13,6 +13,7 @@
 import AccountSparkline from './AccountSparkline';
 import HoldingsRecorded from './HoldingsRecorded';
 import InvestmentActivity from './InvestmentActivity';
+import type { MoneyInOutTarget } from './MoneyInOutFigures';
 import { Sheet } from './Sheet';
 import { Menu, type MenuItem } from './Menu';
 import { Masked } from './HideAmounts';
@@ -159,6 +160,8 @@ export type AccountSheetProps = {
   onAddTransaction: (account_id: string) => void;
   onImport: (account_id: string) => void;
   onImportHistory: (target: HistoryImportTarget) => void;
+  /** Opens the money in and out form (components/MoneyInOutSheet.tsx). */
+  onMoneyInOut: (target: MoneyInOutTarget) => void;
   onDelete: (account: ManualAccount) => void;
 };
 
@@ -177,6 +180,7 @@ export default function AccountSheet({
   onAddTransaction,
   onImport,
   onImportHistory,
+  onMoneyInOut,
   onDelete,
 }: AccountSheetProps) {
   if (!a || !inst) return null;
@@ -333,6 +337,17 @@ export default function AccountSheet({
           investment={isInvestmentType(a.type)}
           owed={isOwedType(a.type)}
           itemId={isInvestmentType(a.type) && !inst.manual ? inst.item_id : undefined}
+          // Its money in and out, above the chart: what they are, or setting
+          // them (lib/money-in-out.ts).
+          moneyInOut={
+            isInvestmentType(a.type) && !inst.manual
+              ? {
+                  balance: a.balance,
+                  label: `${a.name}${a.mask ? ` ••${a.mask}` : ''} · ${inst.institution_name}`,
+                  onEdit: (target) => act(() => onMoneyInOut(target))(),
+                }
+              : undefined
+          }
         />
         {/* Since when its positions have been kept (lib/holdings-history.ts).
             A manual account has none to keep. */}

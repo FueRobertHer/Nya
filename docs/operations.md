@@ -575,6 +575,14 @@ Repeat it from each answer's cursor until the cursor is 0, then do the same for 
 
 **Restores.** A file's plans replace every plan the account holds, and a file with plans but without `plan-facts` leaves the account none. A file with no plans, one from before copies among them, leaves the account's plans and facts as they are, and one from before copies says its plan doesn't come back. Say so to anyone restoring an old file who expects their plan back: it was the cost of not migrating.
 
+## Money in and out, and rolling back
+
+An investment account's money in and out ([features.md](features.md#money-in-and-out)) keep a map store of their own, `money-in-out` ([architecture.md](architecture.md#money-in-and-out-on-an-investment-account)). Nothing to run: it is empty until someone sets them.
+
+**What a rollback sees.** The release before never reads the store: an investment account's sheet has no Since you started and no Set money in and out, and its grey line counts from the start of each range, as it did. The entries stay where they are; it never deletes them. **It refuses every download made by this release**, whether or not anything is set: each has a `money-in-out` part (an empty list when nothing is), and a restore refuses any part it doesn't know. A download from the release before is brought back as before. This release ships without a reader a release ahead, as plans as copies had, since no rollback is planned while one person uses Nya: `test/release-before-plans.test.ts` names this part as the one the release before doesn't know, until its fixtures move to this release's merge.
+
+**Rolling forward again.** Nothing to run: the totals are where they were, carried through whatever activity was recorded meanwhile.
+
 ## The tax law tables, each year
 
 The detailed model's law is code (`lib/fire/tax/law/<year>.ts`, [architecture.md](architecture.md#tax-law-and-the-year)): a value changes only through a reviewed pull request whose golden tests pass. A detailed plan reads the tables through `lawFor` (`lib/fire/tax/law/index.ts`): the law of today's year once every part of it is in, until then the newest complete year, and the plan says so. The admin page's Tax law card and the upkeep job read the tables too, for their sources. Each year:

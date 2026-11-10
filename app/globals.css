@@ -2460,6 +2460,12 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
   overflow-wrap: anywhere;
 }
 
+/* A gain on a figure (an account's growth so far): green with its sign, as
+   money in is on Activity. A loss keeps the text color with its minus. */
+.stat-value.inflow {
+  color: var(--pos);
+}
+
 /* A badge on a figure (Incomplete) keeps its own width. */
 .stat > .badge {
   align-self: flex-start;

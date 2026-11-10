@@ -1,7 +1,7 @@
 // lib/growth.ts
 //
-// Splits an investment account's balance change into money added and growth,
-// for the second line on its chart.
+// Splits an investment account's balance change into money in, money out and
+// growth, for the second line on its chart and the figures on its sheet.
 //
 // The line is the balance on a starting day plus every flow across the account
 // boundary since (lib/investments.ts externalFlow: contributions, rollovers and
@@ -14,15 +14,83 @@
 // (lib/backfill.ts), so growth measured across it would be a fiction the walk
 // put there. Measured points only exist from the first snapshot on.
 //
-// Imports nothing: the chart is a client component.
+// MONEY IN AND OUT. With the totals the person gave for a day
+// (lib/money-in-out.ts), the line is instead their net money in on each day:
+// the totals, less what Nya saw move between that day and the totals' day,
+// plus what moved after (moneyInOutOn). The gap above it is then growth since
+// the account started, not since the line's first day. Each day's flows are
+// already one net per day (lib/investments.ts dailyFlows), so a fund exchange
+// booked as a transfer out and a transfer in on one day nets away: a day's
+// net is money in when above zero, money out when below.
+//
+// Imports nothing but a pure date helper: the chart is a client component.
+
+import { latestAsOf } from './money-in-out';
 
 export type BalancePoint = { date: string; value: number; estimated?: boolean };
 export type Flow = { date: string; amount: number };
+/** A point on the line: its value, and the money in and out it holds, each
+ *  zero or more. Without totals they count from the line's first day; with
+ *  them, from the account's start, so only their changes between two points
+ *  say what moved between them. */
+export type BaselinePoint = { date: string; value: number; in: number; out: number };
+/** What the person said was put in and taken out by the end of `as_of`. */
+export type Totals = { in: number; out: number; as_of: string };
+
+const cents = (n: number) => Math.round(n * 100) / 100;
 
 /**
- * The balance at the start plus net money added since, for every point from the
- * start on. Null when there's nothing honest to draw: no flows (unavailable, or
- * withheld because rows were missing), or no real point inside their window.
+ * Whether the totals can be carried through the activity Nya has for the
+ * account: their day must be one it has activity for (from `flowsFrom`), or
+ * Nya can't take off what moved between the two, and not ahead of the
+ * person's today. Checked on every read, since the activity's start can move
+ * (an institution that keeps less history, a re-link to a new id).
+ */
+export function usableTotals(totals: Totals | null | undefined, flowsFrom: string | null | undefined, now: number = Date.now()): boolean {
+  return !!totals && !!flowsFrom && totals.as_of >= flowsFrom && totals.as_of <= latestAsOf(now);
+}
+
+/**
+ * The money in and out by the start of `day` (flows dated before it, as the
+ * balance shows them, see contributionBaseline), carried from the totals:
+ * what moved after their day is added, what moved from `day` to their day is
+ * taken off. `flows` are the account's daily nets, every one inside the
+ * activity the totals were checked against (usableTotals).
+ */
+export function moneyInOutOn(totals: Totals, flows: readonly Flow[], day: string): { in: number; out: number } {
+  let inn = totals.in;
+  let out = totals.out;
+  for (const f of flows) {
+    // Counted by the totals' day: f <= as_of. Counted by `day`: f < day.
+    const byTotals = f.date <= totals.as_of;
+    const byDay = f.date < day;
+    if (byTotals === byDay) continue;
+    const sign = byDay ? 1 : -1;
+    if (f.amount > 0) inn += sign * f.amount;
+    else out += sign * -f.amount;
+  }
+  return { in: cents(inn), out: cents(out) };
+}
+
+/**
+ * The money in and out that moved after the totals' day and before `day`:
+ * what the sheet says came "since" them.
+ */
+export function movedSince(totals: Totals, flows: readonly Flow[], day: string): { in: number; out: number } {
+  let inn = 0;
+  let out = 0;
+  for (const f of flows) {
+    if (f.date <= totals.as_of || f.date >= day) continue;
+    if (f.amount > 0) inn += f.amount;
+    else out -= f.amount;
+  }
+  return { in: cents(inn), out: cents(out) };
+}
+
+/**
+ * The line for every point from its start on, or null when there's nothing
+ * honest to draw: no flows (unavailable, or withheld because rows were
+ * missing), or no real point inside their window.
  *
  * A flow counts from the day AFTER its date. The daily snapshot is taken at
  * 13:00 UTC, before US markets open, and investment balances usually update
@@ -39,6 +107,10 @@ export type Flow = { date: string; amount: number };
  * with no flow in the SETTLE_DAYS before it, where the starting balance is
  * unambiguous, and only falls back to the first real point when every candidate
  * has one (an account contributing every few days).
+ *
+ * With `totals` that can be carried (usableTotals) the value is the net money
+ * in on each day instead (moneyInOutOn), from the same start: growth measured
+ * across the estimated stretch would still be the walk's fiction.
  */
 const SETTLE_DAYS = 3;
 
@@ -48,8 +120,9 @@ export function contributionBaseline(
   flowsFrom: string | null | undefined,
   /** Last date the flows are known complete for. Past it a contribution may
    *  simply not be known yet, and would read as growth, so the line stops. */
-  flowsTo?: string | null
-): { date: string; value: number }[] | null {
+  flowsTo?: string | null,
+  totals?: Totals | null
+): BaselinePoint[] | null {
   if (!flows || !flowsFrom) return null;
   if (flowsTo) points = points.filter((p) => p.date <= flowsTo);
   const sorted = [...flows].sort((a, b) => (a.date < b.date ? -1 : 1));
@@ -60,15 +133,25 @@ export function contributionBaseline(
     return !sorted.some((f) => f.date >= from && f.date < date);
   };
   const start = candidates.find((p) => settled(p.date)) ?? candidates[0];
+  const carried = usableTotals(totals, flowsFrom) ? totals : null;
 
-  const out: { date: string; value: number }[] = [];
-  let added = 0;
+  const out: BaselinePoint[] = [];
+  // Money in and out since the start, or the totals carried to the start.
+  const first = carried ? moneyInOutOn(carried, sorted, start.date) : { in: 0, out: 0 };
+  let inn = first.in;
+  let outs = first.out;
   let next = 0;
   while (next < sorted.length && sorted[next].date < start.date) next++;
   for (const p of points) {
     if (p.date < start.date) continue;
-    while (next < sorted.length && sorted[next].date < p.date) added += sorted[next++].amount;
-    out.push({ date: p.date, value: Math.round((start.value + added) * 100) / 100 });
+    while (next < sorted.length && sorted[next].date < p.date) {
+      const a = sorted[next++].amount;
+      if (a > 0) inn += a;
+      else outs -= a;
+    }
+    const i = cents(inn);
+    const o = cents(outs);
+    out.push({ date: p.date, value: carried ? cents(i - o) : cents(start.value + i - o), in: i, out: o });
   }
   return out;
 }
@@ -76,4 +159,53 @@ export function contributionBaseline(
 /** A YYYY-MM-DD date moved by whole UTC days. */
 function shiftDays(date: string, days: number): string {
   return new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * The sheet's Since you started figures: money in, money out and the net by
+ * the measuring day, and growth so far, the balance less that net. Measured
+ * today on the live balance while the activity is known to yesterday or
+ * later; otherwise on the last recorded balance up to the day after the
+ * activity ends (`to` names that day), since money that moved after it isn't
+ * known yet. `growth` is null where there is no balance to measure.
+ */
+export function sinceStarted(
+  totals: Totals,
+  flows: readonly Flow[],
+  flowsTo: string | null | undefined,
+  balance: number | null | undefined,
+  points: readonly BalancePoint[] | null,
+  now: number = Date.now()
+): { in: number; out: number; net: number; growth: number | null; to: string | null; since: { in: number; out: number } } {
+  const today = new Date(now).toISOString().slice(0, 10);
+  let day = today;
+  let measured: number | null = balance ?? null;
+  if (flowsTo && flowsTo < shiftDays(today, -1)) {
+    const until = shiftDays(flowsTo, 1);
+    const last = [...(points ?? [])].reverse().find((p) => !p.estimated && p.date <= until);
+    day = last?.date ?? until;
+    measured = last?.value ?? null;
+  }
+  const at = moneyInOutOn(totals, flows, day);
+  const net = cents(at.in - at.out);
+  return {
+    ...at,
+    net,
+    growth: measured === null ? null : cents(measured - net),
+    to: day === today ? null : day,
+    since: movedSince(totals, flows, day),
+  };
+}
+
+/** What Nya has seen go in from the start of its activity to the end of
+ *  `day`: the floor under money in for that day, unless it is a net. */
+export function seenIn(flows: readonly Flow[], day: string): number {
+  return cents(flows.reduce((sum, f) => (f.date <= day && f.amount > 0 ? sum + f.amount : sum), 0));
+}
+
+/** The days' nets in the SETTLE_DAYS up to and including `day`, oldest
+ *  first: money a brokerage's figures for that day may not show yet. */
+export function movedNear(flows: readonly Flow[], day: string): Flow[] {
+  const from = shiftDays(day, -(SETTLE_DAYS - 1));
+  return flows.filter((f) => f.date >= from && f.date <= day).sort((a, b) => (a.date < b.date ? -1 : 1));
 }

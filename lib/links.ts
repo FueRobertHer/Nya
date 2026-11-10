@@ -879,6 +879,8 @@ export async function forgetEarlierAccount(
   if (mayHoldPositions) await forgetRecentHoldings(ctx, id);
   // Its closure and the note about it, which name it too (#50).
   await (await import('./lifecycle')).forgetLifecycle(ctx, id);
+  // What the person said it had put in and taken out, by a day.
+  await (await import('./money-in-out-store')).forgetMoneyInOut(ctx, id);
   // Last: while the entry exists the account is still listed, so a retry is
   // offered. A map nobody can decrypt doesn't hold it back: nothing in it can
   // be read by anyone.

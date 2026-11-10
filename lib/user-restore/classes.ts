@@ -162,6 +162,8 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   imports: 'data',
   'income-carryover': 'setting',
   'manual-transactions': 'data',
+  // What the person said an investment account had put in and taken out.
+  'money-in-out': 'data',
   // What every plan shares, and which is yours: your plan's settings.
   'plan-facts': 'setting',
   'planned-items': 'data',

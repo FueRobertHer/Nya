@@ -105,6 +105,7 @@ export const SEAM: Readonly<Record<string, SeamPart>> = {
   imports: { kind: 'map', restore: 'write', split: { field: 'records', as: 'list' } },
   'income-carryover': { kind: 'value', restore: 'write' },
   'manual-transactions': { kind: 'map', restore: 'write', split: { field: 'rows', as: 'list' } },
+  'money-in-out': { kind: 'map', restore: 'write' },
   'plan-facts': { kind: 'value', restore: 'write' },
   'planned-items': { kind: 'value', restore: 'write' },
   'report-settings': { kind: 'value', restore: 'write' },
