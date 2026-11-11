@@ -43,7 +43,7 @@ const daysBetween = (a: string, b: string) => Math.round((parse(b) - parse(a)) /
 const MIN_YTD_DAYS = 14;
 /** A range whose first point comes more than this long after its start is
  *  labelled with that point's date: a gap means it covers less than its name.
- *  Accounts > Summary names an account counted from later than this. */
+ *  Accounts > Investments names an account counted from later than this. */
 export const LATE_START_DAYS = 7;
 
 /** A YYYY-MM-DD date moved back whole calendar months, clamped to the month's

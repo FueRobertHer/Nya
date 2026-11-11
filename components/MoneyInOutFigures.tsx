@@ -1,17 +1,18 @@
 'use client';
 
-// An investment account's money in and out on its sheet (components/
+// An investment account's deposits and withdrawals on its sheet (components/
 // AccountSheet.tsx), under the balance, above the chart. Drawn by
 // AccountSparkline, which holds the two things it reads: the account's
 // activity (with the totals the person set, lib/money-in-out.ts) and its
 // balance history.
 //
-//   - Totals set and carried (lib/growth.ts usableTotals): Since you started,
-//     Money in, Money out, Net and Growth so far, where they come from, and
-//     Change money in and out.
-//   - None set: one line saying what setting them shows, and that growth
-//     counts from the start of the range shown for now (the chart's own
-//     explanations name the day), with Set money in and out (its one place).
+//   - Totals set and carried (lib/growth.ts usableTotals): All-time
+//     performance, Deposits & withdrawals and Investment returns, where they
+//     come from, and Change deposits and withdrawals.
+//   - None set: one line saying what setting them shows, and that returns
+//     count from the start of the range shown for now (the chart's own
+//     explanations name the day), with Set deposits and withdrawals (its one
+//     place).
 //   - Set but no longer carried (their day is before the activity Nya now
 //     has for the account): an information notice saying so, since no figure
 //     is wrong; the chart counts from the start of each range again.
@@ -38,18 +39,19 @@ export type MoneyInOutTarget = {
 
 const day = (iso: string) => formatDay(iso, { sentence: true });
 
-/** "$2,000.00 in", "$500.00 out", or both: what moved since the totals. */
+/** "$2,000.00 deposited", "$500.00 withdrawn", or both: what moved since
+ *  the totals. */
 function movedWords(m: { in: number; out: number }, currency: string | null): string | null {
   const parts = [
-    ...(roundsToNothing(m.in, currency) ? [] : [`${formatMoney(m.in, currency)} in`]),
-    ...(roundsToNothing(m.out, currency) ? [] : [`${formatMoney(m.out, currency)} out`]),
+    ...(roundsToNothing(m.in, currency) ? [] : [`${formatMoney(m.in, currency)} deposited`]),
+    ...(roundsToNothing(m.out, currency) ? [] : [`${formatMoney(m.out, currency)} withdrawn`]),
   ];
   return parts.length ? parts.join(' and ') : null;
 }
 
 /** What the chart does without totals: the line starts with each range
  *  (lib/growth.ts contributionBaseline), so no one day can be named here. */
-const FOR_NOW = 'For now, growth counts from the start of the range shown.';
+const FOR_NOW = 'For now, returns count from the start of the range shown.';
 
 export default function MoneyInOutFigures({
   target,
@@ -71,7 +73,6 @@ export default function MoneyInOutFigures({
   onEdit: (target: MoneyInOutTarget) => void;
 }) {
   const { totals, flows, flows_from, currency } = target;
-  const money = (n: number) => formatMoney(n, currency);
   const edit = (words: string) => (
     <div>
       <button type="button" className="btn ghost" onClick={() => onEdit(target)}>
@@ -83,7 +84,7 @@ export default function MoneyInOutFigures({
   if (unreadable) {
     return (
       <Notice level="caution" role="status">
-        Your money in and out for this account can’t be read just now, so its growth counts from the start of the range shown.
+        Your deposits and withdrawals for this account can’t be read just now, so its returns count from the start of the range shown.
       </Notice>
     );
   }
@@ -91,8 +92,8 @@ export default function MoneyInOutFigures({
   if (!totals) {
     return (
       <div className="stack tight">
-        <p className="helper">Set your money in and out to see your growth since you started. {FOR_NOW}</p>
-        {edit('Set money in and out')}
+        <p className="helper">Set your deposits and withdrawals to see your all-time returns. {FOR_NOW}</p>
+        {edit('Set deposits and withdrawals')}
       </div>
     );
   }
@@ -101,9 +102,9 @@ export default function MoneyInOutFigures({
     return (
       <div className="stack tight">
         <Notice level="info">
-          Change money in and out to see your growth since you started again: your totals are for {day(totals.as_of)}, and Nya’s activity for this account now starts {day(flows_from)}. {FOR_NOW}
+          Change deposits and withdrawals to see your all-time returns again: your totals are for {day(totals.as_of)}, and Nya’s activity for this account now starts {day(flows_from)}. {FOR_NOW}
         </Notice>
-        {edit('Change money in and out')}
+        {edit('Change deposits and withdrawals')}
       </div>
     );
   }
@@ -112,28 +113,18 @@ export default function MoneyInOutFigures({
   const moved = movedWords(f.since, currency);
   return (
     <div className="stack tight">
-      <h3 className="section-label">{f.to ? `Since you started, to ${formatDay(f.to)}` : 'Since you started'}</h3>
+      <h3 className="section-label">{f.to ? `All-time performance, to ${formatDay(f.to)}` : 'All-time performance'}</h3>
       <ul className="stat-strip" role="list">
+        {/* One figure, in less out, as a brokerage gives it: below zero when
+            more came out. */}
         <li className="stat">
-          <span className="stat-label">Money in</span>
+          <span className="stat-label">Deposits &amp; withdrawals</span>
           <span className="stat-value money">
-            <Masked>{money(f.in)}</Masked>
+            <Masked>{signedMoney(f.net, currency)}</Masked>
           </span>
         </li>
         <li className="stat">
-          <span className="stat-label">Money out</span>
-          <span className="stat-value money">
-            <Masked>{money(f.out)}</Masked>
-          </span>
-        </li>
-        <li className="stat">
-          <span className="stat-label">Net</span>
-          <span className="stat-value money">
-            <Masked>{money(f.net)}</Masked>
-          </span>
-        </li>
-        <li className="stat">
-          <span className="stat-label">Growth so far</span>
+          <span className="stat-label">Investment returns</span>
           {f.growth === null ? (
             <span className="stat-value money">--</span>
           ) : (
@@ -148,7 +139,7 @@ export default function MoneyInOutFigures({
       <p className="helper">
         <Masked>{`From your totals for ${day(totals.as_of)}${moved ? `, and ${moved} since` : ''}.`}</Masked>
       </p>
-      {edit('Change money in and out')}
+      {edit('Change deposits and withdrawals')}
     </div>
   );
 }

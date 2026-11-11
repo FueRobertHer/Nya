@@ -22,13 +22,13 @@ import { Notice } from './TotalCaveats';
 import { Why } from './Why';
 import { moneyInOutSaved } from './InvestmentActivity';
 import type { MoneyInOutTarget } from './MoneyInOutFigures';
-import { fieldAmount, formatDay, formatMoney, hideAmountsIn, minorDigits, onDay, toMinorUnits, zeroExample } from '@/lib/format';
+import { fieldAmount, formatDay, formatMoney, hideAmountsIn, minorDigits, onDay, signedMoney, toMinorUnits, zeroExample } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
 import { isCalendarDay, MAX_AMOUNT, normalizedAmountText } from '@/lib/manual-txn-input';
 import { movedNear, seenIn } from '@/lib/growth';
 import type { MoneyInOut } from '@/lib/money-in-out';
 
-const COULDNT = 'Money in and out couldn’t be saved just now. Try again.';
+const COULDNT = 'Deposits and withdrawals couldn’t be saved just now. Try again.';
 
 /** A total as typed: zero when empty, null when it isn't an amount. */
 function readTotal(text: string, currency: string): number | null {
@@ -140,7 +140,7 @@ function MoneyInOutForm({ open, target, onClose, onDone }: { open: boolean; targ
   return (
     <Sheet
       open={open}
-      title="Money in and out"
+      title="Deposits and withdrawals"
       onClose={close}
       footer={
         <div className="btn-row">
@@ -157,7 +157,7 @@ function MoneyInOutForm({ open, target, onClose, onDone }: { open: boolean; targ
         <p className="helper">{target.label}</p>
         <div className="stack tight">
           <label className="field">
-            Money in
+            Deposits
             <input
               inputMode="decimal"
               autoComplete="off"
@@ -173,7 +173,7 @@ function MoneyInOutForm({ open, target, onClose, onDone }: { open: boolean; targ
             <FieldError id={`${id}-in`}>{`Enter an amount, like ${amountExample(places)}`}</FieldError>
           ) : (
             <p className="helper" id={`${id}-in`}>
-              Contributions, transfers and rollovers in, and your employer’s match.
+              Contributions, transfers and rollovers in, 401(k) loan repayments, and your employer’s match.
             </p>
           )}
           {low && (
@@ -186,7 +186,7 @@ function MoneyInOutForm({ open, target, onClose, onDone }: { open: boolean; targ
         </div>
         <div className="stack tight">
           <label className="field">
-            Money out
+            Withdrawals
             <input
               inputMode="decimal"
               autoComplete="off"
@@ -202,14 +202,14 @@ function MoneyInOutForm({ open, target, onClose, onDone }: { open: boolean; targ
             <FieldError id={`${id}-out`}>{`Enter an amount, like ${amountExample(places)}`}</FieldError>
           ) : (
             <p className="helper" id={`${id}-out`}>
-              Withdrawals, transfers and rollovers out, and distributions. Only know your net? Enter it as money in and leave this empty.
+              Transfers and rollovers out, 401(k) loans, and distributions. Only know the net? Enter it under Deposits (or here, if more came out) and leave the other empty.
             </p>
           )}
         </div>
         {typed && inn !== null && out !== null && (
           <p className="helper">
             <output>
-              <Masked>{`Net (in less out): ${money(inn - out)}`}</Masked>
+              <Masked>{`Deposits & withdrawals: ${signedMoney(inn - out, target.currency)}`}</Masked>
             </output>
           </p>
         )}
@@ -248,12 +248,12 @@ function MoneyInOutForm({ open, target, onClose, onDone }: { open: boolean; targ
         {totals && (
           <div>
             <button type="button" className="btn ghost" onClick={() => void finish({ account_id: target.account_id, clear: true })} disabled={busy}>
-              Clear money in and out
+              Clear deposits and withdrawals
             </button>
           </div>
         )}
         <Why>
-          From these, Nya works out your money in and out on each day it has activity for: it takes off what moved between that day and this one, and adds what moves after, so new contributions and withdrawals count as they happen. Dividends, interest and fees are growth, not money in or out. Your brokerage may call these contributions and withdrawals, or deposits and withdrawals. If it shows only a net, enter it as money in (or as money out, if more came out) and leave the other empty: your net and growth stay right, though money in and out won’t be the real totals. These aren’t your cost basis, which grows with reinvested dividends, nor the Plan’s Roth figure, which leaves out conversions.
+          From these, Nya works out your deposits and withdrawals on each day it has activity for: it takes off what moved between that day and this one, and adds what moves after, so new ones count as they happen. Dividends, interest and fees count in your returns, not as deposits or withdrawals. Your brokerage may call deposits contributions. If it shows only deposits and withdrawals as one figure, enter it under Deposits (or under Withdrawals, if more came out) and leave the other empty: that figure and your returns stay right. These aren’t your cost basis, which grows with reinvested dividends, nor the Plan’s Roth figure, which leaves out conversions.
         </Why>
       </form>
     </Sheet>

@@ -54,9 +54,9 @@ describe('what the route refuses', () => {
     ['no account', { in: 1, out: 0, as_of: '2026-10-15' }, /account id/],
     ['__proto__', { account_id: '__proto__', in: 1, out: 0, as_of: '2026-10-15' }, /account id/],
     ['an extra field', { account_id: 'a', in: 1, out: 0, as_of: '2026-10-15', basis: 3 }, /basis isn’t part of/],
-    ['money in below zero', { account_id: 'a', in: -1, out: 0, as_of: '2026-10-15' }, /Money in is an amount/],
-    ['money in as text', { account_id: 'a', in: '1', out: 0, as_of: '2026-10-15' }, /Money in is an amount/],
-    ['money out past any', { account_id: 'a', in: 1, out: 1e13, as_of: '2026-10-15' }, /Money out is an amount/],
+    ['deposits below zero', { account_id: 'a', in: -1, out: 0, as_of: '2026-10-15' }, /Deposits must be an amount/],
+    ['deposits as text', { account_id: 'a', in: '1', out: 0, as_of: '2026-10-15' }, /Deposits must be an amount/],
+    ['withdrawals past any', { account_id: 'a', in: 1, out: 1e13, as_of: '2026-10-15' }, /Withdrawals must be an amount/],
     ['a day that is not one', { account_id: 'a', in: 1, out: 0, as_of: '2026-02-30' }, /YYYY-MM-DD/],
     ['a day before 1970', { account_id: 'a', in: 1, out: 0, as_of: '1969-12-31' }, /from 1970/],
     ['a currency that is not one', { account_id: 'a', in: 1, out: 0, as_of: '2026-10-15', currency: 'US$' }, /currency/],
@@ -87,7 +87,7 @@ describe('what the route refuses', () => {
     await connect('i1', [{ account_id: 'chk', type: 'depository' }]);
     expect((await post({ account_id: 'nope', in: 1, out: 0, as_of: '2026-10-15' })).status).toBe(404);
     const res = await post({ account_id: 'chk', in: 1, out: 0, as_of: '2026-10-15' });
-    expect(res).toEqual({ status: 400, body: { error: 'Money in and out are for investment accounts' } });
+    expect(res).toEqual({ status: 400, body: { error: 'Deposits and withdrawals are for investment accounts' } });
     expect(await moneyInOutStore.count(ctx)).toBe(0);
   });
 });

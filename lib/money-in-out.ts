@@ -95,9 +95,9 @@ export function parseMoneyInOutChange(body: unknown, now: number = Date.now()): 
     return { kind: 'clear', account_id };
   }
   const extra = Object.keys(body).find((k) => !['account_id', 'in', 'out', 'as_of', 'currency'].includes(k));
-  if (extra) return `${extra.slice(0, 40)} isn’t part of money in and out`;
-  if (!isTotal(body.in)) return 'Money in is an amount, $0.00 or more';
-  if (!isTotal(body.out)) return 'Money out is an amount, $0.00 or more';
+  if (extra) return `${extra.slice(0, 40)} isn’t part of deposits and withdrawals`;
+  if (!isTotal(body.in)) return 'Deposits must be an amount, $0.00 or more';
+  if (!isTotal(body.out)) return 'Withdrawals must be an amount, $0.00 or more';
   if (!isCalendarDay(body.as_of) || body.as_of < FIRST_AS_OF) return 'The day is a date, YYYY-MM-DD, from 1970 on';
   if (body.as_of > latestAsOf(now)) return 'The day can’t be in the future';
   const currency = body.currency ?? null;

@@ -91,7 +91,7 @@ const GROUPS: readonly (readonly [words: string, families: readonly string[]])[]
   ['what you said about transactions', ['txn-category-overrides', 'txn-vendor-renames', 'transaction-annotations', 'transaction-splits', 'transaction-groups', 'transaction-approvals', 'vendor-defaults']],
   ['notes on the timeline', ['timeline-notes']],
   ['holdings history', ['holdings:history']],
-  ['money in and out you set for investment accounts', ['money-in-out']],
+  ['deposits and withdrawals you set for investment accounts', ['money-in-out']],
   ['planned bills and income', ['planned-items']],
   ['runway scenarios you saved', ['runway-scenarios']],
   ['copies of your plan', ['fire-plans']],

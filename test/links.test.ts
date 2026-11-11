@@ -671,7 +671,7 @@ describe('review follow-ups: routes', () => {
     expect(preview.points[0]).toEqual({ date: '2026-06-01', value: 1 }); // A was seen later, so it wins
   });
 
-  // Accounts > Summary reads every investment account in one request; each
+  // Accounts > Investments reads every investment account in one request; each
   // comes back joined through its own links, as the one-id form answers it.
   test('several ids answer each account as one id does', async () => {
     await rememberAccounts(ctx, [{ item_id: 'i', institution_name: 'Bank', error: null, accounts: [{ account_id: 'B', type: 'investment' }, { account_id: 'C', type: 'investment' }] } as any]);

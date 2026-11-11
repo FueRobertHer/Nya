@@ -375,17 +375,17 @@ An entry that can't be read is named under [`problems`](#problems) by the id it 
 
 #### `money-in-out`
 
-The money in and out you set for your investment accounts (`lib/money-in-out.ts`, [features.md](features.md#money-in-and-out)), as stored: one entry per account under the id it was set on. An account linked to an earlier one uses the entry on its own id, or else the newest on its links' ids, and setting or clearing removes the others, so there is at most one per account and its links. An account with no entry has none set. Each `value`:
+The deposits and withdrawals you set for your investment accounts (`lib/money-in-out.ts`, [features.md](features.md#deposits-and-withdrawals)), as stored: one entry per account under the id it was set on. An account linked to an earlier one uses the entry on its own id, or else the newest on its links' ids, and setting or clearing removes the others, so there is at most one per account and its links. An account with no entry has none set. Each `value`:
 
 | Field | Meaning |
 | --- | --- |
-| `in` | Money in by the end of `as_of`, as you typed it: contributions, transfers and rollovers in, and an employer's match. 0 or more. |
-| `out` | Money out by the end of `as_of`: withdrawals, transfers and rollovers out, and distributions. 0 or more. |
+| `in` | Deposits by the end of `as_of`, as you typed them: contributions, transfers and rollovers in, 401(k) loan repayments, and an employer's match. 0 or more. |
+| `out` | Withdrawals by the end of `as_of`: withdrawals, transfers and rollovers out, 401(k) loans, and distributions. 0 or more. |
 | `as_of` | The day they are for (`YYYY-MM-DD`). Nya carries them to each other day through the account's investment activity, so they are as typed, never moved on. |
 | `currency` | The account's currency when they were set (an ISO code), or `null` when it wasn't known. |
 | `set_at` | When they were saved. |
 
-An entry that can't be read is named under [`problems`](#problems) by the id it is stored under, and the account's sheet says its money in and out can't be read just now.
+An entry that can't be read is named under [`problems`](#problems) by the id it is stored under, and the account's sheet says its deposits and withdrawals can't be read just now.
 
 #### `allocation-settings`
 
