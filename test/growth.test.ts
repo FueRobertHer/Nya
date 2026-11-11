@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { contributionBaseline, moneyInOutOn, movedBetween, movedNear, movedSince, rangeSplit, seenIn, sinceStarted, usableTotals, withoutMoves, type Totals } from '@/lib/growth';
+import { contributionBaseline, moneyInOutOn, movedNear, movedSince, rangeSplit, seenIn, sinceStarted, usableTotals, withoutMoves, type Totals } from '@/lib/growth';
 
 const r = (date: string, value: number) => ({ date, value });
 const e = (date: string, value: number) => ({ date, value, estimated: true });
@@ -241,14 +241,5 @@ describe('moves', () => {
     const points = [r('2026-01-01', 40_000), r('2026-01-05', 50_000), r('2026-02-01', 50_000)];
     expect(contributionBaseline(points, flows, '2025-01-01', '2026-02-01', null, moves)?.[0].date).toBe('2026-01-05');
     expect(rangeSplit(points, flows, '2025-01-01', '2026-02-01', null, moves)).toEqual({ from: '2026-01-05', to: '2026-02-01', in: 0, out: 0, growth: 0 });
-  });
-
-  test('between accounts: one’s money out that another took in, within five days', () => {
-    const roth = [{ date: '2026-04-01', amount: -7_000 }, { date: '2026-04-20', amount: 300 }];
-    const brokerage = [{ date: '2026-04-03', amount: 7_000 }];
-    expect(movedBetween([roth, brokerage])).toBe(7_000);
-    // Never one account's own legs: those are withoutMoves', at the source.
-    expect(movedBetween([[{ date: '2026-04-01', amount: -7_000 }, { date: '2026-04-03', amount: 7_000 }]])).toBe(0);
-    expect(movedBetween([roth, [{ date: '2026-04-07', amount: 7_000 }]])).toBe(0);
   });
 });

@@ -203,6 +203,51 @@ describe('NetWorthChart with deposits and withdrawals set', () => {
   });
 });
 
+// An investment account's sheet with totals carried (components/
+// AccountSparkline.tsx): All is all time, from $0.00 when the account opened.
+describe('NetWorthChart all time', () => {
+  const points = [
+    { date: '2026-09-01', value: 150_000 },
+    { date: '2026-09-02', value: 152_600 },
+    { date: '2026-09-03', value: 152_650 },
+  ];
+  const net = [
+    { date: '2026-09-01', value: 140_000, in: 146_000, out: 6000 },
+    { date: '2026-09-02', value: 140_500, in: 146_500, out: 6000 },
+    { date: '2026-09-03', value: 140_500, in: 146_500, out: 6000 },
+  ];
+
+  test('the readout is the balance from $0.00, its split the net and the returns', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={() => net} baselineFrom="2026-08-15" allTime />);
+    expect(html).toContain('<span class="chart-readout-value">+$152,650.00</span>');
+    expect(html).toContain('<span class="chart-readout-date">All time</span>');
+    expect(html).toContain('All time: +$140,500.00 deposits &amp; withdrawals · +$12,150.00 returns');
+    expect(html).toContain('All time starts at $0.00, when the account opened, and counts from your totals for Aug 15.');
+    expect(html).not.toContain('count from Sep 1');
+  });
+
+  // The activity known only to Sep 2: measured there, and said.
+  test('to the last recorded day the line reaches', () => {
+    const early = () => net.slice(0, 2);
+    const html = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={early} baselineFrom="2026-08-15" allTime />);
+    expect(html).toContain('<span class="chart-readout-date">All time, to Sep 2</span>');
+    expect(html).toContain('All time: +$140,500.00 deposits &amp; withdrawals · +$12,100.00 returns');
+  });
+
+  test('only on All, and only with totals carried', () => {
+    // Since Jul 1, so a month back from Sep 3 is a range of its own.
+    const longer = [{ date: '2026-07-01', value: 120_000 }, ...points];
+    const lineFor = (shown: P[]) => [{ date: '2026-07-01', value: 120_000, in: 126_000, out: 6000 }, ...net].filter((b) => shown.some((p) => p.date === b.date));
+    const ranged = renderToStaticMarkup(
+      <NetWorthChart points={longer} baselineFor={lineFor} baselineFrom="2026-06-15" allTime rangeSet="investment" initialRange="1M" />
+    );
+    expect(ranged).toContain('chart-readout-split');
+    expect(ranged).not.toContain('All time');
+    const uncarried = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={() => net} allTime />);
+    expect(uncarried).not.toContain('All time');
+  });
+});
+
 describe('NetWorthChart split on estimated points', () => {
   // An estimated value has no market movement in it, so no growth figure;
   // the summary falls back to the last real point.

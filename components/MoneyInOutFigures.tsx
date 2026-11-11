@@ -6,9 +6,9 @@
 // activity (with the totals the person set, lib/money-in-out.ts) and its
 // balance history.
 //
-//   - Totals set and carried (lib/growth.ts usableTotals): All-time
-//     performance, Deposits & withdrawals and Investment returns, where they
-//     come from, and Change deposits and withdrawals.
+//   - Totals set and carried (lib/growth.ts usableTotals): one line saying
+//     where all time counts from (the chart's All reads all time, components/
+//     NetWorthChart.tsx `allTime`), and Change deposits and withdrawals.
 //   - None set: one line saying what setting them shows, and that returns
 //     count from the start of the range shown for now (the chart's own
 //     explanations name the day), with Set deposits and withdrawals (its one
@@ -19,7 +19,7 @@
 //
 // Nothing while the account has no activity Nya can carry them through.
 
-import { formatDay, formatMoney, roundsToNothing, signedMoney } from '@/lib/format';
+import { formatDay, formatMoney, roundsToNothing } from '@/lib/format';
 import { sinceStarted, usableTotals, type BalancePoint, type Flow } from '@/lib/growth';
 import type { MoneyInOut } from '@/lib/money-in-out';
 import { Masked } from './HideAmounts';
@@ -109,35 +109,13 @@ export default function MoneyInOutFigures({
     );
   }
 
+  // What moved since the totals, to the day all time is measured on.
   const f = sinceStarted(totals, flows, flowsTo, balance, points);
   const moved = movedWords(f.since, currency);
   return (
     <div className="stack tight">
-      <h3 className="section-label">{f.to ? `All-time performance, to ${formatDay(f.to)}` : 'All-time performance'}</h3>
-      <ul className="stat-strip" role="list">
-        {/* One figure, in less out, as a brokerage gives it: below zero when
-            more came out. */}
-        <li className="stat">
-          <span className="stat-label">Deposits &amp; withdrawals</span>
-          <span className="stat-value money">
-            <Masked>{signedMoney(f.net, currency)}</Masked>
-          </span>
-        </li>
-        <li className="stat">
-          <span className="stat-label">Investment returns</span>
-          {f.growth === null ? (
-            <span className="stat-value money">--</span>
-          ) : (
-            // A gain in green with its sign; a loss keeps the text color with
-            // its minus, as a loss does in a row.
-            <span className={`stat-value money${f.growth > 0 && !roundsToNothing(f.growth, currency) ? ' inflow' : ''}`}>
-              <Masked>{signedMoney(f.growth, currency)}</Masked>
-            </span>
-          )}
-        </li>
-      </ul>
       <p className="helper">
-        <Masked>{`From your totals for ${day(totals.as_of)}${moved ? `, and ${moved} since` : ''}.`}</Masked>
+        <Masked>{`All time counts from your totals for ${day(totals.as_of)}${moved ? `, and ${moved} since` : ''}.`}</Masked>
       </p>
       {edit('Change deposits and withdrawals')}
     </div>

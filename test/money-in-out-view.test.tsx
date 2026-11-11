@@ -60,32 +60,26 @@ function figures(over: Partial<Target> = {}, props: Partial<React.ComponentProps
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
 
 describe('the figures', () => {
-  test('set: deposits and withdrawals, returns, and where they come from', () => {
+  // The figures are the chart's: its All reads all time (components/
+  // NetWorthChart.tsx `allTime`). Above it, one line says where from.
+  test('set: where all time counts from, and what moved since', () => {
     const html = figures();
-    expect(text(html)).toBe(
-      'All-time performance Deposits & withdrawals +$142,000.00 Investment returns +$42,520.40 From your totals for Oct 15, and $2,000.00 deposited since. Change deposits and withdrawals'
-    );
-    // A gain is green.
-    expect(html).toContain('<span class="stat-value money inflow">');
+    expect(text(html)).toBe('All time counts from your totals for Oct 15, and $2,000.00 deposited since. Change deposits and withdrawals');
+    expect(html).not.toContain('stat-strip');
   });
 
-  test('more out than in: the net below zero, said as a number, and a loss in the text color', () => {
+  test('withdrawn since, or both', () => {
     const ira = { in: 120_000, out: 138_000, as_of: '2026-09-30', currency: 'USD', set_at: '2026-10-01T00:00:00.000Z' };
     const withdrawals = ['2026-10-01', '2026-11-01'].map((date) => ({ date, amount: -4000 }));
     expect(text(figures({ totals: ira, flows: withdrawals }, { balance: 115_846.2 }))).toBe(
-      'All-time performance Deposits & withdrawals −$26,000.00 Investment returns +$141,846.20 From your totals for Sep 30, and $8,000.00 withdrawn since. Change deposits and withdrawals'
+      'All time counts from your totals for Sep 30, and $8,000.00 withdrawn since. Change deposits and withdrawals'
     );
-    const loss = figures({ totals: { ...TOTALS, in: 200_000 } });
-    expect(text(loss)).toContain('Investment returns −$5,479.60');
-    expect(loss).not.toContain('inflow');
+    const both = [{ date: '2026-10-20', amount: -500 }, { date: '2026-11-01', amount: 2000 }];
+    expect(text(figures({ flows: both }))).toStartWith('All time counts from your totals for Oct 15, and $2,000.00 deposited and $500.00 withdrawn since.');
   });
 
-  test('activity known only to an earlier day: measured there, and the label says to when', () => {
-    expect(text(figures({}, { flowsTo: '2026-11-01' }))).toStartWith('All-time performance, to Nov 2 Deposits & withdrawals +$142,000.00 Investment returns +$41,000.00');
-  });
-
-  test('no balance to measure: returns are a dash', () => {
-    expect(text(figures({}, { balance: null }))).toContain('Investment returns --');
+  test('nothing moved since: the day alone', () => {
+    expect(text(figures({ flows: [] }))).toBe('All time counts from your totals for Oct 15. Change deposits and withdrawals');
   });
 
   // The chart starts its line with each range, so no one day is named.
