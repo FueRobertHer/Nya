@@ -11,8 +11,20 @@
 import { createContext } from 'react';
 
 /** The day a finger is on: its value, its date as the chart writes it, and
- *  what the chart says of it, so an estimate never reads as recorded. */
-export type HeroReading = { value: number; day: string; estimated: boolean; note: string | null };
+ *  what the chart says of it, so an estimate never reads as recorded. A
+ *  chart with a grey line gives its value there too (null before the line
+ *  starts), and Accounts > Investments' (NetWorthChart's `outside`) gives a
+ *  measure's first day in `from`. */
+export type HeroReading = {
+  value: number;
+  day: string;
+  /** The day, as YYYY-MM-DD. */
+  date?: string;
+  estimated: boolean;
+  note: string | null;
+  base?: number | null;
+  from?: { value: number; base: number | null; day: string; estimated: boolean };
+};
 
 /** The hero's setter, for the chart under it; null anywhere else. */
 export const HeroScrub = createContext<((reading: HeroReading | null) => void) | null>(null);

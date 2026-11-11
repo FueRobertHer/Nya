@@ -1,15 +1,19 @@
 'use client';
 
-// Accounts > Investments' two cards (docs/design/information-architecture.md
-// #accounts): what the linked investment accounts did, together and each,
-// from their own recorded balances and activity. For each currency on its
-// own, never converted:
-//   - All-time performance, which no range changes: Money in, Money out, Net
-//     and Returns, once every account has money in and out Nya can carry,
-//     else what to set;
-//   - Performance by period: the same four over a range, then a row for each
-//     account, which opens its sheet.
-// The numbers are lib/growth-summary.ts's.
+// Accounts > Investments (docs/design/information-architecture.md #accounts):
+// what the linked investment accounts did, from their own recorded balances
+// and activity, in a brokerage's terms. A chip chooses the accounts (all,
+// retirement or not, or one); under it the hero gives their investment
+// returns over the range, their rate of return and the chart, whose range
+// switch is the screen's; then the range's card: Beginning balance, Deposits
+// & withdrawals, Investment returns and Ending balance, and a row for each
+// account, which opens its sheet. Each currency is added up on its own,
+// never converted: the hero is the home currency's, and each other one has
+// its own card. The numbers are lib/growth-summary.ts's.
+//
+// All is all time once every chosen account has deposits and withdrawals
+// Nya can carry: from $0.00, when each opened, with no rate. Until then, All
+// counts from the first recorded day, and the card says what to set.
 //
 // It loads every account's balance history in one read (app/api/
 // account-history `ids`), and each account's activity through the cache its
@@ -19,31 +23,39 @@
 // save of money in and out loads that account again; Refresh loads them all.
 //
 // What it can't count is said, never left out quietly: an account whose
-// activity couldn't be loaded or is still loading in a critical notice under
-// the figures it is missing from, and in All-time performance, which waits for
-// it; manual and SimpleFIN or Lunch Flow accounts, which have no investment
-// activity, in an information notice. Money moved between the accounts is
-// taken off both cards' totals, and said under them.
+// activity couldn't be loaded or is still loading in a critical notice by the
+// figures it is missing from; manual and SimpleFIN or Lunch Flow accounts,
+// which have no investment activity, in an information notice.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { currencyPlural, formatDay, formatMoney, roundsToNothing, signedMoney } from '@/lib/format';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { accountBucket, type TaxBucket } from '@/lib/allocation/buckets';
+import { overridesOf } from '@/lib/allocation/settings';
+import { currencyPlural, formatDay, formatMoney, MINUS, roundsToNothing, signedMoney } from '@/lib/format';
 import { isInvestmentType } from '@/lib/balance';
 import { RANGE_TEXT, type RangeKey } from '@/lib/chart-range';
 import { connectorLabel } from '@/lib/connectors/types';
 import { summarizeGrowth, type ActivityState, type CurrencyGroup, type Figures, type GrowthAccount, type GrowthRow } from '@/lib/growth-summary';
 import { joinNames } from '@/lib/month-coverage';
 import type { BalancePoint } from '@/lib/growth';
+import type { Rate } from '@/lib/returns-rate';
 import type { Institution } from './accounts-format';
+import ChipSelect from './ChipSelect';
+import { Hero } from './Hero';
+import { useAmountsHidden } from './hide-amounts';
+import { HeroScrub, type HeroReading } from './hero-scrub';
 import { Masked } from './HideAmounts';
 import { CHEVRON } from './InstitutionCard';
 import { loadInvestmentActivity, onMoneyInOutSaved } from './InvestmentActivity';
 import type { MoneyInOutTarget } from './MoneyInOutFigures';
+import NetWorthChart from './NetWorthChart';
+import { HeroFigure } from './NetWorthCard';
+import { useSettingsRead } from './plan-detailed-home';
 import { Segmented } from './Segmented';
 import { focusInsteadOf } from './Sheet';
 import { Notice } from './TotalCaveats';
 import { Why } from './Why';
 
-/** An account on the card, with what its row and sentences name it by. */
+/** An account on the screen, with what its row and sentences name it by. */
 type Shown = GrowthAccount & {
   key: string;
   name: string;
@@ -51,14 +63,35 @@ type Shown = GrowthAccount & {
   /** "Roth IRA ••3302" */
   title: string;
   institution: string;
+  retirement: boolean;
 };
 
 /** The most ids one history read takes (app/api/account-history MAX_IDS). */
 const IDS_PER_READ = 50;
 
+const LOADING: ActivityState = { state: 'loading' };
+
 const day = (iso: string) => formatDay(iso, { sentence: true });
 
 const its = (n: number) => (n === 1 ? 'its' : 'their');
+
+/** A retirement account: tax-deferred or Roth, by the person's choice or its
+ *  subtype, or one Plaid calls a retirement account without saying which
+ *  (lib/allocation/buckets.ts). */
+function isRetirement(subtype: string | null, chosen: TaxBucket | undefined): boolean {
+  const b = accountBucket(subtype, chosen);
+  if (b.bucket === 'tax-deferred' || b.bucket === 'roth') return true;
+  if (b.bucket !== 'unclassified') return false;
+  const s = (subtype ?? '').trim().toLowerCase();
+  return s === 'retirement' || s === 'non-taxable brokerage account';
+}
+
+/** "+9.2%", "−1.4%", "0.0%" */
+function ratePct(r: Rate): string {
+  const text = `${Math.abs(r.value * 100).toFixed(1)}%`;
+  if (text === '0.0%') return text;
+  return `${r.value > 0 ? '+' : MINUS}${text}`;
+}
 
 export default function InvestmentGrowth({
   institutions,
@@ -88,12 +121,12 @@ export default function InvestmentGrowth({
         ),
     [institutions]
   );
-  const notCounted = institutions
+  const unlinked = institutions
     .filter((inst) => inst.manual)
     .flatMap((inst) =>
       inst.accounts
         .filter((a) => isInvestmentType(a.type))
-        .map((a) => `${a.name}${a.mask ? ` ••${a.mask}` : ''} (${inst.connector ? `through ${connectorLabel(inst.connector)}` : 'manual'})`)
+        .map((a) => ({ a, words: `${a.name}${a.mask ? ` ••${a.mask}` : ''} (${inst.connector ? `through ${connectorLabel(inst.connector)}` : 'manual'})` }))
     );
 
   // Keys as `item:account`, the order the tab lists them in.
@@ -102,9 +135,12 @@ export default function InvestmentGrowth({
   const [historyFailed, setHistoryFailed] = useState(false);
   const [activities, setActivities] = useState<Record<string, ActivityState>>({});
   const [picked, setPicked] = useState<RangeKey | null>(null);
-  // All-time performance's heading: where focus goes after a save from its Set
-  // button, which the save usually takes away.
-  const sinceRef = useRef<HTMLHeadingElement>(null);
+  const [choice, setChoice] = useState('all');
+  const [infoOpen, setInfoOpen] = useState(false);
+  const infoId = useId();
+  // Which accounts are retirement ones can be the person's choice (Plan >
+  // Allocation), read once there is a choice of accounts to make.
+  const settings = useSettingsRead(linked.length > 1);
 
   useEffect(() => {
     const ids = keys ? keys.split('\n').map((k) => k.slice(k.indexOf(':') + 1)) : [];
@@ -167,132 +203,405 @@ export default function InvestmentGrowth({
     };
   }, [keys, refreshKey]);
 
-  const accounts: Shown[] = linked.map(({ inst, a, key }) => ({
-    key,
-    account_id: a.account_id,
-    item_id: inst.item_id,
-    currency: a.currency,
-    balance: a.balance,
-    activity: activities[key] ?? { state: 'loading' },
-    points: histories?.[a.account_id] ?? null,
-    name: a.name,
-    mask: a.mask,
-    title: `${a.name}${a.mask ? ` ••${a.mask}` : ''}`,
-    institution: inst.institution_name,
-  }));
-  const s = summarizeGrowth(accounts, picked, main, histories === null && !historyFailed);
+  const buckets = useMemo(() => overridesOf(settings?.value ?? null).buckets, [settings]);
+  const accounts = useMemo(
+    (): Shown[] =>
+      linked.map(({ inst, a, key }) => ({
+        key,
+        account_id: a.account_id,
+        item_id: inst.item_id,
+        currency: a.currency,
+        activity: activities[key] ?? LOADING,
+        points: histories?.[a.account_id] ?? null,
+        name: a.name,
+        mask: a.mask,
+        title: `${a.name}${a.mask ? ` ••${a.mask}` : ''}`,
+        institution: inst.institution_name,
+        retirement: isRetirement(a.subtype, buckets.get(a.account_id)),
+      })),
+    [linked, activities, histories, buckets]
+  );
 
+  // The chooser: all of them, the retirement ones or the others when both
+  // kinds are there, or one.
+  const retirementCount = accounts.filter((a) => a.retirement).length;
+  const kinds = retirementCount > 0 && retirementCount < accounts.length;
+  const options: [string, string][] = [
+    ['all', 'All accounts'],
+    ...(kinds
+      ? ([
+          ['retirement', 'Retirement'],
+          ['other', 'Non-retirement'],
+        ] as [string, string][])
+      : []),
+    ...accounts.map((a) => [`acct:${a.key}`, a.title] as [string, string]),
+  ];
+  const chosen = options.some(([v]) => v === choice) ? choice : 'all';
+  const shownText = chosen === 'all' ? 'Accounts' : `Accounts: ${options.find(([v]) => v === chosen)![1]}`;
+
+  const picks = useMemo(() => {
+    if (chosen === 'retirement') return accounts.filter((a) => a.retirement);
+    if (chosen === 'other') return accounts.filter((a) => !a.retirement);
+    if (chosen.startsWith('acct:')) return accounts.filter((a) => `acct:${a.key}` === chosen);
+    return accounts;
+  }, [accounts, chosen]);
+  const historyLoading = histories === null && !historyFailed;
+  const s = useMemo(() => summarizeGrowth<Shown>(picks, picked, main, historyLoading), [picks, picked, main, historyLoading]);
+
+  // Manual and SimpleFIN or Lunch Flow accounts in the accounts chosen.
+  const notCounted = unlinked
+      .filter(({ a }) => {
+      if (chosen === 'all') return true;
+      if (chosen === 'retirement' || chosen === 'other') return isRetirement(a.subtype, buckets.get(a.account_id)) === (chosen === 'retirement');
+      return false;
+    })
+    .map((u) => u.words);
   const notCountedNotice = notCounted.length > 0 && (
     <Notice level="info">
       {`Not counted: ${joinNames(notCounted)}. Nya has no investment activity for ${notCounted.length === 1 ? 'it' : 'them'}.`}
     </Notice>
   );
 
+  const g = s.groups[0] ?? null;
+  const chart = g?.chart ?? null;
+  const baseline = chart?.baseline ?? null;
+  const baselineFor = useCallback(() => baseline, [baseline]);
+  const one = picks.length === 1;
+  const info = useMemo(() => (g ? heroInfo(g, one) : []), [g, one]);
+  const outside = useMemo(() => ({ infoId, infoOpen, info }), [infoId, infoOpen, info]);
+  const drawn = !!chart && !historyFailed && chart.points.length >= 2;
+  // The chart writes amounts (its label, its value, its table): drawn again
+  // when they are hidden or shown.
+  const hidden = useAmountsHidden();
+  const chartEl = useMemo(
+    () =>
+      drawn && chart && g ? (
+        <NetWorthChart
+          points={chart.points}
+          label="Balance"
+          baselineFor={baselineFor}
+          currency={g.currency}
+          rangeSet="investment"
+          hero
+          outside={outside}
+          ranges={s.ranges}
+          range={s.range}
+          onRange={setPicked}
+        />
+      ) : null,
+    [drawn, chart, g, baselineFor, outside, s.ranges, s.range, hidden]
+  );
+
+  if (accounts.length === 0) {
+    return (
+      <section className="card stack" aria-labelledby="investments-title">
+        <div className="card-header">
+          <h2 id="investments-title">Investment returns</h2>
+        </div>
+        <p className="empty-note">Linked investment accounts show their returns here.</p>
+        {notCountedNotice}
+      </section>
+    );
+  }
+
   const several = s.groups.length > 1;
-  const unconverted = several && <p className="helper">Each currency is added up on its own: nothing here is converted.</p>;
+  const switcher = s.ranges.length > 1 && (
+    <Segmented compact className="chart-range-switch" label="Time range" value={s.range} onChange={setPicked} options={s.ranges.map((key) => [key, RANGE_TEXT[key]] as const)} />
+  );
 
   return (
     <>
-      {accounts.length > 0 && (
-        <section className="card stack" aria-labelledby="all-time-title">
-          <div className="card-header">
-            <h2 id="all-time-title" tabIndex={-1} ref={sinceRef}>
-              All-time performance
-            </h2>
-          </div>
-          {s.groups.map((g) => (
-            <SinceGroup key={g.currency} group={g} label={several ? currencyPlural(g.currency) : null} backTo={() => sinceRef.current} onMoneyInOut={onMoneyInOut} />
-          ))}
-          {unconverted}
-          <Why>
-            All-time performance counts from the deposits and withdrawals you set for each account, carried through the activity Nya has had since. Returns are their value today less the net: dividends and interest count, fees come off.
-          </Why>
-        </section>
-      )}
-      <section className="card stack" aria-labelledby="by-period-title">
-        <div className="card-header">
-          <h2 id="by-period-title">Performance by period</h2>
-        </div>
-        {accounts.length === 0 ? (
-          <>
-            <p className="empty-note">Linked investment accounts show their returns here.</p>
-            {notCountedNotice}
-          </>
-        ) : (
-          <>
-            {s.ranges.length > 1 && (
-              <Segmented compact label="Time range" value={s.range} onChange={setPicked} options={s.ranges.map((key) => [key, RANGE_TEXT[key]] as const)} />
-            )}
-            {historyFailed && (
-              <Notice level="critical" role="alert">
-                The accounts’ balance history couldn’t be loaded just now, so their returns over a range can’t be worked out. Refresh to try again.
-              </Notice>
-            )}
-            {s.groups.map((g, i) => (
-              <Group
-                key={g.currency}
-                group={g}
-                label={several ? `${currencyPlural(g.currency)}, ${s.label.charAt(0).toLowerCase()}${s.label.slice(1)}` : s.label}
-                figures={!historyFailed}
-                onOpenAccount={onOpenAccount}
-              >
-                {i === 0 && (
-                  <>
-                    {notCountedNotice}
-                    <Why>
-                      Money in and money out are what went in and came out over the range, rollovers and transfers included, and net is the one less the other. Money that left and came back within five days is a move, neither in nor out: a fund exchange, a sweep, a transfer between these accounts. Returns are the change in value less the net: dividends and interest count, fees come off.
-                    </Why>
-                  </>
-                )}
-              </Group>
+      {accounts.length > 1 && (
+        <div className="chip-row">
+          <ChipSelect label="Accounts" shown={shownText} on={chosen !== 'all'} value={chosen} onChange={setChoice}>
+            {options.map(([value, text]) => (
+              <option key={value} value={value}>
+                {text}
+              </option>
             ))}
-            {unconverted}
-          </>
+          </ChipSelect>
+        </div>
+      )}
+
+      <InvestmentsHero
+        group={g}
+        loading={!g || g.loading}
+        rangeWords={s.label}
+        infoButton={
+          drawn ? (
+            <button
+              type="button"
+              className="chart-info-btn"
+              aria-label="About this chart"
+              aria-expanded={infoOpen}
+              aria-controls={infoId}
+              onClick={() => setInfoOpen((o) => !o)}
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+                <circle cx="8" cy="5" r="0.9" fill="currentColor" />
+                <path d="M8 7.2v4.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              </svg>
+            </button>
+          ) : null
+        }
+        chart={
+          chartEl ?? (
+            <>
+              {g && !g.loading && !historyFailed && <p className="empty-note">Not enough history to draw yet: it builds as balances are recorded.</p>}
+              {(!g || g.loading) && !historyFailed && (
+                <div className="chart-loading" aria-hidden="true">
+                  <div className="chart-loading-box" />
+                </div>
+              )}
+              {switcher}
+            </>
+          )
+        }
+      >
+        {historyFailed && (
+          <Notice level="critical" role="alert">
+            The accounts’ balance history couldn’t be loaded just now, so their returns over a range can’t be worked out. Refresh to try again.
+          </Notice>
         )}
-      </section>
+        {g && !historyFailed && <Qualifiers group={g} />}
+        {notCountedNotice}
+        {several && g && (
+          <p className="helper">{`In ${currencyPlural(g.currency)}. Accounts in other currencies are added up on their own, below: nothing here is converted.`}</p>
+        )}
+      </InvestmentsHero>
+
+      {!historyFailed &&
+        s.groups.map((group, i) => (
+          <RangeCard
+            key={group.currency}
+            group={group}
+            range={s.range}
+            title={rangeTitle(group, s.label, several)}
+            // The hero says the home currency's; each other one says its own.
+            qualifiers={i > 0}
+            onOpenAccount={onOpenAccount}
+            onMoneyInOut={onMoneyInOut}
+          />
+        ))}
     </>
   );
 }
 
-/** Money in, Money out, Net and Returns, in `currency`. */
+/** The card's title: "All time", or the range's words; with the currency
+ *  when there are several. */
+function rangeTitle(g: CurrencyGroup<Shown>, label: string, several: boolean): string {
+  const words = g.basis === 'all' ? 'All time' : label || 'All';
+  return several ? `${currencyPlural(g.currency)}, ${words.charAt(0).toLowerCase()}${words.slice(1)}` : words;
+}
+
+/** The hero's lines in the chart's info, before the chart's own. */
+function heroInfo(g: CurrencyGroup<Shown>, one: boolean): string[] {
+  const these = one ? 'this account' : 'these accounts';
+  const gold = `Gold line: the balance of ${these}.`;
+  if (g.basis === 'all') {
+    const first = g.chart?.baseline[0]?.date ?? null;
+    const startsLater = !!first && !!g.chart && g.chart.points[0].date < first;
+    const from = first ? ` from ${day(first)}${startsLater ? `, the first day Nya has ${one ? 'its' : 'every account’s'} activity` : ''}` : '';
+    return [
+      `${gold} Grey line: your deposits less withdrawals since ${one ? 'it' : 'each account'} opened, from the totals you set, by each day${from}. The gap between them is your investment returns so far.`,
+      'There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.',
+    ];
+  }
+  return [
+    `${gold} Grey line: what ${one ? 'it' : 'they'} would be worth without returns, the beginning balance plus deposits and withdrawals so far. The gap between them is your investment returns.`,
+    `The rate of return weighs each deposit and withdrawal by how long it was invested, so money added late in the range counts for less.${one ? '' : ' An account counted from a later day joins on that day.'} Past a year it is given a year.`,
+  ];
+}
+
+/** What qualifies a group's figures, said with them: what they are short
+ *  of (critical, in full), where an account starts or stops, and what isn't
+ *  counted in the range. */
+function Qualifiers({ group: g }: { group: CurrencyGroup<Shown> }) {
+  if (g.loading) return null;
+  const short = shortWords(g);
+  // For all time every account counts from when it opened: only where one
+  // stops is said.
+  const edges = g.rows.flatMap((r) => edgeWords(r, g.basis === 'all') ?? []);
+  return (
+    <>
+      {short && (
+        <Notice level="critical" role="alert">
+          {short}
+        </Notice>
+      )}
+      {edges.map((words) => (
+        <p key={words} className="helper">
+          {words}
+        </p>
+      ))}
+      {g.uncounted.map((r) => (
+        <p key={r.account.key} className="helper">
+          {`${r.account.title} isn’t counted for this range: it has no recorded day in it that Nya has activity for.`}
+        </p>
+      ))}
+    </>
+  );
+}
+
+/**
+ * The hero: the returns over the range, the rate of return and the chart.
+ * The day a finger is on in the chart is held here (components/
+ * hero-scrub.ts), so a pointer move re-renders the hero, never the screen;
+ * the chart is built by the screen and passed in, the same element each
+ * time, so it isn't drawn again.
+ */
+function InvestmentsHero({
+  group: g,
+  loading,
+  rangeWords,
+  infoButton,
+  chart,
+  children,
+}: {
+  group: CurrencyGroup<Shown> | null;
+  loading: boolean;
+  /** The range in words: "Year to date", "Since Jan 1". */
+  rangeWords: string;
+  infoButton: ReactNode;
+  chart: ReactNode;
+  children?: ReactNode;
+}) {
+  const [reading, setReading] = useState<HeroReading | null>(null);
+  const f = loading ? null : (g?.figures ?? null);
+  const currency = g?.currency ?? null;
+  const all = g?.basis === 'all';
+
+  // A day on the chart: the returns to it, the gap between the lines there;
+  // two days measured: the returns between them.
+  let shown = f?.returns ?? null;
+  let dayLine: string | null = null;
+  if (reading && f && g) {
+    const balance = `balance ${formatMoney(reading.value, currency)}`;
+    const estimated = reading.estimated || !!reading.from?.estimated;
+    // Over a range, the returns count from the first day an account is
+    // counted (the span's), which can be after the chart starts.
+    const counts = all ? null : (g.span?.from ?? null);
+    if (reading.base == null || (reading.from && reading.from.base == null)) {
+      const first = g.chart?.baseline[0]?.date;
+      dayLine = `${reading.from ? `${reading.from.day} to ` : ''}${reading.day} · ${balance}${first ? ` · returns count from ${day(first)}` : ''}`;
+    } else {
+      // To the cent, so a measure across a flat stretch is $0.00, never −$0.00.
+      shown = Math.round((reading.value - reading.base - (reading.from ? reading.from.value - reading.from.base! : 0)) * 100) / 100 || 0;
+      const before = !reading.from && counts !== null && !!reading.date && reading.date < counts;
+      const from = reading.from ? reading.from.day : before ? null : counts !== null ? day(counts) : null;
+      // After "to", in a sentence's case ("Jun 1 to yesterday").
+      const to = from && reading.date ? day(reading.date) : reading.day;
+      dayLine = `${from ? `${from} to ` : ''}${to} · ${balance}${estimated ? ' · estimated' : ''}${before ? ` · returns count from ${day(counts!)}` : ''}`;
+    }
+  }
+
+  let figure: ReactNode;
+  if (loading)
+    figure = (
+      <span role="status">
+        <span className="visually-hidden">Loading investment returns</span>
+        <span className="skeleton accounts-skeleton-figure" aria-hidden="true" />
+      </span>
+    );
+  // Words, never "--", at the answer's smaller size: what stands in the way
+  // is said under it.
+  else if (shown === null) figure = 'Nothing to count yet';
+  else figure = <HeroFigure worth={shown} currency={currency} signed />;
+
+  let delta: ReactNode = null;
+  if (f && g) {
+    if (all) delta = <div className="hero-delta">All time, since each account opened</div>;
+    else {
+      const span = `${rangeWords.charAt(0).toLowerCase()}${rangeWords.slice(1)}`;
+      const r = g.rate;
+      if (!r) delta = <div className="hero-delta">{rangeWords}</div>;
+      else {
+        const pct = ratePct(r);
+        const dir = pct === '0.0%' ? 'flat' : r.value > 0 ? 'up' : 'down';
+        delta = (
+          <div className={`hero-delta ${dir}`}>
+            <b>
+              {dir === 'up' ? '▲ ' : dir === 'down' ? '▼ ' : ''}
+              {pct}
+              {r.annual ? ' a year' : ''}
+            </b>{' '}
+            rate of return · {span}
+          </div>
+        );
+      }
+    }
+  }
+
+  return (
+    <Hero
+      id="investment-returns-title"
+      label="Investment returns"
+      labelEnd={infoButton}
+      className="investments-hero"
+      figure={figure}
+      figureClass={!loading && shown === null ? 'plan-answer' : undefined}
+      line={
+        <div className={`hero-line${dayLine ? ' scrubbed' : ''}`}>
+          {delta}
+          {dayLine && (
+            <p className="hero-day">
+              <Masked>{dayLine}</Masked>
+            </p>
+          )}
+        </div>
+      }
+    >
+      {children}
+      <HeroScrub.Provider value={setReading}>
+        <div>{chart}</div>
+      </HeroScrub.Provider>
+    </Hero>
+  );
+}
+
+/** Beginning balance, Deposits & withdrawals, Investment returns and Ending
+ *  balance, in `currency`. */
 function Strip({ f, currency }: { f: Figures; currency: string }) {
   return (
     <ul className="stat-strip" role="list">
       <li className="stat">
-        <span className="stat-label">Money in</span>
+        <span className="stat-label">Beginning balance</span>
         <span className="stat-value money">
-          <Masked>{formatMoney(f.in, currency)}</Masked>
+          <Masked>{formatMoney(f.begin, currency)}</Masked>
         </span>
       </li>
       <li className="stat">
-        <span className="stat-label">Money out</span>
+        <span className="stat-label">Deposits & withdrawals</span>
         <span className="stat-value money">
-          <Masked>{formatMoney(f.out, currency)}</Masked>
+          <Masked>{signedMoney(f.dw, currency)}</Masked>
         </span>
       </li>
       <li className="stat">
-        <span className="stat-label">Net</span>
-        <span className="stat-value money">
-          <Masked>{formatMoney(f.net, currency)}</Masked>
-        </span>
-      </li>
-      <li className="stat">
-        <span className="stat-label">Returns</span>
+        <span className="stat-label">Investment returns</span>
         {/* A gain in green with its sign; a loss keeps the text color with
             its minus, as on an account's sheet. */}
-        <span className={`stat-value money${f.growth > 0 && !roundsToNothing(f.growth, currency) ? ' inflow' : ''}`}>
-          <Masked>{signedMoney(f.growth, currency)}</Masked>
+        <span className={`stat-value money${f.returns > 0 && !roundsToNothing(f.returns, currency) ? ' inflow' : ''}`}>
+          <Masked>{signedMoney(f.returns, currency)}</Masked>
+        </span>
+      </li>
+      <li className="stat">
+        <span className="stat-label">Ending balance</span>
+        <span className="stat-value money">
+          <Masked>{formatMoney(f.end, currency)}</Masked>
         </span>
       </li>
     </ul>
   );
 }
 
+const STRIP_LABELS = ['Beginning balance', 'Deposits & withdrawals', 'Investment returns', 'Ending balance'];
+
 /** The strip's place while the activity loads. */
-function StripSkeleton() {
+export function StripSkeleton() {
   return (
     <ul className="stat-strip" aria-hidden="true">
-      {['Money in', 'Money out', 'Net', 'Returns'].map((label) => (
+      {STRIP_LABELS.map((label) => (
         <li key={label} className="stat">
           <span className="stat-label">{label}</span>
           <span className="stat-value">
@@ -304,16 +613,16 @@ function StripSkeleton() {
   );
 }
 
-/** "counts from Jul 12, its first recorded day, to Nov 9, the last day Nya
- *  has its activity" */
-function edgeWords(r: GrowthRow<Shown>): string | null {
-  const from = r.from && `from ${day(r.from.day)}, ${r.from.cause === 'recorded' ? 'its first recorded day' : 'the first day Nya has its activity'}`;
+/** "Individual ••4421 counts from Jul 12, its first recorded day, to Nov 9,
+ *  the last day Nya has its activity"; for all time, only where it stops. */
+function edgeWords(r: GrowthRow<Shown>, toOnly: boolean): string | null {
+  const from = !toOnly && r.from && `from ${day(r.from.day)}, ${r.from.cause === 'recorded' ? 'its first recorded day' : 'the first day Nya has its activity'}`;
   const to = r.to && `to ${day(r.to.day)}, ${r.to.cause === 'activity' ? 'the last day Nya has its activity' : 'its last recorded day'}`;
   if (!from && !to) return null;
   return `${r.account.title} counts ${[from, to].filter(Boolean).join(', ')}.`;
 }
 
-/** What the figures are short of, in full, under them. */
+/** What the figures are short of, in full. */
 function shortWords(g: CurrencyGroup<Shown>): string | null {
   const names = (rows: GrowthRow<Shown>[]) => joinNames(rows.map((r) => r.account.title));
   const failed = g.failed.length > 0 && `${names(g.failed)}: ${its(g.failed.length)} activity couldn’t be loaded just now.`;
@@ -323,71 +632,75 @@ function shortWords(g: CurrencyGroup<Shown>): string | null {
   return null;
 }
 
-/** Why All-time performance isn't shown, and what would show it. */
+/** On All short of all time: what to set, and where All counts from. */
 function missingWords(g: CurrencyGroup<Shown>): string | null {
   const unset = g.missing.filter((r) => r.totals === 'unset').map((r) => r.account.title);
   const outdated = g.missing.filter((r) => r.totals === 'outdated').map((r) => r.account.title);
-  const see = 'to see your all-time returns across these accounts';
-  if (unset.length && outdated.length) return `Set deposits and withdrawals for ${joinNames(unset)}, and change them for ${joinNames(outdated)}, ${see}.`;
-  if (unset.length) return `Set deposits and withdrawals for ${joinNames(unset)} ${see}.`;
-  if (outdated.length)
-    return `Change deposits and withdrawals for ${joinNames(outdated)} ${see}: ${outdated.length === 1 ? 'its totals are' : 'their totals are'} for a day before the activity Nya now has.`;
-  return null;
+  const see = 'to see all time for these accounts';
+  let ask: string;
+  if (unset.length && outdated.length) ask = `Set deposits and withdrawals for ${joinNames(unset)}, and change them for ${joinNames(outdated)}, ${see}.`;
+  else if (unset.length) ask = `Set deposits and withdrawals for ${joinNames(unset)} ${see}.`;
+  else if (outdated.length)
+    ask = `Change deposits and withdrawals for ${joinNames(outdated)} ${see}: ${outdated.length === 1 ? 'its totals are' : 'their totals are'} for a day before the activity Nya now has.`;
+  else return null;
+  if (!g.span) return ask;
+  return `${ask} Until then, All counts from ${day(g.span.from)}${g.span.from === g.firstRecorded ? ', the first recorded day' : ''}.`;
 }
 
-/** What the totals leave out as moves between the accounts, said with them:
- *  the rows each show their own leg. */
-function MovedLine({ moved, currency }: { moved: number; currency: string }) {
-  if (roundsToNothing(moved, currency)) return null;
-  return (
-    <p className="helper">
-      <Masked>{`Not counted as money in or out: ${formatMoney(moved, currency)} that moved between these accounts.`}</Masked>
-    </p>
-  );
-}
+const WHY_DW =
+  'Deposits & withdrawals is the money that went into these accounts less the money that came out, so a negative amount means more came out than went in. Rollovers, 401(k) loan repayments and employer contributions count, and so does money moved in from or out to an account you haven’t chosen; money moved between the accounts you chose cancels out. Money that left an account and came back within five days, as a fund exchange or a sweep does, is neither. Dividends, interest and gains are returns, not deposits, and fees come off returns.';
 
-/** All-time performance for one currency: its figures, or why they aren't
- *  shown and what would show them. */
-function SinceGroup({
+/** The range's card for one currency: its four figures, what they count and
+ *  why, then a row for each account. */
+function RangeCard({
   group: g,
-  label,
-  backTo,
+  range,
+  title,
+  qualifiers,
+  onOpenAccount,
   onMoneyInOut,
 }: {
   group: CurrencyGroup<Shown>;
-  /** The currency, when the card has several. */
-  label: string | null;
-  /** Where focus goes when the Set button is gone: the card's heading. */
-  backTo: () => HTMLElement | null;
+  range: RangeKey;
+  title: string;
+  /** Say what qualifies the figures here (a currency the hero isn't). */
+  qualifiers: boolean;
+  onOpenAccount: (item_id: string, account_id: string) => void;
   onMoneyInOut: (target: MoneyInOutTarget) => void;
 }) {
-  const missing = g.loading || g.since ? null : missingWords(g);
-  const one = g.missing.length === 1 ? g.missing[0] : null;
-  const early = g.since ? g.rows.filter((r) => r.since?.to) : [];
-  const waiting = g.loading || g.since ? null : waitingWords(g);
-  const nothing = !g.loading && !g.since && !waiting && !missing && g.unmeasured.length === 0 && g.unreadable.length === 0;
+  const titleId = useId();
+  // Where focus goes after a save from the Set button, which the save
+  // usually takes away.
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const all = g.basis === 'all';
+  const f = g.loading ? null : g.figures;
+  // On All, what stands between it and all time.
+  const onAll = range === 'ALL' && !all && !g.loading;
+  const missing = onAll ? missingWords(g) : null;
+  const one = missing && g.missing.length === 1 ? g.missing[0] : null;
+  const waiting = onAll && g.failed.length + g.busy.length > 0 ? joinNames([...g.failed, ...g.busy].map((r) => r.account.title)) : null;
+
+  let helper: string | null = null;
+  if (f && all) helper = 'Since each account opened, from the deposits and withdrawals you set for it.';
+  else if (f && g.span) {
+    const late = g.rows.filter((r) => r.figures && r.from).map((r) => `${r.account.title}’s beginning balance is its ${day(r.from!.day)} balance.`);
+    helper = [`${day(g.span.from)} to ${day(g.span.to)}.`, ...late].join(' ');
+  }
 
   return (
-    <div className="stack tight" {...(g.loading ? { role: 'status', 'aria-label': 'Loading all-time performance' } : {})}>
-      {label && <h3 className="section-label">{label}</h3>}
-      {g.loading ? (
-        <StripSkeleton />
-      ) : (
-        g.since && (
-          <>
-            <Strip f={g.since} currency={g.currency} />
-            <MovedLine moved={g.sinceMoved} currency={g.currency} />
-            {early.map((r) => (
-              <p key={r.account.key} className="helper">
-                {`${r.account.title}’s all-time returns are measured on ${day(r.since!.to!)}, as Nya has its activity only to ${day(r.flowsTo!)}.`}
-              </p>
-            ))}
-          </>
-        )
-      )}
-      {waiting && <p className="helper">{waiting}</p>}
+    <section className="card stack" aria-labelledby={titleId}>
+      <div className="card-header">
+        <h2 id={titleId} tabIndex={-1} ref={titleRef}>
+          {title}
+        </h2>
+      </div>
+      <div className="stack tight" {...(g.loading ? { role: 'status', 'aria-label': 'Loading investment activity' } : {})}>
+        {g.loading ? <StripSkeleton /> : f ? <Strip f={f} currency={g.currency} /> : <p className="empty-note">Nothing to count in this range yet.</p>}
+        {helper && <p className="helper">{helper}</p>}
+      </div>
+      {qualifiers && <Qualifiers group={g} />}
       {missing && (
-        <>
+        <div className="stack tight">
           <p className="helper">{missing}</p>
           {one && (
             <div>
@@ -395,105 +708,43 @@ function SinceGroup({
                 type="button"
                 className="btn ghost"
                 onClick={(e) => {
-                  focusInsteadOf(e.currentTarget, backTo);
+                  focusInsteadOf(e.currentTarget, () => titleRef.current);
                   onMoneyInOut(targetFor(one));
                 }}
               >
-                {`${one.totals === 'outdated' ? 'Change' : 'Set'} deposits and withdrawals for ${one.account.title}`}
+                {`${one.totals === 'outdated' ? 'Change' : 'Set'} deposits and withdrawals`}
               </button>
             </div>
           )}
-        </>
+        </div>
       )}
-      {!g.loading && g.unmeasured.length > 0 && (
-        <p className="helper">
-          {`Nya has no balance for ${joinNames(g.unmeasured.map((r) => r.account.title))} just now, so all-time returns across these accounts aren’t shown.`}
-        </p>
-      )}
-      {!g.loading && g.unreadable.length > 0 && (
+      {waiting && <p className="helper">{`All time is shown once Nya has the activity for ${waiting}.`}</p>}
+      {onAll && g.unreadable.length > 0 && (
         // Never a button here: a save would write over what is stored.
         <Notice level="caution" role="status">
           {`Deposits and withdrawals for ${joinNames(g.unreadable.map((r) => r.account.title))} can’t be read just now, so all-time returns across these accounts aren’t shown.`}
         </Notice>
       )}
-      {nothing && <p className="empty-note">Nothing to count yet.</p>}
-    </div>
-  );
-}
-
-/** Why All-time performance waits on activity the range's figures are short of
- *  (said in full under them). */
-function waitingWords(g: CurrencyGroup<Shown>): string | null {
-  const names = (rows: GrowthRow<Shown>[]) => joinNames(rows.map((r) => r.account.title));
-  const shown = 'All-time returns across these accounts are shown once Nya has';
-  if (g.failed.length > 0 && g.busy.length > 0)
-    return `${shown} all their activity. The activity for ${names(g.failed)} couldn’t be loaded just now; for ${names(g.busy)}, it is still loading.`;
-  if (g.failed.length > 0) return `${shown} the activity for ${names(g.failed)}: ${its(g.failed.length)} activity couldn’t be loaded just now.`;
-  if (g.busy.length > 0) return `${shown} the activity for ${names(g.busy)}: ${its(g.busy.length)} activity is still loading.`;
-  return null;
-}
-
-/** The range's figures for one currency, then a row for each account. */
-function Group({
-  group: g,
-  label,
-  figures,
-  onOpenAccount,
-  children,
-}: {
-  group: CurrencyGroup<Shown>;
-  label: string;
-  /** False when the histories couldn't be read: the card says so once. */
-  figures: boolean;
-  onOpenAccount: (item_id: string, account_id: string) => void;
-  children?: ReactNode;
-}) {
-  const short = g.loading ? null : shortWords(g);
-  const edges = g.loading ? [] : g.rows.flatMap((r) => edgeWords(r) ?? []);
-
-  return (
-    <>
-      {figures && (
-        <div className="stack tight" {...(g.loading ? { role: 'status', 'aria-label': 'Loading investment activity' } : {})}>
-          <h3 className="section-label">{label}</h3>
-          {g.loading ? (
-            <StripSkeleton />
-          ) : g.figures ? (
-            <>
-              <Strip f={g.figures} currency={g.currency} />
-              <MovedLine moved={g.moved} currency={g.currency} />
-            </>
-          ) : (
-            <p className="empty-note">Nothing to count in this range yet.</p>
-          )}
-        </div>
+      <Why>
+        <Masked>
+          {all
+            ? `All time starts at ${formatMoney(0, g.currency)}, when each account opened, and counts from the deposits and withdrawals you set for each account, carried through the activity Nya has had since. ${WHY_DW} There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.`
+            : WHY_DW}
+        </Masked>
+      </Why>
+      {g.rows.length > 1 && (
+        <>
+          <h3 className="section-label">By account</h3>
+          <ul className="list-rows">
+            {g.rows.map((r) => (
+              <li key={r.account.key}>
+                <Row row={r} currency={g.currency} loading={g.loading} all={all} onOpen={() => onOpenAccount(r.account.item_id, r.account.account_id)} />
+              </li>
+            ))}
+          </ul>
+        </>
       )}
-      {short && (
-        <Notice level="critical" role="alert">
-          {short}
-        </Notice>
-      )}
-      {figures &&
-        edges.map((words) => (
-          <p key={words} className="helper">
-            {words}
-          </p>
-        ))}
-      {figures &&
-        g.uncounted.map((r) => (
-          <p key={r.account.key} className="helper">
-            {`${r.account.title} isn’t counted for this range: it has no recorded day in it that Nya has activity for.`}
-          </p>
-        ))}
-      {children}
-      <ul className="list-rows">
-        {g.rows.map((r) => (
-          <li key={r.account.key}>
-            <Row row={r} currency={g.currency} loading={g.loading} onOpen={() => onOpenAccount(r.account.item_id, r.account.account_id)} />
-          </li>
-        ))}
-      </ul>
-    </>
+    </section>
   );
 }
 
@@ -512,32 +763,30 @@ function targetFor(r: GrowthRow<Shown>): MoneyInOutTarget {
   };
 }
 
-function Row({ row: r, currency, loading, onOpen }: { row: GrowthRow<Shown>; currency: string; loading: boolean; onOpen: () => void }) {
+function Row({
+  row: r,
+  currency,
+  loading,
+  all,
+  onOpen,
+}: {
+  row: GrowthRow<Shown>;
+  currency: string;
+  loading: boolean;
+  all: boolean;
+  onOpen: () => void;
+}) {
   const a = r.account;
-  const money = (n: number) => formatMoney(n, currency);
-  let moved: string;
-  if (r.status === 'loading') moved = 'Loading its activity';
-  else if (r.status === 'busy') moved = 'Its activity is still loading';
-  else if (r.status === 'failed') moved = 'Its activity couldn’t be loaded';
-  else if (r.status === 'none') moved = 'No investment activity yet';
-  else if (r.split) {
-    const parts = [
-      ...(roundsToNothing(r.split.in, currency) ? [] : [`${money(r.split.in)} in`]),
-      ...(roundsToNothing(r.split.out, currency) ? [] : [`${money(r.split.out)} out`]),
-    ];
-    moved = `${parts.length ? parts.join(', ') : 'nothing in or out'}${r.from ? `, from ${day(r.from.day)}` : ''}`;
-  } else moved = loading || !a.points ? '' : 'Nothing to count in this range';
+  let status: string | null = null;
+  if (r.status === 'loading') status = 'Loading its activity';
+  else if (r.status === 'busy') status = 'Its activity is still loading';
+  else if (r.status === 'failed') status = 'Its activity couldn’t be loaded';
+  else if (r.status === 'none') status = 'No investment activity yet';
+  else if (!r.figures && !loading && a.points) status = 'Nothing to count in this range';
+  else if (r.figures && r.from && !all) status = `from ${day(r.from.day)}`;
+  const sub = status ? `${a.institution} · ${status}` : a.institution;
 
-  let since: string | null = null;
-  if (r.status === 'counted') {
-    if (r.totals === 'set' && r.since) {
-      since = `All time: net ${money(r.since.net)}${r.since.growth === null ? '' : ` · ${signedMoney(r.since.growth, currency)} returns`}`;
-    } else if (r.totals === 'unset') since = 'No deposits and withdrawals set yet';
-    else if (r.totals === 'outdated') since = 'Deposits and withdrawals need changing';
-    else if (r.totals === 'unreadable') since = 'Deposits and withdrawals can’t be read just now';
-  }
-
-  const waiting = r.status === 'loading' || (r.status === 'counted' && !a.points && loading);
+  const waiting = !r.figures && (r.status === 'loading' || (r.status === 'counted' && loading));
   return (
     <button className="list-row" onClick={onOpen}>
       <span className="list-row-text">
@@ -545,19 +794,12 @@ function Row({ row: r, currency, loading, onOpen }: { row: GrowthRow<Shown>; cur
           {a.name}
           {a.mask && <span className="acct-mask">{` ••${a.mask}`}</span>}
         </span>
-        <span className="list-row-sub">
-          <Masked>{moved ? `${a.institution} · ${moved}` : a.institution}</Masked>
-        </span>
-        {since && (
-          <span className="list-row-sub">
-            <Masked>{since}</Masked>
-          </span>
-        )}
+        <span className="list-row-sub">{sub}</span>
       </span>
-      {r.split ? (
+      {r.figures ? (
         <span className="list-row-value money growth-value">
-          <Masked>{signedMoney(r.split.growth, currency)}</Masked>
-          <span className="growth-value-label">returns</span>
+          <Masked>{signedMoney(r.figures.returns, currency)}</Masked>
+          <span className="growth-value-label">{r.rate ? `returns · ${ratePct(r.rate)}${r.rate.annual ? ' a year' : ''}` : 'returns'}</span>
         </span>
       ) : (
         waiting && (

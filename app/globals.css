@@ -465,6 +465,20 @@ h1,
   white-space: nowrap;
 }
 
+/* Accounts > Investments' figure, the same: a scrubbed day's returns never
+   move the chart under the finger. */
+.investments-hero .total-value {
+  white-space: nowrap;
+}
+
+/* A hero's label with a control at the end of its row (components/Hero.tsx
+   labelEnd): Accounts > Investments' chart info button. */
+.hero-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+
 /* The change line's place: while a day is scrubbed, the day sits over it,
    one line cut to fit, and the change line keeps the height it had. */
 .hero-line {

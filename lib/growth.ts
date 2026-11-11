@@ -30,8 +30,8 @@
 // MOVE_DAYS of each other is a move. In one account its legs are taken out of
 // the flows where the activity is built (withoutMoves, lib/investment-
 // activity.ts), so the line, its readout and the sheet's figures never see
-// them; between accounts, Accounts > Investments takes them off its totals
-// (movedBetween), as each account's own figures rightly show its leg.
+// them. Between accounts each one's figures rightly show its leg, and Accounts
+// > Investments' net has the two cancel out (lib/growth-summary.ts).
 //
 // Imports nothing but a pure date helper: the chart is a client component.
 
@@ -229,12 +229,11 @@ export const MOVE_DAYS = 5;
 
 /**
  * The legs that pair into moves: each money out with money in of the same
- * amount, to the cent, no more than MOVE_DAYS from it, when `pairs` lets
- * their owners pair. Nearest first, so of two candidates the closer one is
- * the other leg; then the earlier. Returns each pair's two indexes, out
- * first.
+ * amount, to the cent, no more than MOVE_DAYS from it. Nearest first, so
+ * of two candidates the closer one is the other leg; then the earlier.
+ * Returns each pair's two indexes, out first.
  */
-function pairMoves(legs: readonly (Flow & { owner: number })[], pairs: (out: number, inn: number) => boolean): [number, number][] {
+function pairMoves(legs: readonly Flow[]): [number, number][] {
   const ins = new Map<number, number[]>();
   legs.forEach((l, i) => {
     if (l.amount <= 0) return;
@@ -247,7 +246,7 @@ function pairMoves(legs: readonly (Flow & { owner: number })[], pairs: (out: num
     if (l.amount >= 0) return;
     for (const inn of ins.get(Math.round(-l.amount * 100)) ?? []) {
       const gap = Math.abs(dayOf(legs[inn].date) - dayOf(l.date));
-      if (gap <= MOVE_DAYS && pairs(l.owner, legs[inn].owner)) candidates.push({ out, inn, gap });
+      if (gap <= MOVE_DAYS) candidates.push({ out, inn, gap });
     }
   });
   const first = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -274,10 +273,7 @@ export type Move = { from: string; to: string };
  * between two legs (contributionBaseline).
  */
 export function withoutMoves(flows: readonly Flow[]): { flows: Flow[]; moves: Move[] } {
-  const found = pairMoves(
-    flows.map((f) => ({ ...f, owner: 0 })),
-    () => true
-  );
+  const found = pairMoves(flows);
   const paired = new Set(found.flat());
   const moves = found
     .map(([out, inn]): Move => {
@@ -289,23 +285,13 @@ export function withoutMoves(flows: readonly Flow[]): { flows: Flow[]; moves: Mo
 }
 
 /**
- * What moved between accounts, each given as the flows it counted: money one
- * account's figures have going out and another's coming in, paired as moves
- * are. Accounts > Investments takes it off its money in and its money out alike,
- * so its net is unchanged.
- */
-export function movedBetween(accounts: readonly (readonly Flow[])[]): number {
-  const legs = accounts.flatMap((flows, owner) => flows.map((f) => ({ ...f, owner })));
-  return cents(pairMoves(legs, (out, inn) => out !== inn).reduce((t, [, inn]) => t + legs[inn].amount, 0));
-}
-
-/**
- * The sheet's All-time performance figures: money in, money out and the net by
- * the measuring day, and all-time returns, the balance less that net. Measured
- * today on the live balance while the activity is known to yesterday or
- * later; otherwise on the last recorded balance up to the day after the
- * activity ends (`to` names that day), since money that moved after it isn't
- * known yet. `growth` is null where there is no balance to measure.
+ * An account's all-time figures from its totals: money in, money out and the
+ * net by the measuring day, and all-time returns, the balance less that net;
+ * its sheet says what moved since the totals (`since`). Measured today on
+ * the live balance while the activity is known to yesterday or later;
+ * otherwise on the last recorded balance up to the day after the activity
+ * ends (`to` names that day), since money that moved after it isn't known
+ * yet. `growth` is null where there is no balance to measure.
  */
 export function sinceStarted(
   totals: Totals,

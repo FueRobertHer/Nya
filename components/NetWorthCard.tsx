@@ -62,11 +62,15 @@ export function HeroDelta({ delta, currency, endedIn, fromRates }: { delta: Hero
 
 /** The total, its cents at half size (look and feel, step 3). Drawn in runs
  *  a screen reader would stop between, so it hears the whole figure apart;
- *  while amounts are hidden there are no cents, and Masked says "hidden". */
-function HeroFigure({ worth, currency }: { worth: number; currency: string | null }) {
-  // The same text either way: moneyRuns joins to formatMoney's.
-  const whole = formatMoney(worth, currency);
+ *  while amounts are hidden there are no cents, and Masked says "hidden".
+ *  `signed` gives a gain its plus, as signedMoney writes it (Accounts >
+ *  Investments' returns). */
+export function HeroFigure({ worth, currency, signed = false }: { worth: number; currency: string | null; signed?: boolean }) {
+  // The same text either way: moneyRuns joins to formatMoney's, and with a
+  // plus before it to signedMoney's.
+  const whole = signed ? signedMoney(worth, currency) : formatMoney(worth, currency);
   const runs = moneyRuns(worth, currency);
+  if (signed && worth > 0 && whole.startsWith('+')) runs.unshift({ text: '+', cents: false });
   if (!runs.some((r) => r.cents)) return <Masked>{whole}</Masked>;
   return (
     <>

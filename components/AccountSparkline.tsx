@@ -13,8 +13,9 @@
 // With `moneyInOut` it also draws the account's money in and out above the
 // chart (components/MoneyInOutFigures.tsx), from the same payload and this
 // history, and carries the grey line from the totals the person set
-// (lib/growth.ts usableTotals). A save or a clear reloads the payload
-// (onMoneyInOutSaved), so both change at once.
+// (lib/growth.ts usableTotals), and the chart's All then reads all time.
+// A save or a clear reloads the payload (onMoneyInOutSaved),
+// so both change at once.
 
 import { useCallback, useEffect, useState } from 'react';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
@@ -178,6 +179,8 @@ export default function AccountSparkline({
         label="Balance"
         baselineFor={activity ? baselineFor : null}
         baselineFrom={carried?.as_of ?? null}
+        // Its All is all time once the totals are carried.
+        allTime={!!carried && !!moneyInOut && !previewWith}
         currency={currency}
         rangeSet={investment ? 'investment' : 'balance'}
         // A preview is for checking the joined history, all of it.

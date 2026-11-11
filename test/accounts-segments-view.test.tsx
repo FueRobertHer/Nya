@@ -38,8 +38,8 @@ describe('the views', () => {
     expect(tags(html, 'tab').map((t) => attr(t, 'aria-selected'))).toEqual(['true', 'false']);
     const summary = renderToStaticMarkup(<TabSkeleton tab="accounts" segments={{ accounts: 'investments' }} />);
     expect(tags(summary, 'tab').map((t) => attr(t, 'aria-selected'))).toEqual(['false', 'true']);
-    expect(summary).toContain('Loading investment performance');
-    // Its two cards, All-time performance and Performance by period, said as one.
+    expect(summary).toContain('Loading investment returns');
+    // Its hero and the range's card, said as one.
     expect(summary.split('class="card stack"')).toHaveLength(3);
     expect(summary.split('role="status"')).toHaveLength(2);
   });
