@@ -913,7 +913,7 @@ const STORES: Readonly<Record<string, Entry>> = {
   },
   'money-in-out': {
     group: 'accounts',
-    name: 'Money in and out you set for investment accounts',
+    name: 'Deposits and withdrawals you set for investment accounts',
     about: 'What you said each account had put in and taken out in all, and the day those totals were for.',
     unit: ACCOUNT,
     kept: 'Your data',

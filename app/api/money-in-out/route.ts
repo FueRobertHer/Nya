@@ -47,10 +47,10 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'That account isn’t one Nya knows' }, { status: 404 });
       }
       const known = (await directoryEntries(ctx, [change.account_id]))[change.account_id];
-      if (known && typeof known.type === 'string' && !isInvestmentType(known.type)) return bad('Money in and out are for investment accounts');
+      if (known && typeof known.type === 'string' && !isInvestmentType(known.type)) return bad('Deposits and withdrawals are for investment accounts');
     }
     return NextResponse.json({ money_in_out: await saveMoneyInOut(ctx, change) });
   } catch (err) {
-    return storeFailure(err, 'Failed to save money in and out');
+    return storeFailure(err, 'Failed to save deposits and withdrawals');
   }
 }

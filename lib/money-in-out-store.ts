@@ -25,7 +25,7 @@ import { liveAccountIds } from './links';
 import { isMoneyInOut, type MoneyInOut, type MoneyInOutChange } from './money-in-out';
 
 export const moneyInOutStore: MapStore<MoneyInOut> = defineMapStore<MoneyInOut>('money-in-out', {
-  what: 'money in and out',
+  what: 'deposits and withdrawals',
   isValid: isMoneyInOut,
   exportable: true,
 });

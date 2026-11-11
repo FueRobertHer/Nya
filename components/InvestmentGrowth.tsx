@@ -205,7 +205,7 @@ export default function InvestmentGrowth({
           ))}
           {unconverted}
           <Why>
-            All-time performance counts from the money in and out you gave for each account, carried through the activity Nya has had since. Returns are their value today less the net: dividends and interest count, fees come off.
+            All-time performance counts from the deposits and withdrawals you set for each account, carried through the activity Nya has had since. Returns are their value today less the net: dividends and interest count, fees come off.
           </Why>
         </section>
       )}
@@ -328,10 +328,10 @@ function missingWords(g: CurrencyGroup<Shown>): string | null {
   const unset = g.missing.filter((r) => r.totals === 'unset').map((r) => r.account.title);
   const outdated = g.missing.filter((r) => r.totals === 'outdated').map((r) => r.account.title);
   const see = 'to see your all-time returns across these accounts';
-  if (unset.length && outdated.length) return `Set money in and out for ${joinNames(unset)}, and change them for ${joinNames(outdated)}, ${see}.`;
-  if (unset.length) return `Set money in and out for ${joinNames(unset)} ${see}.`;
+  if (unset.length && outdated.length) return `Set deposits and withdrawals for ${joinNames(unset)}, and change them for ${joinNames(outdated)}, ${see}.`;
+  if (unset.length) return `Set deposits and withdrawals for ${joinNames(unset)} ${see}.`;
   if (outdated.length)
-    return `Change money in and out for ${joinNames(outdated)} ${see}: ${outdated.length === 1 ? 'its totals are' : 'their totals are'} for a day before the activity Nya now has.`;
+    return `Change deposits and withdrawals for ${joinNames(outdated)} ${see}: ${outdated.length === 1 ? 'its totals are' : 'their totals are'} for a day before the activity Nya now has.`;
   return null;
 }
 
@@ -399,7 +399,7 @@ function SinceGroup({
                   onMoneyInOut(targetFor(one));
                 }}
               >
-                {`${one.totals === 'outdated' ? 'Change' : 'Set'} money in and out for ${one.account.title}`}
+                {`${one.totals === 'outdated' ? 'Change' : 'Set'} deposits and withdrawals for ${one.account.title}`}
               </button>
             </div>
           )}
@@ -413,7 +413,7 @@ function SinceGroup({
       {!g.loading && g.unreadable.length > 0 && (
         // Never a button here: a save would write over what is stored.
         <Notice level="caution" role="status">
-          {`Money in and out for ${joinNames(g.unreadable.map((r) => r.account.title))} can’t be read just now, so all-time returns across these accounts aren’t shown.`}
+          {`Deposits and withdrawals for ${joinNames(g.unreadable.map((r) => r.account.title))} can’t be read just now, so all-time returns across these accounts aren’t shown.`}
         </Notice>
       )}
       {nothing && <p className="empty-note">Nothing to count yet.</p>}
@@ -532,9 +532,9 @@ function Row({ row: r, currency, loading, onOpen }: { row: GrowthRow<Shown>; cur
   if (r.status === 'counted') {
     if (r.totals === 'set' && r.since) {
       since = `All time: net ${money(r.since.net)}${r.since.growth === null ? '' : ` · ${signedMoney(r.since.growth, currency)} returns`}`;
-    } else if (r.totals === 'unset') since = 'No money in and out set yet';
-    else if (r.totals === 'outdated') since = 'Money in and out need changing';
-    else if (r.totals === 'unreadable') since = 'Money in and out can’t be read just now';
+    } else if (r.totals === 'unset') since = 'No deposits and withdrawals set yet';
+    else if (r.totals === 'outdated') since = 'Deposits and withdrawals need changing';
+    else if (r.totals === 'unreadable') since = 'Deposits and withdrawals can’t be read just now';
   }
 
   const waiting = r.status === 'loading' || (r.status === 'counted' && !a.points && loading);

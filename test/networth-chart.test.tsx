@@ -83,7 +83,7 @@ describe('NetWorthChart segment styles', () => {
   });
 });
 
-describe('NetWorthChart money in, out and returns', () => {
+describe('NetWorthChart deposits, withdrawals and returns', () => {
   const points = [
     { date: '2026-09-01', value: 1000 },
     { date: '2026-09-02', value: 1600 },
@@ -98,12 +98,12 @@ describe('NetWorthChart money in, out and returns', () => {
   test('draws the baseline and says how the change splits', () => {
     const html = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={() => baseline} />);
     expect(html).toContain('class="chart-baseline"');
-    expect(html).toContain('Sep 1 to Sep 3: $500.00 in · +$150.00 returns');
-    expect(html).toContain('Grey line: the balance on Sep 1 plus net money in since. The gap above it is your returns.');
+    expect(html).toContain('Sep 1 to Sep 3: $500.00 deposits · +$150.00 returns');
+    expect(html).toContain('Grey line: the balance on Sep 1 plus deposits less withdrawals since. The gap above it is your returns.');
   });
 
   // Each part that moved, and none that didn't: growth always.
-  test('says money out apart from money in', () => {
+  test('says withdrawals apart from deposits', () => {
     const html = renderToStaticMarkup(
       <NetWorthChart
         points={points}
@@ -114,7 +114,7 @@ describe('NetWorthChart money in, out and returns', () => {
         ]}
       />
     );
-    expect(html).toContain('Sep 1 to Sep 3: $500.00 in · $50.00 out · +$200.00 returns');
+    expect(html).toContain('Sep 1 to Sep 3: $500.00 deposits · $50.00 withdrawals · +$200.00 returns');
   });
 
   test('draws nothing extra without a baseline', () => {
@@ -127,7 +127,7 @@ describe('NetWorthChart money in, out and returns', () => {
 // With the money in and out the person set (lib/money-in-out.ts), the grey
 // line is their net money in by each day: the gap above it is growth since
 // the account started, and the line stops at zero when more had come out.
-describe('NetWorthChart with money in and out set', () => {
+describe('NetWorthChart with deposits and withdrawals set', () => {
   const points = [
     { date: '2026-09-01', value: 150_000 },
     { date: '2026-09-02', value: 152_600 },
@@ -146,11 +146,11 @@ describe('NetWorthChart with money in and out set', () => {
     return { line, floor };
   }
 
-  test('the line is the net money in, and the range splits as it does without totals', () => {
+  test('the line is deposits less withdrawals, and the range splits as it does without totals', () => {
     const html = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={() => net} baselineFrom="2026-08-15" />);
     expect(html).toContain('class="chart-baseline"');
-    expect(html).toContain('Sep 1 to Sep 3: $500.00 in · +$2,150.00 returns');
-    expect(html).toContain('Grey line: your net money in (in less out) by each day, from your totals for Aug 15. The gap above it is your returns so far.');
+    expect(html).toContain('Sep 1 to Sep 3: $500.00 deposits · +$2,150.00 returns');
+    expect(html).toContain('Grey line: your deposits less withdrawals by each day, from your totals for Aug 15. The gap above it is your returns so far.');
     expect(html).not.toContain('count from');
   });
 
@@ -160,8 +160,8 @@ describe('NetWorthChart with money in and out set', () => {
     const html = renderToStaticMarkup(
       <NetWorthChart points={[{ date: '2026-08-30', value: 149_000, estimated: true }, ...points]} baselineFor={() => net} baselineFrom="2026-08-15" />
     );
-    expect(html).toContain('Sep 1 to Sep 3: +$2,650.00, with $500.00 in and +$2,150.00 returns');
-    expect(html).toContain('Money in, out and returns for the range count from Sep 1, the first recorded day.');
+    expect(html).toContain('Sep 1 to Sep 3: +$2,650.00, with $500.00 deposits and +$2,150.00 returns');
+    expect(html).toContain('Deposits, withdrawals and returns for the range count from Sep 1, the first recorded day.');
   });
 
   test('more out than in: the line stops at zero, on the plot’s floor, and says from when', () => {
@@ -182,7 +182,7 @@ describe('NetWorthChart with money in and out set', () => {
     const below = net.map((b) => ({ ...b, value: -1000 - b.value / 1000, out: b.in + 1000 + b.value / 1000 }));
     const html = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={() => below} baselineFrom="2026-08-15" />);
     expect(html).not.toContain('class="chart-baseline"');
-    expect(html).toContain('No grey line for this range: all through it, more had come out than gone in, so your net was below zero.');
+    expect(html).toContain('No grey line for this range: all through it, more had come out than gone in, so deposits less withdrawals were below zero.');
     expect(html).not.toContain('Grey line:');
   });
 

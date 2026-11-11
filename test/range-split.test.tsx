@@ -37,8 +37,8 @@ const signed = (n: number) => (n < 0 ? MINUS : '+') + formatMoney(Math.abs(n));
 function readoutFor(shown: BalancePoint[], s: RangeSplit): string {
   const value = (d: string) => shown.find((p) => p.date === d)!.value;
   const parts = [
-    ...(roundsToNothing(s.in, null) ? [] : [`${formatMoney(s.in)} in`]),
-    ...(roundsToNothing(s.out, null) ? [] : [`${formatMoney(s.out)} out`]),
+    ...(roundsToNothing(s.in, null) ? [] : [`${formatMoney(s.in)} deposits`]),
+    ...(roundsToNothing(s.out, null) ? [] : [`${formatMoney(s.out)} withdrawals`]),
     `${signed(s.growth)} returns`,
   ];
   const from = `${formatDay(s.from)} to ${formatDay(s.to)}: `;

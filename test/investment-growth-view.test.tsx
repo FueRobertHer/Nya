@@ -167,7 +167,7 @@ function setup(
             setTarget(t);
           }}
         />
-        <Sheet open={!!target} title="Money in and out" onClose={() => setTarget(null)}>
+        <Sheet open={!!target} title="Deposits and withdrawals" onClose={() => setTarget(null)}>
           <p>The form</p>
         </Sheet>
       </>
@@ -205,14 +205,14 @@ describe('the card', () => {
       expect(text).toContain('Year to date Money in $8,500.00 Money out $500.00 Net $8,000.00 Returns +$22,500.00');
       expect(text).toContain('401(k) ••8810 counts from Jul 12, its first recorded day.');
       expect(text).not.toContain('All-time performance Money in');
-      expect(text).toContain('Set money in and out for Roth IRA ••3302 to see your all-time returns across these accounts.');
+      expect(text).toContain('Set deposits and withdrawals for Roth IRA ••3302 to see your all-time returns across these accounts.');
       expect(rows(host)).toEqual([
         'Individual ••4421 Vanguard · $5,000.00 in All time: net $80,000.00 · +$40,500.00 returns +$15,000.00 returns',
-        'Roth IRA ••3302 Vanguard · $2,000.00 in No money in and out set yet +$2,500.00 returns',
+        'Roth IRA ••3302 Vanguard · $2,000.00 in No deposits and withdrawals set yet +$2,500.00 returns',
         '401(k) ••8810 Fidelity · $1,500.00 in, $500.00 out, from Jul 12 All time: net $28,000.00 · +$28,200.00 returns +$5,000.00 returns',
       ]);
       // Its one button opens the form on that account.
-      const set = host.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Set money in and out for Roth IRA ••3302');
+      const set = host.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Set deposits and withdrawals for Roth IRA ••3302');
       act(() => click(set[0]));
       expect(forms.map((f) => [f.account_id, f.label, f.flows_from])).toEqual([[id('roth'), 'Roth IRA ••3302 · Vanguard', '2025-06-01']]);
     } finally {
@@ -225,7 +225,7 @@ describe('the card', () => {
     try {
       await pass(50);
       expect(words(host)).toContain('All-time performance Money in $130,000.00 Money out $2,000.00 Net $128,000.00 Returns +$94,300.00');
-      expect(words(host)).not.toContain('Set money in and out');
+      expect(words(host)).not.toContain('Set deposits and withdrawals');
     } finally {
       act(() => root.unmount());
     }
@@ -322,7 +322,7 @@ describe('what the figures are short of', () => {
       expect(rows(host)[1]).toBe('Roth IRA ••3302 Vanguard · Its activity couldn’t be loaded');
       // Short of an account, so no All-time performance, and no button to set its totals.
       expect(words(host)).not.toContain('All-time performance Money in');
-      expect(words(host)).not.toContain('Set money in and out for Roth IRA');
+      expect(words(host)).not.toContain('Set deposits and withdrawals for Roth IRA');
       expect(words(byClass(host, 'card')[0])).toContain(
         'All-time returns across these accounts are shown once Nya has the activity for Roth IRA ••3302: its activity couldn’t be loaded just now.'
       );
@@ -405,10 +405,10 @@ describe('totals', () => {
     try {
       await pass(50);
       expect(byClass(host, 'caution').map(words)).toEqual([
-        'Caution: Money in and out for Roth IRA ••3302 can’t be read just now, so all-time returns across these accounts aren’t shown.',
+        'Caution: Deposits and withdrawals for Roth IRA ••3302 can’t be read just now, so all-time returns across these accounts aren’t shown.',
       ]);
-      expect(rows(host)[1]).toBe('Roth IRA ••3302 Vanguard · $2,000.00 in Money in and out can’t be read just now +$2,500.00 returns');
-      expect(host.findAll((e) => e.tagName === 'BUTTON' && words(e).startsWith('Set money'))).toHaveLength(0);
+      expect(rows(host)[1]).toBe('Roth IRA ••3302 Vanguard · $2,000.00 in Deposits and withdrawals can’t be read just now +$2,500.00 returns');
+      expect(host.findAll((e) => e.tagName === 'BUTTON' && /^(Set|Change) deposits/.test(words(e)))).toHaveLength(0);
     } finally {
       act(() => root.unmount());
     }
@@ -419,10 +419,10 @@ describe('totals', () => {
     try {
       await pass(50);
       expect(words(host)).toContain(
-        'Change money in and out for Roth IRA ••3302 to see your all-time returns across these accounts: its totals are for a day before the activity Nya now has.'
+        'Change deposits and withdrawals for Roth IRA ••3302 to see your all-time returns across these accounts: its totals are for a day before the activity Nya now has.'
       );
-      expect(host.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Change money in and out for Roth IRA ••3302')).toHaveLength(1);
-      expect(rows(host)[1]).toContain('Money in and out need changing');
+      expect(host.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Change deposits and withdrawals for Roth IRA ••3302')).toHaveLength(1);
+      expect(rows(host)[1]).toContain('Deposits and withdrawals need changing');
     } finally {
       act(() => root.unmount());
     }
@@ -444,8 +444,8 @@ describe('totals', () => {
     const { host, root } = setup({ answers: { ind: { totals: null } } });
     try {
       await pass(50);
-      expect(words(host)).toContain('Set money in and out for Individual ••4421 and Roth IRA ••3302 to see your all-time returns across these accounts.');
-      expect(host.findAll((e) => e.tagName === 'BUTTON' && words(e).startsWith('Set money'))).toHaveLength(0);
+      expect(words(host)).toContain('Set deposits and withdrawals for Individual ••4421 and Roth IRA ••3302 to see your all-time returns across these accounts.');
+      expect(host.findAll((e) => e.tagName === 'BUTTON' && words(e).startsWith('Set deposits'))).toHaveLength(0);
     } finally {
       act(() => root.unmount());
     }
@@ -471,7 +471,7 @@ describe('totals', () => {
     const { host, root, id, close } = setup();
     try {
       await pass(50);
-      const set = host.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Set money in and out for Roth IRA ••3302')[0];
+      const set = host.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Set deposits and withdrawals for Roth IRA ••3302')[0];
       act(() => {
         set.focus();
         click(set);
