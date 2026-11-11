@@ -347,13 +347,13 @@ export default function Dashboard({
   // Budgets' segment, kept the same way.
   const [budgetsSegment, setBudgetsSegment] = useState<BudgetsSegment>('month');
   // Accounts' view (components/AccountsSegments.tsx), kept the same way.
-  // Summary is mounted from the first time it is shown, so it keeps its
+  // Investments is mounted from the first time it is shown, so it keeps its
   // range while hidden.
   const [accountsSegment, setAccountsSegment] = useState<AccountsSegment>('accounts');
-  const [summaryShown, setSummaryShown] = useState(false);
+  const [investmentsShown, setInvestmentsShown] = useState(false);
   const chooseAccountsSegment = useCallback((s: AccountsSegment) => {
     setAccountsSegment(s);
-    if (s === 'summary') setSummaryShown(true);
+    if (s === 'investments') setInvestmentsShown(true);
   }, []);
   /** The Accounts tab on its Accounts view, where a link into the tab lands:
    *  the cards and notices it focuses are there. */
@@ -1046,10 +1046,10 @@ export default function Dashboard({
   // An investment account's money in and out (components/MoneyInOutSheet.tsx),
   // opened from its sheet, which comes back once they are saved or cleared.
   const [moneyTarget, setMoneyTarget] = useState<MoneyInOutTarget | null>(null);
-  // Opened from Accounts > Summary rather than the sheet: it goes back there,
+  // Opened from Accounts > Investments rather than the sheet: it goes back there,
   // which loads the account again (components/InvestmentActivity.tsx
   // onMoneyInOutSaved).
-  const moneyFromSummary = useRef(false);
+  const moneyFromInvestments = useRef(false);
   // Switching from another app (components/MigrationSheet.tsx): accounts it
   // makes change net worth, and its rows join the Activity tab.
   const [migrationOpen, setMigrationOpen] = useState(false);
@@ -2765,24 +2765,24 @@ export default function Dashboard({
                       from the first time it is shown. */}
                   <div
                     className="accounts-panel"
-                    id={accountsPanelId('summary')}
+                    id={accountsPanelId('investments')}
                     role="tabpanel"
-                    aria-labelledby={accountsTabId('summary')}
-                    hidden={accountsSegment !== 'summary'}
+                    aria-labelledby={accountsTabId('investments')}
+                    hidden={accountsSegment !== 'investments'}
                   >
                     {error && (
                       <Notice level="critical" role="alert">
                         {error}
                       </Notice>
                     )}
-                    {summaryShown && (
+                    {investmentsShown && (
                       <InvestmentGrowth
                         institutions={sortedInstitutions}
                         main={accountCurrency}
                         refreshKey={reloadKey}
                         onOpenAccount={(item_id, account_id) => setAccountOpen({ item_id, account_id })}
                         onMoneyInOut={(target) => {
-                          moneyFromSummary.current = true;
+                          moneyFromInvestments.current = true;
                           setMoneyTarget(target);
                         }}
                       />
@@ -3238,7 +3238,7 @@ export default function Dashboard({
         onClose={() => setMoneyTarget(null)}
         onDone={() => {
           setMoneyTarget(null);
-          if (moneyTarget && !moneyFromSummary.current) setAccountOpen({ item_id: moneyTarget.item_id, account_id: moneyTarget.account_id });
+          if (moneyTarget && !moneyFromInvestments.current) setAccountOpen({ item_id: moneyTarget.item_id, account_id: moneyTarget.account_id });
         }}
       />
       <AccountSheet
@@ -3257,7 +3257,7 @@ export default function Dashboard({
         onImport={(account_id) => setImportTarget({ account_id })}
         onImportHistory={setHistoryTarget}
         onMoneyInOut={(target) => {
-          moneyFromSummary.current = false;
+          moneyFromInvestments.current = false;
           setMoneyTarget(target);
         }}
         onDelete={(account) => {

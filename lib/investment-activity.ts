@@ -158,7 +158,7 @@ export function hasPlanFields(cached: Record<string, unknown>): boolean {
 
 /** A cached entry whose flows have the moves inside the account taken out
  *  (withoutMoves), which says so with its `moves`: one cached before then is
- *  a miss, so its chart and Accounts > Summary never count an exchange's two
+ *  a miss, so its chart and Accounts > Investments never count an exchange's two
  *  legs as money out and money in for the rest of its life in the cache. */
 export function hasCurrentFlows(cached: Record<string, unknown>): boolean {
   return 'moves' in cached;

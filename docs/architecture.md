@@ -225,7 +225,7 @@ An account's end (#50, [features.md](features.md#accounts-that-end)) is a state 
 
 ### Money in and out on an investment account
 
-The totals the person sets for an investment account ([features.md](features.md#money-in-and-out)) are two positive amounts as of a day, kept in the `money-in-out` map store (`lib/money-in-out-store.ts`), one entry per account id, exportable, the owner's alone.
+The totals the person sets for an investment account ([features.md](features.md#deposits-and-withdrawals)) are two positive amounts as of a day, kept in the `money-in-out` map store (`lib/money-in-out-store.ts`), one entry per account id, exportable, the owner's alone.
 
 - **Carried, never moved on.** The entry stays as typed. `lib/growth.ts` carries it to any day through the account's daily nets (`moneyInOutOn`: what moved between that day and the totals' day comes off, what moved after is added; a day's net is money in above zero, money out below). `usableTotals` decides on every read whether it can be: its day must be inside the activity Nya has for the account (`flows_from` on) and no later than the UTC day after today, since the person's today can be ahead of the server's.
 - **The line and the figures.** With usable totals, `contributionBaseline` gives each point the net money in on its day, from the same settled start as without them, and every point carries its money in and out, so the chart (`NetWorthChart`, told by `baselineFrom`) splits a range by their changes and draws the line only at zero and above, the plot's floor at zero where it reaches it. `sinceStarted` gives the sheet's figures, measured on the live balance, or on the last recorded balance the activity covers when that ends before yesterday.

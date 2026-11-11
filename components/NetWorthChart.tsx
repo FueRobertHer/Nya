@@ -438,12 +438,13 @@ export default function NetWorthChart({
     return { in: (baseIn[j] as number) - (baseIn[i] as number), out: (baseOut[j] as number) - (baseOut[i] as number), growth: vals[j] - vals[i] - (bj - bi) };
   }
   /** Its parts as the readout says them, those that round to nothing left
-   *  out but growth: "$8,000.00 in", "$500.00 out", "+$6,312.75 growth". */
+   *  out but returns: "$8,000.00 deposits", "$500.00 withdrawals",
+   *  "+$6,312.75 returns". */
   function splitParts(s: { in: number; out: number; growth: number }): string[] {
     return [
-      ...(roundsToNothing(s.in, currency ?? null) ? [] : [`${formatMoney(s.in, currency)} in`]),
-      ...(roundsToNothing(s.out, currency ?? null) ? [] : [`${formatMoney(s.out, currency)} out`]),
-      `${signed(s.growth, currency)} growth`,
+      ...(roundsToNothing(s.in, currency ?? null) ? [] : [`${formatMoney(s.in, currency)} deposits`]),
+      ...(roundsToNothing(s.out, currency ?? null) ? [] : [`${formatMoney(s.out, currency)} withdrawals`]),
+      `${signed(s.growth, currency)} returns`,
     ];
   }
   /** "+$2,340.00 (+4.1%)", marked approximate when it starts or ends on an
@@ -492,18 +493,18 @@ export default function NetWorthChart({
     const stays = below > 0 && shown.slice(below).every((b) => b < 0);
     const firstRecorded = points.slice(0, baseStart).every((p) => p.estimated);
     const none = !shown.some((b) => b >= 0);
-    const more = baselineFrom ? 'more had come out than gone in' : `more had come out than the balance ${onDay(dayIn(baseStart))} and money in since`;
-    if (none) info.push(`No grey line for this range: all through it, ${more}${baselineFrom ? ', so your net was below zero' : ''}.`);
+    const more = baselineFrom ? 'more had come out than gone in' : `more had come out than the balance ${onDay(dayIn(baseStart))} and deposits since`;
+    if (none) info.push(`No grey line for this range: all through it, ${more}${baselineFrom ? ', so deposits less withdrawals were below zero' : ''}.`);
     else {
       info.push(
         baselineFrom
-          ? `Grey line: your net money in (in less out) by each day, from your totals for ${fmtDay(baselineFrom, true)}. The gap above it is your growth so far.`
-          : `Grey line: the balance ${onDay(dayIn(baseStart))} plus net money in since. The gap above it is growth.`
+          ? `Grey line: your deposits less withdrawals by each day, from your totals for ${fmtDay(baselineFrom, true)}. The gap above it is your returns so far.`
+          : `Grey line: the balance ${onDay(dayIn(baseStart))} plus deposits less withdrawals since. The gap above it is your returns.`
       );
       if (stays) info.push(`It stops at zero ${onDay(dayIn(baseStart + below))}: from then on, ${more}.`);
       else if (below >= 0) info.push(`It stops at zero on the days ${more}.`);
     }
-    if (baselineFrom && baseStart > 0) info.push(`Money in, out and growth for the range count from ${dayIn(baseStart)}${firstRecorded ? ', the first recorded day' : ''}.`);
+    if (baselineFrom && baseStart > 0) info.push(`Deposits, withdrawals and returns for the range count from ${dayIn(baseStart)}${firstRecorded ? ', the first recorded day' : ''}.`);
   }
   if (uniform) info.push(`${estimatedWords} No stretch of this range is recorded, so the line is solid.`);
   else if (hasEstimated) info.push('Dashed: estimated, from transactions or across days with no data.');

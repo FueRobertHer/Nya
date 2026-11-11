@@ -15,13 +15,13 @@ const attr = (tag: string, name: string) => tag.match(new RegExp(`${name}="([^"]
 
 describe('the views', () => {
   test('each tab controls its own panel, the chosen one selected and the tab stop', () => {
-    const html = renderToStaticMarkup(<AccountsSegments segment="summary" onSegment={() => {}} />);
+    const html = renderToStaticMarkup(<AccountsSegments segment="investments" onSegment={() => {}} />);
     expect(html).toContain('role="tablist" aria-label="Accounts views"');
     expect(
       tags(html, 'tab').map((t) => [attr(t, 'id'), attr(t, 'aria-controls'), attr(t, 'aria-selected'), attr(t, 'tabindex')])
     ).toEqual([
       [accountsTabId('accounts'), accountsPanelId('accounts'), 'false', '-1'],
-      [accountsTabId('summary'), accountsPanelId('summary'), 'true', '0'],
+      [accountsTabId('investments'), accountsPanelId('investments'), 'true', '0'],
     ]);
   });
 
@@ -36,10 +36,10 @@ describe('the views', () => {
     const html = renderToStaticMarkup(<TabSkeleton tab="accounts" segments={{ accounts: 'accounts' }} />);
     expect(html).toContain('<div inert=""><div class="segmented accounts-segments" role="tablist"');
     expect(tags(html, 'tab').map((t) => attr(t, 'aria-selected'))).toEqual(['true', 'false']);
-    const summary = renderToStaticMarkup(<TabSkeleton tab="accounts" segments={{ accounts: 'summary' }} />);
+    const summary = renderToStaticMarkup(<TabSkeleton tab="accounts" segments={{ accounts: 'investments' }} />);
     expect(tags(summary, 'tab').map((t) => attr(t, 'aria-selected'))).toEqual(['false', 'true']);
-    expect(summary).toContain('Loading investment growth');
-    // Its two cards, Since you started and Investment growth, said as one.
+    expect(summary).toContain('Loading investment performance');
+    // Its two cards, All-time performance and Performance by period, said as one.
     expect(summary.split('class="card stack"')).toHaveLength(3);
     expect(summary.split('role="status"')).toHaveLength(2);
   });
