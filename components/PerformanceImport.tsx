@@ -23,8 +23,8 @@
 //     newest marked Counts, each with Undo, confirmed in place with what
 //     will change.
 
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
-import { formatDay, formatInstantDay, formatMoney, MINUS, onDay, signedMoney } from '@/lib/format';
+import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { fieldAmount, formatDay, formatInstantDay, formatMoney, MINUS, onDay, signedMoney, zeroExample } from '@/lib/format';
 import { normalizedAmountText } from '@/lib/manual-txn-input';
 import { pdfTextPages, MAX_PDF_BYTES, MAX_PDF_PAGES, type PdfJs, type PdfTextError } from '@/lib/import/pdf-text';
 import { readPerformance, type Cents, type PerformanceRead } from '@/lib/import/vanguard-performance';
@@ -300,6 +300,7 @@ export function PerformanceImports({
   const applied = useMemo(() => (points && activity ? withPastMonths(points, activity, imports, currency).applied : null), [points, activity, imports, currency]);
   if (!counting) return null;
   const shown = all ? list : list.slice(0, SHOWN);
+  const hidden = list.length - SHOWN;
 
   const askText = (i: MonthsImport) => {
     const d = importedDay(i);
@@ -365,7 +366,7 @@ export function PerformanceImports({
       {!all && list.length > SHOWN && (
         <div>
           <button type="button" className="btn ghost" onClick={() => setAll(true)}>
-            {`Show ${(list.length - SHOWN).toLocaleString()} more`}
+            {`Show ${hidden.toLocaleString()} ${hidden === 1 ? 'more import' : 'more imports'}`}
           </button>
         </div>
       )}
@@ -409,7 +410,7 @@ export function readSigned(text: string): Cents | null {
 }
 
 /** A figure as a field shows it to begin with. */
-const fieldText = (c: Cents | null, signed: boolean) => (c === null ? '' : `${signed ? (c < 0 ? MINUS : '+') : ''}${(Math.abs(c) / 100).toFixed(2)}`);
+const fieldText = (c: Cents | null, signed: boolean) => (c === null ? '' : `${signed ? (c < 0 ? MINUS : '+') : ''}${fieldAmount(Math.abs(c) / 100)}`);
 
 /** The body the route takes for an import (app/api/investment-months). */
 export type ImportBody = {
@@ -730,16 +731,40 @@ function FailingMonth({ id, m, state, currency }: { id: string; m: MonthState; s
   const set = (part: keyof FieldText, value: string) => state.setTypedText((t) => ({ ...t, [m.month]: { ...text, [part]: value } }));
   const read = state.read!.months[k];
 
-  let problem: string | null = null;
+  // Its amounts each through Masked, so hidden amounts hide them here too.
+  let problem: ReactNode = null;
   if (m.net === null || m.returns === null || m.end === null || m.begin === null) problem = 'Type each figure as an amount, such as 1,000.00 or −250.00.';
   else if (m.begin + m.net + m.returns !== m.end) {
     const sum = m.begin + m.net + m.returns;
-    const part = (c: Cents) => `${c < 0 ? MINUS : '+'} ${money(Math.abs(c))}`;
-    problem = `${money(m.begin)} ${part(m.net)} ${part(m.returns)} is ${money(sum)}, not ${money(m.end)}.${
-      next && next.figures.begin !== null ? ` ${monthText(next.month)} began at ${money(next.figures.begin)}.` : ''
-    }`;
+    const sign = (c: Cents) => (c < 0 ? ` ${MINUS} ` : ' + ');
+    problem = (
+      <>
+        <Masked>{money(m.begin)}</Masked>
+        {sign(m.net)}
+        <Masked>{money(Math.abs(m.net))}</Masked>
+        {sign(m.returns)}
+        <Masked>{money(Math.abs(m.returns))}</Masked>
+        {' is '}
+        <Masked>{money(sum)}</Masked>
+        {', not '}
+        <Masked>{money(m.end)}</Masked>.
+        {next && next.figures.begin !== null && (
+          <>
+            {` ${monthText(next.month)} began at `}
+            <Masked>{money(next.figures.begin)}</Masked>.
+          </>
+        )}
+      </>
+    );
   } else if (!m.typed && read.failed.includes('returns')) problem = 'Its returns aren’t its market gain or loss plus its income, so one of them was read wrong. Check its returns against Vanguard’s page.';
-  else if (!m.typed && read.figures.begin !== m.begin && prev) problem = `It begins at ${money(read.figures.begin ?? 0)}, not ${monthText(prev.month)}’s ending balance. Check both months against Vanguard’s page.`;
+  else if (!m.typed && read.figures.begin !== m.begin && prev)
+    problem = (
+      <>
+        {'It begins at '}
+        <Masked>{money(read.figures.begin ?? 0)}</Masked>
+        {`, not ${monthText(prev.month)}’s ending balance. Check both months against Vanguard’s page.`}
+      </>
+    );
   else if (!m.typed) problem = 'Its cumulative returns don’t follow from its returns. Check its returns against Vanguard’s page.';
 
   const errId = `${id}-error`;
@@ -755,15 +780,15 @@ function FailingMonth({ id, m, state, currency }: { id: string; m: MonthState; s
       )}
       <label className="field">
         Deposits & withdrawals
-        <input inputMode="decimal" value={text.net} onChange={(e) => set('net', e.target.value)} />
+        <input inputMode="decimal" placeholder={zeroExample(2)} value={text.net} onChange={(e) => set('net', e.target.value)} />
       </label>
       <label className="field">
         Investment returns
-        <input inputMode="decimal" value={text.returns} onChange={(e) => set('returns', e.target.value)} />
+        <input inputMode="decimal" placeholder={zeroExample(2)} value={text.returns} onChange={(e) => set('returns', e.target.value)} />
       </label>
       <label className="field">
         Ending balance
-        <input inputMode="decimal" value={text.end} aria-invalid={problem ? true : undefined} aria-describedby={problem ? errId : undefined} onChange={(e) => set('end', e.target.value)} />
+        <input inputMode="decimal" placeholder={zeroExample(2)} value={text.end} aria-invalid={problem ? true : undefined} aria-describedby={problem ? errId : undefined} onChange={(e) => set('end', e.target.value)} />
       </label>
       {problem && <FieldError id={errId}>{problem}</FieldError>}
     </fieldset>
