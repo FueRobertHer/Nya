@@ -465,7 +465,7 @@ export function AccountsSkeleton({ segment = 'accounts' }: { segment?: AccountsS
     return (
       <>
         {bar}
-        <CardSkeleton label="Loading investment performance" cards={2} />
+        <CardSkeleton label="Loading investment returns" cards={2} />
       </>
     );
   }

@@ -1,19 +1,30 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, trackRoots, click, fakeClock, FakeElement, type FakeNode } from './mini-dom';
+import { installDom, trackRoots, click, fakeClock, type, FakeElement, FakeEvent, type FakeNode } from './mini-dom';
 import { holdDay, HELD_DAY } from './held-day';
 
 holdDay();
 
-// Accounts > Investments' two cards (components/InvestmentGrowth.tsx),
-// All-time performance and Performance by period, as a person sees them
-// (react-dom/client over test/mini-dom.ts), on mocked history and activity:
-// their figures for each currency, what stands in for All-time performance,
-// what they can't count, and how they load.
+// Accounts > Investments (components/InvestmentGrowth.tsx), as a person sees
+// it (react-dom/client over test/mini-dom.ts), on mocked history and
+// activity: the chooser, the hero's returns and rate, the range's card and
+// its rows, when All is all time, what it can't count, how it loads, and the
+// hero under a finger.
 
 const dom = installDom();
 const realFetch = globalThis.fetch;
+
+// The chart is laid out 352px wide, from the left of the screen, so a
+// pointer's clientX is its viewBox x (as test/net-worth-hero-view.test.tsx).
+const LAID_OUT = 352;
+const rect = FakeElement.prototype.getBoundingClientRect;
+FakeElement.prototype.getBoundingClientRect = function (this: FakeElement) {
+  const r = rect.call(this);
+  return this.tagName.toLowerCase() === 'svg' ? { ...r, width: LAID_OUT, right: LAID_OUT } : r;
+};
+
 afterAll(() => {
   globalThis.fetch = realFetch;
+  FakeElement.prototype.getBoundingClientRect = rect;
   dom.uninstall();
 });
 
@@ -25,6 +36,7 @@ const { default: InvestmentGrowth } = await import('@/components/InvestmentGrowt
 const { moneyInOutSaved } = await import('@/components/InvestmentActivity');
 const { Sheet } = await import('@/components/Sheet');
 const { ACTIVITY_STILL_LOADING } = await import('@/lib/growth-summary');
+const { setHideAmounts } = await import('@/components/hide-amounts');
 type Institution = import('@/components/accounts-format').Institution;
 type Target = import('@/components/MoneyInOutFigures').MoneyInOutTarget;
 type Point = import('@/lib/growth').BalancePoint;
@@ -33,9 +45,11 @@ type Point = import('@/lib/growth').BalancePoint;
 const pass = fakeClock({ now: HELD_DAY });
 
 // Today is Nov 6, 2026; each account's last recorded day is Nov 5.
-//   Individual: $5,000 in on Mar 1, 100,000 to 120,000 this year: +$15,000 growth.
-//   Roth IRA: $2,000 in on Apr 15, 41,000 to 45,500: +$2,500.
-//   401(k): recorded from Jul 12; $1,500 in, $500 out, 50,000 to 56,000: +$5,000.
+//   Individual (brokerage): $5,000 in on Mar 1, 100,000 to 120,000 this
+//     year: +$15,000 returns; totals of $80,000 in.
+//   Roth IRA: $2,000 in on Apr 15, 41,000 to 45,500: +$2,500; no totals.
+//   401(k): recorded from Jul 12; $1,500 in, $500 out, 50,000 to 56,000:
+//     +$5,000; totals of $30,000 in and $2,000 out.
 //   TFSA (CAD): CA$6,500 in, 10,000 to 17,000: +CA$500.
 type Fixture = { points: Point[]; flows: { date: string; amount: number }[]; flows_from: string; totals?: { in: number; out: number; as_of: string } | null };
 const FIXTURES: Record<string, Fixture> = {
@@ -64,6 +78,8 @@ const FIXTURES: Record<string, Fixture> = {
     totals: null,
   },
 };
+const SUBTYPES: Record<string, string> = { ind: 'brokerage', roth: 'roth', k401: '401k', tfsa: 'tfsa', rh: 'brokerage', wf: 'ira' };
+const ROTH_SET = { roth: { totals: { in: 20_000, out: 0, as_of: '2026-05-01' } } };
 
 // Each test's accounts get their own ids: the activity is cached by account
 // for a minute (components/InvestmentActivity.tsx), across tests too.
@@ -77,8 +93,9 @@ function setup(
     manual?: boolean;
     history?: number;
     only?: string[];
-    balances?: Record<string, number | null>;
     flows?: Record<string, Fixture['flows']>;
+    /** The buckets the person set (Plan > Allocation), by fixture key. */
+    buckets?: Record<string, string>;
   } = {}
 ) {
   run++;
@@ -89,8 +106,8 @@ function setup(
     official_name: null,
     mask,
     type: 'investment',
-    subtype: null,
-    balance: opts.balances && k in opts.balances ? opts.balances[k] : balance,
+    subtype: SUBTYPES[k] ?? null,
+    balance,
     limit: null,
     currency: opts.currencies?.[k] ?? 'USD',
   });
@@ -124,6 +141,11 @@ function setup(
       if (opts.history) return Response.json({ error: 'Failed' }, { status: opts.history });
       const ids = u.searchParams.get('ids')!.split(',');
       return Response.json({ histories: Object.fromEntries(ids.map((i) => [i, FIXTURES[i.replace(/_\d+$/, '')]?.points ?? []])) });
+    }
+    if (u.pathname === '/api/allocation-settings') {
+      calls.push('settings');
+      const buckets = Object.entries(opts.buckets ?? {}).map(([k, bucket]) => ({ account_id: id(k), bucket }));
+      return Response.json({ settings: { v: 1, buckets, funds: [], accounts: [], target: null } });
     }
     const key = u.searchParams.get('id')!.replace(/_\d+$/, '');
     calls.push(key);
@@ -176,7 +198,22 @@ function setup(
   let refreshes = 0;
   const draw = (refreshKey: string | null) => act(() => root.render(<Tab refreshKey={refreshKey} />));
   draw(null);
-  return { host, root, calls, opened, forms, id, refresh: () => draw(`refresh ${++refreshes}`), close: () => act(() => closeSheet()) };
+  const buttons = (text: string) => host.findAll((e) => e.tagName === 'BUTTON' && words(e) === text);
+  return {
+    host,
+    root,
+    calls,
+    opened,
+    forms,
+    id,
+    refresh: () => draw(`refresh ${++refreshes}`),
+    close: () => act(() => closeSheet()),
+    buttons,
+    /** The chart's range switch. */
+    range: (text: string) => act(() => click(buttons(text)[0])),
+    /** The Accounts chip's select. */
+    chooser: () => host.findAll((e) => e.tagName === 'SELECT' && e.getAttribute('aria-label') === 'Accounts')[0] ?? null,
+  };
 }
 
 /** An element's words, its parts spaced apart. */
@@ -184,12 +221,21 @@ const words = (n: FakeNode): string =>
   (n instanceof FakeElement ? n.childNodes.map(words).join(' ') : n.textContent).replace(/\s+/g, ' ').trim();
 const byClass = (host: FakeElement, cls: string) => host.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes(cls));
 const rows = (host: FakeElement) => byClass(host, 'list-row').map(words);
+/** The hero's figure as a screen reader hears it: the whole amount. */
+const figure = (host: FakeElement) => {
+  const v = byClass(host, 'total-value')[0];
+  const whole = byClass(v, 'visually-hidden')[0];
+  return words(whole ?? v);
+};
+const heroLine = (host: FakeElement) => words(byClass(host, 'hero-delta')[0]);
+const hero = (host: FakeElement) => words(byClass(host, 'investments-hero')[0]);
+const card = (host: FakeElement) => words(byClass(host, 'card')[0]);
 
-describe('the card', () => {
-  test('loading: a placeholder for the figures, and rows waiting on their activity', () => {
+describe('the screen', () => {
+  test('loading: placeholders for the figures, and rows waiting on their activity', () => {
     const { host, root } = setup();
     try {
-      expect(host.findAll((e) => e.getAttribute('aria-label') === 'Loading all-time performance').length).toBe(1);
+      expect(figure(host)).toBe('Loading investment returns');
       expect(host.findAll((e) => e.getAttribute('aria-label') === 'Loading investment activity').length).toBe(1);
       expect(rows(host)).toEqual(['Individual ••4421 Vanguard · Loading its activity', 'Roth IRA ••3302 Vanguard · Loading its activity', '401(k) ••8810 Fidelity · Loading its activity']);
     } finally {
@@ -197,77 +243,81 @@ describe('the card', () => {
     }
   });
 
-  test('one total missing: the range for each account and together, and what would show all-time returns', async () => {
-    const { host, root, forms, id } = setup();
+  test('year to date: the returns and the rate, the four figures, and a row for each account', async () => {
+    const { host, root } = setup();
     try {
       await pass(50);
-      const text = words(host);
-      expect(text).toContain('Year to date Money in $8,500.00 Money out $500.00 Net $8,000.00 Returns +$22,500.00');
-      expect(text).toContain('401(k) ••8810 counts from Jul 12, its first recorded day.');
-      expect(text).not.toContain('All-time performance Money in');
-      expect(text).toContain('Set deposits and withdrawals for Roth IRA ••3302 to see your all-time returns across these accounts.');
+      expect(figure(host)).toBe('+$22,500.00');
+      expect(heroLine(host)).toBe('▲ +13.6% rate of return · year to date');
+      expect(hero(host)).toContain('401(k) ••8810 counts from Jul 12, its first recorded day.');
+      expect(card(host)).toContain(
+        'Year to date Beginning balance $191,000.00 Deposits & withdrawals +$8,000.00 Investment returns +$22,500.00 Ending balance $221,500.00 Jan 1 to yesterday. 401(k) ••8810’s beginning balance is its Jul 12 balance.'
+      );
       expect(rows(host)).toEqual([
-        'Individual ••4421 Vanguard · $5,000.00 in All time: net $80,000.00 · +$40,500.00 returns +$15,000.00 returns',
-        'Roth IRA ••3302 Vanguard · $2,000.00 in No deposits and withdrawals set yet +$2,500.00 returns',
-        '401(k) ••8810 Fidelity · $1,500.00 in, $500.00 out, from Jul 12 All time: net $28,000.00 · +$28,200.00 returns +$5,000.00 returns',
+        'Individual ••4421 Vanguard +$15,000.00 returns · +14.4%',
+        'Roth IRA ••3302 Vanguard +$2,500.00 returns · +5.9%',
+        '401(k) ••8810 Fidelity · from Jul 12 +$5,000.00 returns · +9.8%',
       ]);
+      // Only All asks for totals.
+      expect(card(host)).not.toContain('Set deposits and withdrawals');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  test('All, one total missing: counted from the first recorded day, and what would make it all time', async () => {
+    const { host, root, forms, id, range, buttons } = setup();
+    try {
+      await pass(50);
+      range('All');
+      expect(heroLine(host)).toStartWith('▲');
+      expect(heroLine(host)).toEndWith('rate of return · since Dec 1, 2025');
+      expect(figure(host)).toBe('+$28,500.00');
+      expect(card(host)).toContain(
+        'Since Dec 1, 2025 Beginning balance $185,000.00 Deposits & withdrawals +$8,000.00 Investment returns +$28,500.00 Ending balance $221,500.00'
+      );
+      expect(card(host)).toContain(
+        'Set deposits and withdrawals for Roth IRA ••3302 to see all time for these accounts. Until then, All counts from Dec 1, 2025, the first recorded day.'
+      );
       // Its one button opens the form on that account.
-      const set = host.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Set deposits and withdrawals for Roth IRA ••3302');
-      act(() => click(set[0]));
+      act(() => click(buttons('Set deposits and withdrawals')[0]));
       expect(forms.map((f) => [f.account_id, f.label, f.flows_from])).toEqual([[id('roth'), 'Roth IRA ••3302 · Vanguard', '2025-06-01']]);
     } finally {
       act(() => root.unmount());
     }
   });
 
-  test('every total set: All-time performance across the accounts', async () => {
-    const { host, root } = setup({ answers: { roth: { totals: { in: 20_000, out: 0, as_of: '2026-05-01' } } } });
+  test('All, every total set: all time, from $0.00, with no rate', async () => {
+    const { host, root, range } = setup({ answers: ROTH_SET });
     try {
       await pass(50);
-      expect(words(host)).toContain('All-time performance Money in $130,000.00 Money out $2,000.00 Net $128,000.00 Returns +$94,300.00');
+      range('All');
+      expect(heroLine(host)).toBe('All time, since each account opened');
+      expect(figure(host)).toBe('+$93,500.00');
+      expect(card(host)).toContain(
+        'All time Beginning balance $0.00 Deposits & withdrawals +$128,000.00 Investment returns +$93,500.00 Ending balance $221,500.00 Since each account opened, from the deposits and withdrawals you set for it.'
+      );
+      expect(rows(host)).toEqual(['Individual ••4421 Vanguard +$40,000.00 returns', 'Roth IRA ••3302 Vanguard +$25,500.00 returns', '401(k) ••8810 Fidelity +$28,000.00 returns']);
       expect(words(host)).not.toContain('Set deposits and withdrawals');
+      // For all time each account counts from when it opened: no late start said.
+      expect(hero(host)).not.toContain('counts from');
+      // The rate's absence, said in the chart's info.
+      expect(words(host)).toContain('There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.');
     } finally {
       act(() => root.unmount());
     }
   });
 
-  // Two cards, so the range's switch sits with what it changes.
-  test('All-time performance is a card of its own, first, and no range changes it', async () => {
-    const { host, root } = setup({ answers: { roth: { totals: { in: 20_000, out: 0, as_of: '2026-05-01' } } } });
-    try {
-      await pass(50);
-      const cards = byClass(host, 'card');
-      expect(cards.map((c) => words(c.findAll((e) => e.tagName === 'H2')[0]))).toEqual(['All-time performance', 'Performance by period']);
-      const since = 'Money in $130,000.00 Money out $2,000.00 Net $128,000.00 Returns +$94,300.00';
-      expect(words(cards[0])).toContain(since);
-      expect(words(cards[0])).not.toContain('Year to date');
-      expect(cards[0].findAll((e) => e.getAttribute('role') === 'radiogroup')).toHaveLength(0);
-      expect(words(cards[1])).toContain('Year to date Money in $8,500.00');
-      act(() => click(cards[1].findAll((e) => e.tagName === 'BUTTON' && words(e) === 'All')[0]));
-      expect(words(cards[1])).not.toContain('Year to date');
-      expect(words(cards[0])).toContain(since);
-    } finally {
-      act(() => root.unmount());
-    }
-  });
-
-  // Individual sends Roth IRA $3,000 in September: on the totals, neither in
-  // nor out, so they come to what they were without it; each row keeps its leg.
-  test('money moved between the accounts: off the totals, and said; the rows keep it', async () => {
+  // Individual sends Roth IRA $3,000 in September: a withdrawal from one and a
+  // deposit to the other, so the net is what it was without it.
+  test('money moved between the accounts cancels out; the rows keep it', async () => {
     const { host, root } = setup({
-      answers: { roth: { totals: { in: 20_000, out: 0, as_of: '2026-05-01' } } },
       flows: { ind: [{ date: '2026-03-01', amount: 5000 }, { date: '2026-09-10', amount: -3000 }], roth: [{ date: '2026-04-15', amount: 2000 }, { date: '2026-09-12', amount: 3000 }] },
     });
     try {
       await pass(50);
-      const [since, range] = byClass(host, 'card').map(words);
-      const moved = 'Not counted as money in or out: $3,000.00 that moved between these accounts.';
-      expect(since).toContain(`Money in $130,000.00 Money out $2,000.00 Net $128,000.00 Returns +$94,300.00 ${moved}`);
-      expect(range).toContain(`Year to date Money in $8,500.00 Money out $500.00 Net $8,000.00 Returns +$22,500.00 ${moved}`);
-      expect(rows(host).slice(0, 2)).toEqual([
-        'Individual ••4421 Vanguard · $5,000.00 in, $3,000.00 out All time: net $77,000.00 · +$43,500.00 returns +$18,000.00 returns',
-        'Roth IRA ••3302 Vanguard · $5,000.00 in All time: net $23,000.00 · +$22,600.00 returns −$500.00 returns',
-      ]);
+      expect(card(host)).toContain('Deposits & withdrawals +$8,000.00 Investment returns +$22,500.00');
+      expect(rows(host).slice(0, 2).map((r) => r.replace(/ · [+−][\d.]+%$/, ''))).toEqual(['Individual ••4421 Vanguard +$18,000.00 returns', 'Roth IRA ••3302 Vanguard −$500.00 returns']);
     } finally {
       act(() => root.unmount());
     }
@@ -284,14 +334,17 @@ describe('the card', () => {
     }
   });
 
-  test('two currencies: each added up on its own, named', async () => {
+  test('two currencies: each added up on its own, the hero the home one', async () => {
     const { host, root } = setup({ currencies: { tfsa: 'CAD' } });
     try {
       await pass(50);
-      const text = words(host);
-      expect(text).toContain('US dollars, year to date Money in $8,500.00');
-      expect(text).toContain('Canadian dollars, year to date Money in CA$6,500.00 Money out CA$0.00 Net CA$6,500.00 Returns +CA$500.00');
-      expect(text).toContain('Each currency is added up on its own: nothing here is converted.');
+      expect(figure(host)).toBe('+$22,500.00');
+      expect(hero(host)).toContain('In US dollars. Accounts in other currencies are added up on their own, below: nothing here is converted.');
+      const cards = byClass(host, 'card').map(words);
+      expect(cards[0]).toStartWith('US dollars, year to date Beginning balance $191,000.00');
+      expect(cards[1]).toStartWith(
+        'Canadian dollars, year to date Beginning balance CA$10,000.00 Deposits & withdrawals +CA$6,500.00 Investment returns +CA$500.00 Ending balance CA$17,000.00'
+      );
     } finally {
       act(() => root.unmount());
     }
@@ -309,23 +362,97 @@ describe('the card', () => {
       act(() => root.unmount());
     }
   });
+
+  test('no linked investment accounts: what will be here', async () => {
+    const { host, root } = setup({ only: [], manual: true });
+    try {
+      await pass(50);
+      expect(words(host)).toContain('Linked investment accounts show their returns here.');
+      expect(words(host)).toContain('Not counted: Robinhood ••1290 (manual) and Wealthfront ••7781 (through SimpleFIN).');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+});
+
+describe('the chooser', () => {
+  test('all, retirement or not, or one account', async () => {
+    const { host, root, chooser } = setup({ manual: true });
+    try {
+      await pass(50);
+      const select = chooser()!;
+      expect(select.findAll((e) => e.tagName === 'OPTION').map(words)).toEqual([
+        'All accounts',
+        'Retirement',
+        'Non-retirement',
+        'Individual ••4421',
+        'Roth IRA ••3302',
+        '401(k) ••8810',
+      ]);
+      expect(words(byClass(host, 'chip-select')[0])).toStartWith('Accounts');
+
+      act(() => type(select, 'retirement'));
+      await pass(50);
+      expect(words(byClass(host, 'chip-select')[0])).toStartWith('Accounts: Retirement');
+      expect(card(host)).toContain('Beginning balance $91,000.00 Deposits & withdrawals +$3,000.00 Investment returns +$7,500.00 Ending balance $101,500.00');
+      expect(rows(host).map((r) => r.split(' Vanguard')[0].split(' Fidelity')[0])).toEqual(['Roth IRA ••3302', '401(k) ••8810']);
+      // The accounts not counted go with the ones chosen.
+      expect(words(host)).toContain('Not counted: Wealthfront ••7781 (through SimpleFIN). Nya has no investment activity for it.');
+      expect(words(host)).not.toContain('Robinhood');
+
+      act(() => type(chooser()!, 'other'));
+      await pass(50);
+      expect(figure(host)).toBe('+$15,000.00');
+      expect(words(host)).toContain('Not counted: Robinhood ••1290 (manual).');
+
+      // One account: its own figures, and no rows to repeat them.
+      const ind = chooser()!.findAll((e) => e.tagName === 'OPTION' && words(e) === 'Individual ••4421')[0].getAttribute('value')!;
+      act(() => type(chooser()!, ind));
+      await pass(50);
+      expect(words(byClass(host, 'chip-select')[0])).toStartWith('Accounts: Individual ••4421');
+      expect(card(host)).toContain('Beginning balance $100,000.00 Deposits & withdrawals +$5,000.00 Investment returns +$15,000.00 Ending balance $120,000.00');
+      expect(rows(host)).toEqual([]);
+      expect(words(host)).not.toContain('Not counted');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  test('the buckets the person set win over the kind of account', async () => {
+    const { root, chooser } = setup({ buckets: { ind: 'roth' } });
+    try {
+      await pass(50);
+      // All three are retirement accounts now: no kinds to choose between.
+      expect(chooser()!.findAll((e) => e.tagName === 'OPTION').map(words)).toEqual(['All accounts', 'Individual ••4421', 'Roth IRA ••3302', '401(k) ••8810']);
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  test('one account: nothing to choose', async () => {
+    const { root, chooser, calls } = setup({ only: ['ind'] });
+    try {
+      await pass(50);
+      expect(chooser()).toBeNull();
+      expect(calls).not.toContain('settings');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
 });
 
 describe('what the figures are short of', () => {
-  test('activity that fails to load: a critical notice under the figures, and on its row', async () => {
-    const { host, root } = setup({ answers: { roth: { status: 500 } } });
+  test('activity that fails to load: a critical notice by the figures, and on its row', async () => {
+    const { host, root, range } = setup({ answers: { roth: { status: 500 } } });
     try {
       await pass(50);
-      const critical = byClass(host, 'critical').map(words);
-      expect(critical).toEqual(['Critical: These figures leave out Roth IRA ••3302: its activity couldn’t be loaded just now.']);
-      expect(words(host)).toContain('Money in $6,500.00 Money out $500.00 Net $6,000.00 Returns +$20,000.00');
+      expect(byClass(host, 'critical').map(words)).toEqual(['Critical: These figures leave out Roth IRA ••3302: its activity couldn’t be loaded just now.']);
+      expect(card(host)).toContain('Beginning balance $150,000.00 Deposits & withdrawals +$6,000.00 Investment returns +$20,000.00 Ending balance $176,000.00');
       expect(rows(host)[1]).toBe('Roth IRA ••3302 Vanguard · Its activity couldn’t be loaded');
-      // Short of an account, so no All-time performance, and no button to set its totals.
-      expect(words(host)).not.toContain('All-time performance Money in');
-      expect(words(host)).not.toContain('Set deposits and withdrawals for Roth IRA');
-      expect(words(byClass(host, 'card')[0])).toContain(
-        'All-time returns across these accounts are shown once Nya has the activity for Roth IRA ••3302: its activity couldn’t be loaded just now.'
-      );
+      // On All: all time waits for it, and there is no button to set its totals.
+      range('All');
+      expect(card(host)).toContain('All time is shown once Nya has the activity for Roth IRA ••3302.');
+      expect(words(host)).not.toContain('Set deposits and withdrawals');
     } finally {
       act(() => root.unmount());
     }
@@ -335,22 +462,8 @@ describe('what the figures are short of', () => {
     const { host, root } = setup({ answers: { roth: { note: ACTIVITY_STILL_LOADING } } });
     try {
       await pass(50);
-      expect(byClass(host, 'critical').map(words)).toEqual([
-        'Critical: These figures leave out Roth IRA ••3302: its activity is still loading, so refresh in a moment.',
-      ]);
+      expect(byClass(host, 'critical').map(words)).toEqual(['Critical: These figures leave out Roth IRA ••3302: its activity is still loading, so refresh in a moment.']);
       expect(rows(host)[1]).toBe('Roth IRA ••3302 Vanguard · Its activity is still loading');
-    } finally {
-      act(() => root.unmount());
-    }
-  });
-
-  test('one failed and one still loading: All-time performance gives each its reason', async () => {
-    const { host, root } = setup({ answers: { roth: { status: 500 }, k401: { note: ACTIVITY_STILL_LOADING } } });
-    try {
-      await pass(50);
-      expect(words(byClass(host, 'card')[0])).toContain(
-        'All-time returns across these accounts are shown once Nya has all their activity. The activity for Roth IRA ••3302 couldn’t be loaded just now; for 401(k) ••8810, it is still loading.'
-      );
     } finally {
       act(() => root.unmount());
     }
@@ -373,26 +486,28 @@ describe('what the figures are short of', () => {
   });
 
   test('no investment activity at all: its row says so, and nothing is short', async () => {
-    const { host, root } = setup({ answers: { roth: { noActivity: true } } });
+    const { host, root, range } = setup({ answers: { roth: { noActivity: true } } });
     try {
       await pass(50);
       expect(byClass(host, 'critical')).toHaveLength(0);
       expect(rows(host)[1]).toBe('Roth IRA ••3302 Vanguard · No investment activity yet');
-      // The two left have their totals: All-time performance across them.
-      expect(words(host)).toContain('All-time performance Money in $110,000.00 Money out $2,000.00 Net $108,000.00 Returns +$68,700.00');
+      // The two left have their totals: all time across them.
+      range('All');
+      expect(card(host)).toContain('All time Beginning balance $0.00 Deposits & withdrawals +$108,000.00 Investment returns +$68,000.00 Ending balance $176,000.00');
     } finally {
       act(() => root.unmount());
     }
   });
 
-  test('history that fails to load: said once, critical', async () => {
+  test('history that fails to load: said once, critical, and no figures', async () => {
     const { host, root } = setup({ history: 500 });
     try {
       await pass(50);
       expect(byClass(host, 'critical').map(words)).toEqual([
         'Critical: The accounts’ balance history couldn’t be loaded just now, so their returns over a range can’t be worked out. Refresh to try again.',
       ]);
-      expect(words(host)).not.toContain('Year to date');
+      expect(figure(host)).toBe('Nothing to count yet');
+      expect(byClass(host, 'card')).toHaveLength(0);
     } finally {
       act(() => root.unmount());
     }
@@ -400,14 +515,14 @@ describe('what the figures are short of', () => {
 });
 
 describe('totals', () => {
-  test('that can’t be read: a caution, and never a button', async () => {
-    const { host, root } = setup({ answers: { roth: { unreadable: true } } });
+  test('that can’t be read: a caution on All, and never a button', async () => {
+    const { host, root, range } = setup({ answers: { roth: { unreadable: true } } });
     try {
       await pass(50);
+      range('All');
       expect(byClass(host, 'caution').map(words)).toEqual([
         'Caution: Deposits and withdrawals for Roth IRA ••3302 can’t be read just now, so all-time returns across these accounts aren’t shown.',
       ]);
-      expect(rows(host)[1]).toBe('Roth IRA ••3302 Vanguard · $2,000.00 in Deposits and withdrawals can’t be read just now +$2,500.00 returns');
       expect(host.findAll((e) => e.tagName === 'BUTTON' && /^(Set|Change) deposits/.test(words(e)))).toHaveLength(0);
     } finally {
       act(() => root.unmount());
@@ -415,36 +530,25 @@ describe('totals', () => {
   });
 
   test('set for a day before the activity Nya has: change them', async () => {
-    const { host, root } = setup({ answers: { roth: { totals: { in: 1, out: 0, as_of: '2025-01-01' } } } });
+    const { host, root, range, buttons } = setup({ answers: { roth: { totals: { in: 1, out: 0, as_of: '2025-01-01' } } } });
     try {
       await pass(50);
-      expect(words(host)).toContain(
-        'Change deposits and withdrawals for Roth IRA ••3302 to see your all-time returns across these accounts: its totals are for a day before the activity Nya now has.'
+      range('All');
+      expect(card(host)).toContain(
+        'Change deposits and withdrawals for Roth IRA ••3302 to see all time for these accounts: its totals are for a day before the activity Nya now has. Until then, All counts from Dec 1, 2025, the first recorded day.'
       );
-      expect(host.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Change deposits and withdrawals for Roth IRA ••3302')).toHaveLength(1);
-      expect(rows(host)[1]).toContain('Deposits and withdrawals need changing');
-    } finally {
-      act(() => root.unmount());
-    }
-  });
-
-  test('set, with no balance to measure all-time returns by: said, not left out', async () => {
-    const { host, root } = setup({ answers: { roth: { totals: { in: 20_000, out: 0, as_of: '2026-05-01' } } }, balances: { ind: null } });
-    try {
-      await pass(50);
-      expect(words(host)).toContain('Nya has no balance for Individual ••4421 just now, so all-time returns across these accounts aren’t shown.');
-      expect(words(host)).not.toContain('All-time performance Money in');
-      expect(rows(host)[0]).toBe('Individual ••4421 Vanguard · $5,000.00 in All time: net $80,000.00 +$15,000.00 returns');
+      expect(buttons('Change deposits and withdrawals')).toHaveLength(1);
     } finally {
       act(() => root.unmount());
     }
   });
 
   test('several missing: named, with no button', async () => {
-    const { host, root } = setup({ answers: { ind: { totals: null } } });
+    const { host, root, range } = setup({ answers: { ind: { totals: null } } });
     try {
       await pass(50);
-      expect(words(host)).toContain('Set deposits and withdrawals for Individual ••4421 and Roth IRA ••3302 to see your all-time returns across these accounts.');
+      range('All');
+      expect(card(host)).toContain('Set deposits and withdrawals for Individual ••4421 and Roth IRA ••3302 to see all time for these accounts.');
       expect(host.findAll((e) => e.tagName === 'BUTTON' && words(e).startsWith('Set deposits'))).toHaveLength(0);
     } finally {
       act(() => root.unmount());
@@ -452,26 +556,27 @@ describe('totals', () => {
   });
 
   test('a save loads that account again', async () => {
-    const { host, root, id } = setup();
+    const { host, root, id, range } = setup();
     try {
       await pass(50);
+      range('All');
       const totals = { in: 20_000, out: 0, as_of: '2026-05-01', currency: 'USD', set_at: '2026-11-06T00:00:00.000Z' };
       act(() => moneyInOutSaved(id('roth'), id('vg'), totals));
       await pass(50);
-      expect(rows(host)[1]).toBe('Roth IRA ••3302 Vanguard · $2,000.00 in All time: net $20,000.00 · +$25,600.00 returns +$2,500.00 returns');
-      expect(words(host)).toContain('All-time performance Money in $130,000.00');
+      expect(card(host)).toStartWith('All time Beginning balance $0.00 Deposits & withdrawals +$128,000.00');
     } finally {
       act(() => root.unmount());
     }
   });
 
-  // The save takes the button away (All-time performance takes its place), and
-  // the sheet closes after: focus goes to that heading, not to nothing.
-  test('a save from its button: focus goes to All-time performance', async () => {
-    const { host, root, id, close } = setup();
+  // The save takes the button away (all time takes its place), and the sheet
+  // closes after: focus goes to the card's title, not to nothing.
+  test('a save from its button: focus goes to the card’s title', async () => {
+    const { root, id, close, range, buttons } = setup();
     try {
       await pass(50);
-      const set = host.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Set deposits and withdrawals for Roth IRA ••3302')[0];
+      range('All');
+      const set = buttons('Set deposits and withdrawals')[0];
       act(() => {
         set.focus();
         click(set);
@@ -484,7 +589,7 @@ describe('totals', () => {
       expect(set.isConnected).toBe(false);
       close();
       await pass(50);
-      expect(words(dom.document.activeElement)).toBe('All-time performance');
+      expect(words(dom.document.activeElement)).toBe('All time');
     } finally {
       act(() => root.unmount());
     }
@@ -499,35 +604,74 @@ describe('loading', () => {
     try {
       await pass(50);
       expect(calls.filter((c) => c === 'history')).toHaveLength(1);
-      const activity = calls.filter((c) => c !== 'history');
+      const activity = calls.filter((c) => c !== 'history' && c !== 'settings');
       expect(activity.slice(0, 2).sort()).toEqual(['ind', 'k401']);
       expect(activity[2]).toBe('roth');
     } finally {
       act(() => root.unmount());
     }
   });
+});
 
-  test('the range switch changes what is counted', async () => {
-    const { host, root } = setup();
+// Individual alone, year to date: Jan 1, Jun 1 and Nov 5 on the chart.
+describe('the hero, under a finger', () => {
+  const xOf = (i: number) => 2 + (i * (LAID_OUT - 10)) / 2;
+  const fire = (host: FakeElement, type: string, i: number) => {
+    const svg = host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'slider')[0];
+    act(() => {
+      svg.dispatchEvent(Object.assign(new FakeEvent(type), { pointerId: 1, button: 0, buttons: 1, pointerType: 'touch', clientX: xOf(i), clientY: 0 }));
+    });
+  };
+
+  test('the returns to the day under it, the gap between the lines there; lifted, the range again', async () => {
+    const { host, root } = setup({ only: ['ind'] });
     try {
       await pass(50);
-      const all = host.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'All');
-      act(() => click(all[0]));
-      // From Dec 1: Individual 95,000 to 120,000 with $5,000 in, +$20,000;
-      // Roth IRA 40,000 to 45,500 with $2,000 in, +$3,500; the 401(k) as before.
-      expect(words(host)).toContain('Since Dec 1, 2025 Money in $8,500.00 Money out $500.00 Net $8,000.00 Returns +$28,500.00');
+      expect(figure(host)).toBe('+$15,000.00');
+      fire(host, 'pointerdown', 0);
+      fire(host, 'pointermove', 1);
+      // Jun 1: $110,000 against $100,000 and the $5,000 deposited.
+      expect(figure(host)).toBe('+$5,000.00');
+      expect(words(byClass(host, 'hero-day')[0])).toBe('Jan 1 to Jun 1 · balance $110,000.00');
+      fire(host, 'pointerup', 1);
+      expect(figure(host)).toBe('+$15,000.00');
+      expect(byClass(host, 'hero-day')).toHaveLength(0);
     } finally {
       act(() => root.unmount());
     }
   });
 
-  test('no linked investment accounts: what will be here', async () => {
-    const { host, root } = setup({ only: [], manual: true });
+  // Money in on Dec 30 may not be in Jan 1's balance yet, so the returns
+  // count from Jun 1, while the chart starts with the range.
+  test('a day before the returns count from says so, never a span run backwards', async () => {
+    const { host, root } = setup({ only: ['ind'], flows: { ind: [{ date: '2025-12-30', amount: 1000 }, { date: '2026-03-01', amount: 5000 }] } });
     try {
       await pass(50);
-      expect(words(host)).toContain('Linked investment accounts show their returns here.');
-      expect(words(host)).toContain('Not counted: Robinhood ••1290 (manual) and Wealthfront ••7781 (through SimpleFIN).');
+      expect(figure(host)).toBe('+$10,000.00');
+      fire(host, 'pointerdown', 1);
+      fire(host, 'pointermove', 0);
+      expect(figure(host)).toBe('$0.00');
+      expect(words(byClass(host, 'hero-day')[0])).toBe('Jan 1 · balance $100,000.00 · returns count from Jun 1');
+      fire(host, 'pointermove', 2);
+      expect(words(byClass(host, 'hero-day')[0])).toBe('Jun 1 to yesterday · balance $120,000.00');
     } finally {
+      act(() => root.unmount());
+    }
+  });
+});
+
+describe('hide amounts', () => {
+  test('the chart is drawn again: its label and table hide their amounts too', async () => {
+    const { host, root } = setup({ only: ['ind'] });
+    const label = () => host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'slider')[0].getAttribute('aria-label') ?? '';
+    try {
+      await pass(50);
+      expect(label()).toContain('$120,000.00');
+      act(() => setHideAmounts(true, null));
+      expect(label()).not.toContain('$120,000.00');
+      expect(figure(host)).not.toContain('15,000');
+    } finally {
+      act(() => setHideAmounts(false, null));
       act(() => root.unmount());
     }
   });

@@ -60,13 +60,28 @@
 // change. Elsewhere (an account's sheet, a shared net worth) it keeps to its
 // card, in the shape it has always had, and the readout reads the day under
 // the finger.
+//
+// As Accounts > Investments' hero (`outside`) the hero holds the readout: the
+// figure is the returns, so the chart draws no readout row or split line,
+// its info opens from the hero's button and starts with the hero's lines,
+// and a scrub or a measure goes to the hero with the grey line's value
+// there. The hero's figures follow its range, so the range is the hero's too
+// (`range`, `ranges`, `onRange`).
+//
+// ALL TIME. On an investment account's sheet with deposits and withdrawals
+// that can be carried (`allTime`, with `baselineFrom`), the grey line is its
+// deposits less withdrawals since it opened, so All is all time: the readout
+// reads from $0.00 when the account opened to the last recorded day the
+// line reaches, its split line the deposits and withdrawals and the returns
+// there, and a scrubbed day all time to that day. Every other range counts
+// from its start.
 
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { formatDay, formatMoney, MINUS, onDay, roundsToNothing, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { Segmented } from './Segmented';
 import { MIN_LABEL_GAP as LABEL_GAP, labelWidth, useDrawnWidth } from './drawn-width';
-import { HeroScrub } from './hero-scrub';
+import { HeroScrub, type HeroReading } from './hero-scrub';
 import {
   availableRanges,
   axisTickLadder,
@@ -142,6 +157,11 @@ export default function NetWorthChart({
   reserveSplit = false,
   notes,
   hero = false,
+  outside = null,
+  ranges: givenRanges,
+  range: givenRange,
+  onRange,
+  allTime = false,
 }: {
   points: HistoryPoint[];
   label?: string;
@@ -173,12 +193,27 @@ export default function NetWorthChart({
   /** Home's hero: edge to edge, its scrub moving the figure above (see the
    *  header). */
   hero?: boolean;
+  /** Accounts > Investments' hero, which holds the readout (see the header):
+   *  the info's id and open state, from the hero's button, and its first
+   *  lines. Only with `hero`. */
+  outside?: { infoId: string; infoOpen: boolean; info: readonly string[] } | null;
+  /** The ranges to offer, the one shown and a pick, when the screen's figures
+   *  follow the range (Accounts > Investments); otherwise the chart keeps its
+   *  own. All three or none. */
+  ranges?: RangeKey[];
+  range?: RangeKey;
+  onRange?: (key: RangeKey) => void;
+  /** All is all time (see the header): the grey line is carried from the
+   *  totals (`baselineFrom`). */
+  allTime?: boolean;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
-  const [drawIn] = useState(() => hero && !heroDrawn);
+  // Home's line draws in, never Investments'.
+  const homeHero = hero && !outside;
+  const [drawIn] = useState(() => homeHero && !heroDrawn);
   useEffect(() => {
-    if (hero) heroDrawn = true;
-  }, [hero]);
+    if (homeHero) heroDrawn = true;
+  }, [homeHero]);
   // Drawn at its own width, in the hero's frame or a card's.
   const [drawnRef, drawnW] = useDrawnWidth<SVGSVGElement>();
   const frame = useMemo(() => (hero ? heroFrame(drawnW) : cardFrame(drawnW)), [hero, drawnW]);
@@ -215,11 +250,11 @@ export default function NetWorthChart({
   // Where the first finger or pen went down, to tell a scrub from a scroll.
   const touchFrom = useRef<{ x: number; y: number } | null>(null);
 
-  const ranges = useMemo(() => availableRanges(allPoints, rangeSet), [allPoints, rangeSet]);
+  const ownRanges = useMemo(() => availableRanges(allPoints, rangeSet), [allPoints, rangeSet]);
+  const ranges = givenRanges ?? ownRanges;
   const range =
-    picked && ranges.includes(picked)
-      ? picked
-      : initialRange(ranges, rangeSet, allPoints[allPoints.length - 1]?.date ?? '');
+    givenRange ??
+    (picked && ranges.includes(picked) ? picked : initialRange(ranges, rangeSet, allPoints[allPoints.length - 1]?.date ?? ''));
   const points = useMemo(() => sliceRange(allPoints, range), [allPoints, range]);
 
   // Scrubbed and measured days are indices into `points`: new points (a
@@ -461,15 +496,34 @@ export default function NetWorthChart({
   // when the flows are only known up to an earlier day.
   let lastReal = last;
   while (lastReal > 0 && (points[lastReal].estimated || base[lastReal] === null)) lastReal--;
+  // All time, on All only, to the last recorded day the line reaches.
+  const lastBase = base[lastReal];
+  const whole =
+    range === 'ALL' && allTime && baselineFrom && lastBase !== null && !points[lastReal].estimated
+      ? { net: lastBase, returns: vals[lastReal] - lastBase, to: lastReal < last ? points[lastReal].date : null }
+      : null;
   const rangeChange = change(0, last);
+
+  /** All time to a point: the grey line there is the net deposits and
+   *  withdrawals since the account opened, and the balance above it the
+   *  returns (see the header). */
+  function wholeTo(i: number): string {
+    const b = base[i];
+    if (b === null || points[i].estimated) return '';
+    return `${signed(b, currency)} deposits & withdrawals · ${signed(vals[i] - b, currency)} returns`;
+  }
 
   let splitText = '';
   if (measure) {
     const s = splitBetween(measure[0], measure[1]);
     if (s) splitText = splitParts(s).join(' · ');
+  } else if (active !== null && whole) {
+    splitText = wholeTo(active);
   } else if (active !== null) {
     const s = baseStart >= 0 && active >= baseStart ? splitBetween(baseStart, active) : null;
     if (s) splitText = splitParts(s).join(' · ');
+  } else if (whole) {
+    splitText = `All time: ${signed(whole.net, currency)} deposits & withdrawals · ${signed(whole.returns, currency)} returns`;
   } else {
     const s = baseStart >= 0 ? splitBetween(baseStart, lastReal) : null;
     if (s) {
@@ -485,6 +539,8 @@ export default function NetWorthChart({
   }
 
   const info: string[] = [];
+  // Outside the chart, the hero says what its lines are and where they
+  // count from; where the grey line stops is still said here.
   if (baseStart >= 0) {
     // Below zero the line isn't drawn (see geo): said, with the day it
     // stopped when it went below once and stayed there.
@@ -493,22 +549,30 @@ export default function NetWorthChart({
     const stays = below > 0 && shown.slice(below).every((b) => b < 0);
     const firstRecorded = points.slice(0, baseStart).every((p) => p.estimated);
     const none = !shown.some((b) => b >= 0);
-    const more = baselineFrom ? 'more had come out than gone in' : `more had come out than the balance ${onDay(dayIn(baseStart))} and deposits since`;
+    const more =
+      baselineFrom || outside ? 'more had come out than gone in' : `more had come out than the balance ${onDay(dayIn(baseStart))} and deposits since`;
     if (none) info.push(`No grey line for this range: all through it, ${more}${baselineFrom ? ', so deposits less withdrawals were below zero' : ''}.`);
     else {
-      info.push(
-        baselineFrom
-          ? `Grey line: your deposits less withdrawals by each day, from your totals for ${fmtDay(baselineFrom, true)}. The gap above it is your returns so far.`
-          : `Grey line: the balance ${onDay(dayIn(baseStart))} plus deposits less withdrawals since. The gap above it is your returns.`
-      );
+      if (!outside)
+        info.push(
+          baselineFrom
+            ? `Grey line: your deposits less withdrawals by each day, from your totals for ${fmtDay(baselineFrom, true)}. The gap above it is your returns so far.`
+            : `Grey line: the balance ${onDay(dayIn(baseStart))} plus deposits less withdrawals since. The gap above it is your returns.`
+        );
       if (stays) info.push(`It stops at zero ${onDay(dayIn(baseStart + below))}: from then on, ${more}.`);
       else if (below >= 0) info.push(`It stops at zero on the days ${more}.`);
     }
-    if (baselineFrom && baseStart > 0) info.push(`Deposits, withdrawals and returns for the range count from ${dayIn(baseStart)}${firstRecorded ? ', the first recorded day' : ''}.`);
+    if (outside) {
+      // The hero's lines say it.
+    } else if (baselineFrom && whole)
+      info.push(`All time starts at ${formatMoney(0, currency)}, when the account opened, and counts from your totals for ${fmtDay(baselineFrom, true)}.`);
+    else if (baselineFrom && baseStart > 0)
+      info.push(`Deposits, withdrawals and returns for the range count from ${dayIn(baseStart)}${firstRecorded ? ', the first recorded day' : ''}.`);
   }
   if (uniform) info.push(`${estimatedWords} No stretch of this range is recorded, so the line is solid.`);
   else if (hasEstimated) info.push('Dashed: estimated, from transactions or across days with no data.');
-  if (rangeChange.approx) info.push('≈: the change starts or ends on an estimated balance.');
+  // Only where the readout gives the range's change.
+  if (rangeChange.approx && !outside && !whole) info.push('≈: the change starts or ends on an estimated balance.');
   if (marked.length > 0) info.push('Dotted lines mark your notes: touch the day to read one, or pick it from the list below.');
   info.push('Touch with two fingers, or drag with a mouse, to compare two days.');
 
@@ -666,7 +730,8 @@ export default function NetWorthChart({
   }
 
   function pickRange(key: RangeKey) {
-    setPicked(key);
+    if (onRange) onRange(key);
+    else setPicked(key);
     setActive(null);
     setMeasure(null);
     setChosenNote(null);
@@ -686,15 +751,37 @@ export default function NetWorthChart({
   // list), in the same frame as the plot; gone when the pointer or the keys
   // let go (Escape, blur), or the chart is.
   const heroDay = hero && scrubbing && !measure && active !== null && points[active] ? active : null;
-  const heroValue = heroDay === null ? null : vals[heroDay];
-  const heroText = heroDay === null ? '' : day(heroDay);
-  const heroEstimated = heroDay !== null && !!points[heroDay].estimated;
   const heroNote = heroDay === null ? null : noteOn(heroDay);
+  // Outside the chart, a measure goes to the hero too, its first day in `from`.
+  const m0 = hero && outside && measure && points[measure[1]] ? measure[0] : null;
+  const m1 = m0 === null || !measure ? null : measure[1];
+  const reading = useMemo((): HeroReading | null => {
+    if (m0 !== null && m1 !== null) {
+      return {
+        value: vals[m1],
+        day: fmtDay(points[m1].date),
+        date: points[m1].date,
+        estimated: !!points[m1].estimated,
+        note: null,
+        base: base[m1],
+        from: { value: vals[m0], base: base[m0], day: fmtDay(points[m0].date), estimated: !!points[m0].estimated },
+      };
+    }
+    if (heroDay === null) return null;
+    return {
+      value: vals[heroDay],
+      day: fmtDay(points[heroDay].date),
+      date: points[heroDay].date,
+      estimated: !!points[heroDay].estimated,
+      note: heroNote,
+      base: base[heroDay],
+    };
+  }, [m0, m1, heroDay, heroNote, vals, base, points]);
   useLayoutEffect(() => {
     if (!hero || !report) return;
-    report(heroValue === null ? null : { value: heroValue, day: heroText, estimated: heroEstimated, note: heroNote });
+    report(reading);
     return () => report(null);
-  }, [hero, report, heroValue, heroText, heroEstimated, heroNote]);
+  }, [hero, report, reading]);
   // In the hero, the readout keeps the range's change while a pointer moves
   // the figure; a note chosen from the list still reads its day here.
   const readActive = hero && scrubbing ? null : active;
@@ -709,6 +796,10 @@ export default function NetWorthChart({
     readValue = formatMoney(vals[readActive], currency);
     readNote = noteOn(readActive);
     readDate = `${day(readActive)}${points[readActive].estimated ? ' · estimated' : ''}`;
+  } else if (whole) {
+    // From $0.00 when the account opened: its balance, measured.
+    readValue = signed(whole.net + whole.returns, currency);
+    readDate = whole.to ? `All time, to ${fmtDay(whole.to, true)}` : 'All time';
   } else {
     readValue = rangeChange.text;
     // Said once here when the line is solid for being all an estimate.
@@ -723,39 +814,44 @@ export default function NetWorthChart({
     `${formatMoney(vals[said], currency)} ${onDay(dayIn(said))}${points[said].estimated ? ', estimated' : ''}${saidNote ? `. ${saidNote}` : ''}`
   );
 
+  const infoLines = outside ? [...outside.info, ...info] : info;
+  const infoAt = outside ? outside.infoId : infoId;
+
   return (
     <div>
-      <div className="chart-readout chart-readout-stable">
-        <span className="chart-readout-value">
-          <Masked>{readValue}</Masked>
-        </span>
-        {readNote ? (
-          <span className="chart-readout-date chart-readout-noted">
-            <span className="chart-readout-day">{readDate}</span>
-            <span className="chart-readout-note">{`\u00a0·\u00a0${readNote}`}</span>
+      {!outside && (
+        <div className="chart-readout chart-readout-stable">
+          <span className="chart-readout-value">
+            <Masked>{readValue}</Masked>
           </span>
-        ) : (
-          <span className="chart-readout-date">{readDate}</span>
-        )}
-        <button
-          type="button"
-          className="chart-info-btn"
-          aria-label="About this chart"
-          aria-expanded={showInfo}
-          aria-controls={infoId}
-          onClick={() => setShowInfo((s) => !s)}
-        >
-          <svg viewBox="0 0 16 16" aria-hidden="true">
-            <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
-            <circle cx="8" cy="5" r="0.9" fill="currentColor" />
-            <path d="M8 7.2v4.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-          </svg>
-        </button>
-      </div>
+          {readNote ? (
+            <span className="chart-readout-date chart-readout-noted">
+              <span className="chart-readout-day">{readDate}</span>
+              <span className="chart-readout-note">{`\u00a0·\u00a0${readNote}`}</span>
+            </span>
+          ) : (
+            <span className="chart-readout-date">{readDate}</span>
+          )}
+          <button
+            type="button"
+            className="chart-info-btn"
+            aria-label="About this chart"
+            aria-expanded={showInfo}
+            aria-controls={infoId}
+            onClick={() => setShowInfo((s) => !s)}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+              <circle cx="8" cy="5" r="0.9" fill="currentColor" />
+              <path d="M8 7.2v4.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            </svg>
+          </button>
+        </div>
+      )}
       {/* The line keeps its height whenever the chart can show it at all, so
           scrubbing to a day without a split (or the data arriving late) moves
           nothing below it. */}
-      {(splitText || reserveSplit || baselineFor) && (
+      {!outside && (splitText || reserveSplit || baselineFor) && (
         <div className="chart-readout-split">{splitText ? <Masked>{splitText}</Masked> : <>&nbsp;</>}</div>
       )}
 
@@ -916,9 +1012,11 @@ export default function NetWorthChart({
 
       {/* In the markup even while closed (hidden), so it is one tap to show and
           the page never shifts while loading it. */}
-      <div id={infoId} className="chart-info" hidden={!showInfo}>
-        {info.map((n) => (
-          <p key={n}>{n}</p>
+      <div id={infoAt} className="chart-info" hidden={outside ? !outside.infoOpen : !showInfo}>
+        {infoLines.map((n) => (
+          <p key={n}>
+            <Masked>{n}</Masked>
+          </p>
         ))}
       </div>
     </div>
