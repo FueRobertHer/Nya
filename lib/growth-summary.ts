@@ -61,6 +61,10 @@ export type GrowthActivity = {
   moves?: Move[] | null;
   flows_from?: string | null;
   flows_to?: string | null;
+  /** The first day of Nya's own activity, which typed totals are checked
+   *  against, when months imported from a file reach `flows_from` further
+   *  back (lib/investment-months.ts withPastMonths); else `flows_from`. */
+  totals_from?: string | null;
   note: string | null;
   txns?: readonly unknown[];
   money_in_out?: MoneyInOut | null;
@@ -184,7 +188,7 @@ function statusOf(activity: ActivityState): RowStatus {
 function totalsOf(a: GrowthActivity): TotalsState {
   if (a.money_in_out_unreadable) return 'unreadable';
   if (!a.money_in_out) return 'unset';
-  return usableTotals(a.money_in_out, a.flows_from) ? 'set' : 'outdated';
+  return usableTotals(a.money_in_out, a.totals_from ?? a.flows_from) ? 'set' : 'outdated';
 }
 
 const add = (rows: readonly Figures[]): Figures => {
@@ -196,7 +200,7 @@ const add = (rows: readonly Figures[]): Figures => {
  *  first to its last, its balance and its grey line there (carried from the
  *  totals when it has them, so then its deposits less withdrawals since it
  *  opened), with the money in and out the line holds. */
-type Track = { date: string; balance: number; line: number; in: number; out: number }[];
+type Track = { date: string; balance: number; line: number; in: number; out: number; entered?: boolean }[];
 
 /**
  * The view's figures for `accounts` (those chosen, in the order the tab
@@ -235,8 +239,10 @@ export function summarizeGrowth<A extends GrowthAccount>(
     const row: GrowthRow<A> = { account, status, split: null, from: null, to: null, totals: null, figures: null, rate: null };
     if (status !== 'counted' || account.activity.state !== 'ready') return row;
     const a = account.activity.data;
-    const totals = a.money_in_out ?? null;
     row.totals = totalsOf(a);
+    // Only totals Nya can carry: checked against its own activity, which
+    // months from a file can reach before.
+    const totals = row.totals === 'set' ? (a.money_in_out ?? null) : null;
     if (!account.points) return row;
     // Its range ends on its own last day, as on its sheet, unless that day is
     // before the view's range starts: then it has nothing in this range. It
@@ -250,11 +256,16 @@ export function summarizeGrowth<A extends GrowthAccount>(
     if (!row.split) return row;
     const split = row.split;
     // The same line rangeSplit reads, on its recorded days.
-    const real = new Map(shown.filter((p) => !p.estimated).map((p) => [p.date, p.value] as const));
+    const real = new Map(shown.filter((p) => !p.estimated).map((p) => [p.date, p] as const));
     const line = contributionBaseline(shown, a.flows, a.flows_from, a.flows_to, totals, a.moves) ?? [];
     tracks.set(
       row,
-      line.filter((b) => b.date <= split.to && real.has(b.date)).map((b) => ({ date: b.date, balance: real.get(b.date)!, line: b.value, in: b.in, out: b.out }))
+      line
+        .filter((b) => b.date <= split.to && real.has(b.date))
+        .map((b) => {
+          const p = real.get(b.date)!;
+          return { date: b.date, balance: p.value, line: b.value, in: b.in, out: b.out, ...(p.entered ? { entered: true } : {}) };
+        })
     );
     if (start !== null && daysBetween(start, split.from) > LATE_START_DAYS) {
       row.from = { day: split.from, cause: shown.some((p) => !p.estimated && p.date < split.from) ? 'activity' : 'recorded' };
@@ -331,7 +342,8 @@ export function summarizeGrowth<A extends GrowthAccount>(
     const shown = counted.filter((r) => r.figures);
     const froms = shown.map((r) => r.split!.from).sort();
     const tos = shown.map((r) => r.split!.to).sort();
-    const recorded = list.flatMap((r) => (r.account.points ?? []).flatMap((p) => (p.estimated ? [] : [p.date]))).sort();
+    // Recorded by Nya: not estimated, and not a month from a file.
+    const recorded = list.flatMap((r) => (r.account.points ?? []).flatMap((p) => (p.estimated || p.entered ? [] : [p.date]))).sort();
     return {
       currency,
       rows: list,
@@ -387,6 +399,10 @@ function chartOf<A extends GrowthAccount>(
     let inn = 0;
     let out = 0;
     let estimated = false;
+    // A month's end from a file, where every account has its own balance
+    // that day: drawn solid however far from the next (components/
+    // NetWorthChart.tsx).
+    let entered = false;
     each.forEach((e, k) => {
       const { track, split } = e;
       while (atTrack[k] + 1 < track.length && track[atTrack[k] + 1].date <= date) atTrack[k]++;
@@ -395,6 +411,7 @@ function chartOf<A extends GrowthAccount>(
         const t = track[atTrack[k]];
         const first = track[0];
         if (t.date !== date && date <= split.to) estimated = true;
+        if (t.date === date && t.entered) entered = true;
         value += t.balance;
         inn += t.in - first.in;
         out += t.out - first.out;
@@ -409,11 +426,12 @@ function chartOf<A extends GrowthAccount>(
       while (atPoint[k] + 1 < e.points.length && e.points[atPoint[k] + 1].date <= date) atPoint[k]++;
       const p = e.points[atPoint[k]];
       if (p.estimated || p.date !== date) estimated = true;
+      if (p.date === date && p.entered) entered = true;
       value += p.value;
       if (basis === 'all') base = null;
       else if (base !== null) base += p.value;
     });
-    points.push(estimated ? { date, value: cents(value), estimated: true } : { date, value: cents(value) });
+    points.push(estimated ? { date, value: cents(value), estimated: true } : entered ? { date, value: cents(value), entered: true } : { date, value: cents(value) });
     if (base !== null) baseline.push({ date, value: cents(base), in: cents(inn), out: cents(out) });
   }
   return { points, baseline };
