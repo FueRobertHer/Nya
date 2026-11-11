@@ -20,6 +20,7 @@
     "@upstash/redis": "^1.38.0",
     "@vercel/blob": "^2.8.0",
     "next": "16.3.0-canary.83",
+    "pdfjs-dist": "^6.5.438",
     "plaid": "^27.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
