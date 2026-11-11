@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import NetWorthChart from '@/components/NetWorthChart';
 import { DrawnWidth, MIN_LABEL_GAP, labelWidth } from '@/components/drawn-width';
+import { contributionBaseline } from '@/lib/growth';
 
 // Days are said as the design system says them (lib/format.ts formatDay):
 // without their year in this one, on a today held still.
@@ -658,5 +659,50 @@ describe('NetWorthChart as the hero', () => {
     for (let i = 1; i < labels.length; i++) expect(labels[i][0] - labels[i - 1][1]).toBeGreaterThanOrEqual(MIN_LABEL_GAP);
     expect(html).toContain('<summary>Show as a table</summary>');
     expect(html).not.toContain('<table>');
+  });
+});
+
+// A month's end from Vanguard's Performance page (`entered`, lib/investment-
+// months.ts): solid, though a month apart, since the record says where the
+// balance was at each end; and the info says so.
+describe('months from a brokerage’s record', () => {
+  const MONTHS = { source: 'Vanguard’s Performance page', firm: 'Vanguard', first_recorded: '2026-05-15', activity_from: '2026-06-01' };
+  const entered = ['2026-01-01', '2026-02-01', '2026-03-01', '2026-04-01', '2026-05-01'].map((date, i) => ({ date, value: 10_000 + i * 1000, entered: true }));
+  const recorded: P[] = [];
+  for (let t = Date.parse('2026-05-15T00:00:00Z'); t <= Date.parse('2026-10-28T00:00:00Z'); t += 86_400_000)
+    recorded.push({ date: new Date(t).toISOString().slice(0, 10), value: 15_000 + recorded.length });
+  const words = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ');
+  const chart = (points: P[], extra: Partial<Parameters<typeof NetWorthChart>[0]> = {}) =>
+    renderToStaticMarkup(<NetWorthChart points={points} rangeSet="investment" initialRange="ALL" months={MONTHS} {...extra} />);
+  const runsOf = (html: string) => [...html.matchAll(/<path [^>]*stroke-width="2"[^>]*>/g)].map((m) => (m[0].includes('stroke-dasharray') ? 'dashed' : 'solid'));
+
+  test('each month’s end draws solid, and straight on to the first recorded day', () => {
+    expect(runsOf(chart([...entered, ...recorded]))).toEqual(['solid']);
+    // The same balances, not from a record: dashed across the days between.
+    expect(runsOf(chart([...entered.map(({ date, value }) => ({ date, value })), ...recorded]))).toContain('dashed');
+  });
+
+  test('the info says where the line is the record’s', () => {
+    expect(words(chart([...entered, ...recorded]))).toContain(
+      'Before May 15, the first recorded day, the balance is each month’s end from Vanguard’s Performance page, joined by straight lines.'
+    );
+  });
+
+  test('a range after the record says nothing of it', () => {
+    expect(words(chart([...entered, ...recorded], { initialRange: '1M' }))).not.toContain('each month’s end');
+  });
+
+  test('deposits and withdrawals before Nya’s activity: said to be drawn at each month’s middle', () => {
+    const flows = [
+      { date: '2026-01-16', amount: 500 },
+      { date: '2026-03-16', amount: 500 },
+      { date: '2026-06-03', amount: 250 },
+    ];
+    const baselineFor = (shown: P[]) => contributionBaseline(shown, flows, '2026-01-01', '2026-10-28');
+    expect(words(chart([...entered, ...recorded], { baselineFor }))).toContain(
+      'Vanguard gives one figure a month, so until Jun 1, when Nya’s activity starts, each month’s deposits and withdrawals are drawn at its middle.'
+    );
+    // Not where the range starts after it.
+    expect(words(chart([...entered, ...recorded], { initialRange: '1M', baselineFor }))).not.toContain('drawn at its middle');
   });
 });

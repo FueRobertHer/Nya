@@ -96,6 +96,8 @@ function setup(
     flows?: Record<string, Fixture['flows']>;
     /** The buckets the person set (Plan > Allocation), by fixture key. */
     buckets?: Record<string, string>;
+    /** Months imported from Vanguard's Performance page, by fixture key. */
+    months?: Record<string, import('@/lib/investment-months').InvestmentMonths>;
   } = {}
 ) {
   run++;
@@ -163,6 +165,7 @@ function setup(
       note: a.note ?? null,
       money_in_out: a.unreadable ? null : 'totals' in a ? a.totals ? { ...a.totals, currency: 'USD', set_at: '2026-11-01T00:00:00.000Z' } : null : f.totals ? { ...f.totals, currency: 'USD', set_at: '2026-11-01T00:00:00.000Z' } : null,
       money_in_out_unreadable: !!a.unreadable,
+      investment_months: opts.months?.[key] ?? null,
     });
   }) as unknown as typeof fetch;
 
@@ -672,6 +675,46 @@ describe('hide amounts', () => {
       expect(figure(host)).not.toContain('15,000');
     } finally {
       act(() => setHideAmounts(false, null));
+      act(() => root.unmount());
+    }
+  });
+});
+
+// Months imported from Vanguard's Performance page (lib/investment-months.ts
+// withPastMonths), joined as the account's chart joins them: Individual's
+// from Jan 2023, before its first recorded day (Dec 1, 2025) and its
+// activity (Jun 1, 2025).
+describe('imported months', () => {
+  const months = Array.from({ length: 35 }, (_, k) => {
+    const y = 2023 + Math.floor(k / 12);
+    const m = (k % 12) + 1;
+    return { month: `${y}-${String(m).padStart(2, '0')}`, net: 500, returns: 250, end: 70_000 + 750 * (k + 1) };
+  });
+  const MONTHS = {
+    imports: [{ id: 'imp-1', source: 'vanguard-performance' as const, file_name: 'Performance.pdf', imported_at: '2026-11-01T12:00:00.000Z', start: { month: '2023-01', balance: 70_000 }, months, currency: 'USD' }],
+  };
+
+  test('a range that reaches into them says where the line and the rate are Vanguard’s', async () => {
+    const { host, root, range } = setup({ only: ['ind'], months: { ind: MONTHS } });
+    try {
+      await pass(50);
+      range('3Y');
+      await pass(10);
+      expect(hero(host)).toContain('Before Dec 1, 2025, the first recorded day, it is each month’s end from Vanguard’s Performance page.');
+      expect(hero(host)).toContain('Until Jun 1, 2025, Vanguard gives one figure a month, so each counts from the middle of its month.');
+      expect(card(host)).toContain('Before Jun 1, 2025, when Nya’s activity for this account starts, each month’s figures are Vanguard’s, from the Performance page you imported.');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  test('a range after them says nothing of them', async () => {
+    const { host, root } = setup({ only: ['ind'], months: { ind: MONTHS } });
+    try {
+      await pass(50);
+      expect(hero(host)).not.toContain('Performance page');
+      expect(card(host)).not.toContain('Performance page');
+    } finally {
       act(() => root.unmount());
     }
   });

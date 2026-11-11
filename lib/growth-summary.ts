@@ -47,6 +47,7 @@
 import { LATE_START_DAYS, availableRanges, initialRange, rangeLabel, rangeStart, type RangeKey } from './chart-range';
 import { contributionBaseline, rangeSplit, usableTotals, type BalancePoint, type BaselinePoint, type Flow, type Move, type RangeSplit } from './growth';
 import type { MoneyInOut } from './money-in-out';
+import type { InvestmentMonths } from './investment-months';
 import { returnsRate, type Rate, type RateLeg } from './returns-rate';
 
 /** The note the activity carries while another request is making the
@@ -69,6 +70,9 @@ export type GrowthActivity = {
   txns?: readonly unknown[];
   money_in_out?: MoneyInOut | null;
   money_in_out_unreadable?: boolean;
+  /** The months imported for the account, which the views join to its
+   *  history before it is summed (lib/investment-months.ts). Not read here. */
+  investment_months?: InvestmentMonths | null;
 };
 
 export type ActivityState = { state: 'loading' } | { state: 'failed' } | { state: 'ready'; data: GrowthActivity };

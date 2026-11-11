@@ -8,6 +8,7 @@ How Nya stores, protects and reconstructs your data. Operational procedures are 
 - [Caching](#caching)
 - [Net-worth history](#net-worth-history)
   - [Accounts that end, and notes on the timeline](#accounts-that-end-and-notes-on-the-timeline)
+  - [Past months on an investment account](#past-months-on-an-investment-account)
   - [Holdings history](#holdings-history)
 - [Exchange rates](#exchange-rates)
 - [Import pipeline](#import-pipeline)
@@ -232,6 +233,17 @@ The totals the person sets for an investment account ([features.md](features.md#
 - **Read fresh.** `GET /api/investment-activity` answers `money_in_out` beside its payload, cached or not, read on every request, or `money_in_out_unreadable` when the entry can't be read, so the activity still shows. A save patches the client's copy (`moneyInOutSaved`) and tells the account's chart to load again.
 - **Links.** Read through the links that apply (`effectiveLinks` with the live ids, so a paused link carries nothing): the current id's own entry, then the newest. `POST /api/money-in-out` writes the current id's entry before removing the others, and clearing removes all of them, so a failure part way never leaves older totals showing. It takes only an id a connection lists now, and refuses one the directory knows isn't an investment account.
 - **Kept and forgotten with the account.** A disconnect keeps the entry, for a re-link. `forgetEarlierAccount` removes it. A manual account never has one: only an id a connection lists can be given totals.
+
+### Past months on an investment account
+
+The months imported from Vanguard's Performance page ([features.md](features.md#past-months-from-vanguard)), kept in the `investment-months` map store (`lib/investment-months-store.ts`), one entry per account id, exportable and compressed, the owner's alone.
+
+- **Read on the device.** The sheet (`components/HistoryImportSheet.tsx`, its Vanguard part in `components/PerformanceImport.tsx`) loads pdf.js only when a PDF is picked, its worker served from Nya's own origin. `lib/import/pdf-text.ts` turns the pages into placed text, `lib/import/vanguard-performance.ts` reads the table, its Total row and its summary in cents, and `lib/import/performance-review.ts` runs the checks again on any month the person corrects and compares the balances with the account's (`accountCheck`). Only the months reach the server.
+- **Each import a record, never changed.** An entry is the imports stored under that id, oldest first, each `{ id, source, file_name, imported_at, start, months, currency }` as it was read. `POST /api/investment-months` adds one or removes one, each a compare-and-set on the entry (`MapStore.update`), and nothing else is written. An import names the import it was reviewed against (`counting`): if another device changed what counts since, it answers 409 and the review is checked again. It takes only a live investment account at a Vanguard connection (the item's Plaid `institution_id`, or the stored one while the item can't be read), months that pass `monthsProblem`, and 24 imports an account at most.
+- **Joined on read, never stored.** `withPastMonths` (`lib/investment-months.ts`, pure) joins the import that counts to an account's whole history and activity, once per view tree: its chart (`AccountSparkline`) and Accounts > Investments (`InvestmentGrowth`), so the two agree. Each month's end is an `entered` point on the next 1st, and the start balance one on the first month's 1st, only before the first recorded day; estimated points before that day are dropped; each month before Nya's activity is one flow at the middle of its days, the month the activity starts in giving Vanguard's net less Nya's own; `flows_from` reaches back to the first month while `totals_from` stays Nya's own, so typed totals are still checked against the activity they were carried through. Since the lumps join the flows, `contributionBaseline` and the modified Dietz rate count them at mid-month with no change of their own. `unused` says why nothing applies, `differs` lists months whose nets differ from Nya's by more than $1.
+- **Read fresh.** `GET /api/investment-activity` answers `investment_months` beside its payload, cached or not, read on every request, or `investment_months_unreadable`, so the activity still shows. An import or an undo patches the client's copy (`investmentMonthsSaved`) and tells the account's chart and Investments to load again. The sheet reads `GET /api/investment-months` for its list.
+- **Links.** Stored under the id the account had then, read through the links that apply now (`effectiveLinks` over the strict live ids, so a paused link carries nothing), every id's list joined: the newest import across them counts, and every one is listed for its Undo. A new import goes under the current id, and an undo takes the record from whichever id holds it.
+- **Kept and forgotten with the account.** A disconnect keeps the entry, for a re-link; `forgetEarlierAccount` removes it. A restore brings it back under the ids it was imported on.
 
 ### Holdings history
 

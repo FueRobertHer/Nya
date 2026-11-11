@@ -89,6 +89,12 @@ describe('the figures', () => {
     );
   });
 
+  test('none set on a Vanguard account with nothing imported: the Performance page named too', () => {
+    expect(text(figures({ totals: null }, { importable: true }))).toBe(
+      'Set your deposits and withdrawals to see your all-time returns. For now, returns count from the start of the range shown. To see further back, import Vanguard’s Performance page from ⋯. Set deposits and withdrawals'
+    );
+  });
+
   test('set for a day before the activity Nya now has: a note, no figures', () => {
     const html = figures({ totals: { ...TOTALS, as_of: '2026-05-01' } });
     expect(html).toContain('notice info');

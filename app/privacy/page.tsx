@@ -254,13 +254,17 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: A
     : []),
   [
     'A bank you disconnect',
-    'Its transactions are deleted at once, except that for each one you recategorized, its date, amount and bank description are kept, encrypted, so the category carries across a reconnection. What you told your plan about its accounts for tax is deleted at once too. Its accounts’ balance history, names and the categories you set stay, until you Forget them (Settings, Connections, Earlier accounts) or delete your account.',
+    'Its transactions are deleted at once, except that for each one you recategorized, its date, amount and bank description are kept, encrypted, so the category carries across a reconnection. What you told your plan about its accounts for tax is deleted at once too. Its accounts’ balance history, names, the categories you set and the months you imported stay, until you Forget them (Settings, Connections, Earlier accounts) or delete your account.',
   ],
   [
     'A download you brought back',
     'What it held is your data, kept as the rest is. A bank in it that was connected through Plaid keeps its transactions, encrypted, until you Forget it: they count once you connect it again and link its accounts (then as its own), or once you say the bank is gone (then as an ended account’s, up to the day you give). What you answer about it (that it is gone, which connections made since it isn’t at, which account carries it on) is kept with it, encrypted and in your download, until you Forget it, undo the restore, empty the account or delete it. An account from SimpleFIN or Lunch Flow you carry on with the one you track in its place keeps what it was, so undoing that puts it back. The record of the restore (when the file was made, its size, and how much came back) stays until you undo the restore, empty the account or delete it; the file itself is never stored.',
   ],
   ['Receipts and documents you attach', attachmentsRow(backups, files)],
+  [
+    'Months you import from Vanguard’s Performance page',
+    'The PDF is read on your device and never sent to Nya: only its months are, each month’s deposits and withdrawals, returns and ending balance, with the balance the first began at, the file’s name and when you imported it. Each import is kept until you undo it, Forget the account or delete your account. Encrypted, and in your download. Never shown to anyone you share with.',
+  ],
   [
     'A SimpleFIN connection',
     'The access SimpleFIN gave Nya, encrypted, never in your download and never in backups: until you disconnect it, or delete your account. Restoring a backup ends it: you connect again with a new Setup Token, and the accounts carry on. Its accounts and their transactions are kept like any account’s. Disconnecting deletes the access; you choose to keep the accounts as manual accounts, or to remove them and their transactions (their past balances stay in your net-worth history). A note of each account you stop tracking (its name, its bank and when) stays, so a report on a period it was tracked in can say what may be missing, until you forget it on the Reports page, or delete your account. SimpleFIN keeps what it holds under its own terms: remove Nya in your SimpleFIN account too.',

@@ -22,6 +22,7 @@ import type { HistoryImportTarget } from './HistoryImportSheet';
 import { formatDay, hiddenFigure } from '@/lib/format';
 import { readableName } from '@/lib/merchant-name';
 import { isInvestmentType, isOwedType } from '@/lib/balance';
+import { isVanguard } from '@/lib/investment-months';
 import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
 import {
   accountKindParts,
@@ -216,7 +217,18 @@ export default function AccountSheet({
           {
             label: 'Import history from a file',
             onSelect: act(() =>
-              onImportHistory({ account_id: a.account_id, name: a.name, institution_name: inst.institution_name, type: a.type, currency: a.currency ?? null })
+              onImportHistory({
+                account_id: a.account_id,
+                name: a.name,
+                institution_name: inst.institution_name,
+                type: a.type,
+                currency: a.currency ?? null,
+                item_id: inst.item_id,
+                // Vanguard's Performance page, as a PDF, by Plaid's institution
+                // id (lib/investment-months.ts).
+                vanguard: isInvestmentType(a.type) && isVanguard(inst.institution_id),
+                balance: a.balance ?? null,
+              })
             ),
           },
         ]
@@ -344,6 +356,7 @@ export default function AccountSheet({
               ? {
                   balance: a.balance,
                   label: `${a.name}${a.mask ? ` ••${a.mask}` : ''} · ${inst.institution_name}`,
+                  vanguard: isVanguard(inst.institution_id),
                   onEdit: (target) => act(() => onMoneyInOut(target))(),
                 }
               : undefined

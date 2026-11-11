@@ -36,6 +36,13 @@
 // (a shared net worth, one point a week) stays dashed, whatever estimates
 // sit among them.
 //
+// A month's end from a brokerage's own record (`entered`, imported from
+// Vanguard's Performance page, lib/investment-months.ts) is a real balance,
+// on the next month's 1st: a segment touching one draws solid however long,
+// since the record says where the balance was at each end, and the dashed
+// note leaves it out. Scrubbed or in the table it reads "End of Mar 2022",
+// and the info says where it comes from (`months`).
+//
 // Notes on the timeline (#50, lib/timeline-notes.ts) mark their days: a
 // dotted rule and a small marker, never a change to the line, so a step (an
 // account that closed, a house bought) stays as it happened and says what it
@@ -94,7 +101,12 @@ import {
   type RangeSet,
 } from '@/lib/chart-range';
 
-export type HistoryPoint = { date: string; value: number; estimated?: boolean };
+export type HistoryPoint = { date: string; value: number; estimated?: boolean; entered?: boolean };
+/** Where an account's entered points come from, for the info: the record
+ *  ("Vanguard’s Performance page"), the firm, the first day Nya recorded a
+ *  balance and the first day of its own activity, before which each month's
+ *  deposits and withdrawals are one figure at its middle. */
+export type MonthsInfo = { source: string; firm: string; first_recorded: string; activity_from: string };
 /** The grey line by date (lib/growth.ts BaselinePoint): its value, and the
  *  money in and out it holds, whose changes between two points say what
  *  moved between them. */
@@ -139,6 +151,14 @@ function fmtDay(iso: string, sentence = false): string {
   return formatDay(iso, { sentence });
 }
 
+/** A point's day as a scrub or the table says it: a month's end from a
+ *  brokerage's record, on the next month's 1st, reads "End of Mar 2022". */
+function pointDay(p: HistoryPoint, sentence = false): string {
+  if (!p.entered) return fmtDay(p.date, sentence);
+  const month = new Date(Date.parse(`${p.date}T00:00:00Z`) - DAY_MS).toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+  return `${sentence ? 'the end' : 'End'} of ${month}`;
+}
+
 // The hero's line draws in once a page load: the first time Home's chart is
 // shown (on its own data, after the skeleton), never again as tabs or
 // ranges change. Server and first client render agree (it is false on both),
@@ -162,6 +182,7 @@ export default function NetWorthChart({
   range: givenRange,
   onRange,
   allTime = false,
+  months = null,
 }: {
   points: HistoryPoint[];
   label?: string;
@@ -206,6 +227,8 @@ export default function NetWorthChart({
   /** All is all time (see the header): the grey line is carried from the
    *  totals (`baselineFrom`). */
   allTime?: boolean;
+  /** Where the entered points come from (see the header), for the info. */
+  months?: MonthsInfo | null;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   // Home's line draws in, never Investments'.
@@ -331,7 +354,9 @@ export default function NetWorthChart({
     // points a week apart never qualifies through an estimated week (or an
     // estimated Sunday beside a recorded Monday). Then the line is one solid
     // run, said in words instead.
-    const gaps = points.map((_, i) => i > 0 && ts[i] - ts[i - 1] > DAY_MS);
+    // A month's end from a brokerage's record is a real balance at its day,
+    // so the days between it and the next point aren't unmeasured.
+    const gaps = points.map((p, i) => i > 0 && ts[i] - ts[i - 1] > DAY_MS && !p.entered && !points[i - 1].entered);
     const touches = (i: number) => !!(points[i].estimated || points[i - 1].estimated);
     let recordedSegment = false;
     for (let i = 1; i < points.length; i++) if (!touches(i)) recordedSegment = true;
@@ -541,6 +566,8 @@ export default function NetWorthChart({
   const info: string[] = [];
   // Outside the chart, the hero says what its lines are and where they
   // count from; where the grey line stops is still said here.
+  if (months && !outside && points.some((p) => p.entered))
+    info.push(`Before ${fmtDay(months.first_recorded, true)}, the first recorded day, the balance is each month’s end from ${months.source}, joined by straight lines.`);
   if (baseStart >= 0) {
     // Below zero the line isn't drawn (see geo): said, with the day it
     // stopped when it went below once and stayed there.
@@ -559,6 +586,8 @@ export default function NetWorthChart({
             ? `Grey line: your deposits less withdrawals by each day, from your totals for ${fmtDay(baselineFrom, true)}. The gap above it is your returns so far.`
             : `Grey line: the balance ${onDay(dayIn(baseStart))} plus deposits less withdrawals since. The gap above it is your returns.`
         );
+      if (!outside && months && points[baseStart].date < months.activity_from)
+        info.push(`${months.firm} gives one figure a month, so until ${fmtDay(months.activity_from, true)}, when Nya’s activity starts, each month’s deposits and withdrawals are drawn at its middle.`);
       if (stays) info.push(`It stops at zero ${onDay(dayIn(baseStart + below))}: from then on, ${more}.`);
       else if (below >= 0) info.push(`It stops at zero on the days ${more}.`);
     }
@@ -759,18 +788,18 @@ export default function NetWorthChart({
     if (m0 !== null && m1 !== null) {
       return {
         value: vals[m1],
-        day: fmtDay(points[m1].date),
+        day: pointDay(points[m1]),
         date: points[m1].date,
         estimated: !!points[m1].estimated,
         note: null,
         base: base[m1],
-        from: { value: vals[m0], base: base[m0], day: fmtDay(points[m0].date), estimated: !!points[m0].estimated },
+        from: { value: vals[m0], base: base[m0], day: pointDay(points[m0]), estimated: !!points[m0].estimated },
       };
     }
     if (heroDay === null) return null;
     return {
       value: vals[heroDay],
-      day: fmtDay(points[heroDay].date),
+      day: pointDay(points[heroDay]),
       date: points[heroDay].date,
       estimated: !!points[heroDay].estimated,
       note: heroNote,
@@ -791,11 +820,11 @@ export default function NetWorthChart({
   let readNote: string | null = null;
   if (measure) {
     readValue = change(measure[0], measure[1]).text;
-    readDate = `${day(measure[0])} to ${day(measure[1])}`;
+    readDate = `${pointDay(points[measure[0]])} to ${pointDay(points[measure[1]])}`;
   } else if (readActive !== null) {
     readValue = formatMoney(vals[readActive], currency);
     readNote = noteOn(readActive);
-    readDate = `${day(readActive)}${points[readActive].estimated ? ' · estimated' : ''}`;
+    readDate = `${pointDay(points[readActive])}${points[readActive].estimated ? ' · estimated' : ''}`;
   } else if (whole) {
     // From $0.00 when the account opened: its balance, measured.
     readValue = signed(whole.net + whole.returns, currency);
@@ -811,7 +840,7 @@ export default function NetWorthChart({
   const said = settled !== null && settled <= last ? settled : last;
   const saidNote = noteOn(said);
   const valueText = spoken(
-    `${formatMoney(vals[said], currency)} ${onDay(dayIn(said))}${points[said].estimated ? ', estimated' : ''}${saidNote ? `. ${saidNote}` : ''}`
+    `${formatMoney(vals[said], currency)} ${points[said].entered ? `at ${pointDay(points[said], true)}` : onDay(dayIn(said))}${points[said].estimated ? ', estimated' : ''}${saidNote ? `. ${saidNote}` : ''}`
   );
 
   const infoLines = outside ? [...outside.info, ...info] : info;
@@ -996,7 +1025,7 @@ export default function NetWorthChart({
                 .map((p, i) => (
                   <tr key={p.date}>
                     <td>
-                      {day(i)}
+                      {pointDay(p)}
                       {p.estimated ? ' · estimated' : ''}
                     </td>
                     <td className="num">

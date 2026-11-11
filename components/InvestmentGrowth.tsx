@@ -37,6 +37,7 @@ import { connectorLabel } from '@/lib/connectors/types';
 import { summarizeGrowth, type ActivityState, type CurrencyGroup, type Figures, type GrowthAccount, type GrowthRow } from '@/lib/growth-summary';
 import { joinNames } from '@/lib/month-coverage';
 import type { BalancePoint } from '@/lib/growth';
+import { withPastMonths, type PastMonthsResult } from '@/lib/investment-months';
 import type { Rate } from '@/lib/returns-rate';
 import type { Institution } from './accounts-format';
 import ChipSelect from './ChipSelect';
@@ -54,6 +55,7 @@ import { Segmented } from './Segmented';
 import { focusInsteadOf } from './Sheet';
 import { Notice } from './TotalCaveats';
 import { Why } from './Why';
+import { Strip, StripSkeleton } from './FiguresStrip';
 
 /** An account on the screen, with what its row and sentences name it by. */
 type Shown = GrowthAccount & {
@@ -64,6 +66,11 @@ type Shown = GrowthAccount & {
   title: string;
   institution: string;
   retirement: boolean;
+  /** Its activity as loaded, before the months: the totals form's. */
+  raw: ActivityState;
+  /** Its imported months joined to its history and activity
+   *  (lib/investment-months.ts withPastMonths), or null without both. */
+  past: PastMonthsResult | null;
 };
 
 /** The most ids one history read takes (app/api/account-history MAX_IDS). */
@@ -206,19 +213,30 @@ export default function InvestmentGrowth({
   const buckets = useMemo(() => overridesOf(settings?.value ?? null).buckets, [settings]);
   const accounts = useMemo(
     (): Shown[] =>
-      linked.map(({ inst, a, key }) => ({
-        key,
-        account_id: a.account_id,
-        item_id: inst.item_id,
-        currency: a.currency,
-        activity: activities[key] ?? LOADING,
-        points: histories?.[a.account_id] ?? null,
-        name: a.name,
-        mask: a.mask,
-        title: `${a.name}${a.mask ? ` ••${a.mask}` : ''}`,
-        institution: inst.institution_name,
-        retirement: isRetirement(a.subtype, buckets.get(a.account_id)),
-      })),
+      linked.map(({ inst, a, key }) => {
+        const raw = activities[key] ?? LOADING;
+        const points = histories?.[a.account_id] ?? null;
+        // Through the seam the account's chart uses, so the two agree: the
+        // months' ends before its first recorded day, their deposits and
+        // withdrawals before Nya's activity.
+        const data = raw.state === 'ready' ? raw.data : null;
+        const past = data && points ? withPastMonths(points, data, data.investment_months, a.currency) : null;
+        return {
+          key,
+          account_id: a.account_id,
+          item_id: inst.item_id,
+          currency: a.currency,
+          activity: past && data ? { state: 'ready', data: { ...data, flows: past.flows, flows_from: past.flows_from, totals_from: past.totals_from } } : raw,
+          points: past ? past.points : points,
+          name: a.name,
+          mask: a.mask,
+          title: `${a.name}${a.mask ? ` ••${a.mask}` : ''}`,
+          institution: inst.institution_name,
+          retirement: isRetirement(a.subtype, buckets.get(a.account_id)),
+          raw,
+          past,
+        };
+      }),
     [linked, activities, histories, buckets]
   );
 
@@ -395,10 +413,27 @@ function rangeTitle(g: CurrencyGroup<Shown>, label: string, several: boolean): s
   return several ? `${currencyPlural(g.currency)}, ${words.charAt(0).toLowerCase()}${words.slice(1)}` : words;
 }
 
+/** The accounts whose figures reach into their imported months: before
+ *  their first recorded day (`balances`) or Nya's activity (`flows`). */
+function monthsIn(g: CurrencyGroup<Shown>, k: 'first_recorded' | 'activity_from'): { title: string; day: string }[] {
+  return g.rows.flatMap((r) => {
+    const applied = r.account.past?.applied;
+    const from = r.split?.from ?? null;
+    return applied && from !== null && from < applied[k] ? [{ title: r.account.title, day: applied[k] }] : [];
+  });
+}
+
 /** The hero's lines in the chart's info, before the chart's own. */
 function heroInfo(g: CurrencyGroup<Shown>, one: boolean): string[] {
   const these = one ? 'this account' : 'these accounts';
-  const gold = `Gold line: the balance of ${these}.`;
+  // Where a line is each month's end from Vanguard's Performance page.
+  const ends = monthsIn(g, 'first_recorded')
+    .map((m) => (one ? ` Before ${day(m.day)}, the first recorded day, it is each month’s end from Vanguard’s Performance page.` : ` ${m.title}’s, before ${day(m.day)}, is each month’s end from Vanguard’s Performance page.`))
+    .join('');
+  const gold = `Gold line: the balance of ${these}.${ends}`;
+  const middles = monthsIn(g, 'activity_from')
+    .map((m) => (one ? ` Until ${day(m.day)}, Vanguard gives one figure a month, so each counts from the middle of its month.` : ` For ${m.title}, until ${day(m.day)}, Vanguard gives one figure a month, so each counts from the middle of its month.`))
+    .join('');
   if (g.basis === 'all') {
     const first = g.chart?.baseline[0]?.date ?? null;
     const startsLater = !!first && !!g.chart && g.chart.points[0].date < first;
@@ -410,7 +445,7 @@ function heroInfo(g: CurrencyGroup<Shown>, one: boolean): string[] {
   }
   return [
     `${gold} Grey line: what ${one ? 'it' : 'they'} would be worth without returns, the beginning balance plus deposits and withdrawals so far. The gap between them is your investment returns.`,
-    `The rate of return weighs each deposit and withdrawal by how long it was invested, so money added late in the range counts for less.${one ? '' : ' An account counted from a later day joins on that day.'} Past a year it is given a year.`,
+    `The rate of return weighs each deposit and withdrawal by how long it was invested, so money added late in the range counts for less.${one ? '' : ' An account counted from a later day joins on that day.'}${middles} Past a year it is given a year.`,
   ];
 }
 
@@ -560,59 +595,6 @@ function InvestmentsHero({
   );
 }
 
-/** Beginning balance, Deposits & withdrawals, Investment returns and Ending
- *  balance, in `currency`. */
-function Strip({ f, currency }: { f: Figures; currency: string }) {
-  return (
-    <ul className="stat-strip" role="list">
-      <li className="stat">
-        <span className="stat-label">Beginning balance</span>
-        <span className="stat-value money">
-          <Masked>{formatMoney(f.begin, currency)}</Masked>
-        </span>
-      </li>
-      <li className="stat">
-        <span className="stat-label">Deposits & withdrawals</span>
-        <span className="stat-value money">
-          <Masked>{signedMoney(f.dw, currency)}</Masked>
-        </span>
-      </li>
-      <li className="stat">
-        <span className="stat-label">Investment returns</span>
-        {/* A gain in green with its sign; a loss keeps the text color with
-            its minus, as on an account's sheet. */}
-        <span className={`stat-value money${f.returns > 0 && !roundsToNothing(f.returns, currency) ? ' inflow' : ''}`}>
-          <Masked>{signedMoney(f.returns, currency)}</Masked>
-        </span>
-      </li>
-      <li className="stat">
-        <span className="stat-label">Ending balance</span>
-        <span className="stat-value money">
-          <Masked>{formatMoney(f.end, currency)}</Masked>
-        </span>
-      </li>
-    </ul>
-  );
-}
-
-const STRIP_LABELS = ['Beginning balance', 'Deposits & withdrawals', 'Investment returns', 'Ending balance'];
-
-/** The strip's place while the activity loads. */
-export function StripSkeleton() {
-  return (
-    <ul className="stat-strip" aria-hidden="true">
-      {STRIP_LABELS.map((label) => (
-        <li key={label} className="stat">
-          <span className="stat-label">{label}</span>
-          <span className="stat-value">
-            <span className="skeleton accounts-skeleton-figure" />
-          </span>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
 /** "Individual ••4421 counts from Jul 12, its first recorded day, to Nov 9,
  *  the last day Nya has its activity"; for all time, only where it stops. */
 function edgeWords(r: GrowthRow<Shown>, toOnly: boolean): string | null {
@@ -729,7 +711,9 @@ function RangeCard({
         <Masked>
           {all
             ? `All time starts at ${formatMoney(0, g.currency)}, when each account opened, and counts from the deposits and withdrawals you set for each account, carried through the activity Nya has had since. ${WHY_DW} There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.`
-            : WHY_DW}
+            : `${WHY_DW}${monthsIn(g, 'activity_from')
+                .map((m) => ` Before ${day(m.day)}, when Nya’s activity for ${g.rows.length === 1 ? 'this account' : m.title} starts, each month’s figures are Vanguard’s, from the Performance page you imported.`)
+                .join('')}`}
         </Masked>
       </Why>
       {g.rows.length > 1 && (
@@ -751,7 +735,8 @@ function RangeCard({
 /** The form's target for a counted account (components/MoneyInOutSheet.tsx). */
 function targetFor(r: GrowthRow<Shown>): MoneyInOutTarget {
   const a = r.account;
-  const data = a.activity.state === 'ready' ? a.activity.data : null;
+  // Nya's own activity, which the totals are set against, never the months.
+  const data = a.raw.state === 'ready' ? a.raw.data : null;
   return {
     account_id: a.account_id,
     item_id: a.item_id,
