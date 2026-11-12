@@ -209,6 +209,101 @@ describe('what the route refuses', () => {
   });
 });
 
+describe('the review', () => {
+  const reviewBody = (over: Record<string, unknown> = {}) => ({ action: 'review', account_id: 'ind', file_name: 'OfxDownload.csv', text: FILE, today: TODAY, ...over });
+  const byMask = (body: { review: { accounts: { mask: string }[] } }, mask: string) => body.review.accounts.find((a) => a.mask === mask) as any;
+
+  test('each of the file’s accounts in its order, what taking it would do, nothing kept, and the fingerprint the import names', async () => {
+    const res = await post(reviewBody());
+    expect(res.status).toBe(200);
+    const { review } = res.body;
+    expect(review.covers).toEqual({ from: daysAgo(60), to: daysAgo(1) });
+    expect(review.after_today).toBe(1);
+    expect(review.sheet_in).toBe(true);
+    expect(review.accounts.map((a: { mask: string }) => a.mask)).toEqual(['4421', '3307', '8802']);
+    const ind = byMask(res.body, '4421');
+    expect(ind).toMatchObject({ lines: 4, rows: 3, account: { account_id: 'ind', item_id: 'i1', name: 'ind' }, problem: null });
+    // Plaid's two deposits in those days ($2,000) give way to the file's
+    // three ($2,500).
+    expect(ind.effect).toMatchObject({ kind: 'takes', days: [{ from: daysAgo(60), to: daysAgo(1) }], rows: 3, now_rows: 2, flows: { file: 2500, now: 2000 }, twins: [] });
+    expect(ind.effect.months.reduce((n: number, m: { now: number | null; file: number }) => n + m.file - (m.now ?? 0), 0)).toBe(500);
+    // The Roth has no rows from Plaid, which proves nothing about how far its
+    // feed reaches, so nothing counts there now (activityFromSync).
+    expect(byMask(res.body, '3307').effect).toMatchObject({ rows: 1, now_rows: 0, flows: { file: 7000, now: null } });
+    expect(byMask(res.body, '8802')).toEqual({ mask: '8802', lines: 1, rows: 1, account: null, problem: { why: 'not-in-nya' }, effect: null });
+    expect(await investmentImportsStore.count(ctx)).toBe(0);
+    expect(review.fingerprint).toBe((await list()).body.fingerprint);
+    // Opened on an account the file doesn't have (the Traditional IRA ends in
+    // 5519): said, and the others can still be taken.
+    expect((await post(reviewBody({ account_id: 'trad' }))).body.review.sheet_in).toBe(false);
+    // What it said, taken as it said it.
+    expect((await post(importBody({ counting: review.fingerprint }))).status).toBe(200);
+  });
+
+  test('what stops an account, each said: two of yours end alike, a kind Nya doesn’t know, nothing in the file’s days', async () => {
+    await connect('i2', [{ account_id: 'twin', mask: '4421' }]);
+    const text = vanguardCsv(
+      [],
+      [
+        { account: '11114421', trade: daysAgo(20), type: 'Funds Received', net: 1 },
+        { account: '22223307', trade: daysAgo(20), type: 'Gift', net: 1 },
+        { account: '33335519', trade: TODAY, type: 'Funds Received', net: 1 },
+      ],
+      { noHoldings: true }
+    );
+    const { body } = await post(reviewBody({ text }));
+    expect(byMask(body, '4421')).toMatchObject({ account: null, problem: { why: 'two-in-nya' } });
+    // The sheet's account is in the file, though it can't be told apart.
+    expect(body.review.sheet_in).toBe(true);
+    expect(byMask(body, '3307')).toMatchObject({ account: { account_id: 'roth' }, problem: { why: 'unreadable', detail: { reason: 'unknown-type', type: 'Gift' } }, effect: null });
+    expect(byMask(body, '5519')).toMatchObject({ account: { account_id: 'trad' }, problem: { why: 'no-rows', now: 0 } });
+  });
+
+  test('nothing in the file’s days while Plaid has rows there: off, with how many stay', async () => {
+    const text = vanguardCsv(
+      [],
+      [
+        { account: '11114421', trade: TODAY, type: 'Funds Received', net: 1 },
+        { account: '22223307', trade: daysAgo(50), type: 'Contribution', net: 7000 },
+      ],
+      { noHoldings: true }
+    );
+    expect(byMask((await post(reviewBody({ text }))).body, '4421').problem).toEqual({ why: 'no-rows', now: 2 });
+  });
+
+  test('as many imports as an account keeps, and days that don’t reach Nya’s activity: off, said why', async () => {
+    const value = { source: 'vanguard-csv' as const, file_name: null, imported_at: '2026-01-01T00:00:00.000Z', covers: { from: '2025-01-01', to: '2025-01-02' }, currency: 'USD', rows: [{ date: '2025-01-02', name: 'Funds Received', type: 'cash', subtype: 'deposit', quantity: 0, price: 0, amount: -1, fees: 0, currency: 'USD', security: null }] };
+    for (let n = 0; n < MAX_IMPORTS_PER_ACCOUNT; n++) await investmentImportsStore.set(ctx, `roth:old-import-${String(n).padStart(2, '0')}`, value);
+    expect(byMask((await post(reviewBody())).body, '3307').problem).toEqual({ why: 'full' });
+    await investmentImportsStore.remove(ctx, ...(await investmentImportsStore.ids(ctx)));
+    const old = vanguardCsv([], [{ account: '11114421', trade: daysAgo(900), type: 'Funds Received', net: 1 }], { noHoldings: true });
+    const problem = byMask((await post(reviewBody({ text: old }))).body, '4421').problem;
+    expect(problem).toMatchObject({ why: 'unreached', covers: { from: daysAgo(900), to: daysAgo(900) }, activity: { through: expect.any(String) } });
+    expect(problem.activity.from > daysAgo(900)).toBe(true);
+  });
+
+  test('a row Plaid dated after the file’s last day that is one of the file’s: shown as counted once', async () => {
+    PLAID_ROWS.push(deposit('p5', 'ind', TODAY, 777));
+    try {
+      const text = vanguardCsv([], [{ account: '11114421', trade: daysAgo(2), type: 'Funds Received', net: 777 }], { noHoldings: true });
+      const ind = byMask((await post(reviewBody({ text }))).body, '4421');
+      expect(ind.effect.twins).toEqual([{ date: TODAY, file_date: daysAgo(2), name: 'Funds Received', type: 'cash', subtype: 'deposit', amount: -777 }]);
+    } finally {
+      PLAID_ROWS.pop();
+    }
+  });
+
+  test('refused like an import: a file that isn’t the download, or a today far from Nya’s', async () => {
+    expect((await post(reviewBody({ text: 'Date,Amount\n2026-01-01,5\n' }))).body.error).toMatch(/isn’t Vanguard’s transaction download/);
+    expect((await post(reviewBody({ today: daysAgo(3) }))).status).toBe(400);
+  });
+
+  test('the list names every account an import took, for the Undo’s words', async () => {
+    await post(importBody());
+    expect((await list()).body.names).toEqual({ ind: { name: 'ind', mask: '4421', item_id: 'i1' }, roth: { name: 'roth', mask: '3307', item_id: 'i1' } });
+  });
+});
+
 describe('importing', () => {
   test('every account chosen, in one step, its rows to the day before today, listed on each account with all it took', async () => {
     const res = await post(importBody());
@@ -260,7 +355,7 @@ describe('undoing, without loss', () => {
 
     const { import_id } = (await post(importBody())).body.imports[0];
     const undone = await post({ action: 'undo', account_id: 'ind', import_id });
-    expect(undone).toEqual({ status: 200, body: { imports: [], fingerprint: 'none' } });
+    expect(undone).toEqual({ status: 200, body: { imports: [], fingerprint: 'none', names: {} } });
     expect(everything()).toEqual(before);
     expect(await fake.hgetall(ctxKey('investment-imports'))).toBeFalsy();
 
@@ -309,7 +404,7 @@ describe('both readers of the activity', () => {
       { date: daysAgo(45), amount: 1200 },
       { date: daysAgo(16), amount: 1000 },
     ]);
-    expect(joined.imported_days).toEqual([{ import_id: expect.any(String), from: daysAgo(60), to: daysAgo(1) }]);
+    expect(joined.imported_days).toEqual([{ import_id: expect.any(String), from: daysAgo(60), to: daysAgo(1), file_name: 'OfxDownload.csv', imported_at: expect.any(String) }]);
     expect(joined.txns.map((t: { investment_transaction_id: string }) => t.investment_transaction_id)).toEqual([
       expect.stringMatching(/:0$/),
       expect.stringMatching(/:1$/),

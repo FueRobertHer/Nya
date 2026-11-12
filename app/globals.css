@@ -4238,6 +4238,15 @@ button.danger-outline {
   overflow-wrap: anywhere;
 }
 
+/* A row that can't be chosen: its name dims, and its sub says why. */
+.check-row:has(> input:disabled) {
+  cursor: default;
+}
+
+.check-row:has(> input:disabled) .check-row-title {
+  color: var(--text-2);
+}
+
 /* --- download my data (components/DownloadMyData.tsx) --- */
 
 .download-formats {

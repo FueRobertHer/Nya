@@ -190,6 +190,11 @@ describe('the twins at the edges', () => {
     ];
     const out = withImportedRows(syncOf(rows), 'inv', [csv]);
     expect(out.twins.map((t) => t.investment_transaction_id)).toEqual(['early', 'settled']);
+    // Each with the file row it was taken for, which the review shows.
+    expect(out.pairs.map((p) => [p.plaid.investment_transaction_id, p.file.investment_transaction_id])).toEqual([
+      ['early', 'csv-a:1'],
+      ['settled', 'csv-a:0'],
+    ]);
     expect(ids(out.sync.rows)).toContain('again');
   });
 
@@ -319,7 +324,10 @@ describe('the stored shape, closed', () => {
 describe('the request', () => {
   const body = (over: Record<string, unknown> = {}) => ({ action: 'import' as const, account_id: 'inv', file_name: 'OfxDownload.csv', text: 'x', today: '2026-11-12', take: [{ account_id: 'inv', mask: '4421' }], counting: 'none', ...over });
 
-  test('an import and an undo, as sent', () => {
+  test('a review, an import and an undo, as sent', () => {
+    const review = { action: 'review' as const, account_id: 'inv', file_name: 'OfxDownload.csv', text: 'x', today: '2026-11-12' };
+    expect(parseImportsChange(review)).toEqual(review);
+    expect(parseImportsChange({ ...review, take: [] })).toMatch(/take isn’t part of a review/);
     expect(parseImportsChange(body())).toEqual(body());
     expect(parseImportsChange({ action: 'undo', account_id: 'inv', import_id: 'abcdefgh-1' })).toEqual({ action: 'undo', account_id: 'inv', import_id: 'abcdefgh-1' });
   });

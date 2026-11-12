@@ -7,7 +7,7 @@
 // expand/collapse loop.
 
 import { useEffect, useState } from 'react';
-import { amountsHidden, formatDay, formatMoney, hiddenMoney, trueMinus } from '@/lib/format';
+import { amountsHidden, formatDay, formatInstantDay, formatMoney, hiddenFigure, hiddenMoney, trueMinus } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { readableName } from '@/lib/merchant-name';
 import { displayName } from '@/lib/categories';
@@ -53,6 +53,11 @@ export type InvestmentActivityPayload = {
    *  `investment_months_unreadable` when they couldn't be read. */
   investment_months?: InvestmentMonths | null;
   investment_months_unreadable?: boolean;
+  /** The days imports of the brokerage's transactions download decide
+   *  (lib/investment-imports.ts), in order, each with its file. */
+  imported_days?: { import_id: string; from: string; to: string; file_name: string | null; imported_at: string }[];
+  /** Imports whose days don't reach Nya's activity, so they aren't used. */
+  imports_unused?: string[];
 };
 type Payload = InvestmentActivityPayload;
 
@@ -118,9 +123,20 @@ export function investmentMonthsSaved(accountId: string, itemId: string, months:
   patched(accountId, itemId, { investment_months: months, investment_months_unreadable: false });
 }
 
+/** Transactions were imported into these accounts, or an import of them
+ *  undone: what each one's activity is changed, so its copy goes and its
+ *  readers load it again. */
+export function investmentImportsChanged(accounts: readonly { account_id: string; item_id: string }[]): void {
+  for (const { account_id, item_id } of accounts) {
+    const key = `${item_id}:${account_id}`;
+    inflight.delete(key);
+    for (const tell of saved) tell(key);
+  }
+}
+
 /** Calls `tell` with an account's key (`item:account`) when its money in and
- *  out or its imported months are saved; returns the unsubscribe, for an
- *  effect's cleanup. */
+ *  out or its imported months are saved, or its transactions imported;
+ *  returns the unsubscribe, for an effect's cleanup. */
 export function onMoneyInOutSaved(tell: (key: string) => void): () => void {
   saved.add(tell);
   return () => {
@@ -169,12 +185,23 @@ export default function InvestmentActivity({
 }) {
   const [data, setData] = useState<Payload | null>(null);
   const [failed, setFailed] = useState(false);
+  // Bumped when the account's transactions are imported or an import undone.
+  const [changes, setChanges] = useState(0);
+  useEffect(() => {
+    const mine = `${itemId}:${accountId}`;
+    return onMoneyInOutSaved((key) => {
+      if (key === mine) setChanges((n) => n + 1);
+    });
+  }, [accountId, itemId]);
 
   useEffect(() => {
     let cancelled = false;
     loadInvestmentActivity(accountId, itemId)
       .then((d) => {
-        if (!cancelled) setData(d);
+        if (!cancelled) {
+          setData(d);
+          setFailed(false);
+        }
       })
       .catch(() => {
         if (!cancelled) setFailed(true);
@@ -182,7 +209,7 @@ export default function InvestmentActivity({
     return () => {
       cancelled = true;
     };
-  }, [accountId, itemId]);
+  }, [accountId, itemId, changes]);
 
   if (failed)
     return (
@@ -196,10 +223,12 @@ export default function InvestmentActivity({
   if (data.txns.length === 0) {
     return <p className="empty-note">{data.note ? `${data.note}.` : 'No investment activity yet.'}</p>;
   }
+  const imported = data.imported_days ?? [];
 
   return (
     <div className="inv-activity">
       {data.note && <p className="empty-note">{data.note}.</p>}
+      {imported.length > 0 && <p className="chart-note">{importedText(imported)}</p>}
       {data.ytd_contributions > 0 && (
         <div className="type-tag">
           <Masked>{formatMoney(data.ytd_contributions, data.txns[0]?.currency)}</Masked> contributed this year
@@ -225,6 +254,11 @@ export default function InvestmentActivity({
                     <div className="type-tag">
                       {fmtDay(t.date)} · {displayName(t.subtype)}
                       {t.security ? ` · ${readableName(t.security)}` : ''}
+                      {t.type === 'transfer' && t.quantity ? (
+                        <>
+                          , <Masked>{shares(t.quantity)}</Masked>
+                        </>
+                      ) : null}
                     </div>
                   </div>
                 </td>
@@ -239,7 +273,31 @@ export default function InvestmentActivity({
       <p className="chart-note">
         Amounts are cash moving in and out of the account, not change in its value: a buy spends
         cash to hold securities worth the same.
+        {imported.length > 0 && ' Shares moved in or out, as in a conversion, show what they were worth.'}
       </p>
     </div>
   );
+}
+
+/** "98.12 shares": the shares a row moved, without their sign. A figure of
+ *  the person's, as a holding's quantity is: masked while amounts are
+ *  hidden. */
+function shares(quantity: number): string {
+  const n = Math.abs(quantity);
+  return `${hiddenFigure(n.toLocaleString(undefined, { maximumFractionDigits: 4 }))} ${n === 1 ? 'share' : 'shares'}`;
+}
+
+/** Which days come from which imported file, in order, and where to undo
+ *  them: "Jun 1, 2025 to Nov 10 come from OfxDownload.csv, imported Nov 12.
+ *  To undo it: ⋯, Import history from a file." */
+export function importedText(days: NonNullable<Payload['imported_days']>): string {
+  const day = (d: string) => formatDay(d, { sentence: true });
+  const parts = days.map((d) => {
+    const when = formatInstantDay(d.imported_at, { sentence: true });
+    const span = d.from === d.to ? `${day(d.from)} comes` : `${day(d.from)} to ${day(d.to)} come`;
+    return `${span} from ${d.file_name ?? 'Vanguard’s transactions download'}${when ? `, imported ${when}` : ''}`;
+  });
+  const said = parts.join('; ');
+  const files = new Set(days.map((d) => d.import_id)).size;
+  return `${said.charAt(0).toUpperCase()}${said.slice(1)}. To undo ${files === 1 ? 'it' : 'one'}: ⋯, Import history from a file.`;
 }

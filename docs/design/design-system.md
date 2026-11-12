@@ -191,7 +191,8 @@ Built as `RadioRows` (`.radio-rows`, `.radio-row`, `.radio-row-name`, `.radio-ro
 Any of a few things, none to all: what a save does besides (the Plan's Also change it in, since C2 of the tax plan: the other plans a figure's or an item's change goes to). The radio rows' shape with checkboxes: a fieldset whose legend (`.section-label`) says what is chosen, then one row per thing, a native checkbox in `--accent`, its name (`--fs-3`, semibold) and one line under it (`--fs-2`, `--text-2`; its value there, through `Masked` when it is an amount), hairlines (`--border-subtle`) between rows. Each row's whole label is the checkbox's target, at least `--tap` (44px) tall; a long name wraps rather than widen the sheet.
 
 - Above a sheet's footer, after what the sheet edits, so it reads as part of the save.
-- Nothing is checked until the person checks it, and it is never there with nothing to offer.
+- Nothing is checked until the person checks it, and it is never there with nothing to offer. Where the rows are what one action takes (the accounts a Vanguard transactions download goes into), each that can be taken starts checked, so the person unchecks what they don't want.
+- A row that can't be chosen now is disabled: its name in `--text-2`, its line saying why (an account the download can't go into).
 - Saved with the sheet's own Save, all or none: a change that can't reach one of them reaches none.
 
 Built as `CheckRows` (`.check-rows`, `.check-row`, `.check-row-text`, `.check-row-title`, `.check-row-sub`), with `AlsoChange` for Also change it in.

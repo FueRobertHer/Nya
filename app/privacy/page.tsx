@@ -266,6 +266,10 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: A
     'The PDF is read on your device and never sent to Nya: only its months are, each month’s deposits and withdrawals, returns and ending balance, with the balance the first began at, the file’s name and when you imported it. Each import is kept until you undo it, Forget the account or delete your account. Encrypted, and in your download. Never shown to anyone you share with.',
   ],
   [
+    'Transactions you import from Vanguard’s download',
+    'The CSV is read on your device and on Nya’s server, and never kept: only each account’s transactions in the days it covers are (each one’s day, kind, description, fund, shares, price, fees and amount), with those days, the file’s name and when you imported it. Account numbers are read only for their last four digits. Each import is kept until you undo it, Forget the account or delete your account. Encrypted, and in your download. Never shown to anyone you share with.',
+  ],
+  [
     'A SimpleFIN connection',
     'The access SimpleFIN gave Nya, encrypted, never in your download and never in backups: until you disconnect it, or delete your account. Restoring a backup ends it: you connect again with a new Setup Token, and the accounts carry on. Its accounts and their transactions are kept like any account’s. Disconnecting deletes the access; you choose to keep the accounts as manual accounts, or to remove them and their transactions (their past balances stay in your net-worth history). A note of each account you stop tracking (its name, its bank and when) stays, so a report on a period it was tracked in can say what may be missing, until you forget it on the Reports page, or delete your account. SimpleFIN keeps what it holds under its own terms: remove Nya in your SimpleFIN account too.',
   ],
