@@ -54,6 +54,8 @@ const POINTS = [
 ];
 const flowsOf = (ms: MonthFigures[]) => ms.filter((m) => m.month >= '2026-07' && m.net !== 0).map((m) => ({ date: `${m.month}-15`, amount: dollars(m.net) }));
 const ACTIVITY = { flows: flowsOf(MONTHS), flows_from: '2026-07-01', flows_to: '2026-11-05', moves: [] };
+// Totals the person set, which stand for all time instead of the months.
+const SET = { ...ACTIVITY, money_in_out: { in: 60_000, out: 0, as_of: '2026-10-15', currency: 'USD', set_at: '2026-11-01T00:00:00.000Z' } };
 
 const ctx = (over: Partial<ReviewContext> = {}): ReviewContext => ({
   account_id: 'acc_vg',
@@ -157,8 +159,22 @@ describe('the review', () => {
     expect(r.text).toContain(
       'Jan 2020 to Dec 2023 would stop counting: this file starts in Jan 2024, and only the newest import counts. To keep them, print Vanguard’s page from Jan 2020, when the account opened.'
     );
-    expect(r.text).toContain('Use this file’s months only Before Jan 2024, the chart and your returns would come from Nya’s own records again.');
+    // The months that count start at $0.00, when the account opened, so all
+    // time counts from them; this file's start at $0.00 too, in Jan 2024.
+    expect(r.text).toContain('Use this file’s months only All time would count from Jan 2024, not from when the account opened.');
     expect(r.state.body).toBeNull();
+    // A file from a balance gives no all time of its own.
+    const fromBalance = review(readOf(makeMonths(RANGE.from, RANGE.to, { startBalance: 2_500_000 })), ctx({ imports: { imports: [counting] } }));
+    expect(fromBalance.text).toContain(
+      'Use this file’s months only Before Jan 2024, the chart and your returns would come from Nya’s own records again, and all time would need your deposits and withdrawals.'
+    );
+    // With totals set, or ones that can't be read, all time doesn't come
+    // from the months either way.
+    for (const activity of [SET, { ...ACTIVITY, money_in_out_unreadable: true }]) {
+      expect(review(readOf(MONTHS), ctx({ imports: { imports: [counting] }, activity })).text).toContain(
+        'Use this file’s months only Before Jan 2024, the chart and your returns would come from Nya’s own records again.'
+      );
+    }
   });
 
   test('a file with no day to compare with the account’s balances: said, imported only on a yes', () => {
@@ -190,7 +206,22 @@ describe('the review', () => {
     expect(r.text).toContain(
       'Jan 2020 to Dec 2023 and Jan 2026 to Oct 2026 would stop counting: this file runs from Jan 2024 to Dec 2025, and only the newest import counts. To keep them, print Vanguard’s page from Jan 2020, when the account opened, up to today.'
     );
-    expect(r.text).toContain('Use this file’s months only Before Jan 2024 and after Dec 2025, the chart and your returns would come from Nya’s own records again.');
+    // This file ends before Nya's activity starts, so none of it would be
+    // used, and all time would have nothing to count from.
+    expect(r.text).toContain(
+      'Use this file’s months only Before Jan 2024 and after Dec 2025, the chart and your returns would come from Nya’s own records again, and all time would need your deposits and withdrawals.'
+    );
+    const set = review(readOf(inside, { range: { from: '2024-01-01', to: '2025-12-31' } }), ctx({ imports: { imports: [counting] }, activity: SET }));
+    expect(set.text).toContain('Use this file’s months only Before Jan 2024 and after Dec 2025, the chart and your returns would come from Nya’s own records again.');
+  });
+
+  test('a file from $0.00 with empty months before the one that counts: nothing would stop counting', () => {
+    // Printed from Jan 2023, a year before the account opened in Jan 2024.
+    const empty = ['2023-01', '2023-02', '2023-03', '2023-04', '2023-05', '2023-06', '2023-07', '2023-08', '2023-09', '2023-10', '2023-11', '2023-12'].map((month) => ({ month, net: 0, returns: 0, end: 0 }));
+    const counting = anImport({ start: { month: '2023-01', balance: 0 }, months: [...empty, ...anImport().months] });
+    const r = review(readOf(MONTHS), ctx({ imports: { imports: [counting] } }));
+    expect(r.text).not.toContain('would stop counting');
+    expect(r.text).toContain('The chart and your returns will reach back to Jan 2024.');
   });
 
   test('months Nya has activity for whose deposits and withdrawals differ: listed, and Nya’s kept', () => {
@@ -210,7 +241,7 @@ describe('the review', () => {
 });
 
 describe('the imports', () => {
-  const mount = (imports: MonthsImport[]) => {
+  const mount = (imports: MonthsImport[], activity: typeof ACTIVITY = ACTIVITY) => {
     const host = dom.document.createElement('div');
     dom.document.body.appendChild(host);
     const root = createRoot(host as unknown as HTMLElement);
@@ -221,7 +252,7 @@ describe('the imports', () => {
           name="Individual"
           imports={{ imports }}
           points={POINTS}
-          activity={ACTIVITY}
+          activity={activity}
           currency="USD"
           busy={false}
           onUndo={async (i) => {
@@ -253,13 +284,38 @@ describe('the imports', () => {
     v.unmount();
   });
 
+  test('undoing the newest when the one before gives all time otherwise: said', () => {
+    // The one before starts on a balance; then one from $0.00 in Jan 2025.
+    const balance = mount([anImport({ id: 'imp-0', imported_at: '2026-11-01T12:00:00.000Z', start: { month: '2024-01', balance: 1_000 } }), anImport()]);
+    act(() => click(balance.button('Undo the import from today')));
+    expect(balance.host.textContent).toContain('Jan 2024 to Oct 2026, and all time will need your deposits and withdrawals. Nothing else changes');
+    balance.unmount();
+    const later = anImport({ id: 'imp-0', imported_at: '2026-11-01T12:00:00.000Z', start: { month: '2025-01', balance: 0 }, months: anImport().months.filter((m) => m.month >= '2025-01') });
+    const v = mount([later, anImport()]);
+    act(() => click(v.button('Undo the import from today')));
+    expect(v.host.textContent).toContain('Jan 2025 to Oct 2026, and all time will count from Jan 2025. Nothing else changes');
+    v.unmount();
+  });
+
   test('the only import: the account goes back to how it was', () => {
     const v = mount([anImport()]);
     act(() => click(v.button('Undo the import from today')));
     expect(v.host.textContent).toContain(
-      'Undo the import from today? Individual goes back to how it was before any import: before Jul 1 its chart is Nya’s estimate again. Nothing else changes, and you can import the file again later.'
+      'Undo the import from today? Individual goes back to how it was before any import: before Jul 1 its chart is Nya’s estimate again, and all time needs your deposits and withdrawals. Nothing else changes, and you can import the file again later.'
     );
     v.unmount();
+    // With totals set, all time keeps them.
+    const set = mount([anImport()], SET);
+    act(() => click(set.button('Undo the import from today')));
+    expect(set.host.textContent).toContain(
+      'Undo the import from today? Individual goes back to how it was before any import: before Jul 1 its chart is Nya’s estimate again. Nothing else changes, and you can import the file again later.'
+    );
+    set.unmount();
+    // From a balance, the months never gave all time.
+    const balance = mount([anImport({ start: { month: '2024-01', balance: 1_000 } })]);
+    act(() => click(balance.button('Undo the import from today')));
+    expect(balance.host.textContent).toContain('before Jul 1 its chart is Nya’s estimate again. Nothing else changes');
+    balance.unmount();
   });
 });
 

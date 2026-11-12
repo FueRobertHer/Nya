@@ -12,8 +12,10 @@
 // its own card. The numbers are lib/growth-summary.ts's.
 //
 // All is all time once every chosen account has deposits and withdrawals
-// Nya can carry: from $0.00, when each opened, with no rate. Until then, All
-// counts from the first recorded day, and the card says what to set.
+// Nya can carry, or months from its brokerage that start when it opened:
+// from $0.00, when each opened, with a rate only where every account's
+// months say when its money went in. Until then, All counts from the first
+// recorded day, and the card says what to set.
 //
 // It loads every account's balance history in one read (app/api/
 // account-history `ids`), and each account's activity through the cache its
@@ -38,7 +40,7 @@ import { connectorLabel } from '@/lib/connectors/types';
 import { summarizeGrowth, type ActivityState, type CurrencyGroup, type Figures, type GrowthAccount, type GrowthRow } from '@/lib/growth-summary';
 import { joinNames } from '@/lib/month-coverage';
 import type { BalancePoint } from '@/lib/growth';
-import { withPastMonths, type PastMonthsResult } from '@/lib/investment-months';
+import { monthText, previousMonth, withPastMonths, type PastMonthsResult } from '@/lib/investment-months';
 import type { Rate } from '@/lib/returns-rate';
 import AccountsChooser, { presetOf, type ChooserPreset } from './AccountsChooser';
 import type { Institution } from './accounts-format';
@@ -463,10 +465,18 @@ function heroInfo(g: CurrencyGroup<Shown>, one: boolean): string[] {
     const first = g.chart?.baseline[0]?.date ?? null;
     const startsLater = !!first && !!g.chart && g.chart.points[0].date < first;
     const from = first ? ` from ${day(first)}${startsLater ? `, the first day Nya has ${one ? 'its' : 'every account’s'} activity` : ''}` : '';
+    const typed = g.rows.filter((r) => r.figures && r.totals === 'set');
+    const source = typed.length === 0 ? '' : typed.length === g.rows.filter((r) => r.figures).length ? ', from the totals you set' : ', from the totals you set and the months you imported';
     return [
-      `${gold} Grey line: your deposits less withdrawals since ${one ? 'it' : 'each account'} opened, from the totals you set, by each day${from}. The gap between them is your investment returns so far.`,
-      'There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.',
-    ];
+      `${gold} Grey line: your deposits less withdrawals since ${one ? 'it' : 'each account'} opened${source}, by each day${from}. The gap between them is your investment returns so far.`,
+      g.rate
+        ? `The rate of return weighs each deposit and withdrawal by how long it was invested.${middles} Past a year it is given a year.`
+        : typed.length === g.rows.filter((r) => r.figures).length
+          ? 'There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.'
+          : typed.length > 0
+            ? `There’s no rate of return for all time across these accounts: Nya doesn’t know when the money before its records went in for ${joinNames(typed.map((r) => r.account.title))}.`
+            : '',
+    ].filter(Boolean);
   }
   return [
     `${gold} Grey line: what ${one ? 'it' : 'they'} would be worth without returns, the beginning balance plus deposits and withdrawals so far. The gap between them is your investment returns.`,
@@ -571,9 +581,10 @@ function InvestmentsHero({
 
   let delta: ReactNode = null;
   if (f && g) {
-    if (all) delta = <div className="hero-delta">All time, since each account opened</div>;
+    // All time has a rate only from months that say when the money went in.
+    if (all && !g.rate) delta = <div className="hero-delta">All time, since each account opened</div>;
     else {
-      const span = `${rangeWords.charAt(0).toLowerCase()}${rangeWords.slice(1)}`;
+      const span = all && g.span ? `since ${monthText(g.span.from.slice(0, 7))}` : `${rangeWords.charAt(0).toLowerCase()}${rangeWords.slice(1)}`;
       const r = g.rate;
       if (!r) delta = <div className="hero-delta">{rangeWords}</div>;
       else {
@@ -620,10 +631,19 @@ function InvestmentsHero({
   );
 }
 
+/** Where a row counts from, and why. */
+function fromWords(e: NonNullable<GrowthRow['from']>): string {
+  if (e.cause === 'opened') return `from ${monthText(e.day.slice(0, 7))}, when it opened`;
+  if (e.cause === 'months') return `from ${monthText(e.day.slice(0, 7))}, its first month from Vanguard’s Performance page`;
+  // A month's end is on the next month's 1st.
+  if (e.cause === 'month-end') return `from the end of ${monthText(previousMonth(e.day.slice(0, 7)))}, the first balance in the range from Vanguard’s Performance page`;
+  return `from ${day(e.day)}, ${e.cause === 'recorded' ? 'its first recorded day' : 'the first day Nya has its activity'}`;
+}
+
 /** "Individual ••4421 counts from Jul 12, its first recorded day, to Nov 9,
  *  the last day Nya has its activity"; for all time, only where it stops. */
 function edgeWords(r: GrowthRow<Shown>, toOnly: boolean): string | null {
-  const from = !toOnly && r.from && `from ${day(r.from.day)}, ${r.from.cause === 'recorded' ? 'its first recorded day' : 'the first day Nya has its activity'}`;
+  const from = !toOnly && r.from && fromWords(r.from);
   const to = r.to && `to ${day(r.to.day)}, ${r.to.cause === 'activity' ? 'the last day Nya has its activity' : 'its last recorded day'}`;
   if (!from && !to) return null;
   return `${r.account.title} counts ${[from, to].filter(Boolean).join(', ')}.`;
@@ -657,6 +677,39 @@ function missingWords(g: CurrencyGroup<Shown>): string | null {
 const WHY_DW =
   'Deposits & withdrawals is the money that went into these accounts less the money that came out, so a negative amount means more came out than went in. Rollovers, 401(k) loan repayments and employer contributions count, and so does money moved in from or out to an account you haven’t chosen; money moved between the accounts you chose cancels out. Money that left an account and came back within five days, as a fund exchange or a sweep does, is neither. Dividends, interest and gains are returns, not deposits, and fees come off returns.';
 
+/** The card's Why on all time: where it starts, what it counts from, and
+ *  whether it has a rate. */
+function allTimeWhy(g: CurrencyGroup<Shown>): string {
+  const counted = g.rows.filter((r) => r.figures);
+  const typed = counted.filter((r) => r.totals === 'set');
+  const opened = `All time starts at ${formatMoney(0, g.currency)}, when ${counted.length === 1 ? 'the account' : 'each account'} opened`;
+  const from =
+    typed.length === counted.length
+      ? `${opened}, and counts from the deposits and withdrawals you set for each account, carried through the activity Nya has had since.`
+      : typed.length === 0
+        ? `${opened}, and counts from the months you imported from Vanguard’s Performance page, then the activity Nya has had since.`
+        : `${opened}, and counts from the deposits and withdrawals you set or the months you imported from Vanguard’s Performance page, carried through the activity Nya has had since.`;
+  const middles = monthsIn(g)
+    .map((m) => ` Before ${day(m.day)}, when Nya’s activity for ${counted.length === 1 ? 'this account' : m.title} starts, each month’s figures are Vanguard’s.`)
+    .join('');
+  const rate = g.rate || typed.length === 0 ? '' : ' There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.';
+  return `${from}${middles} ${WHY_DW}${rate}`;
+}
+
+/** Where all time's figures come from: the totals set, or the months
+ *  imported and then Nya's activity, for each account. */
+function allTimeHelper(g: CurrencyGroup<Shown>): string {
+  const counted = g.rows.filter((r) => r.figures);
+  if (counted.every((r) => r.totals === 'set')) return 'Since each account opened, from the deposits and withdrawals you set for it.';
+  const months = (r: GrowthRow<Shown>) => {
+    const a = r.account.past?.applied;
+    return a && a.activity_from > a.from ? `Vanguard’s months until ${day(a.activity_from)}, then Nya’s activity` : 'Nya’s activity';
+  };
+  if (counted.length === 1) return `Since ${monthText(counted[0].split!.from.slice(0, 7))}, when the account opened: ${months(counted[0])}.`;
+  const parts = counted.map((r) => `${r.account.title}’s from ${r.totals === 'set' ? 'the deposits and withdrawals you set' : months(r)}`);
+  return `Since each account opened: ${parts.join('; ')}.`;
+}
+
 /** The range's card for one currency: its four figures, what they count and
  *  why, then a row for each account. */
 function RangeCard({
@@ -688,7 +741,7 @@ function RangeCard({
   const waiting = onAll && g.failed.length + g.busy.length > 0 ? joinNames([...g.failed, ...g.busy].map((r) => r.account.title)) : null;
 
   let helper: string | null = null;
-  if (f && all) helper = 'Since each account opened, from the deposits and withdrawals you set for it.';
+  if (f && all) helper = allTimeHelper(g);
   else if (f && g.span) {
     const late = g.rows.filter((r) => r.figures && r.from).map((r) => `${r.account.title}’s beginning balance is its ${day(r.from!.day)} balance.`);
     helper = [`${day(g.span.from)} to ${day(g.span.to)}.`, ...late].join(' ');
@@ -735,7 +788,7 @@ function RangeCard({
       <Why>
         <Masked>
           {all
-            ? `All time starts at ${formatMoney(0, g.currency)}, when each account opened, and counts from the deposits and withdrawals you set for each account, carried through the activity Nya has had since. ${WHY_DW} There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.`
+            ? allTimeWhy(g)
             : `${WHY_DW}${monthsIn(g)
                 .map((m) => ` Before ${day(m.day)}, when Nya’s activity for ${g.rows.length === 1 ? 'this account' : m.title} starts, each month’s figures are Vanguard’s, from the Performance page you imported.`)
                 .join('')}`}

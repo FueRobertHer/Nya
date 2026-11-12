@@ -39,6 +39,9 @@
 //     middle of its days; the month the activity starts in gives the part
 //     before it, Vanguard's net less Nya's own from that day to its end.
 //     Months Nya's activity covers add nothing: its own rows count there.
+//   - A file that starts at $0.00 with empty months (a range chosen from
+//     before the account opened) starts at its first month with anything in
+//     it: the months before held nothing.
 //   - `flows_from` reaches back to the first month. Typed totals stay bound
 //     to Nya's own activity (`totals_from`), so totals for a day before it
 //     still read as outdated.
@@ -50,8 +53,8 @@
 // months-store.ts, the route app/api/investment-months.
 
 import { MAX_AMOUNT } from './manual-txn-input';
-import { isTotal } from './money-in-out';
-import type { BalancePoint, Flow, Move } from './growth';
+import { isTotal, type MoneyInOut } from './money-in-out';
+import { usableTotals, type BalancePoint, type Flow, type Move } from './growth';
 
 /** Plaid's institution id for Vanguard (Fue checked it against Plaid,
  *  2026-11-11): the only brokerage whose Performance page Nya reads. By id,
@@ -122,6 +125,13 @@ const toCents = (n: number) => Math.round(n * 100);
 const cents = (n: number) => Math.round(n * 100) / 100;
 
 export const isMonth = (v: unknown): v is Month => typeof v === 'string' && MONTH.test(v) && v >= FIRST_MONTH;
+
+/** The month before 'YYYY-MM'. */
+export function previousMonth(m: Month): Month {
+  const y = Number(m.slice(0, 4));
+  const n = Number(m.slice(5));
+  return n === 1 ? `${y - 1}-12` : `${y}-${String(n - 1).padStart(2, '0')}`;
+}
 
 /** The month after 'YYYY-MM'. */
 export function nextMonth(m: Month): Month {
@@ -279,7 +289,17 @@ export function parseMonthsChange(body: unknown): MonthsChange | string {
 
 /** What the activity payload says (app/api/investment-activity), the parts
  *  read here. */
-export type MonthsActivity = { flows?: Flow[] | null; flows_from?: string | null; flows_to?: string | null; moves?: Move[] | null };
+export type MonthsActivity = {
+  flows?: Flow[] | null;
+  flows_from?: string | null;
+  flows_to?: string | null;
+  moves?: Move[] | null;
+  /** The totals the person set, and whether they couldn't be read: not
+   *  read by the seam, only by the sheet, to say what an import or an undo
+   *  does to all time. */
+  money_in_out?: MoneyInOut | null;
+  money_in_out_unreadable?: boolean;
+};
 
 /**
  * Why the months that count aren't used now (see the header, rule 0):
@@ -317,6 +337,19 @@ export type PastMonthsResult = {
   applied: { from: string; first_recorded: string; activity_from: string; entered_to: string; joined: boolean } | null;
   differs: MonthDiffers[];
 };
+
+/** The month a file's months count from: its first, or from $0.00 its first
+ *  with anything in it (see the seam's header). A start with no balance
+ *  given counts from its first. */
+export function firstMonth(i: { start: { month: Month; balance?: number }; months: readonly PastMonth[] }): Month {
+  if (i.start.balance !== 0) return i.start.month;
+  return i.months.find((m) => m.net !== 0 || m.returns !== 0 || m.end !== 0)?.month ?? i.start.month;
+}
+
+/** "Mar 2018". */
+export function monthText(m: Month): string {
+  return new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5)) - 1, 1)).toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+}
 
 /** The longest a line is joined straight from a month's end: a month. */
 export const JOINED_DAYS = 31;
@@ -363,11 +396,14 @@ export function withPastMonths(
   if (from > `${nextMonth(last)}-01`) return asGiven('gap');
 
   // The months' points before the first recorded day: the start balance on
-  // its 1st, each month's end on the next month's 1st.
+  // its 1st, each month's end on the next month's 1st. From $0.00, from the
+  // first month with anything in it (see the header).
+  const first = firstMonth(counting);
+  const used = counting.months.filter((m) => m.month >= first);
   const entered: BalancePoint[] = [];
-  const startDay = `${counting.start.month}-01`;
+  const startDay = `${first}-01`;
   if (startDay < firstRecorded) entered.push({ date: startDay, value: counting.start.balance, entered: true });
-  for (const m of counting.months) {
+  for (const m of used) {
     const day = `${nextMonth(m.month)}-01`;
     if (day >= firstRecorded) break;
     entered.push({ date: day, value: m.end, entered: true });
@@ -411,20 +447,31 @@ export function withPastMonths(
   };
 }
 
+/**
+ * The day all time counts from through the months (lib/growth-summary.ts,
+ * components/AccountSparkline.tsx): their first day, when they apply and
+ * start at $0.00 (when the account opened) and the person's totals can't
+ * stand instead: none carried, and none unreadable. Else null.
+ */
+export function allTimeFromMonths(past: PastMonthsResult | null, totals: MoneyInOut | null | undefined, unreadable = false): string | null {
+  if (!past?.applied || !past.counting || past.counting.start.balance !== 0 || unreadable) return null;
+  return usableTotals(totals ?? null, past.totals_from) ? null : past.applied.from;
+}
+
 /** The months an import would stop counting if `next` counted instead: those
  *  the counting one has at either end that `next` doesn't. */
-export function monthsDropped(now: MonthsImport | null, next: { start: { month: Month }; months: { month: Month }[] }): { before: { from: Month; to: Month } | null; after: { from: Month; to: Month } | null } {
+export function monthsDropped(
+  now: MonthsImport | null,
+  next: { start: { month: Month; balance?: number }; months: PastMonth[] }
+): { before: { from: Month; to: Month } | null; after: { from: Month; to: Month } | null } {
   if (!now) return { before: null, after: null };
-  const a = importSpan(now);
-  const nextFrom = next.start.month;
+  // From each file's first month that counts: a file from $0.00 drops none
+  // of the empty months before it.
+  const a = { from: firstMonth(now), to: importSpan(now).to };
+  const nextFrom = firstMonth(next);
   const nextTo = next.months[next.months.length - 1].month;
-  const prevMonth = (m: Month) => {
-    const y = Number(m.slice(0, 4));
-    const n = Number(m.slice(5));
-    return n === 1 ? `${y - 1}-12` : `${y}-${String(n - 1).padStart(2, '0')}`;
-  };
   return {
-    before: a.from < nextFrom ? { from: a.from, to: prevMonth(nextFrom) < a.to ? prevMonth(nextFrom) : a.to } : null,
+    before: a.from < nextFrom ? { from: a.from, to: previousMonth(nextFrom) < a.to ? previousMonth(nextFrom) : a.to } : null,
     after: a.to > nextTo ? { from: nextMonth(nextTo) > a.from ? nextMonth(nextTo) : a.from, to: a.to } : null,
   };
 }

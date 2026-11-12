@@ -712,4 +712,27 @@ describe('months from a brokerage’s record', () => {
     // Not where the range starts after it.
     expect(words(chart([...entered, ...recorded], { initialRange: '1M', baselineFor }))).not.toContain('drawn at its middle');
   });
+
+  // From $0.00 on Jan 1, when the account opened: $1,000 in each month to
+  // April, then the balance Nya recorded.
+  const opened = entered.map((p, i) => ({ ...p, value: i * 1000 }));
+  const flows = ['2026-01-16', '2026-02-16', '2026-03-16', '2026-04-16'].map((date) => ({ date, amount: 1000 }));
+  const baselineFor = (shown: P[]) => contributionBaseline(shown, flows, '2026-01-01', '2026-10-28');
+
+  test('months that start at $0.00 make All all time, with no totals', () => {
+    const html = chart([...opened, ...recorded], { baselineFor, allTime: true });
+    expect(html).toContain('<span class="chart-readout-value">+$15,166.00</span>');
+    expect(html).toContain('<span class="chart-readout-date">All time</span>');
+    expect(html).toContain('All time: +$4,000.00 deposits &amp; withdrawals · +$11,166.00 returns');
+    expect(words(html)).toContain('Grey line: your deposits less withdrawals by each day, from $0.00 when the account opened. The gap above it is your returns so far.');
+    expect(words(html)).not.toContain('counts from your totals');
+  });
+
+  test('not from months that start on a balance, nor without all time asked for', () => {
+    const balance = chart([...entered, ...recorded], { baselineFor, allTime: true });
+    expect(balance).not.toContain('All time');
+    expect(words(balance)).toContain('Grey line: the balance on Jan 1 plus deposits less withdrawals since.');
+    expect(chart([...opened, ...recorded], { baselineFor })).not.toContain('All time');
+    expect(chart([...opened, ...recorded], { baselineFor, allTime: true, initialRange: '1M' })).not.toContain('All time');
+  });
 });

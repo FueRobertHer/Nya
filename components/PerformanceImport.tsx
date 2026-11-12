@@ -30,10 +30,13 @@ import { pdfTextPages, MAX_PDF_BYTES, MAX_PDF_PAGES, type PdfJs, type PdfTextErr
 import { readPerformance, type Cents, type PerformanceRead } from '@/lib/import/vanguard-performance';
 import { accountCheck, addsUpAsRead, reviewMonths, type AccountCheck, type MonthState, type Read, type TypedMonth } from '@/lib/import/performance-review';
 import {
+  monthText,
   countingImport,
   importSpan,
   monthsDropped,
   withPastMonths,
+  allTimeFromMonths,
+  firstMonth,
   type InvestmentMonths,
   type Month,
   type MonthsActivity,
@@ -96,10 +99,6 @@ export function notVanguardWords(name: string, institution: string): string {
 
 // ---- Words ------------------------------------------------------------------
 
-/** "Mar 2018". */
-export function monthText(m: Month): string {
-  return new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5)) - 1, 1)).toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
-}
 const spanText = (from: Month, to: Month) => (from === to ? monthText(from) : `${monthText(from)} to ${monthText(to)}`);
 const day = (iso: string) => formatDay(iso, { sentence: true });
 const importedDay = (i: MonthsImport) => formatInstantDay(i.imported_at, { sentence: true }) ?? i.imported_at.slice(0, 10);
@@ -301,7 +300,8 @@ export function PerformanceImports({
   const [all, setAll] = useState(false);
   const list = [...imports.imports].reverse();
   const counting = list[0];
-  const applied = useMemo(() => (points && activity ? withPastMonths(points, activity, imports, currency).applied : null), [points, activity, imports, currency]);
+  const past = useMemo(() => (points && activity ? withPastMonths(points, activity, imports, currency) : null), [points, activity, imports, currency]);
+  const applied = past?.applied ?? null;
   if (!counting) return null;
   const shown = all ? list : list.slice(0, SHOWN);
   const hidden = list.length - SHOWN;
@@ -311,12 +311,21 @@ export function PerformanceImports({
     if (i !== counting)
       return `Undo the import from ${d}? Nothing you see changes: the newest import counts. There’s just no going back to this one afterwards. You can import the file again later.`;
     const next = list[1];
+    const totals = activity?.money_in_out;
+    const unreadable = !!activity?.money_in_out_unreadable;
     if (next) {
       const s = importSpan(next);
-      return `Undo the import from ${d}? The months will come from the one before it again, from ${importedDay(next)}: ${spanText(s.from, s.to)}. Nothing else changes, and you can import the file again later.`;
+      // All time from the newest's months, and from the one before's.
+      const now = allTimeFromMonths(past, totals, unreadable);
+      const then = now && points && activity ? allTimeFromMonths(withPastMonths(points, activity, { imports: imports.imports.filter((i) => i !== counting) }, currency), totals, unreadable) : now;
+      const allTime = now && then !== now ? `, and all time will ${then ? `count from ${monthText(then.slice(0, 7))}` : 'need your deposits and withdrawals'}` : '';
+      return `Undo the import from ${d}? The months will come from the one before it again, from ${importedDay(next)}: ${spanText(s.from, s.to)}${allTime}. Nothing else changes, and you can import the file again later.`;
     }
+    // All time came from its months when they start at $0.00 and no totals
+    // stand instead (lib/growth-summary.ts).
+    const allTime = !!allTimeFromMonths(past, totals, unreadable);
     return `Undo the import from ${d}? ${name} goes back to how it was before any import${
-      applied ? `: before ${day(applied.first_recorded)} its chart is Nya’s estimate again` : ''
+      applied ? `: before ${day(applied.first_recorded)} its chart is Nya’s estimate again${allTime ? ', and all time needs your deposits and withdrawals' : ''}` : ''
     }. Nothing else changes, and you can import the file again later.`;
   };
 
@@ -484,6 +493,19 @@ export function usePerformanceReview(read: Read | null, ctx: ReviewContext, file
     };
     return withPastMonths(ctx.points, ctx.activity, { imports: [candidate] }, ctx.currency);
   }, [importable, ctx.points, ctx.activity, ctx.currency, fileName]);
+  // Whether all time counts from the months now, when the account opened,
+  // and this file's alone would make it count from later.
+  const opensNow = useMemo(
+    () =>
+      ctx.points && ctx.activity
+        ? allTimeFromMonths(withPastMonths(ctx.points, ctx.activity, ctx.imports, ctx.currency), ctx.activity.money_in_out, !!ctx.activity.money_in_out_unreadable)
+        : null,
+    [ctx.points, ctx.activity, ctx.imports, ctx.currency]
+  );
+  const opensThen = allTimeFromMonths(future, ctx.activity?.money_in_out, !!ctx.activity?.money_in_out_unreadable);
+  // Null: unchanged. Else the day all time would count from, or null with
+  // none (the file's months from a balance, or unused).
+  const allTimeLater = opensNow && opensThen !== opensNow ? { from: opensThen } : null;
 
   const waits =
     !importable ||
@@ -504,7 +526,7 @@ export function usePerformanceReview(read: Read | null, ctx: ReviewContext, file
         }
       : null;
   const count = importable?.months.length ?? review?.months.filter((m) => m.whole).length ?? 0;
-  return { read, review, typedText, setTypedText, check, dropped, future, yesAnother, setYesAnother, yesDropped, setYesDropped, body, count, counting };
+  return { read, review, typedText, setTypedText, check, dropped, future, allTimeLater, yesAnother, setYesAnother, yesDropped, setYesDropped, body, count, counting };
 }
 export type ReviewState = ReturnType<typeof usePerformanceReview>;
 
@@ -660,11 +682,7 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
             <span className="check-row-text">
               <span className="check-row-title">Use this file’s months only</span>
               <span className="check-row-sub">
-                {dropped.before && dropped.after
-                  ? `Before ${monthText(imp!.start.month)} and after ${monthText(imp!.months[imp!.months.length - 1].month)}, the chart and your returns would come from Nya’s own records again.`
-                  : dropped.before
-                    ? `Before ${monthText(imp!.start.month)}, the chart and your returns would come from Nya’s own records again.`
-                    : `The months after ${monthText(imp!.months[imp!.months.length - 1].month)} would come from Nya’s own records again.`}
+                {laterWords(dropped, imp!, state.allTimeLater)}
               </span>
             </span>
           </label>
@@ -682,7 +700,7 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
       )}
       {imp && !later && !allAcc && !future?.unused && (
         <p className="helper">
-          {`The chart and your returns will reach back to ${monthText(imp.start.month)}.${
+          {`The chart and your returns will reach back to ${monthText(firstMonth(imp))}.${
             future?.applied ? ` Where Nya has its own balances (from ${day(future.applied.first_recorded)}) and activity (from ${day(future.applied.activity_from)}), those count.` : ''
           }`}
         </p>
@@ -744,15 +762,34 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
   );
 }
 
+/** What using only this file's months does, for its yes. `allTime`: all
+ *  time counts from the counting import's months now, which start when the
+ *  account opened, and with this file's alone it would count from `from`,
+ *  or need the person's totals (null). */
+function laterWords(d: ReturnType<typeof monthsDropped>, next: { start: { month: Month; balance?: number }; months: PastMonth[] }, allTime: { from: string | null } | null): string {
+  const from = monthText(firstMonth(next));
+  const to = monthText(next.months[next.months.length - 1].month);
+  if (allTime?.from) {
+    const before = `All time would count from ${monthText(allTime.from.slice(0, 7))}, not from when the account opened`;
+    if (d.before && d.after) return `${before}, and the months after ${to} would come from Nya’s own records again.`;
+    if (d.before) return `${before}.`;
+  }
+  const needs = allTime ? ', and all time would need your deposits and withdrawals' : '';
+  if (d.before && d.after) return `Before ${from} and after ${to}, the chart and your returns would come from Nya’s own records again${needs}.`;
+  if (d.before) return `Before ${from}, the chart and your returns would come from Nya’s own records again${needs}.`;
+  return `The months after ${to} would come from Nya’s own records again${needs}.`;
+}
+
 /** The months the counting import has that this file doesn't. */
-function droppedWords(d: ReturnType<typeof monthsDropped>, counting: MonthsImport, next: { start: { month: Month }; months: PastMonth[] }): string {
-  const from = counting.start.month;
+function droppedWords(d: ReturnType<typeof monthsDropped>, counting: MonthsImport, next: { start: { month: Month; balance?: number }; months: PastMonth[] }): string {
+  const from = firstMonth(counting);
+  const nextFrom = firstMonth(next);
   const opened = counting.start.balance === 0 ? ', when the account opened' : '';
   const to = next.months[next.months.length - 1].month;
   if (d.before && d.after)
-    return `${spanText(d.before.from, d.before.to)} and ${spanText(d.after.from, d.after.to)} would stop counting: this file runs from ${monthText(next.start.month)} to ${monthText(to)}, and only the newest import counts. To keep them, print Vanguard’s page from ${monthText(from)}${opened ? `${opened},` : ''} up to today.`;
+    return `${spanText(d.before.from, d.before.to)} and ${spanText(d.after.from, d.after.to)} would stop counting: this file runs from ${monthText(nextFrom)} to ${monthText(to)}, and only the newest import counts. To keep them, print Vanguard’s page from ${monthText(from)}${opened ? `${opened},` : ''} up to today.`;
   if (d.before)
-    return `${spanText(d.before.from, d.before.to)} would stop counting: this file starts in ${monthText(next.start.month)}, and only the newest import counts. To keep them, print Vanguard’s page from ${monthText(from)}${opened}.`;
+    return `${spanText(d.before.from, d.before.to)} would stop counting: this file starts in ${monthText(nextFrom)}, and only the newest import counts. To keep them, print Vanguard’s page from ${monthText(from)}${opened}.`;
   const a = d.after!;
   return `${spanText(a.from, a.to)} would stop counting: this file ends in ${monthText(to)}, and only the newest import counts. To keep them, print Vanguard’s page up to today.`;
 }
