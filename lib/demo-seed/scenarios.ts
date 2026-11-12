@@ -9,7 +9,7 @@
 // reads storage.
 
 import { demoProfile, type DemoName, type DemoProfile } from './profiles';
-import { earlyRetiree, needsAttention } from './scenario-profiles';
+import { earlyRetiree, needsAttention, vanguardHistory } from './scenario-profiles';
 
 export type Scenario = {
   id: string;
@@ -43,6 +43,12 @@ export const SCENARIOS: readonly Scenario[] = [
     title: 'Needs attention',
     description: 'The single renter with things to fix: a loan to sign in to again, a connection ending soon, new accounts, an account at $0. No estimated history while a bank needs signing in.',
     build: (today) => needsAttention(today),
+  },
+  {
+    id: 'vanguard-history',
+    title: 'History from Vanguard',
+    description: 'The single renter with the brokerage at Vanguard: its months since it opened four years ago imported from Vanguard’s Performance page, before Nya’s own.',
+    build: (today) => vanguardHistory(today),
   },
 ];
 

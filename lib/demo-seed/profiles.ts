@@ -123,6 +123,10 @@ export const WEALTHFRONT = { institution_id: 'ins_115617', name: 'Wealthfront' }
 export const SCHWAB_PLANS = { institution_id: 'ins_121400', name: 'Charles Schwab - Retirement Plan Center' };
 export const ETRADE = { institution_id: 'ins_129473', name: 'E*TRADE from Morgan Stanley' };
 export const ASCENSUS = { institution_id: 'ins_118645', name: 'Ascensus - Merrill Lynch' };
+// The one brokerage whose own record of past months Nya reads
+// (lib/investment-months.ts isVanguard). Possibly OAuth at Plaid, where a
+// custom user may not keep every field, so only its own scenario has it.
+export const VANGUARD = { institution_id: 'ins_115616', name: 'Vanguard' };
 
 const FUNDS = {
   VTI: { name: 'Vanguard Total Stock Market ETF', price: 312.4 },
@@ -142,9 +146,21 @@ export const addDays = (d: string, n: number) => fmtDay(parseDay(d) + n * DAY_MS
 export type Month = { index: number; year: number; month: number };
 
 export function historyMonths(today: string): Month[] {
+  return monthsBack(today, HISTORY_MONTHS - 1, 0);
+}
+
+/** The `count` months before the history's first, oldest first, indexed on
+ *  back from it (-1 the month just before). */
+export function monthsBeforeHistory(today: string, count: number): Month[] {
+  return monthsBack(today, HISTORY_MONTHS + count - 1, HISTORY_MONTHS);
+}
+
+/** The months from `from` to `to` months back from today's, oldest first,
+ *  indexed from the history's first. */
+function monthsBack(today: string, from: number, to: number): Month[] {
   const [y, m] = today.split('-').map(Number);
   const out: Month[] = [];
-  for (let back = HISTORY_MONTHS - 1; back >= 0; back--) {
+  for (let back = from; back >= to; back--) {
     const total = y * 12 + (m - 1) - back;
     out.push({ index: HISTORY_MONTHS - 1 - back, year: Math.floor(total / 12), month: (total % 12) + 1 });
   }
