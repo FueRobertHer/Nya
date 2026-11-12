@@ -12,7 +12,9 @@
 //   - None set: one line saying what setting them shows, and that returns
 //     count from the start of the range shown for now (the chart's own
 //     explanations name the day), with Set deposits and withdrawals (its one
-//     place).
+//     place). On a Vanguard account with no months imported, the line also
+//     names the Performance page, imported from the sheet's ⋯
+//     (components/PerformanceImport.tsx).
 //   - Set but no longer carried (their day is before the activity Nya now
 //     has for the account): an information notice saying so, since no figure
 //     is wrong; the chart counts from the start of each range again.
@@ -60,6 +62,7 @@ export default function MoneyInOutFigures({
   balance,
   points,
   onEdit,
+  importable = false,
 }: {
   /** The account, its activity and its totals, as the form takes them. */
   target: MoneyInOutTarget;
@@ -71,6 +74,9 @@ export default function MoneyInOutFigures({
   /** Its balance history, null while it loads. */
   points: BalancePoint[] | null;
   onEdit: (target: MoneyInOutTarget) => void;
+  /** At Vanguard with no months imported yet: the line names the
+   *  Performance page too. */
+  importable?: boolean;
 }) {
   const { totals, flows, flows_from, currency } = target;
   const edit = (words: string) => (
@@ -92,7 +98,11 @@ export default function MoneyInOutFigures({
   if (!totals) {
     return (
       <div className="stack tight">
-        <p className="helper">Set your deposits and withdrawals to see your all-time returns. {FOR_NOW}</p>
+        <p className="helper">
+          {importable
+            ? `Set your deposits and withdrawals to see your all-time returns. ${FOR_NOW} To see further back, import Vanguard’s Performance page from ⋯.`
+            : `Set your deposits and withdrawals to see your all-time returns. ${FOR_NOW}`}
+        </p>
         {edit('Set deposits and withdrawals')}
       </div>
     );

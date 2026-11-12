@@ -911,6 +911,14 @@ const STORES: Readonly<Record<string, Entry>> = {
     seen: ['connector', 'shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
+  'investment-months': {
+    group: 'accounts',
+    name: 'Months you imported for investment accounts',
+    about: 'Each month’s deposits and withdrawals, returns and ending balance, read from a page your brokerage prints (Vanguard’s Performance page), one record for each import.',
+    unit: ACCOUNT,
+    kept: 'Your data',
+    plain: ACCOUNT_IDS,
+  },
   'money-in-out': {
     group: 'accounts',
     name: 'Deposits and withdrawals you set for investment accounts',

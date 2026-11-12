@@ -881,6 +881,8 @@ export async function forgetEarlierAccount(
   await (await import('./lifecycle')).forgetLifecycle(ctx, id);
   // What the person said it had put in and taken out, by a day.
   await (await import('./money-in-out-store')).forgetMoneyInOut(ctx, id);
+  // The months imported for it from its brokerage.
+  await (await import('./investment-months-store')).forgetInvestmentMonths(ctx, id);
   // Last: while the entry exists the account is still listed, so a retry is
   // offered. A map nobody can decrypt doesn't hold it back: nothing in it can
   // be read by anyone.

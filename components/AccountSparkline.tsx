@@ -16,12 +16,20 @@
 // (lib/growth.ts usableTotals), and the chart's All then reads all time.
 // A save or a clear reloads the payload (onMoneyInOutSaved),
 // so both change at once.
+//
+// With months imported from its brokerage (lib/investment-months.ts, in the
+// payload) the chart is drawn through withPastMonths: each month's end
+// before the first recorded day, and each month's deposits and withdrawals
+// before Nya's activity, so the grey line and the split reach back. The
+// figures above keep Nya's own activity, which the totals are set against.
+// An import or an undo reloads the payload too.
 
-import { useCallback, useEffect, useState } from 'react';
-import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import NetWorthChart, { type HistoryPoint, type MonthsInfo } from './NetWorthChart';
 import { loadInvestmentActivity, onMoneyInOutSaved, type InvestmentActivityPayload } from './InvestmentActivity';
 import MoneyInOutFigures, { MoneyInOutSkeleton, type MoneyInOutTarget } from './MoneyInOutFigures';
 import { contributionBaseline, usableTotals } from '@/lib/growth';
+import { countingImport, withPastMonths } from '@/lib/investment-months';
 import { Notice } from './TotalCaveats';
 
 export default function AccountSparkline({
@@ -47,7 +55,7 @@ export default function AccountSparkline({
   itemId?: string;
   /** Its money in and out above the chart, for an investment account's sheet:
    *  its live balance, how the form names it, and opening the form. */
-  moneyInOut?: { balance: number | null | undefined; label: string; onEdit: (target: MoneyInOutTarget) => void };
+  moneyInOut?: { balance: number | null | undefined; label: string; onEdit: (target: MoneyInOutTarget) => void; vanguard?: boolean };
 }) {
   const [points, setPoints] = useState<HistoryPoint[] | null>(null);
   const [failed, setFailed] = useState(false);
@@ -100,16 +108,28 @@ export default function AccountSparkline({
     };
   }, [accountId, itemId, saves]);
 
-  // The totals, when the grey line can be carried from them.
+  // The imported months joined to the history and the activity; not on a
+  // preview, which checks the joined history alone.
+  const past = useMemo(
+    () => (points && activity && !previewWith ? withPastMonths(points, activity, activity.investment_months, currency) : null),
+    [points, activity, previewWith, currency]
+  );
+  const drawn = past?.points ?? points;
+  const flows = past ? past.flows : (activity?.flows ?? null);
+  const flowsFrom = past ? past.flows_from : (activity?.flows_from ?? null);
+  // The totals, when the grey line can be carried from them: set against
+  // Nya's own activity, never the months.
   const totals = activity?.money_in_out ?? null;
-  const carried = usableTotals(totals, activity?.flows_from) ? totals : null;
+  const carried = usableTotals(totals, past ? past.totals_from : activity?.flows_from) ? totals : null;
   // Given the selected range's points, so money in, out and growth count from
   // the start of the range.
   const baselineFor = useCallback(
-    (shown: HistoryPoint[]) =>
-      activity ? contributionBaseline(shown, activity.flows, activity.flows_from, activity.flows_to, carried, activity.moves) : null,
-    [activity, carried]
+    (shown: HistoryPoint[]) => (activity ? contributionBaseline(shown, flows, flowsFrom, activity.flows_to, carried, activity.moves) : null),
+    [activity, flows, flowsFrom, carried]
   );
+  const months: MonthsInfo | null = past?.applied
+    ? { source: 'Vanguard’s Performance page', firm: 'Vanguard', first_recorded: past.applied.first_recorded, activity_from: past.applied.activity_from, entered_to: past.applied.entered_to, joined: past.applied.joined }
+    : null;
 
   // Above the chart, whatever the chart's own state: it reads the history
   // only for where the line starts and a measuring day.
@@ -134,6 +154,7 @@ export default function AccountSparkline({
           balance={moneyInOut.balance}
           points={points}
           onEdit={moneyInOut.onEdit}
+          importable={!!moneyInOut.vanguard && !countingImport(activity.investment_months)}
         />
       );
     }
@@ -161,7 +182,7 @@ export default function AccountSparkline({
       </>
     );
   }
-  if (points.length < 2) {
+  if (drawn!.length < 2) {
     return (
       <>
         {figures}
@@ -175,7 +196,7 @@ export default function AccountSparkline({
     <>
       {figures}
       <NetWorthChart
-        points={points}
+        points={drawn!}
         label="Balance"
         baselineFor={activity ? baselineFor : null}
         baselineFrom={carried?.as_of ?? null}
@@ -191,6 +212,7 @@ export default function AccountSparkline({
         // range): a row that came and went would shift the page, and one blank line
         // is cheaper than that.
         reserveSplit={!!itemId}
+        months={months}
       />
     </>
   );

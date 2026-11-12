@@ -6,6 +6,7 @@ import { syncInvestments } from '@/lib/invstore';
 import { readAccountCache, writeAccountCache } from '@/lib/cache';
 import { loggable } from '@/lib/log-safe';
 import { readMoneyInOut } from '@/lib/money-in-out-store';
+import { readInvestmentMonths } from '@/lib/investment-months-store';
 import type { Ctx } from '@/lib/containers';
 
 // Recent buys, sells, dividends and fees for one investment account, plus what
@@ -25,19 +26,32 @@ import type { Ctx } from '@/lib/containers';
 // Plan's inputs (app/api/plan-inputs) share.
 //
 // Beside it, the money in and out the person set for the account
-// (lib/money-in-out-store.ts), read fresh on every request and never cached,
-// so a change shows at once. Totals that can't be read are said in
-// `money_in_out_unreadable` rather than failing the activity, which stands on
-// its own.
+// (lib/money-in-out-store.ts) and the months they imported from their
+// brokerage (lib/investment-months-store.ts), each read fresh on every
+// request and never cached, so a change shows at once. Either that can't be
+// read is said in `money_in_out_unreadable` or `investment_months_unreadable`
+// rather than failing the activity, which stands on its own.
 
-/** The account's money in and out, or that they can't be read. */
+/** The account's money in and out and its imported months, or that they
+ *  can't be read. */
 async function totalsFor(ctx: Ctx, account_id: string) {
-  try {
-    return { money_in_out: await readMoneyInOut(ctx, account_id) };
-  } catch (err) {
-    console.error(loggable(err));
-    return { money_in_out: null, money_in_out_unreadable: true };
-  }
+  const [totals, months] = await Promise.all([
+    readMoneyInOut(ctx, account_id).then(
+      (money_in_out) => ({ money_in_out }),
+      (err) => {
+        console.error(loggable(err));
+        return { money_in_out: null, money_in_out_unreadable: true };
+      }
+    ),
+    readInvestmentMonths(ctx, account_id).then(
+      (investment_months) => ({ investment_months }),
+      (err) => {
+        console.error(loggable(err));
+        return { investment_months: null, investment_months_unreadable: true };
+      }
+    ),
+  ]);
+  return { ...totals, ...months };
 }
 
 export async function GET(req: Request) {

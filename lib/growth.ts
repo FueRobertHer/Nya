@@ -37,7 +37,10 @@
 
 import { latestAsOf } from './money-in-out';
 
-export type BalancePoint = { date: string; value: number; estimated?: boolean };
+/** A balance on a day. `entered`: a month's ending balance from a file the
+ *  person imported (lib/investment-months.ts), real, on the 1st of the next
+ *  month: it holds every flow dated before that day. */
+export type BalancePoint = { date: string; value: number; estimated?: boolean; entered?: boolean };
 export type Flow = { date: string; amount: number };
 /** A point on the line: its value, and the money in and out it holds, each
  *  zero or more. Without totals they count from the line's first day; with
@@ -145,13 +148,16 @@ export function contributionBaseline(
   const sorted = [...flows].sort((a, b) => (a.date < b.date ? -1 : 1));
   const candidates = points.filter((p) => !p.estimated && p.date >= flowsFrom);
   if (candidates.length === 0) return null;
-  const settled = (date: string) => {
-    const from = shiftDays(date, -SETTLE_DAYS);
+  const settled = (p: BalancePoint) => {
+    const from = shiftDays(p.date, -SETTLE_DAYS);
     // A leg counts from the day after its date: from `date` on, one leg is
     // in the balance and the other isn't.
-    return !sorted.some((f) => f.date >= from && f.date < date) && !(moves ?? []).some((m) => m.from < date && date <= m.to);
+    if ((moves ?? []).some((m) => m.from < p.date && p.date <= m.to)) return false;
+    // A month's ending balance holds every flow dated before its day, so
+    // nothing just before it is in doubt (the snapshot's ambiguity).
+    return !!p.entered || !sorted.some((f) => f.date >= from && f.date < p.date);
   };
-  const start = candidates.find((p) => settled(p.date)) ?? candidates[0];
+  const start = candidates.find(settled) ?? candidates[0];
   const carried = usableTotals(totals, flowsFrom) ? totals : null;
 
   const out: BaselinePoint[] = [];

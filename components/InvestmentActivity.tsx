@@ -14,6 +14,7 @@ import { displayName } from '@/lib/categories';
 import { InvestmentActivitySkeleton } from './LoadingSkeletons';
 import { Notice } from './TotalCaveats';
 import type { MoneyInOut } from '@/lib/money-in-out';
+import type { InvestmentMonths } from '@/lib/investment-months';
 import { ACTIVITY_STILL_LOADING } from '@/lib/growth-summary';
 
 type InvestmentTxn = {
@@ -47,6 +48,11 @@ export type InvestmentActivityPayload = {
    *  they couldn't be read. */
   money_in_out?: MoneyInOut | null;
   money_in_out_unreadable?: boolean;
+  /** The months imported for the account from its brokerage
+   *  (lib/investment-months.ts), read fresh beside the activity, or null;
+   *  `investment_months_unreadable` when they couldn't be read. */
+  investment_months?: InvestmentMonths | null;
+  investment_months_unreadable?: boolean;
 };
 type Payload = InvestmentActivityPayload;
 
@@ -81,18 +87,18 @@ export function loadInvestmentActivity(accountId: string, itemId: string): Promi
   return promise;
 }
 
-// Readers of an account's payload that show its money in and out
-// (AccountSparkline), told when they are saved or cleared.
+// Readers of an account's payload that show its money in and out or its
+// imported months (AccountSparkline, Accounts > Investments), told when
+// either is saved, cleared, imported or undone.
 const saved = new Set<(key: string) => void>();
 
-/** Money in and out were saved (or cleared, null) for an account: the
- *  payload in hand takes them, fresh for another REUSE_MS, and its readers
- *  load it again. With none in hand they fetch it. */
-export function moneyInOutSaved(accountId: string, itemId: string, totals: MoneyInOut | null): void {
+/** The payload in hand takes `patch`, fresh for another REUSE_MS, and its
+ *  readers load it again. With none in hand they fetch it. */
+function patched(accountId: string, itemId: string, patch: Partial<Payload>): void {
   const key = `${itemId}:${accountId}`;
   const hit = inflight.get(key);
   if (hit) {
-    const promise = hit.promise.then((p) => ({ ...p, money_in_out: totals, money_in_out_unreadable: false }));
+    const promise = hit.promise.then((p) => ({ ...p, ...patch }));
     inflight.set(key, { at: Date.now(), promise });
     promise.catch(() => {
       if (inflight.get(key)?.promise === promise) inflight.delete(key);
@@ -101,8 +107,20 @@ export function moneyInOutSaved(accountId: string, itemId: string, totals: Money
   for (const tell of saved) tell(key);
 }
 
+/** Money in and out were saved (or cleared, null) for an account. */
+export function moneyInOutSaved(accountId: string, itemId: string, totals: MoneyInOut | null): void {
+  patched(accountId, itemId, { money_in_out: totals, money_in_out_unreadable: false });
+}
+
+/** An account's imported months changed (an import or an undo): what is
+ *  there now, or null. */
+export function investmentMonthsSaved(accountId: string, itemId: string, months: InvestmentMonths | null): void {
+  patched(accountId, itemId, { investment_months: months, investment_months_unreadable: false });
+}
+
 /** Calls `tell` with an account's key (`item:account`) when its money in and
- *  out are saved; returns the unsubscribe, for an effect's cleanup. */
+ *  out or its imported months are saved; returns the unsubscribe, for an
+ *  effect's cleanup. */
 export function onMoneyInOutSaved(tell: (key: string) => void): () => void {
   saved.add(tell);
   return () => {

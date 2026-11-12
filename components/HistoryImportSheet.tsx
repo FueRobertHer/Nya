@@ -25,6 +25,12 @@
 //
 // The file is sent for the review and again for the import, as for a manual
 // account: nothing is staged on the server between them.
+//
+// On an investment account at Vanguard (`vanguard`, by Plaid's institution
+// id) the picker also takes Vanguard's Performance page as a PDF, read on
+// this device into the account's months (components/PerformanceImport.tsx):
+// a step of its own, 'months', with its review and its Import in the
+// footer, and its imports listed with the transaction files'.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
@@ -38,10 +44,42 @@ import { readImport, type ImportOptions, type ReadResult, type StatementInfo } f
 import { columnsFromNames, DELIMITERS, guessColumns, readCsvTable, type CsvColumns, type CsvSign, type CsvTable, type Delimiter } from '@/lib/import/csv';
 import type { DateOrder } from '@/lib/import/dates';
 import type { DecimalMark } from '@/lib/import/amounts';
-import { Notice } from './TotalCaveats';
+import { LevelWord, Notice } from './TotalCaveats';
+import { StripSkeleton } from './FiguresStrip';
+import { Why } from './Why';
+import { loadInvestmentActivity, investmentMonthsSaved } from './InvestmentActivity';
+import {
+  isPdf,
+  notVanguardWords,
+  pdfProblem,
+  PerformanceImports,
+  PerformanceNow,
+  PerformanceReview,
+  readPdfHere,
+  SOURCE,
+  usePerformanceData,
+  usePerformanceReview,
+  type PdfReader,
+} from './PerformanceImport';
+import { MAX_IMPORTS, type MonthsImport } from '@/lib/investment-months';
+import type { Read } from '@/lib/import/performance-review';
+import { MAX_PDF_BYTES } from '@/lib/import/pdf-text';
+import { localDate } from '@/lib/local-date';
 
-/** The linked account the sheet is open on. */
-export type HistoryImportTarget = { account_id: string; name: string; institution_name: string; type: string; currency: string | null };
+/** The linked account the sheet is open on. An investment account at
+ *  Vanguard (`vanguard`) also takes its Performance page as a PDF, checked
+ *  against its balance now and every Vanguard account's (`vanguard_balances`). */
+export type HistoryImportTarget = {
+  account_id: string;
+  name: string;
+  institution_name: string;
+  type: string;
+  currency: string | null;
+  item_id?: string | null;
+  vanguard?: boolean;
+  balance?: number | null;
+  vanguard_balances?: number[];
+};
 
 type Choice = 'same' | 'new';
 type ConflictChoice = 'new' | 'skip';
@@ -152,7 +190,7 @@ type Done = {
    *  imported rows), or after the backfill runs again (`backfill`). */
   history: { drawn: boolean; from: string | null; reach?: string | null; backfill?: boolean };
 };
-type Step = 'pick' | 'statement' | 'mapping' | 'order' | 'review' | 'done';
+type Step = 'pick' | 'statement' | 'mapping' | 'order' | 'review' | 'done' | 'months';
 
 const NONE = <T,>(): ChoiceSet<T> => ({ each: {} });
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
@@ -223,16 +261,28 @@ async function postForm(meta: Record<string, unknown>, file: Picked): Promise<{ 
   return { res, data: await res.json().catch(() => null) };
 }
 
+/** The done notice's check (as components/DemoDataCard.tsx's). */
+const CHECK = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M20 6 9 17l-5-5" />
+  </svg>
+);
+
+const loadMonthsActivity = (id: string, item: string) => loadInvestmentActivity(id, item);
+
 export default function HistoryImportSheet({
   target,
   onClose,
   onImported,
+  readPdf = readPdfHere,
 }: {
   target: HistoryImportTarget | null;
   onClose: () => void;
   /** After an import or an undo changed the account's rows, and so its
    *  estimated history. */
   onImported: () => void;
+  /** Reads a Performance page's PDF; pdf.js in the browser. */
+  readPdf?: PdfReader;
 }) {
   const [shown, setShown] = useState<HistoryImportTarget | null>(null);
   const [past, setPast] = useState<Past | null>(null);
@@ -254,9 +304,30 @@ export default function HistoryImportSheet({
   const [undoing, setUndoing] = useState<Listed | null>(null);
   const [undoPlan, setUndoPlan] = useState<{ plan: UndoPlan | null; error: string } | null>(null);
   const [notice, setNotice] = useState('');
+  // A Performance page being read (`read` null) or reviewed, and what the
+  // last import or undo of one said.
+  const [pdf, setPdf] = useState<{ name: string; read: Read | null } | null>(null);
+  const [monthsError, setMonthsError] = useState<{ level: 'critical' | 'caution'; text: string; again?: boolean } | null>(null);
   const thisYear = new Date().getFullYear();
   const account = shown;
   const name = account?.name ?? 'the account';
+  const vanguard = !!account?.vanguard;
+  const perf = usePerformanceData(vanguard && account ? { account_id: account.account_id, item_id: account.item_id ?? null } : null, loadMonthsActivity);
+  const reviewCtx = useMemo(
+    () => ({
+      account_id: account?.account_id ?? '',
+      name,
+      currency: account?.currency ?? null,
+      balance: account?.balance ?? null,
+      vanguard: account?.vanguard_balances ?? [],
+      imports: perf.imports,
+      points: perf.points,
+      activity: perf.activity,
+      today: localDate(),
+    }),
+    [account, name, perf.imports, perf.points, perf.activity]
+  );
+  const monthsReview = usePerformanceReview(pdf?.read ?? null, reviewCtx, pdf?.name ?? null);
 
   const loadPast = useCallback(async (id: string) => {
     setPastError('');
@@ -304,6 +375,8 @@ export default function HistoryImportSheet({
     setUndoPlan(null);
     setNotice('');
     setPast(null);
+    setPdf(null);
+    setMonthsError(null);
     void loadPast(target.account_id);
   }, [target, loadPast]);
 
@@ -377,7 +450,17 @@ export default function HistoryImportSheet({
     setError('');
     setNotice('');
     setDone(null);
+    setMonthsError(null);
     if (!f || !account) return;
+    const head = new Uint8Array(await f.slice(0, 8).arrayBuffer().catch(() => new ArrayBuffer(0)));
+    if (isPdf(f.name, head)) {
+      if (!account.vanguard) {
+        setError(notVanguardWords(name, account.institution_name));
+        return;
+      }
+      void readMonths(f);
+      return;
+    }
     if (f.size > MAX_FILE_BYTES) {
       setError(`This file is larger than ${MAX_FILE_BYTES / (1024 * 1024)} MB, more than one import takes. Export a shorter period and import it in parts.`);
       return;
@@ -513,7 +596,111 @@ export default function HistoryImportSheet({
     }
   }
 
+  /** A Performance page, read here into its months for the review. */
+  async function readMonths(f: File) {
+    if (f.size > MAX_PDF_BYTES) {
+      setError(pdfProblem({ kind: 'error', error: 'too-large' }));
+      return;
+    }
+    setBusy(true);
+    setPdf({ name: f.name, read: null });
+    setStep('months');
+    try {
+      const outcome = await readPdf(new Uint8Array(await f.arrayBuffer()));
+      if (outcome.kind !== 'read') {
+        setPdf(null);
+        setStep('pick');
+        setError(pdfProblem(outcome));
+        return;
+      }
+      setPdf({ name: f.name, read: outcome });
+    } catch {
+      setPdf(null);
+      setStep('pick');
+      setError(pdfProblem({ kind: 'error', error: 'unreadable' }));
+    } finally {
+      setBusy(false);
+      setInputKey((k) => k + 1);
+    }
+  }
+
+  async function importMonths() {
+    const body = monthsReview.body;
+    if (!account || !body || busy) return;
+    setBusy(true);
+    setMonthsError(null);
+    try {
+      const res = await fetch('/api/investment-months', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        perf.setImports(data?.investment_months ?? null);
+        investmentMonthsSaved(account.account_id, account.item_id ?? '', data?.investment_months ?? null);
+        setNotice(`${body.months.length.toLocaleString()} months imported from ${pdf?.name ?? SOURCE}.`);
+        setPdf(null);
+        setStep('pick');
+        onImported();
+        return;
+      }
+      if (res.status === 409 && data?.needs === 'undo') {
+        setPdf(null);
+        setStep('pick');
+        setMonthsError({ level: 'caution', text: `${name} has ${MAX_IMPORTS} imports of its Performance page, the most Nya keeps. Undo an old one to import this file.` });
+        return;
+      }
+      if (res.status === 409 && data?.needs === 'review') {
+        // Checked again against what is there now: the review follows it.
+        await perf.reload(account.account_id);
+        setMonthsError({ level: 'caution', text: typeof data?.error === 'string' ? data.error : 'The imports changed on another device.', again: true });
+        return;
+      }
+      setMonthsError({ level: 'critical', text: typeof data?.error === 'string' ? data.error : 'The months couldn’t be imported. Please try again.' });
+    } catch {
+      setPdf(null);
+      setStep('pick');
+      setMonthsError({
+        level: 'critical',
+        text: 'Could not reach the server, so the months may not have been imported. The imports below show whether they were; if not, import the file again.',
+      });
+      void perf.reload(account.account_id);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function undoMonths(i: MonthsImport): Promise<boolean> {
+    if (!account || busy) return false;
+    setBusy(true);
+    setMonthsError(null);
+    setNotice('');
+    try {
+      const res = await fetch('/api/investment-months', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'undo', account_id: account.account_id, import_id: i.id }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        perf.setImports(data?.investment_months ?? null);
+        investmentMonthsSaved(account.account_id, account.item_id ?? '', data?.investment_months ?? null);
+        setNotice(`Undone: the import of ${SOURCE} from ${formatInstantDay(i.imported_at, { sentence: true }) ?? i.imported_at.slice(0, 10)}.`);
+        onImported();
+        return true;
+      }
+      setMonthsError({ level: 'critical', text: typeof data?.error === 'string' ? data.error : 'The import couldn’t be undone. Please try again.' });
+      if (res.status === 404) void perf.reload(account.account_id);
+      return false;
+    } catch {
+      setMonthsError({ level: 'critical', text: 'Could not reach the server, so it may not have been undone. The imports below show whether it was.' });
+      void perf.reload(account.account_id);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function chooseAgain() {
+    setPdf(null);
+    setMonthsError(null);
     setFile(null);
     setInputKey((k) => k + 1);
     setOptions({});
@@ -530,15 +717,179 @@ export default function HistoryImportSheet({
 
   if (!shown) return null;
   const back =
-    step === 'statement' || step === 'mapping' || step === 'order'
+    step === 'statement' || step === 'mapping' || step === 'order' || step === 'months'
       ? chooseAgain
       : step === 'review'
         ? () => (file?.format === 'csv' ? setStep('mapping') : chooseAgain())
         : undefined;
 
   return (
-    <Sheet open={!!target} title={step === 'done' ? 'Imported' : `Import ${name}’s history`} onClose={() => !busy && onClose()} onBack={busy ? undefined : back}>
-      {step === 'pick' && (
+    <Sheet
+      open={!!target}
+      title={step === 'done' ? 'Imported' : `Import ${name}’s history`}
+      onClose={() => !busy && onClose()}
+      onBack={busy ? undefined : back}
+      footer={
+        step === 'months' ? (
+          <>
+            <button type="button" className="btn secondary" onClick={chooseAgain} disabled={busy}>
+              Cancel
+            </button>
+            <button type="button" className="btn" onClick={() => void importMonths()} disabled={busy || !monthsReview.body || !!monthsError?.again}>
+              {pdf?.read && monthsReview.count > 0 ? `Import ${monthsReview.count.toLocaleString()} ${monthsReview.count === 1 ? 'month' : 'months'}` : 'Import'}
+            </button>
+          </>
+        ) : undefined
+      }
+    >
+      {step === 'pick' && vanguard && (
+        <div className="stack">
+          {perf.imports ? (
+            <>
+              <PerformanceNow name={name} imports={perf.imports} points={perf.points} activity={perf.activity} currency={shown.currency} />
+              <p>
+                Bring in more of {name}’s history from files {shown.institution_name} lets you download: a newer Performance page as a PDF, or transactions as OFX or QFX,
+                CSV or QIF.
+              </p>
+            </>
+          ) : (
+            <>
+              <p>Bring in years of {name}’s history from files {shown.institution_name} lets you download, to see further back than it shares with Nya.</p>
+              <div className="stack tight">
+                <h3 className="section-label">{SOURCE}, as a PDF</h3>
+                <p className="helper">
+                  Every month since the account opened (its balance, deposits and withdrawals, and returns), so its chart and your returns reach back. On the
+                  Performance page, choose this account alone and a range from when it opened, then print the page to a PDF. Nya reads it on this device and keeps only
+                  the months: the file isn’t uploaded.
+                </p>
+              </div>
+              <div className="stack tight">
+                <h3 className="section-label">Transactions: OFX or QFX, CSV or QIF</h3>
+                <p className="helper">
+                  Up to {MAX_FILE_BYTES / (1024 * 1024)} MB and {MAX_IMPORT_ROWS.toLocaleString()} transactions a file. Those {shown.institution_name} already gave Nya are
+                  shown beside the file’s for you to confirm. They show as the account’s activity and don’t change its balance history: a market’s moves aren’t
+                  transactions.
+                </p>
+              </div>
+            </>
+          )}
+          {past?.history_pending && <HistoryPendingNote bank={shown.institution_name} />}
+          {past?.bank_from && (
+            <p className="helper">
+              {shown.institution_name}’s own transactions for this connection start {onDay(inDay(past.bank_from))}. Export a period that reaches up to that day, or
+              past it, so no days fall between the two.
+            </p>
+          )}
+          <div className="stack tight">
+            <label className="field">
+              File to import into {name}
+              <input
+                key={inputKey}
+                type="file"
+                accept=".pdf,.ofx,.qfx,.csv,.tsv,.txt,.qif,application/pdf,text/csv,application/x-ofx,application/vnd.intu.qfx,application/qif"
+                onChange={(e) => void pick(e.target.files?.[0] ?? null)}
+                disabled={busy}
+              />
+            </label>
+            {perf.imports && <p className="helper">The newest Performance page counts, whole. Older ones are kept so you can go back to them.</p>}
+          </div>
+          {busy && <p className="helper">Reading the file…</p>}
+          {error && (
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          )}
+          {monthsError && (
+            <Notice level={monthsError.level} role={monthsError.level === 'critical' ? 'alert' : 'status'}>
+              {monthsError.text}
+            </Notice>
+          )}
+          {notice && (
+            <div className="notice done" role="status">
+              {CHECK}
+              <div>
+                <LevelWord level="done" />
+                {notice}
+              </div>
+            </div>
+          )}
+          {perf.importsError && <p className="helper">{perf.importsError}</p>}
+          {perf.imports && (
+            <div className="stack tight">
+              <h3 className="section-label">Past imports into {name}</h3>
+              <PerformanceImports
+                name={name}
+                imports={perf.imports}
+                points={perf.points}
+                activity={perf.activity}
+                currency={shown.currency}
+                busy={busy}
+                onUndo={undoMonths}
+              />
+            </div>
+          )}
+          <PastHistoryImports
+            past={past}
+            error={pastError}
+            account={name}
+            bank={shown.institution_name}
+            busy={busy}
+            undoing={undoing}
+            plan={undoPlan}
+            headed={!perf.imports}
+            onUndo={(i) => void askUndo(i)}
+            onKeep={() => {
+              setUndoing(null);
+              setUndoPlan(null);
+            }}
+            onConfirm={(i) => void undo(i)}
+          />
+          {perf.imports && (
+            <Why>
+              Each import is kept on its own, as it was read, and nothing else in Nya is changed by it: not Nya’s activity, not its recorded balances, not your deposits
+              and withdrawals, not another import. What counts is worked out from what’s here each time you look, so undoing an import takes out only that import, and
+              the account is as it was before it. Only the newest Performance page counts, so two files’ months are never mixed. To correct a month Vanguard has since
+              changed, import its page again.
+            </Why>
+          )}
+        </div>
+      )}
+
+      {step === 'months' && pdf && (
+        <div className="stack">
+          {!pdf.read ? (
+            <>
+              <p role="status">Reading {pdf.name}…</p>
+              <StripSkeleton />
+            </>
+          ) : (
+            <>
+              {perf.importsError && (
+                <Notice level="caution" role="status">
+                  {perf.importsError}
+                </Notice>
+              )}
+              {monthsError && (
+                <div className="stack tight">
+                  <Notice level={monthsError.level} role={monthsError.level === 'critical' ? 'alert' : 'status'}>
+                    {monthsError.text}
+                  </Notice>
+                  {monthsError.again && (
+                    <div>
+                      <button type="button" className="btn secondary" onClick={() => setMonthsError(null)}>
+                        Check the file again
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <PerformanceReview state={monthsReview} ctx={reviewCtx} fileName={pdf.name} onAgain={chooseAgain} />
+            </>
+          )}
+        </div>
+      )}
+
+      {step === 'pick' && !vanguard && (
         <>
           <p className="panel-note" style={{ marginTop: 0 }}>
             Bring in years of {name}’s transactions from files {shown.institution_name} lets you download, to see further back than it shares with Nya. OFX or QFX is
@@ -1134,6 +1485,7 @@ function PastHistoryImports({
   busy,
   undoing,
   plan,
+  headed = true,
   onUndo,
   onKeep,
   onConfirm,
@@ -1145,6 +1497,8 @@ function PastHistoryImports({
   busy: boolean;
   undoing: Listed | null;
   plan: { plan: UndoPlan | null; error: string } | null;
+  /** Its own heading: false under the Performance pages' list, which has it. */
+  headed?: boolean;
   onUndo: (i: Listed) => void;
   onKeep: () => void;
   onConfirm: (i: Listed) => void;
@@ -1153,9 +1507,11 @@ function PastHistoryImports({
   if (!past || past.imports.length === 0) return null;
   return (
     <>
-      <p className="section-label" style={{ marginTop: 20 }}>
-        Past imports into {account}
-      </p>
+      {headed && (
+        <p className="section-label" style={{ marginTop: 20 }}>
+          Past imports into {account}
+        </p>
+      )}
       <ul className="import-past">
         {past.imports.map((i) => {
           const title = i.file_name ?? (i.format ? `${FORMAT_NAMES[i.format]} file` : 'An import');
