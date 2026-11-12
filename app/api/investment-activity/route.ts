@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { getItems } from '@/lib/storage';
-import { activityFromSync, cacheable, hasCurrentFlows, hasPlanFields } from '@/lib/investment-activity';
+import { activityWithImports, hasCurrentFlows, hasCurrentImports, hasPlanFields } from '@/lib/investment-activity';
+import { importKeysOrNull, importsFingerprint, readAccountImports } from '@/lib/investment-imports-store';
 import { syncInvestments } from '@/lib/invstore';
 import { readAccountCache, writeAccountCache } from '@/lib/cache';
 import { loggable } from '@/lib/log-safe';
@@ -23,7 +24,12 @@ import type { Ctx } from '@/lib/containers';
 // account inside its institution, so it passes the id it has.
 //
 // What it answers is worked out in lib/investment-activity.ts, which the
-// Plan's inputs (app/api/plan-inputs) share.
+// Plan's inputs (app/api/plan-inputs) share: Plaid's rows with the
+// transactions imported for the account from its brokerage's download
+// joined (lib/investment-imports.ts). A cached payload counts only when it
+// was built under the imports there are now (hasCurrentImports, one HKEYS
+// for the check); imports that can't be read leave Plaid's rows alone, said
+// in the note, and that answer isn't cached.
 //
 // Beside it, the money in and out the person set for the account
 // (lib/money-in-out-store.ts) and the months they imported from their
@@ -76,12 +82,24 @@ export async function GET(req: Request) {
     // cached before the moves left its flows is a miss: hasCurrentFlows.)
     const cacheField = `${item_id}:${account_id}`;
     const totals = totalsFor(ctx, account_id);
-    const cached = await readAccountCache<Record<string, unknown>>(ctx, cacheField);
-    if (cached && hasPlanFields(cached) && hasCurrentFlows(cached)) return NextResponse.json({ ...cached, ...(await totals), from_cache: true });
+    const [cached, keys] = await Promise.all([readAccountCache<Record<string, unknown>>(ctx, cacheField), importKeysOrNull(ctx)]);
+    const fingerprint = keys ? importsFingerprint(keys) : null;
+    if (cached && fingerprint && hasPlanFields(cached) && hasCurrentFlows(cached) && hasCurrentImports(cached, fingerprint)) {
+      return NextResponse.json({ ...cached, ...(await totals), from_cache: true });
+    }
 
     const sync = await syncInvestments(ctx, item);
-    const payload = activityFromSync(sync, account_id);
-    if (cacheable(sync)) await writeAccountCache(ctx, cacheField, payload);
+    const imports = keys
+      ? await readAccountImports(ctx, [account_id], keys).then(
+          (read) => read.get(account_id) ?? [],
+          (err) => {
+            console.error(loggable(err));
+            return null;
+          }
+        )
+      : null;
+    const { payload, cacheable } = activityWithImports(sync, account_id, imports, fingerprint ?? '');
+    if (cacheable) await writeAccountCache(ctx, cacheField, payload);
 
     return NextResponse.json({ ...payload, ...(await totals), from_cache: false });
   } catch (err: any) {

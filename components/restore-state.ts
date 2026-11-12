@@ -146,6 +146,7 @@ const BROUGHT: readonly (readonly [part: string, words: (n: number) => string])[
   ['store:timeline-notes', (n) => plural(n, 'note on the timeline', 'notes on the timeline')],
   ['store:account-lifecycle', (n) => plural(n, 'account you marked closed or stopped following', 'accounts you marked closed or stopped following')],
   ['store:investment-months', (n) => `the imported months of ${plural(n, 'investment account')}`],
+  ['store:investment-imports', (n) => plural(n, 'import of transactions into an investment account', 'imports of transactions into investment accounts')],
   ['store:money-in-out', (n) => `the deposits and withdrawals of ${plural(n, 'investment account')}`],
   ['store:currency-settings', () => 'your home currency and your own exchange rates'],
 ];

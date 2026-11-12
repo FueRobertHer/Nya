@@ -432,14 +432,15 @@ describe('a download this release makes, as the release before’s restore reads
     ok(await plans('POST', { from: MAIN_ID, name: 'Stop at 52', plan: { ...TYPED, targetAge: 52 }, currency: 'USD' }));
     const keys = Object.keys(buildUserExport(await collectUserData({ ctx, userId: null }), new Date('2026-11-04T12:00:00.000Z')));
     expect(keys).toContain('fire-plans');
-    // But two: money in and out (lib/money-in-out-store.ts) and the months
-    // imported for an investment account (lib/investment-months-store.ts) are
-    // newer than the release before, and every download has their parts,
+    // But three: money in and out (lib/money-in-out-store.ts), the months
+    // imported for an investment account (lib/investment-months-store.ts)
+    // and the transactions imported for one (lib/investment-imports-store.ts)
+    // are newer than the release before, and every download has their parts,
     // empty or not, so the release before refuses them all. Shipped without a
     // reader a release ahead, since no rollback is planned
     // (docs/operations.md). Moving the fixtures to this release's merge
     // empties this list again.
-    expect(keys.filter((k) => !oParts.isKnownPart(k))).toEqual(['investment-months', 'money-in-out']);
+    expect(keys.filter((k) => !oParts.isKnownPart(k))).toEqual(['investment-imports', 'investment-months', 'money-in-out']);
     expect(oParts.HEADER_PARTS.filter((p) => !keys.includes(p))).toEqual([]);
     const shared = Object.keys(SEAM).filter((name) => Object.hasOwn(oParts.SEAM, name));
     expect(shared.length).toBeGreaterThan(30);

@@ -145,7 +145,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `api_tokens` | The API tokens you made, by name, with what each can do and when it was made and last used. |
 | `attachments` | The receipts and documents you attached: what each is and which transaction it is on, never the file ([below](#attachments)). |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `api-changes`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan-saved`, `fire-plans`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `investment-months`, `manual-transactions`, `money-in-out`, `plan-facts`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `api-changes`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan-saved`, `fire-plans`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `investment-imports`, `investment-months`, `manual-transactions`, `money-in-out`, `plan-facts`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
 
 ### `problems`
 
@@ -403,6 +403,21 @@ The months you imported for your investment accounts from your brokerage's own r
 | `typed` | The months whose figures you typed in the review because the file's didn't add up. Absent when none. |
 
 Nya joins the counting import to what it recorded on every read: its month ends are drawn before the first day Nya recorded a balance, and its nets count as the money in and out before Nya's own activity. Nothing it works out is stored. An entry that can't be read is named under [`problems`](#problems) by the id it is stored under.
+
+#### `investment-imports`
+
+The transactions you imported for your investment accounts from your brokerage's own download (`lib/investment-imports.ts`): today only Vanguard's transaction history CSV. One entry per account and import, its `id` `<account id>:<import id>`, under the id the account had when it was imported; an account linked to an earlier one reads the imports on all its ids. A file that took several accounts has an entry for each, with the same import id. Each `value` is the account's part of the file as it was read, never changed afterwards. The file itself is never kept: only these rows and the days it covers.
+
+| Field | Meaning |
+| --- | --- |
+| `source` | Where it came from: `vanguard-csv` (and, later, `vanguard-qfx`). |
+| `file_name` | The file's name as your device gave it, or `null`. |
+| `imported_at` | When it was imported. |
+| `covers` | `{ "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" }`: the days the file holds every transaction of, its first to last trade date across its accounts, ending at the latest the day before you imported it. |
+| `currency` | The amounts' currency (an ISO code), or `null`. |
+| `rows[]` | The account's transactions in those days, in the file's order, each as Plaid would give it: `date` (the trade date), `name`, `type` and `subtype`, `quantity`, `price`, `amount` (positive when cash leaves the account, as Plaid's), `fees`, `currency` and `security` (the fund's name, or `null`). |
+
+Nya joins them to Plaid's on every read: for each day, the newest import covering it (a CSV before a QFX) decides which rows count, and a day no import covers is Plaid's. Undoing an import removes its entry from every account it took. Nothing Nya works out from them is stored. An entry that can't be read is named under [`problems`](#problems) by the id it is stored under.
 
 #### `allocation-settings`
 

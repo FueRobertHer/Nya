@@ -5,7 +5,9 @@ import { readPlanAnswer } from '@/lib/plan-copies';
 import { getItems, type StoredItem } from '@/lib/storage';
 import { syncInvestments } from '@/lib/invstore';
 import { readAccountCaches, writeAccountCache } from '@/lib/cache';
-import { activityFromSync, cacheable, hasPlanFields, type InvestmentActivity } from '@/lib/investment-activity';
+import { activityWithImports, hasCurrentImports, hasPlanFields, type InvestmentActivity } from '@/lib/investment-activity';
+import { importKeysOrNull, importsFingerprint, readAccountImports } from '@/lib/investment-imports-store';
+import type { AccountImport } from '@/lib/investment-imports';
 import { begin } from '@/lib/eager';
 import { loggable } from '@/lib/log-safe';
 
@@ -33,6 +35,13 @@ import { loggable } from '@/lib/log-safe';
 // lock, lib/invstore.ts), and cached by the rule the Accounts tab's route
 // keeps (lib/investment-activity.ts cacheable). A Plaid outage answers the
 // stored rows, saying so in the note, as that route does.
+//
+// Each row joins the transactions imported for its account from the
+// brokerage's download, as the Accounts tab's route does
+// (lib/investment-activity.ts activityWithImports): a cached row counts only
+// when it was built under the imports there are now, which one HKEYS beside
+// the rows checks (none with no plans asked for), and imports that can't be
+// read (or listed) leave Plaid's rows alone, said in the note and not cached.
 //
 // A cached row is served without checking its item is still linked, as the
 // Accounts tab's route checks: unlinking an item clears the cache
@@ -75,9 +84,10 @@ function wantedOf(params: URLSearchParams): Wanted[] {
 }
 
 /** A row from a cached payload, or null when it is one cached before the
- *  Plan's fields existed. */
-function rowFrom(id: string, cached: Record<string, unknown>): Row | null {
-  if (!hasPlanFields(cached)) return null;
+ *  Plan's fields existed, or built under other imports than there are now
+ *  (or with `fingerprint` null, when which there are couldn't be listed). */
+function rowFrom(id: string, cached: Record<string, unknown>, fingerprint: string | null): Row | null {
+  if (!hasPlanFields(cached) || fingerprint === null || !hasCurrentImports(cached, fingerprint)) return null;
   const row: Record<string, unknown> = { id };
   for (const f of PLAN_FIELDS) row[f] = cached[f];
   return row as Row;
@@ -101,11 +111,12 @@ export async function GET(req: Request) {
 
     // Begun together, so Redis sends the reads at once.
     const answer = begin(() => readPlanAnswer(ctx));
-    const cached = await readAccountCaches<Record<string, unknown>>(ctx, fields);
+    const [cached, keys] = await Promise.all([readAccountCaches<Record<string, unknown>>(ctx, fields), fields.length > 0 ? importKeysOrNull(ctx) : []]);
+    const fingerprint = keys ? importsFingerprint(keys) : null;
     const plans: Row[] = wanted.map((w) => {
       if (!w.item_id) return { id: w.id, failed: true };
       const hit = cached.get(w.id);
-      return (hit && rowFrom(w.id, hit)) ?? { id: w.id, pending: true };
+      return (hit && rowFrom(w.id, hit, fingerprint)) ?? { id: w.id, pending: true };
     });
     try {
       return NextResponse.json({ ...(await answer), plans });
@@ -125,13 +136,14 @@ type Ctx = Awaited<ReturnType<typeof dataCtx>>;
 
 /** The rows asked for, each item synced once for all its plans not cached. */
 async function syncedRows(ctx: Ctx, wanted: Wanted[], fields: string[]): Promise<Row[]> {
-  const cached = await readAccountCaches<Record<string, unknown>>(ctx, fields);
+  const [cached, keys] = await Promise.all([readAccountCaches<Record<string, unknown>>(ctx, fields), fields.length > 0 ? importKeysOrNull(ctx) : []]);
+  const fingerprint = keys ? importsFingerprint(keys) : null;
   const rows = new Map<string, Row>();
   const byItem = new Map<string, { id: string; account_id: string }[]>();
   for (const w of wanted) {
     if (!w.item_id) continue;
     const hit = cached.get(w.id);
-    const row = hit ? rowFrom(w.id, hit) : null;
+    const row = hit ? rowFrom(w.id, hit, fingerprint) : null;
     if (row) rows.set(w.id, row);
     else byItem.set(w.item_id, [...(byItem.get(w.item_id) ?? []), { id: w.id, account_id: w.account_id }]);
   }
@@ -142,6 +154,30 @@ async function syncedRows(ctx: Ctx, wanted: Wanted[], fields: string[]): Promise
     } catch (err) {
       console.error(loggable(err));
     }
+    // Every account's imports in one read; when that fails, each account's
+    // on its own, so one account's entry that can't be read never holds the
+    // others back (null: an account's can't be read).
+    const account_ids = [...new Set([...byItem.values()].flat().map((a) => a.account_id))];
+    let imports = new Map<string, AccountImport[] | null>(account_ids.map((id) => [id, null]));
+    if (keys) {
+      try {
+        imports = await readAccountImports(ctx, account_ids, keys);
+      } catch (err) {
+        console.error(loggable(err));
+        const each = await Promise.all(
+          account_ids.map((id) =>
+            readAccountImports(ctx, [id], keys).then(
+              (read) => [id, read.get(id) ?? []] as const,
+              (e) => {
+                console.error(loggable(e));
+                return [id, null] as const;
+              }
+            )
+          )
+        );
+        imports = new Map(each);
+      }
+    }
     await Promise.all(
       [...byItem].map(async ([item_id, accounts]) => {
         const item = items?.find((i) => i.item_id === item_id);
@@ -150,9 +186,9 @@ async function syncedRows(ctx: Ctx, wanted: Wanted[], fields: string[]): Promise
           const sync = await syncInvestments(ctx, item);
           await Promise.all(
             accounts.map(async ({ id, account_id }) => {
-              const payload = activityFromSync(sync, account_id);
-              if (cacheable(sync)) await writeAccountCache(ctx, id, payload);
-              rows.set(id, rowFrom(id, payload)!);
+              const { payload, cacheable } = activityWithImports(sync, account_id, imports.get(account_id) ?? null, fingerprint ?? '');
+              if (cacheable) await writeAccountCache(ctx, id, payload);
+              rows.set(id, rowFrom(id, payload, fingerprint)!);
             })
           );
         } catch (err) {

@@ -164,6 +164,8 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   'manual-transactions': 'data',
   // The months the person imported for an investment account.
   'investment-months': 'data',
+  // The transactions the person imported for an investment account.
+  'investment-imports': 'data',
   // What the person said an investment account had put in and taken out.
   'money-in-out': 'data',
   // What every plan shares, and which is yours: your plan's settings.
