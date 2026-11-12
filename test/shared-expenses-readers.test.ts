@@ -110,6 +110,7 @@ describe('rows the layer adds are never evidence of history (Blocking 1)', () =>
       'lib/backfill.ts': 'the banks’ stored rows',
       'lib/shared-expenses/balances.ts': 'items’ days, never rows',
       'lib/shared-expenses/rows.ts': 'the rows it is given, before it adds any',
+      'lib/demo-seed/recorded.ts': 'a demo profile’s own rows, never the read layer’s',
     };
     const found = files.filter((f) => earliest.test(readFileSync(join(root, f), 'utf8')));
     const unruled = found.filter((f) => !STORED[f] && !/\bisHistoryRow\(/.test(readFileSync(join(root, f), 'utf8')));

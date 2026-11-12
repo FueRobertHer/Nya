@@ -26,6 +26,7 @@ import type { FirePlan } from '../fire/plan';
 import type { BeforeMedicare } from '../fire/tax-choices';
 import type { Filing, StateCode } from '../fire/tax/law/types';
 import type { DEMO_NAMES } from '../demo';
+import { atAge, atStop, planItem, ref, type SeedExtras } from './extras';
 
 export type DemoName = (typeof DEMO_NAMES)[number];
 
@@ -36,7 +37,9 @@ export const HISTORY_MONTHS = 12;
 
 export type SeedTxn = { date: string; amount: number; description: string; pending?: boolean };
 export type SeedHolding = { ticker: string; name: string; price: number; quantity: number; cost_basis: number };
-export type SeedInvTxn = { date: string; name: string; type: 'cash' | 'buy'; quantity: number; price: number; ticker: string };
+/** A cash row's quantity is -1 for money in and 1 for money out, its price the
+ *  amount; a sell's quantity is below zero, as Plaid's custom users take it. */
+export type SeedInvTxn = { date: string; name: string; type: 'cash' | 'buy' | 'sell'; quantity: number; price: number; ticker: string };
 
 export type SeedAccount = {
   /** Matched to the account Plaid makes by this mask. */
@@ -61,12 +64,27 @@ export type SeedInstitution = {
   accounts: SeedAccount[];
 };
 
-export type SeedManual = { name: string; type: 'depository' | 'investment' | 'other'; subtype: string | null; balance: number };
-/** A goal, tracking the account with this mask (or none). */
-export type SeedGoal = { name: string; target: number; mask: string | null };
+/** A manual account, and the rows entered on it (Plaid's sign: positive is money out). */
+export type SeedManual = {
+  name: string;
+  type: 'depository' | 'investment' | 'other';
+  subtype: string | null;
+  balance: number;
+  rows?: { date: string; amount: number; name: string; category: string | null }[];
+};
+/** A goal, tracking the account with this mask (or none), and its plan
+ *  (lib/goal-plans.ts): a start is the day its target date was set and what
+ *  it held then. */
+export type SeedGoal = {
+  name: string;
+  target: number;
+  mask: string | null;
+  plan?: { monthly_target?: number; target_date?: string; started?: { date: string; amount: number }; archived?: { on: string; amount: number } };
+};
 
 export type DemoProfile = {
-  name: DemoName;
+  /** Who it is, for the tests: a demo account's name, or a scenario's own. */
+  name: string;
   institutions: SeedInstitution[];
   manual: SeedManual[];
   /** Monthly budgets by Plaid primary category. */
@@ -78,38 +96,40 @@ export type DemoProfile = {
    *  account by the mask it ends in, and a partner's age so it can be asked
    *  whose an account is. Left out, nothing is saved. */
   tax?: {
-    partnerAge: number;
+    partnerAge: number | null;
     accounts: { mask: string; owner: 'you' | 'partner'; basis: number | null }[];
     roth: { owner: 'you' | 'partner'; amount: number }[];
     /** What working tax out from the accounts reads, said while the plan stays flat:
      *  `socialSecurity` is the income that is Social Security, given before tax. */
     detail?: { filing: Filing; state: StateCode; beforeMedicare: BeforeMedicare; socialSecurity: string };
   };
+  /** The rest of what it has set up (lib/demo-seed/extras.ts). */
+  extras?: SeedExtras;
 };
 
 // Plaid's sandbox institutions without OAuth, which keep every field of a
 // custom user (Plaid's docs warn OAuth ones may not).
-const PLATYPUS = { institution_id: 'ins_109508', name: 'First Platypus Bank' };
-const GINGHAM = { institution_id: 'ins_109509', name: 'First Gingham Credit Union' };
-const TATTERSALL = { institution_id: 'ins_109510', name: 'Tattersall Federal Credit Union' };
-const TARTAN = { institution_id: 'ins_109511', name: 'Tartan Bank' };
-const HOUNDSTOOTH = { institution_id: 'ins_109512', name: 'Houndstooth Bank' };
+export const PLATYPUS = { institution_id: 'ins_109508', name: 'First Platypus Bank' };
+export const GINGHAM = { institution_id: 'ins_109509', name: 'First Gingham Credit Union' };
+export const TATTERSALL = { institution_id: 'ins_109510', name: 'Tattersall Federal Credit Union' };
+export const TARTAN = { institution_id: 'ins_109511', name: 'Tartan Bank' };
+export const HOUNDSTOOTH = { institution_id: 'ins_109512', name: 'Houndstooth Bank' };
 // Brokerages, also without OAuth in the sandbox. One investment account with
 // activity per Item: the sandbox puts every investment transaction of a custom
 // user on each of its investment accounts, so two in one Item would each show
 // the other's too.
-const BETTERMENT = { institution_id: 'ins_115605', name: 'Betterment' };
-const WEALTHFRONT = { institution_id: 'ins_115617', name: 'Wealthfront' };
-const SCHWAB_PLANS = { institution_id: 'ins_121400', name: 'Charles Schwab - Retirement Plan Center' };
-const ETRADE = { institution_id: 'ins_129473', name: 'E*TRADE from Morgan Stanley' };
-const ASCENSUS = { institution_id: 'ins_118645', name: 'Ascensus - Merrill Lynch' };
+export const BETTERMENT = { institution_id: 'ins_115605', name: 'Betterment' };
+export const WEALTHFRONT = { institution_id: 'ins_115617', name: 'Wealthfront' };
+export const SCHWAB_PLANS = { institution_id: 'ins_121400', name: 'Charles Schwab - Retirement Plan Center' };
+export const ETRADE = { institution_id: 'ins_129473', name: 'E*TRADE from Morgan Stanley' };
+export const ASCENSUS = { institution_id: 'ins_118645', name: 'Ascensus - Merrill Lynch' };
 
 const FUNDS = {
   VTI: { name: 'Vanguard Total Stock Market ETF', price: 312.4 },
   VXUS: { name: 'Vanguard Total International Stock ETF', price: 71.25 },
   BND: { name: 'Vanguard Total Bond Market ETF', price: 74.1 },
 } as const;
-type Fund = keyof typeof FUNDS;
+export type Fund = keyof typeof FUNDS;
 
 // ---------------------------------------------------------------- dates
 
@@ -119,9 +139,9 @@ const fmtDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 export const addDays = (d: string, n: number) => fmtDay(parseDay(d) + n * DAY_MS);
 
 /** One month of the history: its first day, and the calendar month (1 to 12). */
-type Month = { index: number; year: number; month: number };
+export type Month = { index: number; year: number; month: number };
 
-function historyMonths(today: string): Month[] {
+export function historyMonths(today: string): Month[] {
   const [y, m] = today.split('-').map(Number);
   const out: Month[] = [];
   for (let back = HISTORY_MONTHS - 1; back >= 0; back--) {
@@ -133,13 +153,13 @@ function historyMonths(today: string): Month[] {
 
 const daysIn = (mo: Month) => new Date(Date.UTC(mo.year, mo.month, 0)).getUTCDate();
 /** A day of the month, clamped to its last day. */
-const on = (mo: Month, day: number) => `${mo.year}-${String(mo.month).padStart(2, '0')}-${String(Math.min(day, daysIn(mo))).padStart(2, '0')}`;
-const lastDay = (mo: Month) => on(mo, 31);
+export const on = (mo: Month, day: number) => `${mo.year}-${String(mo.month).padStart(2, '0')}-${String(Math.min(day, daysIn(mo))).padStart(2, '0')}`;
+export const lastDay = (mo: Month) => on(mo, 31);
 
 // ---------------------------------------------------------------- randomness
 
 /** mulberry32: small, seeded, the same sequence on every run. */
-function rng(seed: number): () => number {
+export function rng(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) >>> 0;
@@ -150,7 +170,7 @@ function rng(seed: number): () => number {
   };
 }
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
+export const round2 = (n: number) => Math.round(n * 100) / 100;
 
 type Rand = {
   /** About `base`, give or take `spread` (a fraction). */
@@ -160,7 +180,7 @@ type Rand = {
   pick<T>(xs: readonly T[]): T;
 };
 
-function rand(seed: number): Rand {
+export function rand(seed: number): Rand {
   const r = rng(seed);
   return {
     about: (base, spread) => round2(base * (1 + (r() * 2 - 1) * spread)),
@@ -172,12 +192,15 @@ function rand(seed: number): Rand {
 // ---------------------------------------------------------------- books
 
 /** One account's rows for the year, which only ever include days up to today. */
-class Book {
+export class Book {
   readonly rows: SeedTxn[] = [];
   constructor(private readonly today: string) {}
-  add(date: string, amount: number, description: string): void {
-    if (date > this.today) return;
-    this.rows.push({ date, amount: round2(amount), description });
+  /** The row added, or null for a day after today, which isn't. */
+  add(date: string, amount: number, description: string): SeedTxn | null {
+    if (date > this.today) return null;
+    const row = { date, amount: round2(amount), description };
+    this.rows.push(row);
+    return row;
   }
   /** A purchase made today that the bank hasn't posted yet. */
   pending(amount: number, description: string): void {
@@ -193,13 +216,17 @@ class Book {
 }
 
 /** A cash account's balance today, from what it opened the year with. */
-const cashBalance = (opening: number, book: Book) => round2(opening - book.posted());
+export const cashBalance = (opening: number, book: Book) => round2(opening - book.posted());
 /** What a card or a loan owes today, from what it owed when the year opened. */
-const owedBalance = (opening: number, book: Book) => round2(opening + book.posted());
+export const owedBalance = (opening: number, book: Book) => round2(opening + book.posted());
+
+/** How far the market stood below today's on `day`: it rose about 12% over
+ *  the year, so a fund's price then was its price today times this. */
+export const marketOn = (today: string, day: string) => 1 - (0.12 * (parseDay(today) - parseDay(day))) / (365 * DAY_MS);
 
 /** An investment account: today's holdings worth `value`, split by weight
  *  with the rest in cash, and a year of contributions each followed by a buy. */
-class Portfolio {
+export class Portfolio {
   readonly txns: SeedInvTxn[] = [];
   constructor(
     private readonly today: string,
@@ -212,9 +239,17 @@ class Portfolio {
     if (date > this.today) return;
     this.txns.push({ date, name, type: 'cash', quantity: -1, price: round2(amount), ticker: 'CUR:USD' });
     const buyOn = addDays(date, 1) > this.today ? date : addDays(date, 1);
-    const yearsAgo = (parseDay(this.today) - parseDay(buyOn)) / (365 * DAY_MS);
-    const price = round2(FUNDS[fund].price * (1 - 0.12 * yearsAgo));
+    const price = round2(FUNDS[fund].price * marketOn(this.today, buyOn));
     this.txns.push({ date: buyOn, name: `BUY ${fund}`, type: 'buy', quantity: Math.round((amount / price) * 10_000) / 10_000, price, ticker: fund });
+  }
+  /** Money taken out: `fund` sold the day before at about the price then,
+   *  and the cash paid out on `date`. */
+  withdraw(date: string, amount: number, fund: Fund, name: string): void {
+    if (date > this.today) return;
+    const sellOn = addDays(date, -1);
+    const price = round2(FUNDS[fund].price * marketOn(this.today, sellOn));
+    this.txns.push({ date: sellOn, name: `SELL ${fund}`, type: 'sell', quantity: -Math.round((amount / price) * 10_000) / 10_000, price, ticker: fund });
+    this.txns.push({ date, name, type: 'cash', quantity: 1, price: round2(amount), ticker: 'CUR:USD' });
   }
   holdings(): SeedHolding[] {
     const out: SeedHolding[] = [];
@@ -248,6 +283,11 @@ function alex(today: string): DemoProfile {
   const CARD_OPENING = 1_184.36;
   let lastStatement = CARD_OPENING;
   let savingsBalance = 15_500;
+  let united: SeedTxn | null = null;
+  let hyatt: SeedTxn | null = null;
+  let tahoe: SeedTxn | null = null;
+  let laptop: SeedTxn | null = null;
+  const rei: SeedTxn[] = [];
 
   for (const mo of months) {
     const raise = mo.index >= 5; // a raise partway through the year
@@ -266,13 +306,19 @@ function alex(today: string): DemoProfile {
     card.add(on(mo, 7), 15.49, 'NETFLIX.COM');
     card.add(on(mo, 11), 11.99, 'SPOTIFY USA');
     card.add(on(mo, r.day(28)), r.about(42, 0.6), 'AMAZON.COM*2K4LT8 AMZN.COM/BILL');
-    if (mo.index % 3 === 1) card.add(on(mo, r.day(28)), r.about(120, 0.5), 'REI #105 SAN FRANCISCO');
-    if (mo.index % 2 === 1) card.add(on(mo, r.day(28)), r.about(24, 0.4), 'WALGREENS #3021');
-    if (mo.month === 7) {
-      card.add(on(mo, 9), 412.6, 'UNITED AIRLINES');
-      card.add(on(mo, 19), 389.2, 'HYATT HOTELS TOKYO');
+    if (mo.index % 3 === 1) {
+      const row = card.add(on(mo, r.day(28)), r.about(120, 0.5), 'REI #105 SAN FRANCISCO');
+      if (row) rei.push(row);
     }
-    if (mo.month === 2) card.add(on(mo, 13), 520, 'AIRBNB * HM4QZ8 TAHOE');
+    if (mo.index % 2 === 1) card.add(on(mo, r.day(28)), r.about(24, 0.4), 'WALGREENS #3021');
+    // A trip, a weekend shared with friends and a new laptop, counted in
+    // months back from today so each is there whatever day the seed runs.
+    if (mo.index === 6) {
+      united = card.add(on(mo, 9), 412.6, 'UNITED AIRLINES');
+      hyatt = card.add(on(mo, 19), 389.2, 'HYATT HOTELS TOKYO');
+    }
+    if (mo.index === 2) tahoe = card.add(on(mo, 13), 520, 'AIRBNB * HM4QZ8 TAHOE');
+    if (mo.index === 4) laptop = card.add(on(mo, 21), 1_899, 'APPLE STORE #R014 SAN FRANCISCO');
     if (mo.month === 12) {
       card.add(on(mo, 6), 318.4, 'ALASKA AIRLINES');
       card.add(on(mo, 12), 186.5, 'AMAZON.COM*HOLIDAY AMZN.COM/BILL');
@@ -316,6 +362,7 @@ function alex(today: string): DemoProfile {
   card.pending(r.about(64, 0.3), "TRADER JOE'S #552 SAN FRANCISCO CA");
 
   const cardOwed = owedBalance(CARD_OPENING, card);
+  const savingsStart = on(months[5], 1);
   return {
     name: 'Alex',
     institutions: [
@@ -325,6 +372,8 @@ function alex(today: string): DemoProfile {
         accounts: [
           { mask: '4821', type: 'depository', subtype: 'checking', name: 'Everyday Checking', balance: cashBalance(5_400, checking), transactions: checking.sorted() },
           { mask: '9930', type: 'depository', subtype: 'savings', name: 'High-Yield Savings', apy: 4.1, balance: cashBalance(15_500, savings), transactions: savings.sorted() },
+          // A parent's bills, paid from here: Alex's to manage, not to count, so hidden.
+          { mask: '4830', type: 'depository', subtype: 'checking', name: "Mom's Bill Pay", balance: 1_240, transactions: [] },
         ],
       },
       {
@@ -360,14 +409,92 @@ function alex(today: string): DemoProfile {
         accounts: [{ mask: '6620', type: 'loan', subtype: 'loan', name: 'Graduate Student Loan', balance: owedBalance(18_600, loan), transactions: loan.sorted() }],
       },
     ],
-    manual: [{ name: 'Health Savings Account', type: 'investment', subtype: 'hsa', balance: 9_850 }],
+    manual: [
+      { name: 'Health Savings Account', type: 'investment', subtype: 'hsa', balance: 9_850 },
+      {
+        name: 'Cash on hand',
+        type: 'depository',
+        subtype: 'cash',
+        balance: 120,
+        rows: [
+          { date: addDays(today, -26), amount: 34, name: 'Farmers market', category: 'FOOD_AND_DRINK' },
+          { date: addDays(today, -12), amount: 20, name: 'Haircut tip', category: 'PERSONAL_CARE' },
+          { date: addDays(today, -4), amount: 18.5, name: 'Taqueria', category: 'FOOD_AND_DRINK' },
+        ],
+      },
+    ],
     budgets: { FOOD_AND_DRINK: 650, GENERAL_MERCHANDISE: 250, ENTERTAINMENT: 150, TRANSPORTATION: 120, TRAVEL: 300 },
     goals: [
-      { name: 'Emergency fund', target: 25_000, mask: '9930' },
-      { name: 'Japan trip', target: 6_000, mask: null },
+      // Its target date was set six months back, at what savings held then, so
+      // the goal says where it should be by now.
+      {
+        name: 'Emergency fund',
+        target: 30_000,
+        mask: '9930',
+        plan: { target_date: addDays(today, 274), started: { date: savingsStart, amount: cashBalance(15_500, savingsBefore(savings, savingsStart)) } },
+      },
+      { name: 'Japan trip', target: 6_000, mask: null, plan: { monthly_target: 500, target_date: addDays(today, 300) } },
+      ...(laptop ? [{ name: 'New laptop', target: 1_900, mask: null, plan: { archived: { on: laptop.date, amount: 1_900 } } }] : []),
     ],
-    plan: { age: 31, targetAge: 45, withdrawalRate: 0.035, stocksPct: 90, bondsPct: 10 },
+    plan: { age: 31, targetAge: 45, withdrawalRate: 0.035, stocksPct: 90, bondsPct: 10, partTimeIncome: 18_000 },
+    tax: { partnerAge: null, accounts: [], roth: [{ owner: 'you', amount: 26_000 }] },
+    extras: {
+      tags: ['Subscriptions', 'Vacation'],
+      rules: [
+        { name: 'NETFLIX', tags: ['Subscriptions'] },
+        { name: 'SPOTIFY', tags: ['Subscriptions'] },
+        { name: 'VENMO PAYMENT', op: 'equals', rename: 'Venmo' },
+        { name: 'CLIPPER', rename: 'Clipper (transit)', off: true },
+      ],
+      marks: [
+        { row: ref('1077', united), tags: ['Vacation'] },
+        { row: ref('1077', hyatt), tags: ['Vacation'], note: 'Tokyo, five nights' },
+        { row: ref('1077', laptop), excluded: true, note: 'New laptop: a one-off, from the laptop fund' },
+      ],
+      // Two of the merchant's last three filed the same way: its default.
+      recategorized: rei.slice(-2).map((row) => ({ row: ref('1077', row), category: 'ENTERTAINMENT' })),
+      people: ['Priya', 'Marcus'],
+      shares: [{ row: ref('1077', tahoe), what: 'Tahoe cabin', parts: [{ person: 'Priya', amount: 173.33 }, { person: 'Marcus', amount: 173.33 }] }],
+      ious: [{ person: 'Marcus', direction: 'to_you', amount: 40, date: addDays(today, -12), what: 'Concert tickets' }],
+      review: { daysBack: 7 },
+      rollover: ['TRAVEL'],
+      planned: {
+        items: [
+          { name: 'Renter’s insurance', kind: 'expense', amount: 180, date: on(months[2], 5), cadence: 'yearly' },
+          { name: 'Flights to Japan', kind: 'expense', amount: 1_400, date: addDays(today, 40), cadence: 'once' },
+        ],
+        threshold: 2_000,
+      },
+      // The Individual Brokerage ••7788 is left to set (and to its own history import).
+      moneyInOut: [
+        { mask: '5521', in: 29_400, out: 0, as_of: lastDay(months[8]) },
+        { mask: '3314', in: 71_250, out: 0, as_of: lastDay(months[8]) },
+      ],
+      hidden: ['4830'],
+      notes: [{ date: on(months[5], 15), text: 'Raise at Northwind', mask: '4821' }],
+      allocation: { target: { 'us-stocks': 65, 'intl-stocks': 25, bonds: 10 } },
+      plan: {
+        items: [planItem({ id: 'japan-trip', label: 'Japan trip', kind: 'one-off', from: atAge(32), once: 6_000 })],
+        payroll: ['3314'],
+        copies: [
+          {
+            name: 'Coast from 40',
+            set: { targetAge: 40, rule: 'guardrails' },
+            add: [planItem({ id: 'freelance', label: 'Freelance design', kind: 'part-time', from: atStop(), until: { years: 10 }, yearly: 18_000, replaces: 0 })],
+          },
+          { name: 'Earliest stop that lasts', set: { lastsIn: 0.9 } },
+        ],
+        savedMonthsBack: 3,
+      },
+    },
   };
+}
+
+/** The savings book's rows up to the end of `day`, for its balance then. */
+function savingsBefore(book: Book, day: string): Book {
+  const upTo = new Book(day);
+  for (const t of book.rows) if (!t.pending && t.date <= day) upTo.add(t.date, t.amount, t.description);
+  return upTo;
 }
 
 // ---------------------------------------------------------------- Sam
@@ -390,11 +517,15 @@ function sam(today: string): DemoProfile {
   const CARD_OPENING = 2_948.12;
   let lastStatement = CARD_OPENING;
   let savingsBalance = 26_000;
+  let costco: SeedTxn | null = null;
+  let flights: SeedTxn | null = null;
+  let stay: SeedTxn | null = null;
 
   for (const mo of months) {
     const from = on(mo, 1);
     // Card: the household's spending.
-    card.add(on(mo, 4), r.about(265, 0.25), 'COSTCO WHSE #0144');
+    const bulk = card.add(on(mo, 4), r.about(265, 0.25), 'COSTCO WHSE #0144');
+    if (mo.index === 9) costco = bulk; // split into groceries and household things
     card.add(on(mo, 19), r.about(240, 0.25), 'COSTCO WHSE #0144');
     card.add(on(mo, 10), r.about(118, 0.3), 'SAFEWAY #2290');
     card.add(on(mo, 25), r.about(104, 0.3), 'SAFEWAY #2290');
@@ -409,9 +540,11 @@ function sam(today: string): DemoProfile {
     card.add(on(mo, 14), 13.99, 'DISNEY PLUS');
     if (mo.index % 2 === 0) card.add(on(mo, r.day(28)), r.about(92, 0.5), 'THE HOME DEPOT #6612');
     if (mo.index % 3 === 2) card.add(on(mo, r.day(28)), r.about(30, 0.4), 'CVS/PHARMACY #9921');
-    if (mo.month === 6) {
-      card.add(on(mo, 3), 1_084.4, 'SOUTHWEST AIRLINES');
-      card.add(on(mo, 20), 1_412, 'AIRBNB * HMX81Q SAN DIEGO');
+    // The summer trip, counted in months back from today so it is there
+    // whatever day the seed runs, and grouped as one.
+    if (mo.index === 4) {
+      flights = card.add(on(mo, 3), 1_084.4, 'SOUTHWEST AIRLINES');
+      stay = card.add(on(mo, 20), 1_412, 'AIRBNB * HMX81Q SAN DIEGO');
     }
     if (mo.month === 12) card.add(on(mo, 8), 412.75, 'AMAZON.COM*HOLIDAY AMZN.COM/BILL');
 
@@ -479,6 +612,8 @@ function sam(today: string): DemoProfile {
             mask: '4410', type: 'credit', subtype: 'credit card', name: 'Family Rewards Mastercard', limit: 25_000, balance: owedBalance(CARD_OPENING, card), transactions: card.sorted(),
             liability: { type: 'credit', purchase_apr: 21.49, minimum_payment_amount: 75, last_statement_balance: lastStatement, last_payment_amount: 3_050 },
           },
+          // Paid off and closed when the family card came, still listed by the bank.
+          { mask: '4402', type: 'credit', subtype: 'credit card', name: 'Old Cash Back Card', limit: 5_000, balance: 0, transactions: [] },
         ],
       },
       {
@@ -526,7 +661,7 @@ function sam(today: string): DemoProfile {
     budgets: { FOOD_AND_DRINK: 1_350, GENERAL_MERCHANDISE: 600, TRANSPORTATION: 320, ENTERTAINMENT: 120, HOME_IMPROVEMENT: 150 },
     goals: [
       { name: 'Emergency fund (6 months)', target: 45_000, mask: '6145' },
-      { name: 'College fund', target: 80_000, mask: '3360' },
+      { name: 'College fund', target: 80_000, mask: '3360', plan: { monthly_target: 250 } },
     ],
     plan: {
       age: 38,
@@ -550,6 +685,61 @@ function sam(today: string): DemoProfile {
         { owner: 'partner', amount: 31_000 },
       ],
       detail: { filing: 'joint', state: 'NV', beforeMedicare: { kind: 'aca', adult: 11_000, quotedAge: 50, child: null }, socialSecurity: 'social-security' },
+    },
+    extras: {
+      tags: ['Kids', 'Home'],
+      rules: [
+        { name: 'BRIGHT HORIZONS', tags: ['Kids'] },
+        { name: 'HOME DEPOT', category: 'HOME_IMPROVEMENT', tags: ['Home'] },
+      ],
+      splits: [
+        {
+          row: ref('4410', costco),
+          parts: [
+            { share: 0.6, category: 'FOOD_AND_DRINK', note: 'Groceries' },
+            { share: 0.4, category: 'GENERAL_MERCHANDISE', note: 'Paper goods and a booster seat' },
+          ],
+        },
+      ],
+      groups: [{ name: 'San Diego trip', category: 'TRAVEL', rows: [ref('4410', flights), ref('4410', stay)] }],
+      // Under the food group's own budget, so the category's is capped by it.
+      groupBudgets: [{ key: 'FOOD_AND_DRINK', amount: 1_300 }],
+      planned: {
+        items: [
+          { name: 'Car registration', kind: 'expense', amount: 284, date: on(months[3], 12), cadence: 'yearly' },
+          { name: 'Tax refund', kind: 'income', amount: 2_400, date: addDays(today, 150), cadence: 'once' },
+        ],
+        threshold: 5_000,
+      },
+      reportMarked: ['MEDICAL'],
+      runway: [{ name: 'If both paychecks stop', months: 6, lower_by: 800, income_until: today, planned: true, leave_out_one_offs: true }],
+      moneyInOut: [
+        { mask: '1182', in: 176_500, out: 0, as_of: lastDay(months[9]) },
+        { mask: '5530', in: 128_300, out: 0, as_of: lastDay(months[9]) },
+        { mask: '7741', in: 49_000, out: 0, as_of: lastDay(months[9]) },
+        { mask: '7742', in: 38_500, out: 0, as_of: lastDay(months[9]) },
+        { mask: '9013', in: 104_000, out: 8_500, as_of: lastDay(months[9]) },
+        { mask: '3360', in: 24_250, out: 3_100, as_of: lastDay(months[9]) },
+      ],
+      ended: [{ mask: '4402', on: on(months[6], 1), note: 'Closed once the family card came' }],
+      allocation: { target: { 'us-stocks': 60, 'intl-stocks': 20, bonds: 20 } },
+      plan: {
+        items: [
+          planItem({ id: 'maya', label: 'Maya', kind: 'child', from: atAge(38), until: { years: 14 }, yearly: 9_000 }),
+          planItem({ id: 'sam-consulting', label: 'Sam consulting', kind: 'part-time', owner: 'you', from: atStop(), until: { years: 5 }, yearly: 30_000, replaces: 0 }),
+          planItem({ id: 'jordan-tutoring', label: 'Jordan tutoring', kind: 'part-time', owner: 'partner', from: atStop(1), until: { years: 5 }, yearly: 18_000, replaces: 0 }),
+        ],
+        payroll: ['1182', '5530'],
+        copies: [
+          {
+            name: 'Jordan part-time at 48',
+            drop: ['jordan-tutoring'],
+            add: [planItem({ id: 'jordan-part-time', label: 'Jordan part-time', kind: 'part-time', owner: 'partner', from: atAge(48), until: { years: 8 }, yearly: 40_000, replaces: 90_000 })],
+          },
+          { name: 'A bigger home', add: [planItem({ id: 'bigger-home', label: 'A bigger home', kind: 'home', from: atAge(42), once: 150_000, yearly: 6_000 })] },
+        ],
+        dependents: [{ id: 'maya', untilAge: 52 }],
+      },
     },
   };
 }

@@ -4,6 +4,8 @@
 // scripts/seed-demo.ts runs, once the guard (lib/demo-seed/guard.ts) has said
 // where. Run again, it gives the same account, its dates moved up to today.
 //
+// 0. CHECK the profile as the app's routes would (lib/demo-seed/fill.ts
+//    checkProfile), so a scenario the app refuses part of stops here.
 // 1. EMPTY. First what would stop emptying is checked, before anything is
 //    changed (a connection to SimpleFIN or Lunch Flow, a restore under way:
 //    a visitor can leave either), so a refusal leaves the account whole. Then
@@ -18,12 +20,24 @@
 //    user (/sandbox/public_token/create with `user_custom`), exchanged and
 //    stored as linking one in the app stores it (app/api/exchange-public-
 //    token). Two years of history are asked for, so the year's rows all come.
-// 3. FILL. Manual accounts, budgets, goals and the Plan's assumptions, each
-//    through its own store, as its route writes them.
+// 3. FILL. Manual accounts, then what needs no account and no transaction
+//    (budgets, goals, tags and rules, people, planned items and the rest),
+//    then the Plan, each through its own store, as its route writes them
+//    (lib/demo-seed/fill.ts).
 // 4. WAIT for Plaid to have every transaction ready, syncing each Item through
 //    the app's own sync (lib/transactions.ts, the only code that calls
 //    Plaid's Transactions endpoints, after its billing check) until its store
 //    holds the year, so the first visit after a seed sees all of it at once.
+// 5. RECORD. One load as the daily job makes it (lib/snapshot-job.ts,
+//    without its notices); the balance history a visitor's load built while
+//    the year came in is swept; then that load records today and remembers
+//    every account, with the past months' holdings recorded before today's.
+//    A load that held its total back (a bank didn't answer) records no
+//    totals for the year either. Then what is keyed by
+//    an account (deposits and withdrawals, hidden, ended, notes) and by a
+//    transaction (tags, notes, splits, groups, shares), the recorded year and
+//    the saved plan (lib/demo-seed/recorded.ts), and last what a scenario puts
+//    wrong with a connection. The caches and the estimated history go last.
 
 import type { Products } from 'plaid';
 import { plaidClient } from '../plaid';
@@ -41,22 +55,23 @@ import { clearCaches } from '../cache';
 import { clearBackfillDone } from '../history';
 import { transactionsBilledOf } from '../item-products';
 import { readStoredTxns, syncItemTransactions } from '../transactions';
-import { newManualId, saveManualAccount } from '../manual';
-import { ensureTaxonomy } from '../category-store';
-import { categoryForKey, indexTaxonomy, PLAID } from '../categories';
-import { loadBudgets, saveBudgets } from '../budget-store';
-import { readBudgets } from '../budget-set';
-import { setGoals } from '../goals';
-import { DEFAULT_PLAN, parsePlan } from '../fire/plan';
-import { planOf, type FirePlanV2 } from '../fire/plan-v2';
-import { factsOf, holdsAmounts } from '../fire/copies';
-import { DEFAULT_TAX_CHOICES } from '../fire/tax-choices';
-import { DEFAULT_TAX_FACTS, householdOf } from '../fire/tax-facts';
-import { saveMain, saveTaxFacts } from '../plan-writes';
+import { newManualId, saveManualAccount, type ManualAccount } from '../manual';
+import { computeNetWorth, recordFetch } from '../networth';
+import { rememberAccounts } from '../last-known';
+import { recordDirectory } from '../links';
+import { recordSyncs } from '../connection-health';
 import type { Ctx } from '../containers';
 import { customUserConfig, txnCount, type DemoProfile, type SeedInstitution } from './profiles';
+import { checkProfile, fillAccounts, fillPlan, fillSettings, fillTransactions, fillTrouble, savedPlanDay, type Linked, type SeedRun } from './fill';
+import { measuredOf, recordedYear, writeHoldingsMonths, writeRecordedYear, writeSavedPlan } from './recorded';
 
-export type SeedReport = { removed: string[]; linked: { name: string; accounts: number; transactions: number }[]; waiting: string[] };
+export type SeedReport = {
+  removed: string[];
+  linked: { name: string; accounts: number; transactions: number }[];
+  waiting: string[];
+  /** What the profile names that couldn't be written, and why. */
+  skipped: string[];
+};
 
 export type SeedOptions = {
   /** How long to wait for Plaid's history, per Item. */
@@ -72,6 +87,9 @@ const sleeper = (ms: number) => new Promise<void>((resolve) => setTimeout(resolv
 export async function seedDemoAccount(ctx: Ctx, userId: string, profile: DemoProfile, today: string, opts: SeedOptions = {}): Promise<SeedReport> {
   const log = opts.log ?? (() => {});
 
+  // 0. Check.
+  checkProfile(profile, today);
+
   // 1. Empty.
   await checkEmptiable(ctx);
   const before = await getItems(ctx);
@@ -86,10 +104,12 @@ export async function seedDemoAccount(ctx: Ctx, userId: string, profile: DemoPro
   // 2. Link.
   const accountIds = new Map<string, string>();
   const linked: SeedReport['linked'] = [];
+  const items: Linked[] = [];
   const pendingHistory: { item: StoredItem; expected: number }[] = [];
   for (const inst of profile.institutions) {
     const { item, ids } = await linkInstitution(ctx, inst, today);
     for (const [mask, id] of ids) accountIds.set(mask, id);
+    items.push({ inst, item });
     const transactions = txnCount(inst);
     linked.push({ name: inst.name, accounts: inst.accounts.length, transactions });
     if (inst.products.includes('transactions') && transactions > 0) pendingHistory.push({ item, expected: transactions });
@@ -98,76 +118,54 @@ export async function seedDemoAccount(ctx: Ctx, userId: string, profile: DemoPro
 
   // 3. Fill.
   const now = new Date().toISOString();
+  const manual = new Map<string, ManualAccount>();
   for (const m of profile.manual) {
-    await saveManualAccount(ctx, { account_id: newManualId(), name: m.name, institution_name: 'Manual', type: m.type, subtype: m.subtype, balance: m.balance, updated_at: now });
+    const account: ManualAccount = { account_id: newManualId(), name: m.name, institution_name: 'Manual', type: m.type, subtype: m.subtype, balance: m.balance, updated_at: now };
+    await saveManualAccount(ctx, account);
+    manual.set(m.name, account);
   }
+  const run: SeedRun = { ctx, profile, today, accountIds, linked: items, manual, people: new Map(), waiting: new Set(), skipped: [] };
+  await fillSettings(run);
+  const plans = await fillPlan(run);
 
-  const required = Object.keys(profile.budgets).map((key) => ({ provider: PLAID, key }) as const);
-  const taxonomy = await ensureTaxonomy(ctx, { required });
-  const ix = indexTaxonomy(taxonomy);
-  const categories: Record<string, { amount: number }> = {};
-  for (const [key, amount] of Object.entries(profile.budgets)) {
-    const c = categoryForKey(ix, PLAID, key);
-    if (!c) throw new Error(`No category files Plaid's ${key}`);
-    categories[c.id] = { amount };
-  }
-  await loadBudgets(ctx);
-  await saveBudgets(ctx, readBudgets({ categories, groups: {} }), taxonomy);
-
-  await setGoals(
-    ctx,
-    profile.goals.map((g) => {
-      const account_id = g.mask === null ? null : (accountIds.get(g.mask) ?? null);
-      if (g.mask !== null && account_id === null) throw new Error(`No account ending ${g.mask} for the goal ${g.name}`);
-      return { id: crypto.randomUUID(), name: g.name, target: g.target, account_id };
-    })
-  );
-
-  const plan = parsePlan({ ...DEFAULT_PLAN, ...profile.plan });
-  if ('error' in plan) throw new Error(`The profile's plan is refused: ${plan.error}`);
-  const seeded: FirePlanV2 = { ...planOf(plan.plan), partnerAge: profile.tax?.partnerAge ?? null };
-  const first = await seedPlan(ctx, seeded);
-  if (profile.tax?.detail) await seedDetail(ctx, seeded, first.entry.updatedAt, profile.tax.detail);
-  for (const a of profile.tax?.accounts ?? []) {
-    const account_id = accountIds.get(a.mask);
-    if (!account_id) throw new Error(`No account ending ${a.mask} for its tax facts`);
-    await saveTaxFacts(ctx, { kind: 'account', account_id, owner: a.owner, basis: a.basis, count: false });
-  }
-  for (const r of profile.tax?.roth ?? []) await saveTaxFacts(ctx, { kind: 'roth', owner: r.owner, amount: r.amount });
-
-  // 4. Wait. Then the balance history, the caches and the estimated history
-  //    are cleared, so nothing a visitor's page load built from part of the
-  //    year while it came in stays: the history was empty when it began.
+  // 4. Wait.
   const waiting: string[] = [];
   await Promise.all(
     pendingHistory.map(async (p) => {
       const ready = await waitForHistory(ctx, p.item, p.expected, opts);
-      if (!ready) waiting.push(p.item.institution_name);
+      if (!ready) {
+        waiting.push(p.item.institution_name);
+        run.waiting.add(p.item.item_id);
+      }
     })
   );
-  await sweepContainerExcept(ctx, (key) => !key.startsWith('history:'));
+
+  // 5. Record. The load first, then the sweep: the history was empty when
+  //    the year began to come in, and a visitor's load since would leave part
+  //    of it. Swept just before the months go in, since a visitor's holdings
+  //    for today, recorded first, would keep the older months off the index.
+  const { institutions, netWorth } = await computeNetWorth(ctx);
+  for (const inst of institutions) if (inst.error) run.skipped.push(`${inst.institution_name} didn't answer, so its balances aren't recorded`);
+  await sweepContainerExcept(ctx, (key) => !key.startsWith('history:') && !key.startsWith('holdings:history'));
+  await writeHoldingsMonths(ctx, profile, today, institutions, accountIds);
+  const fetched = await recordFetch(ctx, institutions, netWorth);
+  if (fetched.date === null) run.skipped.push('the year’s net worth totals, since today’s load held its total back');
+  await rememberAccounts(ctx, institutions);
+  await recordDirectory(ctx, institutions);
+  await recordSyncs(ctx, institutions);
+  await fillAccounts(run);
+  await fillTransactions(run);
+  const manualIds = new Map([...manual].map(([name, a]) => [name, a.account_id]));
+  await writeRecordedYear(ctx, recordedYear(profile, today, measuredOf(institutions), accountIds, manualIds), fetched.date !== null);
+  const savedOn = savedPlanDay(profile, today);
+  if (savedOn) await writeSavedPlan(ctx, profile, plans.main, savedOn);
+  await fillTrouble(run);
+  // The caches and the estimated history go last, so nothing a visitor's
+  // page load built from part of the year stays.
   await clearCaches(ctx);
   await clearBackfillDone(ctx);
-  return { removed: before.map((i) => i.institution_name), linked, waiting };
-}
-
-/** The profile's plan as your plan (lib/plan-writes.ts), in the emptied
- *  account: its entry, then the facts. The sandbox accounts are in USD, so
- *  that is the currency of any amount it types (Sam's income). */
-function seedPlan(ctx: Ctx, plan: FirePlanV2) {
-  return saveMain(ctx, plan, holdsAmounts(plan) ? 'USD' : null, factsOf(DEFAULT_PLAN), null);
-}
-
-/** What working tax out from the accounts reads, said while the plan stays flat, so
- *  Preview offers it, then shows everything, and a reset brings the offer back. A
- *  second save: the household needs the facts the first one writes. */
-async function seedDetail(ctx: Ctx, plan: FirePlanV2, basedOn: string, detail: NonNullable<NonNullable<DemoProfile['tax']>['detail']>): Promise<void> {
-  const were = householdOf(DEFAULT_TAX_FACTS);
-  const items = plan.items.map((x) => (x.id === detail.socialSecurity ? { ...x, kind: 'social-security' as const, beforeTax: true } : x));
-  await saveMain(ctx, { ...plan, items }, 'USD', factsOf(plan), basedOn, {
-    tax: { ...DEFAULT_TAX_CHOICES, state: detail.state, health: { ...DEFAULT_TAX_CHOICES.health, beforeMedicare: detail.beforeMedicare } },
-    household: { to: { ...were, filing: detail.filing }, were },
-  });
+  for (const line of run.skipped) log(`  skipped ${line}`);
+  return { removed: before.map((i) => i.institution_name), linked, waiting, skipped: run.skipped };
 }
 
 /** Refuses, changing nothing, what emptyAccount would refuse once the banks
