@@ -7,7 +7,8 @@
 // never color alone, and is "on" while a choice other than the first is made.
 // The select is named by the chip's word alone, which the shown text starts
 // with (WCAG 2.5.3); the shown text is hidden from a screen reader, which
-// reads the select's name and value instead.
+// reads the select's name and value instead. A long choice is cut short with
+// an ellipsis: the chip is never wider than its row.
 
 import type { ReactNode } from 'react';
 
@@ -31,7 +32,9 @@ export default function ChipSelect({
 }) {
   return (
     <label className="chip chip-select" data-on={on ? '' : undefined}>
-      <span aria-hidden="true">{shown}</span>
+      <span className="chip-text" aria-hidden="true">
+        <span className="chip-name">{shown}</span>
+      </span>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="m6 9 6 6 6-6" />
       </svg>

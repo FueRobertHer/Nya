@@ -1237,6 +1237,31 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   color: var(--text-2);
 }
 
+/* A chip's words (components/ChipSelect.tsx, AccountsChooser.tsx): a chip
+   that holds them is never wider than its row, so a long name is cut short
+   with an ellipsis and the page never scrolls sideways. An account's last
+   digits stay in view after its name. A chip with bare words keeps growing
+   with them: capped, its edge would cut through words it can't shorten. */
+.chip:has(> .chip-text) {
+  max-width: 100%;
+}
+
+.chip-text {
+  display: flex;
+  min-width: 0;
+}
+
+.chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chip-mask {
+  flex-shrink: 0;
+  white-space: pre;
+}
+
 /* The hit area reaches 44px without the chip looking taller: measured from
    the padding box, so it reaches past the 1px border too. */
 .chip::after {
