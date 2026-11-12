@@ -77,8 +77,10 @@
 // (`range`, `ranges`, `onRange`).
 //
 // ALL TIME. On an investment account's sheet with deposits and withdrawals
-// that can be carried (`allTime`, with `baselineFrom`), the grey line is its
-// deposits less withdrawals since it opened, so All is all time: the readout
+// that can be carried (`allTime`, with `baselineFrom`), or months from its
+// brokerage that start when it opened (`allTime`, the line starting on their
+// $0.00 entered point), the grey line is its deposits less withdrawals since
+// it opened, so All is all time: the readout
 // reads from $0.00 when the account opened to the last recorded day the
 // line reaches, its split line the deposits and withdrawals and the returns
 // there, and a scrubbed day all time to that day. Every other range counts
@@ -229,7 +231,8 @@ export default function NetWorthChart({
   range?: RangeKey;
   onRange?: (key: RangeKey) => void;
   /** All is all time (see the header): the grey line is carried from the
-   *  totals (`baselineFrom`). */
+   *  totals (`baselineFrom`), or starts on a brokerage's $0.00 when the
+   *  account opened. */
   allTime?: boolean;
   /** Where the entered points come from (see the header), for the info. */
   months?: MonthsInfo | null;
@@ -529,8 +532,11 @@ export default function NetWorthChart({
   while (lastReal > 0 && (points[lastReal].estimated || base[lastReal] === null)) lastReal--;
   // All time, on All only, to the last recorded day the line reaches.
   const lastBase = base[lastReal];
+  // From the totals, or from the $0.00 the months start at: never from a
+  // line that starts on a balance, which would count it as deposits.
+  const opensAtZero = baseStart === 0 && !!points[0].entered && vals[0] === 0;
   const whole =
-    range === 'ALL' && allTime && baselineFrom && lastBase !== null && !points[lastReal].estimated
+    range === 'ALL' && allTime && (baselineFrom || opensAtZero) && lastBase !== null && !points[lastReal].estimated
       ? { net: lastBase, returns: vals[lastReal] - lastBase, to: lastReal < last ? points[lastReal].date : null }
       : null;
   const rangeChange = change(0, last);
@@ -585,14 +591,16 @@ export default function NetWorthChart({
     const firstRecorded = points.slice(0, baseStart).every((p) => p.estimated);
     const none = !shown.some((b) => b >= 0);
     const more =
-      baselineFrom || outside ? 'more had come out than gone in' : `more had come out than the balance ${onDay(dayIn(baseStart))} and deposits since`;
-    if (none) info.push(`No grey line for this range: all through it, ${more}${baselineFrom ? ', so deposits less withdrawals were below zero' : ''}.`);
+      baselineFrom || whole || outside ? 'more had come out than gone in' : `more had come out than the balance ${onDay(dayIn(baseStart))} and deposits since`;
+    if (none) info.push(`No grey line for this range: all through it, ${more}${baselineFrom || whole ? ', so deposits less withdrawals were below zero' : ''}.`);
     else {
       if (!outside)
         info.push(
           baselineFrom
             ? `Grey line: your deposits less withdrawals by each day, from your totals for ${fmtDay(baselineFrom, true)}. The gap above it is your returns so far.`
-            : `Grey line: the balance ${onDay(dayIn(baseStart))} plus deposits less withdrawals since. The gap above it is your returns.`
+            : whole
+              ? `Grey line: your deposits less withdrawals by each day, from ${formatMoney(0, currency)} when the account opened. The gap above it is your returns so far.`
+              : `Grey line: the balance ${onDay(dayIn(baseStart))} plus deposits less withdrawals since. The gap above it is your returns.`
         );
       if (!outside && months && points[baseStart].date < months.activity_from)
         info.push(`${months.firm} gives one figure a month, so until ${fmtDay(months.activity_from, true)}, when Nya’s activity starts, each month’s deposits and withdrawals are drawn at its middle.`);

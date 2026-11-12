@@ -758,7 +758,7 @@ export default function HistoryImportSheet({
               <div className="stack tight">
                 <h3 className="section-label">{SOURCE}, as a PDF</h3>
                 <p className="helper">
-                  Every month since the account opened (its balance, deposits and withdrawals, and returns), so its chart and your returns reach back. On the
+                  Every month since the account opened (its balance, deposits and withdrawals, and returns), so its chart and your all-time returns reach back. On the
                   Performance page, choose this account alone and a range from when it opened, then print the page to a PDF. Nya reads it on this device and keeps only
                   the months: the file isn’t uploaded.
                 </p>

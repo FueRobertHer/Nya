@@ -15,6 +15,9 @@
 //     place). On a Vanguard account with no months imported, the line also
 //     names the Performance page, imported from the sheet's ⋯
 //     (components/PerformanceImport.tsx).
+//   - None carried, but months imported from the brokerage that start when
+//     it opened (`opened`, lib/investment-months.ts allTimeFromMonths): one
+//     line saying all time counts from them, and no button: none is needed.
 //   - Set but no longer carried (their day is before the activity Nya now
 //     has for the account): an information notice saying so, since no figure
 //     is wrong; the chart counts from the start of each range again.
@@ -23,6 +26,7 @@
 
 import { formatDay, formatMoney, roundsToNothing } from '@/lib/format';
 import { sinceStarted, usableTotals, type BalancePoint, type Flow } from '@/lib/growth';
+import { monthText } from '@/lib/investment-months';
 import type { MoneyInOut } from '@/lib/money-in-out';
 import { Masked } from './HideAmounts';
 import { Notice } from './TotalCaveats';
@@ -63,6 +67,7 @@ export default function MoneyInOutFigures({
   points,
   onEdit,
   importable = false,
+  opened = null,
 }: {
   /** The account, its activity and its totals, as the form takes them. */
   target: MoneyInOutTarget;
@@ -77,6 +82,9 @@ export default function MoneyInOutFigures({
   /** At Vanguard with no months imported yet: the line names the
    *  Performance page too. */
   importable?: boolean;
+  /** The day all time counts from through the months imported, when they
+   *  start as it opened and no totals stand instead. */
+  opened?: string | null;
 }) {
   const { totals, flows, flows_from, currency } = target;
   const edit = (words: string) => (
@@ -86,6 +94,12 @@ export default function MoneyInOutFigures({
       </button>
     </div>
   );
+
+  if (opened) {
+    return (
+      <p className="helper">{`All time counts from the months you imported from Vanguard’s Performance page, back to ${monthText(opened.slice(0, 7))}, when the account opened.`}</p>
+    );
+  }
 
   if (unreadable) {
     return (
@@ -100,7 +114,7 @@ export default function MoneyInOutFigures({
       <div className="stack tight">
         <p className="helper">
           {importable
-            ? `Set your deposits and withdrawals to see your all-time returns. ${FOR_NOW} To see further back, import Vanguard’s Performance page from ⋯.`
+            ? `Set your deposits and withdrawals, or import Vanguard’s Performance page from ⋯, to see your all-time returns. ${FOR_NOW}`
             : `Set your deposits and withdrawals to see your all-time returns. ${FOR_NOW}`}
         </p>
         {edit('Set deposits and withdrawals')}
