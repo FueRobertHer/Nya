@@ -19,6 +19,7 @@ import { Menu, type MenuItem } from './Menu';
 import { Masked } from './HideAmounts';
 import type { LifecycleTarget } from './AccountLifecycle';
 import type { HistoryImportTarget } from './HistoryImportSheet';
+import { withMask } from '@/lib/account-names';
 import { formatDay, hiddenFigure } from '@/lib/format';
 import { readableName } from '@/lib/merchant-name';
 import { isInvestmentType, isOwedType } from '@/lib/balance';
@@ -271,7 +272,7 @@ export default function AccountSheet({
   );
 
   return (
-    <Sheet open={open} title={`${a.name}${a.mask ? ` ••${a.mask}` : ''}`} onClose={onDismiss} footer={footer}>
+    <Sheet open={open} title={withMask(a.name, a.mask)} onClose={onDismiss} footer={footer}>
       <div className="stack">
         <div className="account-hero">
           <p className="account-balance money">
@@ -343,7 +344,7 @@ export default function AccountSheet({
             isInvestmentType(a.type) && !inst.manual
               ? {
                   balance: a.balance,
-                  label: `${a.name}${a.mask ? ` ••${a.mask}` : ''} · ${inst.institution_name}`,
+                  label: `${withMask(a.name, a.mask)} · ${inst.institution_name}`,
                   onEdit: (target) => act(() => onMoneyInOut(target))(),
                 }
               : undefined

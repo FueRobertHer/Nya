@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { distinctAccountNames } from '@/lib/account-names';
+import { distinctAccountNames, nameAndMask, withMask } from '@/lib/account-names';
 
 // The names a list gives its accounts, so two rows never read the same when
 // the accounts are different (lib/account-names.ts): the screen review found
@@ -59,5 +59,54 @@ describe('distinct account names', () => {
     expect(names.get('a')).toBe('Cash');
     expect(names.get('b')).toBe('Ally Cash');
     expect(names.get('c')).toBe('Ally Cash');
+  });
+});
+
+// A bank's name may already end in the account's last digits; Nya writes
+// them once, after the name, so a name cut short keeps them in view.
+describe('an account name with its last digits', () => {
+  test('a name without them: the digits after it', () => {
+    expect(nameAndMask('Roth IRA', '3302')).toEqual({ name: 'Roth IRA', mask: '3302' });
+    expect(withMask('Roth IRA', '3302')).toBe('Roth IRA ••3302');
+    expect(withMask('Plan 4421 Savings', '4421')).toBe('Plan 4421 Savings ••4421');
+  });
+
+  test('no digits: the name alone', () => {
+    expect(nameAndMask('Roth IRA', null)).toEqual({ name: 'Roth IRA', mask: null });
+    expect(withMask('Roth IRA', ' ')).toBe('Roth IRA');
+  });
+
+  test('a name that ends in them: taken off it and written once', () => {
+    for (const name of [
+      'Brokerage Account Alex Morgan Joint ...4421',
+      'Brokerage Account Alex Morgan Joint - 4421',
+      'Brokerage Account Alex Morgan Joint x4421',
+      'Brokerage Account Alex Morgan Joint XXXX4421',
+      'Brokerage Account Alex Morgan Joint (4421)',
+      'Brokerage Account Alex Morgan Joint ••4421 ',
+      'Brokerage Account Alex Morgan Joint - ****4421',
+      'Brokerage Account Alex Morgan Joint …4421',
+    ]) {
+      expect(nameAndMask(name, '4421')).toEqual({ name: 'Brokerage Account Alex Morgan Joint', mask: '4421' });
+    }
+  });
+
+  test('digits run into the name, or nothing but them: the name whole, nothing after it', () => {
+    expect(nameAndMask('Account 214421', '4421')).toEqual({ name: 'Account 214421', mask: null });
+    expect(nameAndMask('Max4421', '4421')).toEqual({ name: 'Max4421', mask: null });
+    expect(nameAndMask('XXXX4421', '4421')).toEqual({ name: 'XXXX4421', mask: null });
+    expect(nameAndMask('...4421', '4421')).toEqual({ name: '...4421', mask: null });
+  });
+
+  test('what joined the digits goes with them, and the name keeps its own marks', () => {
+    expect(withMask('Account No. 4421', '4421')).toBe('Account No. ••4421');
+    expect(withMask('Account:XXXX4421', '4421')).toBe('Account ••4421');
+    expect(withMask('Account/x4421', '4421')).toBe('Account ••4421');
+    expect(withMask('Roth IRA ', '3302')).toBe('Roth IRA ••3302');
+  });
+
+  test('an x that ends a word is not taken for the digits’ mark', () => {
+    expect(nameAndMask('Index 4421', '4421')).toEqual({ name: 'Index', mask: '4421' });
+    expect(nameAndMask('Max 1234', '4421')).toEqual({ name: 'Max 1234', mask: '4421' });
   });
 });
