@@ -47,7 +47,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: 'vanguard-history',
     title: 'History from Vanguard',
-    description: 'The single renter with the brokerage at Vanguard: its months since it opened four years ago imported from Vanguard’s Performance page, before Nya’s own.',
+    description: 'The single renter with the brokerage and the Roth at Vanguard: the brokerage’s months since it opened four years ago imported from Vanguard’s Performance page, and both accounts’ transactions from its downloads, a CSV over a QFX.',
     build: (today) => vanguardHistory(today),
   },
 ];

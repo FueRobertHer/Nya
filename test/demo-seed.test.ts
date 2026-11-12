@@ -169,6 +169,14 @@ const { readHoldingsSpan } = await import('@/lib/holdings-history');
 const { readInvestmentMonths } = await import('@/lib/investment-months-store');
 const { monthsProblem, nextMonth, withPastMonths } = await import('@/lib/investment-months');
 const { flowsOf, pastMonths } = await import('@/lib/demo-seed/past-months');
+const { checkTransactionImports, importEntries } = await import('@/lib/demo-seed/imports');
+const { importKeys, listImports, readAccountImports } = await import('@/lib/investment-imports-store');
+const { dayBefore, withImportedRows } = await import('@/lib/investment-imports');
+const { contributedAmount, isContribution } = await import('@/lib/investments');
+const { readVanguardTransactions } = await import('@/lib/import/vanguard-transactions');
+const { readVanguardQfx } = await import('@/lib/import/vanguard-qfx');
+const { vanguardCsv } = await import('./vanguard-transactions-csv');
+const { vanguardQfx } = await import('./vanguard-transactions-qfx');
 const { signedContribution } = await import('@/lib/balance');
 const { decrypt } = await import('@/lib/crypto');
 
@@ -307,6 +315,81 @@ describe('the profiles', () => {
       if ('error' in plan) throw new Error(`${name}'s plan is refused: ${plan.error}`);
       // As the seed saves it: version 2, which is what the route takes.
       expect('error' in parsePlanV2(planOf(plan.plan))).toBe(false);
+    }
+  });
+
+  test('import Vanguard’s downloads as its readers read them: each import’s rows are what a file of the same rows gives, whatever the day', () => {
+    const number = (mask: string) => `5000${mask}`;
+    // What a buy or sell's cash comes to: the file's figure is minus it.
+    const cents = (n: number) => Math.round(n * 100) / 100;
+    const DESCRIPTION: Record<string, (day: string) => string> = {
+      'Funds Received': () => 'Funds Received via electronic transfer',
+      Contribution: (day) => `Contribution for ${day.slice(0, 4)}`,
+      'Conversion (incoming)': () => 'Roth conversion',
+    };
+    for (let k = 0; k < 80; k++) {
+    const today = addDays(TODAY, k * 13 - 360);
+    const profile = scenarioById('vanguard-history')!.build(today);
+    const accounts = new Map(profile.institutions.flatMap((i) => i.accounts.map((a) => [a.mask, a] as const)));
+    const specs = profile.extras!.transactionImports!;
+    expect(specs.map((s) => s.source)).toEqual(['vanguard-qfx', 'vanguard-csv']);
+    const fundName = (mask: string, ticker: string) => accounts.get(mask)!.holdings!.find((h) => h.ticker === ticker)?.name ?? ticker;
+    for (const spec of specs) {
+      const entries = importEntries(profile, spec, today);
+      const rowsOf = (mask: string) => accounts.get(mask)!.investment_transactions!.filter((t) => t.date >= spec.from && t.date < spec.made);
+      let read: { accounts: { mask: string; rows: unknown[] }[] };
+      if (spec.source === 'vanguard-csv') {
+        const text = vanguardCsv(
+          spec.masks.flatMap((mask) => accounts.get(mask)!.holdings!.filter((h) => h.ticker !== 'CUR:USD').map((h) => ({ account: number(mask), name: h.name, symbol: h.ticker, shares: h.quantity, price: h.price }))),
+          spec.masks.flatMap((mask) =>
+            rowsOf(mask).map((t) =>
+              t.type === 'cash'
+                ? { account: number(mask), trade: t.date, type: spec.kinds![t.name], description: DESCRIPTION[spec.kinds![t.name]](t.date), net: t.quantity < 0 ? t.price : -t.price }
+                : { account: number(mask), trade: t.date, type: t.type === 'buy' ? 'Buy' : 'Sell', name: fundName(mask, t.ticker), symbol: t.ticker, shares: t.quantity, price: t.price, net: -cents(t.quantity * t.price) }
+            )
+          )
+        );
+        const csv = readVanguardTransactions(text);
+        if (!csv.ok) throw new Error(csv.reason);
+        // Its days are its first row's to its last's.
+        for (const e of entries) expect(e.value.covers).toEqual(csv.span!);
+        read = csv;
+      } else {
+        const tickers = ['VTI', 'VXUS', 'BND'];
+        const fund = (ticker: string) => `00000000${tickers.indexOf(ticker) + 1}`;
+        const text = vanguardQfx(
+          spec.masks.map((mask) => ({
+            number: number(mask),
+            txns: rowsOf(mask).map((t) =>
+              t.type === 'cash'
+                ? { kind: 'bank' as const, posted: t.date, amount: t.quantity < 0 ? t.price : -t.price }
+                : { kind: t.type, trade: t.date, units: t.quantity, price: t.price, total: -cents(t.quantity * t.price), fund: fund(t.ticker) }
+            ),
+          })),
+          { start: spec.from, end: spec.made, funds: Object.fromEntries(tickers.map((ticker) => [fund(ticker), fundName(spec.masks[0], ticker)])) }
+        );
+        const qfx = readVanguardQfx(text);
+        if (!qfx.ok) throw new Error(qfx.reason);
+        // Its days are those it states, to the day before it was made.
+        for (const e of entries) expect(e.value.covers).toEqual({ from: qfx.stated.from, to: dayBefore(qfx.stated.end) });
+        read = qfx;
+      }
+      expect(read.accounts.map((a) => a.mask)).toEqual(spec.masks);
+      for (const e of entries) {
+        const rows = read.accounts.find((a) => a.mask === e.mask)!.rows.map((r: any) => {
+          const { line: _l, kind: _k, ...row } = r;
+          return row;
+        });
+        expect(e.value.rows).toEqual(rows);
+      }
+    }
+    }
+  });
+
+  test('pass the imports’ own check on any day they are seeded on', () => {
+    for (let k = 0; k < 104; k++) {
+      const day = addDays(TODAY, k * 7 - 360);
+      expect(() => checkTransactionImports(scenarioById('vanguard-history')!.build(day), day)).not.toThrow();
     }
   });
 
@@ -614,6 +697,26 @@ describe('what a seed sets up', () => {
     const startLater = (inst: (typeof vanguard.institutions)[number]) => ({ ...inst, accounts: inst.accounts.map((x) => ({ ...x, investment_transactions: x.investment_transactions?.filter((t) => t.date >= addDays(TODAY, -300)) })) });
     const lateActivity = { ...vanguard, institutions: vanguard.institutions.map((i) => (i.name === 'Vanguard' ? startLater(i) : i)) };
     await expect(seedDemoAccount(ctx, 'user_alex', lateActivity, TODAY, quick)).rejects.toThrow(/wouldn't be used \(activity-late\)/);
+    // Transactions imported only at Vanguard, each cash row a kind the file
+    // names, each import deciding days of its own, oldest first.
+    const [qfx, csv] = vanguard.extras!.transactionImports!;
+    const withImports = (list: NonNullable<typeof vanguard.extras>['transactionImports']) => ({ ...vanguard, extras: { ...vanguard.extras, transactionImports: list } });
+    await expect(seedDemoAccount(ctx, 'user_alex', withImports([{ ...csv, masks: ['3314'] }]), TODAY, quick)).rejects.toThrow(/ending 3314 isn't an investment account at Vanguard/);
+    const unknownKind = { ...csv, kinds: { ...csv.kinds, 'ROTH CONVERSION': 'Dividend' } };
+    await expect(seedDemoAccount(ctx, 'user_alex', withImports([qfx, unknownKind]), TODAY, quick)).rejects.toThrow(/names no kind the seed writes for ROTH CONVERSION/);
+    await expect(seedDemoAccount(ctx, 'user_alex', withImports([{ ...qfx, from: addDays(qfx.made, -40) }, csv]), TODAY, quick)).rejects.toThrow(/Vanguard transactions\.qfx decides no day of its own for the account ending 7788/);
+    await expect(seedDemoAccount(ctx, 'user_alex', withImports([csv, qfx]), TODAY, quick)).rejects.toThrow(/list them oldest first/);
+    await expect(seedDemoAccount(ctx, 'user_alex', withImports([qfx, { ...csv, made: qfx.made }]), TODAY, quick)).rejects.toThrow(/a day apart at least/);
+    await expect(seedDemoAccount(ctx, 'user_alex', withImports([qfx, { ...csv, made: TODAY }]), TODAY, quick)).rejects.toThrow(/made today or after/);
+    await expect(seedDemoAccount(ctx, 'user_alex', withImports([{ ...qfx, masks: ['5521'], from: addDays(TODAY, -700), made: addDays(TODAY, -400) }]), TODAY, quick)).rejects.toThrow(/has no rows for the account ending 5521/);
+    // A deposit of Plaid's just past the CSV's last row, as much as the
+    // deposit the CSV ends on, would be left out as the same one.
+    const brokerageRows = vanguard.institutions.flatMap((i) => i.accounts).find((a) => a.mask === '7788')!.investment_transactions!;
+    const last = brokerageRows.filter((t) => t.type === 'cash' && t.date < csv.made).at(-1)!;
+    expect(last.date).toBe(dayBefore(csv.made));
+    const echo = { ...last, date: addDays(csv.made, 1) };
+    const twinned = { ...vanguard, institutions: vanguard.institutions.map((i) => ({ ...i, accounts: i.accounts.map((a) => (a.mask === '7788' ? { ...a, investment_transactions: [...brokerageRows, echo] } : a)) })) };
+    await expect(seedDemoAccount(ctx, 'user_alex', twinned, TODAY, quick)).rejects.toThrow(new RegExp(`would leave out Plaid's ACH CONTRIBUTION on ${echo.date} as one of its own`));
     expect(removed).toEqual([]);
     expect((await getItems(ctx)).map((i) => i.institution_name)).toEqual(['Chime']);
   });
@@ -902,6 +1005,49 @@ describe('what a seed sets up', () => {
     // The line runs on from the last month's end to the recorded year.
     const firstRecorded = points.find((p) => p.date === joined.applied!.first_recorded)!;
     expect(Math.abs(firstRecorded.value / entered[entered.length - 1].value - 1)).toBeLessThan(0.05);
+  });
+
+  test('history from Vanguard: a CSV taken into the brokerage and the Roth, its conversion one, over an older QFX it decides from where they meet', async () => {
+    const profile = scenarioById('vanguard-history')!.build(TODAY);
+    const report = await seedDemoAccount(TEST_CTX, 'user_alex', profile, TODAY, quick);
+    expect(report.skipped).toEqual([]);
+    // Two connections to Vanguard, one account with activity in each.
+    expect((await getItems(TEST_CTX)).filter((i) => i.institution_id === 'ins_115616')).toHaveLength(2);
+    const [qfx, csv] = profile.extras!.transactionImports!;
+    const brokerage = idOf('7788');
+    const roth = idOf('5521');
+
+    // Newest first: the CSV, both accounts', then the QFX, the brokerage's.
+    const { imports } = await listImports(TEST_CTX, brokerage);
+    expect(imports.map((i) => [i.source, i.file_name, i.imported_at.slice(0, 10), [...i.accounts].sort()])).toEqual([
+      ['vanguard-csv', 'Vanguard transactions.csv', csv.made, [brokerage, roth].sort()],
+      ['vanguard-qfx', 'Vanguard transactions.qfx', qfx.made, [brokerage]],
+    ]);
+    const keys = await importKeys(TEST_CTX);
+    expect(keys).toHaveLength(3);
+    const stored = await readAccountImports(TEST_CTX, [brokerage, roth], keys);
+
+    // The QFX decides only the days before the CSV's: it counts in part.
+    const coverage = (id: string) => ({ rows: [], coverage: { [id]: { from: addDays(TODAY, -730), through: TODAY } }, note: null, pending: false, storeNote: null, unconfirmed: {}, unconfirmedIds: [], busy: false });
+    const theCsv = stored.get(brokerage)!.find((i) => i.source === 'vanguard-csv')!;
+    const theQfx = stored.get(brokerage)!.find((i) => i.source === 'vanguard-qfx')!;
+    expect(theQfx.covers.from < theCsv.covers.from && theQfx.covers.to >= theCsv.covers.from).toBe(true);
+    expect(withImportedRows(coverage(brokerage), brokerage, stored.get(brokerage)!).decided).toEqual([
+      { import_id: theQfx.import_id, from: theQfx.covers.from, to: dayBefore(theCsv.covers.from) },
+      { import_id: theCsv.import_id, ...theCsv.covers },
+    ]);
+    // Its money in says only that it came in, never new savings.
+    expect(theQfx.rows.filter((t) => t.type === 'cash').every((t) => t.subtype === 'unlabeled' && t.amount < 0)).toBe(true);
+
+    // The Roth's conversion says it is one, so only its contributions are new savings.
+    const [rothCsv] = stored.get(roth)!;
+    const rows = rothCsv.rows.map((t, i) => ({ ...t, investment_transaction_id: `r${i}`, account_id: roth }));
+    const conversions = rows.filter((t) => t.subtype === 'conversion');
+    expect(conversions.map((t) => [t.type, t.amount])).toEqual([['cash', -5_000]]);
+    expect(conversions.some((t) => isContribution(t))).toBe(false);
+    const saved = rows.filter((t) => isContribution(t)).reduce((n, t) => n + contributedAmount(t, new Set()), 0);
+    expect(saved).toBeGreaterThan(0);
+    expect(saved).toBeCloseTo(rows.filter((t) => t.subtype === 'contribution').length * 583, 2);
   });
 
   test('the months meet the recorded year at its balance less what came in since the month began, that day’s too', () => {
