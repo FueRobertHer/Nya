@@ -267,7 +267,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: A
   ],
   [
     'Transactions you import from Vanguard’s download',
-    'The CSV is read on your device and on Nya’s server, and never kept: only each account’s transactions in the days it covers are (each one’s day, kind, description, fund, shares, price, fees and amount), with those days, the file’s name and when you imported it. Account numbers are read only for their last four digits. Each import is kept until you undo it, Forget the account or delete your account. Encrypted, and in your download. Never shown to anyone you share with.',
+    'The file (its CSV or its QFX) is read on your device and on Nya’s server, and never kept: only each account’s transactions in the days it covers are (each one’s day, kind, description, fund, shares, price, fees and amount), with those days, the file’s name and when you imported it. Account numbers are read only for their last four digits. Each import is kept until you undo it, Forget the account or delete your account. Encrypted, and in your download. Never shown to anyone you share with.',
   ],
   [
     'A SimpleFIN connection',

@@ -31,10 +31,11 @@
 // this device into the account's months (components/PerformanceImport.tsx):
 // a step of its own, 'months', with its review and its Import in the
 // footer, and its imports listed with the transaction files'. It also takes
-// Vanguard's transactions download (a CSV), known by its layout and reviewed
-// on the server (components/TransactionsImport.tsx): a step of its own,
-// 'txns', whose one Import takes every account checked; on an account at
-// another firm that file is refused rather than read as some other CSV.
+// Vanguard's transactions download (its CSV, or its QFX or OFX), known by
+// its layout and reviewed on the server (components/TransactionsImport.tsx):
+// a step of its own, 'txns', whose one Import takes every account checked,
+// and waits for a yes when a QFX differs from what counts now; on an account
+// at another firm that file is refused rather than read as some other file.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
@@ -53,11 +54,13 @@ import { StripSkeleton } from './FiguresStrip';
 import { Why } from './Why';
 import { loadInvestmentActivity, investmentImportsChanged, investmentMonthsSaved } from './InvestmentActivity';
 import { isVanguardTransactions } from '@/lib/import/vanguard-transactions';
+import { isVanguardQfx } from '@/lib/import/vanguard-qfx';
 import type { ImportsReview } from '@/lib/investment-imports-review';
 import type { ListedImport } from '@/lib/investment-imports-store';
 import {
   checkedFirst,
   noneOfYours,
+  qfxDiffers,
   rowsTaken,
   takeOf,
   TransactionImports,
@@ -333,6 +336,8 @@ export default function HistoryImportSheet({
   // or check of one said.
   const [txn, setTxn] = useState<{ name: string; text: string; today: string; review: ImportsReview | null } | null>(null);
   const [txnChecked, setTxnChecked] = useState<string[]>([]);
+  // The person's yes to a QFX that differs from what counts now.
+  const [txnYes, setTxnYes] = useState(false);
   const [txnError, setTxnError] = useState<{ level: 'critical' | 'caution'; text: string; again?: boolean } | null>(null);
   const thisYear = new Date().getFullYear();
   const account = shown;
@@ -408,6 +413,7 @@ export default function HistoryImportSheet({
     setMonthsError(null);
     setTxn(null);
     setTxnChecked([]);
+    setTxnYes(false);
     setTxnError(null);
     void loadPast(target.account_id);
   }, [target, loadPast]);
@@ -507,7 +513,7 @@ export default function HistoryImportSheet({
       const { text, encoding } = decodeFile(new Uint8Array(await f.arrayBuffer()));
       // Vanguard's transactions download: its own review, on a Vanguard
       // account only.
-      if (isVanguardTransactions(text)) {
+      if (isVanguardTransactions(text) || isVanguardQfx(text)) {
         if (!account.vanguard)
           setError(
             /vanguard/i.test(account.institution_name)
@@ -753,6 +759,7 @@ export default function HistoryImportSheet({
     // The import sends the same day, so its rows are the ones reviewed.
     const today = localDate();
     setTxn({ name: fileName, text, today, review: null });
+    setTxnYes(false);
     setStep('txns');
     try {
       const res = await fetch('/api/investment-imports', {
@@ -793,7 +800,7 @@ export default function HistoryImportSheet({
     const review = txn?.review;
     if (!account || !txn || !review || busy) return;
     const take = takeOf(review, txnChecked);
-    if (take.length === 0) return;
+    if (take.length === 0 || (qfxDiffers(review, txnChecked) && !txnYes)) return;
     const touched = review.accounts.flatMap((a) => (a.account && take.some((t) => t.account_id === a.account!.account_id) ? [{ account_id: a.account.account_id, item_id: a.account.item_id }] : []));
     setBusy(true);
     setTxnError(null);
@@ -876,6 +883,7 @@ export default function HistoryImportSheet({
     setPdf(null);
     setMonthsError(null);
     setTxn(null);
+    setTxnYes(false);
     setTxnError(null);
     setFile(null);
     setInputKey((k) => k + 1);
@@ -920,7 +928,10 @@ export default function HistoryImportSheet({
             <button type="button" className="btn secondary" onClick={chooseAgain} disabled={busy}>
               Cancel
             </button>
-            <button type="button" className="btn" onClick={() => void importTxns()} disabled={busy || !txn?.review || takeOf(txn.review, txnChecked).length === 0 || !!txnError?.again}>
+            <button type="button" className="btn" onClick={() => void importTxns()} disabled={
+                busy || !txn?.review || takeOf(txn.review, txnChecked).length === 0 || !!txnError?.again || (qfxDiffers(txn.review, txnChecked) && !txnYes)
+              }
+            >
               {txn?.review && takeOf(txn.review, txnChecked).length > 0
                 ? `Import ${plural(rowsTaken(txn.review, txnChecked), 'transaction')} into ${plural(takeOf(txn.review, txnChecked).length, 'account')}`
                 : 'Import'}
@@ -937,7 +948,7 @@ export default function HistoryImportSheet({
               {perf.imports && <PerformanceNow name={name} imports={perf.imports} points={perf.points} activity={perf.activity} currency={shown.currency} />}
               <p>
                 Bring in more of {name}’s history from files {shown.institution_name} lets you download: a newer Performance page as a PDF, or transactions as a CSV,
-                OFX, QFX or QIF file.
+                QFX, OFX or QIF file.
               </p>
             </>
           ) : (
@@ -952,14 +963,15 @@ export default function HistoryImportSheet({
                 </p>
               </div>
               <div className="stack tight">
-                <h3 className="section-label">{TXN_SOURCE}, as a CSV</h3>
+                <h3 className="section-label">{TXN_SOURCE}: CSV, OFX or QFX</h3>
                 <p className="helper">
                   Up to 18 months of transactions for every account in your Vanguard login, in Vanguard’s own words, so a conversion or a transfer of shares counts as
-                  what it was. For the days the file covers, its transactions take the place of the ones Vanguard gave Nya.
+                  what it was. For the days a file covers, its transactions take the place of the ones Vanguard gave Nya. Choose CSV if you can: an OFX or QFX file
+                  leaves out conversions and shares moved in kind.
                 </p>
               </div>
               <p className="helper">
-                An OFX, QFX or QIF file, or a CSV laid out another way, is imported as before: up to {MAX_FILE_BYTES / (1024 * 1024)} MB and{' '}
+                A QIF file, or a CSV laid out another way, is imported as before: up to {MAX_FILE_BYTES / (1024 * 1024)} MB and{' '}
                 {MAX_IMPORT_ROWS.toLocaleString()} transactions, shown beside what {shown.institution_name} gave Nya for you to confirm. Those show as the account’s
                 activity and don’t change its balance history: a market’s moves aren’t transactions.
               </p>
@@ -987,7 +999,7 @@ export default function HistoryImportSheet({
               <p className="helper">
                 {[
                   perf.imports ? 'The newest Performance page counts, whole.' : '',
-                  txnList ? 'For each day, the newest transactions download that covers it decides.' : '',
+                  txnList ? 'For each day, the newest transactions download that covers it decides, a CSV before a QFX.' : '',
                   'Older imports are kept so you can go back to them.',
                 ]
                   .filter(Boolean)
@@ -1060,8 +1072,9 @@ export default function HistoryImportSheet({
               Each import is kept on its own, as it was read, and nothing else in Nya is changed by it: not what Vanguard gave Nya, not its recorded balances, not your
               deposits and withdrawals, not another import. What counts is worked out from what’s here each time you look, so undoing an import takes out only that
               import, and the account is as it was before it. Only the newest Performance page counts, so two files’ months are never mixed; to correct a month Vanguard
-              has since changed, import its page again. For each day, the newest transactions download that covers it decides, so undoing one hands its days to the one before
-              it, or back to what Vanguard gave Nya. A download imported into several accounts is undone from all of them.
+              has since changed, import its page again. For each day, the newest transactions download that covers it decides, a CSV before a QFX (which leaves out
+              conversions and shares moved in kind), so undoing one hands its days to the next that covers them, or back to what Vanguard gave Nya. A download imported
+              into several accounts is undone from all of them.
             </Why>
           )}
         </div>
@@ -1129,16 +1142,32 @@ export default function HistoryImportSheet({
                 review={txn.review}
                 sheet={{ account_id: shown.account_id, name }}
                 checked={txnChecked}
-                onChecked={setTxnChecked}
+                onChecked={(masks) => {
+                  // A yes is to what was shown: checking other accounts asks again.
+                  setTxnChecked(masks);
+                  setTxnYes(false);
+                }}
+                yes={txnYes}
+                onYes={setTxnYes}
                 disabled={busy}
               />
-              <Why>
-                Vanguard’s download says what happened in its own words: a conversion as a conversion, with the shares it moved and what they were worth, and a sweep as
-                a move inside the account. Nya reads it only as Vanguard lays it out, and a kind of transaction it doesn’t know stops that account’s import, never guessed
-                at. The file has every account in your Vanguard login, matched to yours in Nya by their last four digits. It doesn’t say which days it covers, so Nya
-                takes its first to its last transaction, never later than yesterday. For those days the file decides. What Vanguard gave Nya isn’t changed, only not
-                counted, so undoing the import brings it back. Each import is kept on its own and listed in this sheet with its Undo.
-              </Why>
+              {txn.review.source === 'vanguard-qfx' ? (
+                <Why>
+                  Vanguard’s QFX file is the same download as its CSV, written for money apps, but it leaves out conversions and shares moved in kind: a conversion’s
+                  shares would read as nothing moving. Nor does it say what money in or out was, so none of it counts as new savings. So a CSV decides the days it covers,
+                  whichever was imported last, and a QFX decides only days no CSV covers. Unlike the CSV, a QFX says which days it covers, up to the day it was made,
+                  which Nya leaves out as it may not be complete. Where it and what Nya counts now don’t agree, Nya says so and waits for your yes. What Vanguard gave Nya
+                  isn’t changed, only not counted, so undoing the import brings it back. Each import is kept on its own and listed in this sheet with its Undo.
+                </Why>
+              ) : (
+                <Why>
+                  Vanguard’s download says what happened in its own words: a conversion as a conversion, with the shares it moved and what they were worth, and a sweep
+                  as a move inside the account. Nya reads it only as Vanguard lays it out, and a kind of transaction it doesn’t know stops that account’s import, never
+                  guessed at. The file has every account in your Vanguard login, matched to yours in Nya by their last four digits. It doesn’t say which days it covers,
+                  so Nya takes its first to its last transaction, never later than yesterday. For those days the file decides, over any QFX import. What Vanguard gave
+                  Nya isn’t changed, only not counted, so undoing the import brings it back. Each import is kept on its own and listed in this sheet with its Undo.
+                </Why>
+              )}
             </>
           )}
         </div>

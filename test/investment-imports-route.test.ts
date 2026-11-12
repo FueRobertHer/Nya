@@ -1,6 +1,7 @@
 import { describe, expect, test, mock, beforeEach, afterEach, spyOn } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { vanguardCsv, type Txn } from './vanguard-transactions-csv';
+import { vanguardQfx } from './vanguard-transactions-qfx';
 
 // The transactions imported for an investment account from Vanguard's
 // download (lib/investment-imports-store.ts, app/api/investment-imports):
@@ -193,7 +194,7 @@ describe('what the route refuses', () => {
     const repeated = vanguardCsv([], [...FILE_TXNS, { account: '99994421', trade: daysAgo(20), type: 'Funds Received', net: 1 }], { noHoldings: true });
     expect((await post(importBody({ text: repeated }))).body.error).toMatch(/more than one account ending in 4421/);
     const odd = vanguardCsv([], [...FILE_TXNS, { account: '22223307', trade: daysAgo(20), type: 'Gift', net: 1 }], { noHoldings: true });
-    expect((await post(importBody({ text: odd }))).body.error).toMatch(/ending in 3307 has a line Nya can’t read/);
+    expect((await post(importBody({ text: odd }))).body.error).toMatch(/ending in 3307 has a transaction Nya can’t read \(line \d+\)/);
     expect(await investmentImportsStore.count(ctx)).toBe(0);
   });
 
@@ -483,6 +484,84 @@ describe('both readers of the activity', () => {
     const joined = await readActivity();
     expect(joined.flows.map((f: { amount: number }) => f.amount)).toEqual([1000, 444, 1000, 1000]);
     expect((await list()).body.imports.map((i: { import_id: string }) => i.import_id)).toEqual(['import-early-1']);
+  });
+});
+
+describe('the download as QFX', () => {
+  // The same deposits as the CSV's, as a QFX made today: its stated days run
+  // from 60 days ago to today, and its row from today is left out with it.
+  const QFX = vanguardQfx(
+    [
+      {
+        number: '11114421',
+        txns: [
+          { kind: 'bank', posted: daysAgo(45), amount: 1200 },
+          { kind: 'bank', posted: daysAgo(16), amount: 1000 },
+          { kind: 'bank', posted: TODAY, amount: 5 },
+        ],
+      },
+      { number: '22223307', txns: [{ kind: 'bank', posted: daysAgo(50), amount: 7000 }] },
+    ],
+    { start: daysAgo(60), end: TODAY }
+  );
+  const qfxBody = (action: 'review' | 'import', over: Record<string, unknown> = {}) => ({
+    ...(action === 'review' ? { action, account_id: 'ind', file_name: 'OfxDownload.qfx', text: QFX, today: TODAY } : importBody({ file_name: 'OfxDownload.qfx', text: QFX })),
+    ...over,
+  });
+  const ind = (body: { review: { accounts: { mask: string }[] } }) => body.review.accounts.find((a) => a.mask === '4421') as any;
+
+  test('reviewed by the days it states, to the day before the one it was made, its money in or out never new savings', async () => {
+    const { status, body } = await post(qfxBody('review'));
+    expect(status).toBe(200);
+    expect(body.review).toMatchObject({ source: 'vanguard-qfx', covers: { from: daysAgo(60), to: daysAgo(1) }, stated_end: TODAY, after_today: 1, csv: [] });
+    // Plaid's two deposits in those days ($2,000) give way to the file's ($2,200).
+    expect(ind(body).effect).toMatchObject({ kind: 'takes', days: [{ from: daysAgo(60), to: daysAgo(1) }], rows: 2, now_rows: 2, flows: { file: 2200, now: 2000 } });
+    // Plaid's two were deposits, new savings; the file's say only money in.
+    expect(ind(body).effect.savings).toEqual({ file: 0, now: 2000 });
+    expect(await investmentImportsStore.count(ctx)).toBe(0);
+
+    const res = await post(qfxBody('import', { counting: body.review.fingerprint }));
+    expect(res.status).toBe(200);
+    expect(res.body.imports[0]).toMatchObject({ source: 'vanguard-qfx', file_name: 'OfxDownload.qfx', covers: { from: daysAgo(60), to: daysAgo(1) }, rows: 2 });
+    const joined = await readActivity();
+    expect(joined.flows).toEqual([
+      { date: daysAgo(200), amount: 1000 },
+      { date: daysAgo(90), amount: 1000 },
+      { date: daysAgo(45), amount: 1200 },
+      { date: daysAgo(16), amount: 1000 },
+    ]);
+    // Plaid called its deposits deposits; the file says only money in.
+    expect((await planRow(true)).contributions_12m).toBe(2000);
+  });
+
+  test('a CSV decides the days it covers, imported before or after: the review names it, and the QFX counts where it doesn’t', async () => {
+    const csv = (await post(importBody({ take: [{ account_id: 'ind', mask: '4421' }] }))).body.imports[0];
+    const { body } = await post(qfxBody('review'));
+    expect(body.review.csv).toEqual([{ import_id: csv.import_id, file_name: 'OfxDownload.csv', imported_at: csv.imported_at, covers: { from: daysAgo(60), to: daysAgo(1) }, masks: ['4421'] }]);
+    // The CSV covers every day of the QFX's in the Individual, none in the Roth.
+    expect(ind(body).effect).toMatchObject({ days: [], rows: 0, flows: { file: 0 } });
+    expect(body.review.accounts.find((a: { mask: string }) => a.mask === '3307').effect).toMatchObject({ days: [{ from: daysAgo(60), to: daysAgo(1) }], rows: 1 });
+
+    const qfx = (await post(qfxBody('import', { counting: body.review.fingerprint }))).body.imports[0];
+    const decided = (await readActivity()).imported_days.map((d: { import_id: string }) => d.import_id);
+    expect(decided).toEqual([csv.import_id]);
+    expect((await readActivity('roth')).imported_days.map((d: { import_id: string }) => d.import_id)).toEqual([qfx.import_id]);
+    // Undone, the CSV hands its days to the QFX.
+    await post({ action: 'undo', account_id: 'ind', import_id: csv.import_id });
+    expect((await readActivity()).imported_days.map((d: { import_id: string }) => d.import_id)).toEqual([qfx.import_id]);
+    // A CSV imported after it decides them again.
+    const again = (await post(importBody({ take: [{ account_id: 'ind', mask: '4421' }], counting: (await list()).body.fingerprint }))).body.imports[0];
+    expect((await readActivity()).imported_days.map((d: { import_id: string }) => d.import_id)).toEqual([again.import_id]);
+  });
+
+  test('refused: another firm’s statement, one laid out another way, or one that covers only today', async () => {
+    const other = QFX.replaceAll('<BROKERID>vanguard.com', '<BROKERID>fidelity.com');
+    expect((await post(qfxBody('review', { text: other }))).body.error).toMatch(/isn’t Vanguard’s transaction download/);
+    const odd = QFX.replace(`<DTSTART>${daysAgo(60).replaceAll('-', '')}`, `<DTSTART>${daysAgo(61).replaceAll('-', '')}`);
+    expect((await post(qfxBody('import', { text: odd }))).body.error).toMatch(/isn’t laid out/);
+    const todays = vanguardQfx([{ number: '11114421', txns: [{ kind: 'bank', posted: TODAY, amount: 5 }] }], { start: TODAY, end: TODAY });
+    expect((await post(qfxBody('review', { text: todays }))).body.error).toMatch(/covers only the day it was made/);
+    expect(await investmentImportsStore.count(ctx)).toBe(0);
   });
 });
 

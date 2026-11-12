@@ -252,7 +252,7 @@ export default function InvestmentActivity({
                   <div className="txn-text">
                     {readableName(t.name)}
                     <div className="type-tag">
-                      {fmtDay(t.date)} · {displayName(t.subtype)}
+                      {fmtDay(t.date)} · {t.subtype === 'unlabeled' ? 'Kind not given' : displayName(t.subtype)}
                       {t.security ? ` · ${readableName(t.security)}` : ''}
                       {t.type === 'transfer' && t.quantity ? (
                         <>

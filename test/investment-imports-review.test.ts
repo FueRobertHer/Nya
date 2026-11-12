@@ -73,9 +73,23 @@ describe('what an import would do', () => {
       rows: 3,
       now_rows: 3,
       flows: { file: 700, now: 300 },
+      savings: { file: 700, now: 300 },
       months: [{ month: '2026-06', now: 100, file: 500 }],
       twins: [],
     });
+  });
+
+  test('a QFX’s money in, which never says it was a contribution: the same deposits & withdrawals, less new savings', () => {
+    const f = { ...file('2026-05-01', '2026-07-31', [fileRow('2026-05-10', -100, { subtype: 'unlabeled', name: 'Money in' }), fileRow('2026-06-10', -100, { subtype: 'unlabeled', name: 'Money in' }), fileRow('2026-07-10', -100, { subtype: 'unlabeled', name: 'Money in' })]), source: 'vanguard-qfx' as const };
+    const out = effectOf(syncOf(PLAID), 'inv', [], f);
+    expect(out).toMatchObject({ kind: 'takes', flows: { file: 300, now: 300 }, savings: { file: 0, now: 300 }, months: [] });
+  });
+
+  test('new savings now only over days that count now', () => {
+    const rows = PLAID.filter((t) => t.date >= '2026-03-01');
+    const f = file('2026-01-01', '2026-03-31', [fileRow('2026-01-05', -50), fileRow('2026-03-10', -100)]);
+    const out = effectOf(syncOf(rows, { inv: { from: '2026-03-01', through: '2026-11-10' } }), 'inv', [], f);
+    expect(out).toMatchObject({ savings: { file: 150, now: 100 } });
   });
 
   test('what counts now is what an earlier import decides, where it does', () => {
