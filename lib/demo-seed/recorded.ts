@@ -222,23 +222,23 @@ export async function writeHoldingsMonths(ctx: Ctx, profile: DemoProfile, today:
 }
 
 /** What the profile paid into its investment accounts a year, as of `day`:
- *  the savings a plan saved that day used. Over the part of the year before
- *  it that the history covers, made a year's worth. */
+ *  the savings a plan saved that day used. Each account over the part of
+ *  the year before it that its activity covers, made a year's worth, so one
+ *  with a longer history doesn't make another's part year count as whole. */
 export function yearlySavings(profile: DemoProfile, day: string): number {
   const from = addDays(day, -RECORDED_DAYS);
   let total = 0;
-  let earliest = day;
   for (const inst of profile.institutions) {
     for (const a of inst.accounts) {
-      for (const t of a.investment_transactions ?? []) {
-        if (t.type !== 'cash' || t.date > day) continue;
-        if (t.date < earliest) earliest = t.date;
-        if (t.quantity < 0 && t.date > from) total += t.price;
-      }
+      const cash = (a.investment_transactions ?? []).filter((t) => t.type === 'cash' && t.date <= day);
+      if (cash.length === 0) continue;
+      const begins = cash.map((t) => t.date).sort()[0];
+      const covered = Math.min(RECORDED_DAYS, daysBetween(begins < from ? from : begins, day));
+      const paid = cash.reduce((n, t) => (t.quantity < 0 && t.date > from ? n + t.price : n), 0);
+      if (covered > 0) total += (paid * RECORDED_DAYS) / covered;
     }
   }
-  const covered = Math.min(RECORDED_DAYS, daysBetween(earliest < from ? from : earliest, day));
-  return covered > 0 ? round2((total * RECORDED_DAYS) / covered) : 0;
+  return round2(total);
 }
 
 /** Your plan, saved for Progress against your plan on `day`, as the Progress

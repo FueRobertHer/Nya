@@ -12,6 +12,11 @@
 //   known), a connection that ends in five days, new accounts to review, an
 //   old savings account sitting at $0, and deposits and withdrawals typed as
 //   of a day before the Roth's activity starts, so they can't be carried.
+// - Alex with the brokerage at Vanguard: its months since it opened four
+//   years back imported from Vanguard's Performance page (made up, lib/demo-
+//   seed/past-months.ts), before the two years of activity Plaid shares and
+//   the year Nya recorded. A scenario of its own, since Vanguard may be OAuth
+//   at Plaid, where a custom user may not link as asked.
 //
 // Pure and deterministic, as lib/demo-seed/profiles.ts is.
 
@@ -26,6 +31,7 @@ import {
   GINGHAM,
   historyMonths,
   lastDay,
+  monthsBeforeHistory,
   on,
   owedBalance,
   Portfolio,
@@ -33,6 +39,7 @@ import {
   round2,
   PLATYPUS,
   TARTAN,
+  VANGUARD,
   WEALTHFRONT,
   type DemoProfile,
 } from './profiles';
@@ -203,5 +210,25 @@ export function needsAttention(today: string): DemoProfile {
       ],
       trouble: { loginRequired: GINGHAM.institution_id, reconnectSoon: { institution_id: TARTAN.institution_id, days: 5 }, newAccounts: PLATYPUS.institution_id },
     },
+  };
+}
+
+/** Alex's money, the brokerage at Vanguard with its months imported. */
+export function vanguardHistory(today: string): DemoProfile {
+  const alex = demoProfile('Alex', today);
+  // The eleven months before the history: Plaid shares two years of an
+  // investment account's activity, a bank's one here.
+  const earlier = new Portfolio(today, 0, {});
+  for (const mo of monthsBeforeHistory(today, 11)) earlier.contribute(on(mo, 16), 1_500, 'VTI', 'ACH CONTRIBUTION');
+  const institutions = alex.institutions.map((inst) => {
+    const brokerage = inst.accounts.find((a) => a.mask === '7788');
+    if (!brokerage) return inst;
+    return { ...inst, ...VANGUARD, accounts: [{ ...brokerage, investment_transactions: [...earlier.txns, ...(brokerage.investment_transactions ?? [])] }] };
+  });
+  return {
+    ...alex,
+    name: 'Alex, Vanguard history',
+    institutions,
+    extras: { ...alex.extras, investmentMonths: { mask: '7788', file_name: 'Vanguard performance.pdf', openedMonthsBack: 48, monthlyBefore: 300 } },
   };
 }
