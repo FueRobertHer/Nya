@@ -139,7 +139,7 @@ const { seedRecordStore } = await import('@/lib/demo-seed/store');
 const { createInvite, acceptInvite, myConnections } = await import('@/lib/sharing');
 const { keptWhenEmptied, classOfKey } = await import('@/lib/user-restore/classes');
 const { checkProfile, categoryKeys } = await import('@/lib/demo-seed/fill');
-const { RECORDED_DAYS, holdingsDays } = await import('@/lib/demo-seed/recorded');
+const { RECORDED_DAYS, holdingsDays, recordedYear, yearlySavings } = await import('@/lib/demo-seed/recorded');
 const { historyMonths, lastDay, on } = await import('@/lib/demo-seed/profiles');
 const { readTagSet } = await import('@/lib/tags-store');
 const { readRuleSet } = await import('@/lib/rules-store');
@@ -166,6 +166,9 @@ const { runwayScenariosStore } = await import('@/lib/report/runway-scenario-stor
 const { warningsStore } = await import('@/lib/connection-records');
 const { getAccountHistory, getHistory } = await import('@/lib/history');
 const { readHoldingsSpan } = await import('@/lib/holdings-history');
+const { readInvestmentMonths } = await import('@/lib/investment-months-store');
+const { monthsProblem, nextMonth, withPastMonths } = await import('@/lib/investment-months');
+const { flowsOf, pastMonths } = await import('@/lib/demo-seed/past-months');
 const { signedContribution } = await import('@/lib/balance');
 const { decrypt } = await import('@/lib/crypto');
 
@@ -212,13 +215,30 @@ describe('the profiles', () => {
   test('hold a year of rows, none after today but the pending ones', () => {
     const earliest = addDays(TODAY, -31 * HISTORY_MONTHS);
     for (const p of everyProfile()) {
-      const rows = p.institutions.flatMap((i) => i.accounts.flatMap((a) => [...a.transactions, ...(a.investment_transactions ?? [])]));
+      // An account with months imported has the two years of activity Plaid
+      // shares, checked below.
+      const imported = p.extras?.investmentMonths?.mask;
+      const rows = p.institutions.flatMap((i) => i.accounts.flatMap((a) => [...a.transactions, ...(a.mask === imported ? [] : (a.investment_transactions ?? []))]));
       for (const t of rows) {
         expect(t.date <= TODAY).toBe(true);
         expect(t.date >= earliest).toBe(true);
       }
       const months = new Set(rows.map((t) => t.date.slice(0, 7)));
       expect(months.size).toBe(HISTORY_MONTHS);
+    }
+  });
+
+  test('give an account with imported months activity from before the recorded year, inside the two years Plaid shares', () => {
+    const profiles = everyProfile().filter((p) => p.extras?.investmentMonths);
+    expect(profiles.length).toBeGreaterThan(0);
+    for (const p of profiles) {
+      const a = p.institutions.flatMap((i) => i.accounts).find((x) => x.mask === p.extras!.investmentMonths!.mask)!;
+      const days = a.investment_transactions!.map((t) => t.date).sort();
+      // Before it, so the months join the recorded year (else withPastMonths
+      // says activity-late); within lib/invstore.ts's 730 days asked for.
+      expect(days[0] < addDays(TODAY, -RECORDED_DAYS)).toBe(true);
+      expect(days[0] >= addDays(TODAY, -730)).toBe(true);
+      expect(days[days.length - 1] <= TODAY).toBe(true);
     }
   });
 
@@ -587,6 +607,13 @@ describe('what a seed sets up', () => {
     await expect(seedDemoAccount(ctx, 'user_alex', unnamed, TODAY, quick)).rejects.toThrow(/The group .* is refused: Give the group a name/);
     const ageless = { ...sam, extras: { ...sam.extras, plan: { ...sam.extras!.plan, dependents: [{ id: 'maya', untilAge: 200 }] } } };
     await expect(seedDemoAccount(ctx, 'user_alex', ageless, TODAY, quick)).rejects.toThrow(/household is refused/);
+    // Months imported only at Vanguard, and only where the app would use them.
+    const vanguard = scenarioById('vanguard-history')!.build(TODAY);
+    const notThere = { ...alex, extras: { ...alex.extras, investmentMonths: vanguard.extras!.investmentMonths } };
+    await expect(seedDemoAccount(ctx, 'user_alex', notThere, TODAY, quick)).rejects.toThrow(/isn't at Vanguard/);
+    const startLater = (inst: (typeof vanguard.institutions)[number]) => ({ ...inst, accounts: inst.accounts.map((x) => ({ ...x, investment_transactions: x.investment_transactions?.filter((t) => t.date >= addDays(TODAY, -300)) })) });
+    const lateActivity = { ...vanguard, institutions: vanguard.institutions.map((i) => (i.name === 'Vanguard' ? startLater(i) : i)) };
+    await expect(seedDemoAccount(ctx, 'user_alex', lateActivity, TODAY, quick)).rejects.toThrow(/wouldn't be used \(activity-late\)/);
     expect(removed).toEqual([]);
     expect((await getItems(ctx)).map((i) => i.institution_name)).toEqual(['Chime']);
   });
@@ -840,6 +867,94 @@ describe('what a seed sets up', () => {
     expect(yesterday[idOf('6620')]).toBeGreaterThan(0);
     expect(yesterday[idOf('7001')]).toBe(0);
     expect((await moneyInOutStore.get(TEST_CTX, idOf('5521')))!.as_of < on(historyMonths(TODAY)[0], 2)).toBe(true);
+  });
+
+  test('history from Vanguard: the brokerage at Vanguard, its months imported and joined to the recorded year as its chart joins them', async () => {
+    const profile = scenarioById('vanguard-history')!.build(TODAY);
+    const report = await seedDemoAccount(TEST_CTX, 'user_alex', profile, TODAY, quick);
+    expect(report.skipped.filter((line) => line.includes('months'))).toEqual([]);
+    const item = (await getItems(TEST_CTX)).find((i) => i.institution_name === 'Vanguard')!;
+    expect(item.institution_id).toBe('ins_115616');
+
+    const id = idOf('7788');
+    const entry = (await readInvestmentMonths(TEST_CTX, id))!;
+    expect(entry.imports).toHaveLength(1);
+    const [imported] = entry.imports;
+    expect(imported.source).toBe('vanguard-performance');
+    expect(imported.file_name).toBe('Vanguard performance.pdf');
+    expect(imported.start.balance).toBe(0);
+    expect(imported.months).toHaveLength(48);
+    expect(nextMonth(imported.months[47].month)).toBe(TODAY.slice(0, 7));
+    expect(monthsProblem(imported.start, imported.months)).toBeNull();
+
+    const a = profile.institutions.flatMap((i) => i.accounts).find((x) => x.mask === '7788')!;
+    const from = a.investment_transactions!.map((t) => t.date).sort()[0];
+    const points = await getAccountHistory(TEST_CTX, id);
+    const joined = withPastMonths(points, { flows: flowsOf(a), flows_from: from, flows_to: TODAY, moves: [] }, entry, 'USD');
+    expect(joined.unused).toBeNull();
+    expect(joined.applied!.joined).toBe(true);
+    expect(joined.differs).toEqual([]);
+    // Solid month ends from the month it opened to the recorded year, and a
+    // deposit at the middle of each month before Plaid's activity.
+    const entered = joined.points.filter((p) => p.entered);
+    expect(entered).toHaveLength(imported.months.filter((m) => `${nextMonth(m.month)}-01` < joined.applied!.first_recorded).length + 1);
+    expect(joined.flows!.filter((f) => f.date < from && f.amount === 300).length).toBeGreaterThan(12);
+    // The line runs on from the last month's end to the recorded year.
+    const firstRecorded = points.find((p) => p.date === joined.applied!.first_recorded)!;
+    expect(Math.abs(firstRecorded.value / entered[entered.length - 1].value - 1)).toBeLessThan(0.05);
+  });
+
+  test('the months meet the recorded year at its balance less what came in since the month began, that day’s too', () => {
+    // A year back on the 16th is a deposit day, which the recorded balance holds.
+    for (const today of [TODAY, '2026-11-16', '2027-01-16']) {
+      const profile = scenarioById('vanguard-history')!.build(today);
+      const a = profile.institutions.flatMap((i) => i.accounts).find((x) => x.mask === '7788')!;
+      const ids = new Map(profile.institutions.flatMap((i) => i.accounts.map((x) => [x.mask, x.mask] as const)));
+      const days = recordedYear(profile, today, profile.institutions.flatMap((i) => i.accounts.map((x) => ({ account_id: x.mask, type: x.type, balance: x.balance }))), ids, new Map());
+      const byDay = new Map(days.map((d) => [d.date, d.accounts['7788']]));
+      const made = pastMonths(a, profile.extras!.investmentMonths!, today, (d) => (d >= today ? a.balance : byDay.get(d)), 1);
+      const first = addDays(today, -RECORDED_DAYS);
+      const joinAt = made.months.filter((m) => `${nextMonth(m.month)}-01` < first).length - 1;
+      const began = `${nextMonth(made.months[joinAt].month)}-01`;
+      const since = a.investment_transactions!.filter((t) => t.type === 'cash' && t.date >= began && t.date <= first).reduce((n, t) => n + (t.quantity < 0 ? t.price : -t.price), 0);
+      expect(made.months[joinAt].end).toBeCloseTo(byDay.get(first)! - since, 2);
+    }
+  });
+
+  test('the saved plan’s savings count each account over its own part of the year', () => {
+    const day = addDays(TODAY, -90);
+    const profile = scenarioById('vanguard-history')!.build(TODAY);
+    // The brokerage's longer history leaves the others' part years as they are:
+    // the whole is what each account gives on its own.
+    const only = (keep: (mask: string) => boolean) => ({
+      ...profile,
+      institutions: profile.institutions.map((i) => ({ ...i, accounts: i.accounts.map((a) => (keep(a.mask) ? a : { ...a, investment_transactions: [] })) })),
+    });
+    const brokerage = yearlySavings(only((m) => m === '7788'), day);
+    const others = yearlySavings(only((m) => m !== '7788'), day);
+    expect(brokerage).toBeGreaterThan(0);
+    expect(others).toBeGreaterThan(0);
+    expect(yearlySavings(profile, day)).toBeCloseTo(brokerage + others, 1);
+  });
+
+  test('months that can’t be made from the balance the bank gave are passed over, and the rest of the reset runs', async () => {
+    const client = (await import('@/lib/plaid')).plaidClient as any;
+    const accounts = client.accountsGet;
+    client.accountsGet = async (req: any) => {
+      const res = await accounts(req);
+      if (items.get(req.access_token)?.institution_id !== 'ins_115616') return res;
+      return { data: { ...res.data, accounts: res.data.accounts.map((x: any) => ({ ...x, balances: { ...x.balances, current: 100 } })) } };
+    };
+    let report;
+    try {
+      report = await seedDemoAccount(TEST_CTX, 'user_alex', scenarioById('vanguard-history')!.build(TODAY), TODAY, quick);
+    } finally {
+      client.accountsGet = accounts;
+    }
+    expect(report.skipped.some((line) => line.startsWith('the months imported for the account ending 7788:'))).toBe(true);
+    expect(await readInvestmentMonths(TEST_CTX, idOf('7788'))).toBeNull();
+    // What comes after it still ran.
+    expect(await savedPlanStore.get(TEST_CTX)).not.toBeNull();
   });
 });
 

@@ -94,6 +94,11 @@ export type SeedExtras = {
   runway?: { name: string; months: 3 | 6 | 12; lower_by: number; income_until: string | null; planned: boolean; leave_out_one_offs: boolean }[];
   /** An investment account's deposits and withdrawals, as of a day. */
   moneyInOut?: { mask: string; in: number; out: number; as_of: string }[];
+  /** Months imported from Vanguard's Performance page, made up
+   *  (lib/demo-seed/past-months.ts): from the month the account opened, so
+   *  many months back, to last month, with `monthlyBefore` paid in each month
+   *  before the activity Plaid shares. */
+  investmentMonths?: { mask: string; file_name: string; openedMonthsBack: number; monthlyBefore: number };
   /** Accounts hidden, by mask. */
   hidden?: string[];
   /** Accounts that ended: closed on a day, with a note. */
