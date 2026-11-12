@@ -9,6 +9,7 @@
 // reads storage.
 
 import { demoProfile, type DemoName, type DemoProfile } from './profiles';
+import { earlyRetiree, needsAttention } from './scenario-profiles';
 
 export type Scenario = {
   id: string;
@@ -30,6 +31,18 @@ export const SCENARIOS: readonly Scenario[] = [
     title: 'Two-income household',
     description: 'Two incomes and a child: a mortgage, a car loan, a family card and six investment accounts.',
     build: (today) => demoProfile('Sam', today),
+  },
+  {
+    id: 'early-retiree',
+    title: 'Early retiree',
+    description: 'Stopped work at 44, now 47: living on a taxable brokerage drawn on each month, consulting now and then, ACA cover and Roth conversions planned.',
+    build: (today) => earlyRetiree(today),
+  },
+  {
+    id: 'needs-attention',
+    title: 'Needs attention',
+    description: 'The single renter with things to fix: a loan to sign in to again, a connection ending soon, new accounts, an account at $0. No estimated history while a bank needs signing in.',
+    build: (today) => needsAttention(today),
   },
 ];
 
