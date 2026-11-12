@@ -52,6 +52,11 @@ const EXTERNAL_FLOW_SUBTYPES = new Set([
   // this account, but never a contribution: it isn't in CONTRIBUTION_SUBTYPES,
   // so a conversion is never counted as new savings.
   'conversion',
+  // Nor this one: Vanguard's QFX (lib/import/vanguard-qfx.ts) says only that
+  // cash came in or went out, not whether it was a contribution, a rollover
+  // or a conversion's cash. Money in or out of the account, never counted as
+  // new savings.
+  'unlabeled',
 ]);
 
 // Corporate actions. Plaid files these under type 'transfer', but they are not

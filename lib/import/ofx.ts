@@ -41,7 +41,9 @@
 // leaves it out), TRNAMT, NAME (else the extended name, the payee's name or
 // the memo), MEMO, and a transaction's own currency where it gives one
 // (CURRENCY, whose amounts are in that currency). Investment statements are
-// not read.
+// not read on this path: parseOfx refuses a file of them, and
+// parseInvestmentOfx (at the end) hands their structure to a brokerage's own
+// reader (lib/import/vanguard-qfx.ts).
 //
 // SIGNS. OFX writes amounts as the account holder sees them: negative is money
 // out, on a card as on a bank account (a purchase lowers what you have and
@@ -89,6 +91,13 @@ const AGGREGATES = new Set([
   'BANKTRANLIST', 'STMTTRN', 'PAYEE', 'CURRENCY', 'ORIGCURRENCY', 'LEDGERBAL', 'AVAILBAL', 'BALLIST', 'BAL',
   'CREDITCARDMSGSRSV1', 'CCSTMTTRNRS', 'CCSTMTRS', 'CCACCTFROM', 'CCACCTTO', 'IMAGEDATA', 'MKTGINFO',
   'INVSTMTMSGSRSV1', 'INVSTMTTRNRS', 'INVSTMTRS', 'INVACCTFROM', 'INVTRANLIST', 'INVPOSLIST', 'INVBAL',
+  // An investment statement's transactions and what they hold, its positions
+  // and the security list (parseInvestmentOfx).
+  'INVBANKTRAN', 'BUYDEBT', 'BUYMF', 'BUYOPT', 'BUYOTHER', 'BUYSTOCK', 'CLOSUREOPT', 'INCOME', 'INVEXPENSE', 'JRNLFUND', 'JRNLSEC',
+  'MARGININTEREST', 'REINVEST', 'RETOFCAP', 'SELLDEBT', 'SELLMF', 'SELLOPT', 'SELLOTHER', 'SELLSTOCK', 'SPLIT', 'TRANSFER',
+  'INVBUY', 'INVSELL', 'INVTRAN', 'SECID', 'POSDEBT', 'POSMF', 'POSOPT', 'POSOTHER', 'POSSTOCK', 'INVPOS', 'INVOOLIST',
+  'SECLISTMSGSRSV1', 'SECLIST', 'DEBTINFO', 'MFINFO', 'OPTINFO', 'OTHERINFO', 'STOCKINFO', 'SECINFO', 'MFASSETCLASS', 'PORTION',
+  'FIMFASSETCLASS', 'FIPORTION',
 ]);
 
 type Token = { t: 'open'; name: string; line: number; empty: boolean } | { t: 'close'; name: string; line: number } | { t: 'text'; text: string; line: number };
@@ -625,4 +634,96 @@ export function ofxRecords(s: OfxStatement, opts: { flip?: boolean } = {}): { re
   // Debits are money out, so a file whose debits are mostly positive writes
   // its amounts the other way round.
   return { records, problems, reversedHint: debits >= 3 && positiveDebits / debits > 0.8 };
+}
+
+// ---- Investment statements ---------------------------------------------------
+//
+// INVSTMTRS, under INVSTMTMSGSRSV1, as structure for a brokerage's own reader
+// to judge (lib/import/vanguard-qfx.ts): nothing here says what a
+// transaction means. Each statement's account, its currency, the days its
+// transaction list states (DTSTART, DTEND), and every element in that list,
+// in order, by its name (BUYMF, INCOME, INVBANKTRAN, or one OFX doesn't
+// define) with every value under it by field name. Plus the file's signon
+// organization and its security list's names by id.
+
+/** One element of a statement's transaction list. `fields` holds each leaf
+ *  under it by name; `repeated` says a name came twice with two values, and
+ *  `long` that a value was cut, so neither is read on a guess. */
+export type OfxInvestmentTxn = { element: string; nth: number; line: number; fields: Record<string, string>; repeated: boolean; long: boolean };
+
+export type OfxInvestmentStatement = {
+  line: number;
+  /** The account number as the file gives it. Kept in memory only, as a bank
+   *  statement's is (accountMask). */
+  account_id: string | null;
+  broker_id: string | null;
+  currency: string | null;
+  /** The days its transaction list states, each as the file's own day (OFX
+   *  writes a time zone; the day is the one written). */
+  start: string | null;
+  end: string | null;
+  transactions: OfxInvestmentTxn[];
+};
+
+export type OfxInvestmentFile = {
+  org: string | null;
+  statements: OfxInvestmentStatement[];
+  /** Each security's name and ticker by its id (UNIQUEID). */
+  securities: Record<string, { name: string | null; ticker: string | null }>;
+  /** Bank and card statements in the same file, which this path doesn't read. */
+  other_statements: number;
+  /** Places the file's structure had to be repaired (an aggregate never
+   *  ended, an end with no start). */
+  repairs: number;
+};
+
+/** Every leaf under a node, by name. */
+function fieldsOf(node: Agg): { fields: Record<string, string>; repeated: boolean } {
+  const fields: Record<string, string> = {};
+  let repeated = false;
+  const walk = (n: Agg) => {
+    for (const c of n.children) {
+      if (c.kind === 'agg') walk(c);
+      else if (!Object.hasOwn(fields, c.name)) fields[c.name] = c.value;
+      else if (fields[c.name] !== c.value) repeated = true;
+    }
+  };
+  walk(node);
+  return { fields, repeated };
+}
+
+/** An OFX or QFX file's investment statements, as structure (see above). */
+export function parseInvestmentOfx(text: string): OfxInvestmentFile {
+  const { root, repairs } = buildTree(tokenize(text));
+  const statements = findAll(root, 'INVSTMTRS').map((node): OfxInvestmentStatement => {
+    const from = findAll(node, 'INVACCTFROM')[0];
+    const list = findAll(node, 'INVTRANLIST')[0];
+    const transactions: OfxInvestmentTxn[] = [];
+    for (const c of list?.children ?? []) {
+      if (c.kind === 'leaf' && (c.name === 'DTSTART' || c.name === 'DTEND')) continue;
+      const { fields, repeated } = c.kind === 'agg' ? fieldsOf(c) : { fields: { [c.name]: c.value }, repeated: false };
+      transactions.push({ element: c.name, nth: transactions.length + 1, line: c.line, fields, repeated, long: hasLong(c) });
+    }
+    return {
+      line: node.line,
+      account_id: valueOf(from, 'ACCTID'),
+      broker_id: valueOf(from, 'BROKERID'),
+      currency: currencyCode(valueOf(node, 'CURDEF')),
+      start: list ? ofxDayOrNull(valueOf(list, 'DTSTART')) : null,
+      end: list ? ofxDayOrNull(valueOf(list, 'DTEND')) : null,
+      transactions,
+    };
+  });
+  const securities: OfxInvestmentFile['securities'] = {};
+  for (const info of findAll(root, 'SECINFO')) {
+    const id = valueOf(child(info, 'SECID'), 'UNIQUEID');
+    if (id && !Object.hasOwn(securities, id)) securities[id] = { name: valueOf(info, 'SECNAME'), ticker: valueOf(info, 'TICKER') };
+  }
+  return {
+    org: valueOf(findAll(root, 'FI')[0], 'ORG'),
+    statements,
+    securities,
+    other_statements: findAll(root, 'STMTRS').length + findAll(root, 'CCSTMTRS').length,
+    repairs: repairs.length,
+  };
 }

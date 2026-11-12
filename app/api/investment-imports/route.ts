@@ -6,7 +6,8 @@ import { directoryEntries, liveAccountIds, PROVIDER, type DirectoryEntry } from 
 import { getItems } from '@/lib/storage';
 import { isInvestmentType } from '@/lib/balance';
 import { isVanguard } from '@/lib/investment-months';
-import { readVanguardTransactions, type VanguardAccount, type VanguardTransactionsRead } from '@/lib/import/vanguard-transactions';
+import { isVanguardTransactions, readVanguardTransactions, type VanguardAccount } from '@/lib/import/vanguard-transactions';
+import { isVanguardQfx, readVanguardQfx } from '@/lib/import/vanguard-qfx';
 import { MAX_IMPORT_ROWS } from '@/lib/import/record';
 import { syncInvestments, type InvSync } from '@/lib/invstore';
 import {
@@ -17,10 +18,11 @@ import {
   parseImportsChange,
   type ImportedRow,
   type ImportsChange,
+  type ImportSource,
   type InvestmentImport,
 } from '@/lib/investment-imports';
 import { addImport, importKeys, importsFingerprint, ImportsRefused, listImports, readAccountImports, undoImport } from '@/lib/investment-imports-store';
-import { effectOf, type ImportsReview, type ReviewedAccount } from '@/lib/investment-imports-review';
+import { effectOf, type DecidingCsv, type ImportsReview, type ReviewedAccount } from '@/lib/investment-imports-review';
 import type { Ctx } from '@/lib/containers';
 
 // An investment account's transactions imported from its brokerage's
@@ -39,8 +41,8 @@ import type { Ctx } from '@/lib/containers';
 // say what it was reviewed against, and the name and last four digits of
 // each account they took, for the sheet's words.
 //
-// THE REVIEW answers { review: { fingerprint, covers, after_today,
-// accounts } }: for each account in the file, in its order, its last four
+// THE REVIEW answers { review: { fingerprint, source, covers, stated_end,
+// after_today, sheet_in, csv, accounts } }: for each account in the file, in its order, its last four
 // digits, its lines and the rows it would bring, the account in Nya it is
 // (by those digits, among the live investment accounts at Vanguard), and why
 // it can't be taken (no such account or two, two in the file that end alike,
@@ -49,18 +51,23 @@ import type { Ctx } from '@/lib/containers';
 // would do (lib/investment-imports-review.ts). It reads each matched
 // account's sync and imports as the activity's readers do. Nothing is kept.
 //
-// AN IMPORT is today Vanguard's transaction history CSV. Its text is read on
-// the device for the review and again here, by the same reader
-// (lib/import/vanguard-transactions.ts), and never kept: only each account's
-// rows and the days the file covers are. Each account in `take` gets the
+// AN IMPORT is Vanguard's transactions download, as its CSV or its QFX (or
+// OFX). Its text is read on the device for the review and again here, by the
+// same reader (lib/import/vanguard-transactions.ts, lib/import/
+// vanguard-qfx.ts), and never kept: only each account's rows and the days
+// the file covers are. Each account in `take` gets the
 // file's rows for the account ending in its four digits (at least one: an
 // account with nothing in the file's days isn't taken, so they stay Plaid's),
 // and only an account a connection lists now, at Vanguard by Plaid's institution id, and an
 // investment one whose mask is those four digits and no other such
-// account's, takes them. The file's days are its first to last trade date,
-// across its accounts, ending at the latest the day before the person's
-// today, since the download's own day can be partial; rows after that are
-// left out. Every account's entry is written in one step. An undo removes
+// account's, takes them. A CSV's days are its first to last trade date,
+// across its accounts; a QFX's, the days it states, to the day before the
+// one it was made (its last stated day). Either ends at the latest the day
+// before the person's today, since the download's own day can be partial;
+// rows after that are left out. Which import decides a day is the merge's
+// rule (a CSV before a QFX, then the newer: lib/investment-imports.ts
+// byDeciding), so the review of a QFX names the CSV imports that cover some
+// of its days. Every account's entry is written in one step. An undo removes
 // every account's entry of the import in one, and takes any id, since it
 // only removes.
 //
@@ -103,28 +110,41 @@ export async function GET(req: Request) {
   }
 }
 
-/** Why the file can't be imported, in the person's words, or null. */
-function fileProblem(read: ReturnType<typeof readVanguardTransactions>): string | null {
-  if (read.ok) return read.span ? null : 'This file has no transactions to import';
-  if (read.reason === 'not-this-file') return 'This isn’t Vanguard’s transaction download';
-  if (read.reason === 'too-many-rows') return `This file has more than ${MAX_IMPORT_ROWS.toLocaleString('en-US')} lines, more than Nya reads in one import`;
+type FileChange = Extract<ImportsChange, { action: 'review' | 'import' }>;
+/** The file as read: which download it is, its accounts, and for a QFX the
+ *  day its stated days end (the day it was made). */
+type FileRead = { source: ImportSource; accounts: VanguardAccount[]; stated_end: string | null };
+
+/** Why a file the reader refused can't be imported, in the person's words. */
+function refusal(reason: 'not-this-file' | 'too-many-rows' | 'unknown-layout'): string {
+  if (reason === 'not-this-file') return 'This isn’t Vanguard’s transaction download';
+  if (reason === 'too-many-rows') return `This file has more than ${MAX_IMPORT_ROWS.toLocaleString('en-US')} lines, more than Nya reads in one import`;
   return 'This file isn’t laid out the way Nya reads Vanguard’s transaction download';
 }
-
-type FileChange = Extract<ImportsChange, { action: 'review' | 'import' }>;
-type FileRead = Extract<VanguardTransactionsRead, { ok: true }>;
 
 /** The file read again and the days it covers, or why it can't be imported. */
 function readFile(change: FileChange): { read: FileRead; covers: { from: string; to: string } } | string {
   // The person's today can be a day either side of the server's.
   const utcToday = new Date().toISOString().slice(0, 10);
   if (Math.abs(daysApart(utcToday, change.today)) > 1) return 'Today, as your device gives it, is more than a day from Nya’s. Check its date and try again.';
+  const yesterday = dayBefore(change.today);
+  if (isVanguardQfx(change.text)) {
+    const qfx = readVanguardQfx(change.text);
+    if (!qfx.ok) return refusal(qfx.reason);
+    if (qfx.rows === 0) return 'This file has no transactions to import';
+    // Its last stated day is the one it was made, which can be partial.
+    const last = dayBefore(qfx.stated.end);
+    const covers = { from: qfx.stated.from, to: last < yesterday ? last : yesterday };
+    if (covers.from > covers.to) return 'This file covers only the day it was made, which may not be complete in it, so it has nothing to import. Download a longer period.';
+    return { read: { source: 'vanguard-qfx', accounts: qfx.accounts, stated_end: qfx.stated.end }, covers };
+  }
+  if (!isVanguardTransactions(change.text)) return refusal('not-this-file');
   const read = readVanguardTransactions(change.text);
-  const problem = fileProblem(read);
-  if (problem || !read.ok || !read.span) return problem ?? 'This file has no transactions to import';
-  const covers = { from: read.span.from, to: read.span.to < change.today ? read.span.to : dayBefore(change.today) };
+  if (!read.ok) return refusal(read.reason);
+  if (!read.span) return 'This file has no transactions to import';
+  const covers = { from: read.span.from, to: read.span.to < change.today ? read.span.to : yesterday };
   if (covers.from > covers.to) return 'Every transaction in this file is from today, which may not be complete yet. Import it again tomorrow.';
-  return { read, covers };
+  return { read: { source: 'vanguard-csv', accounts: read.accounts, stated_end: null }, covers };
 }
 
 /** The live investment accounts at Vanguard, linked through Plaid, with every
@@ -165,6 +185,9 @@ async function review(ctx: Ctx, change: FileChange, read: FileRead, covers: { fr
   );
   const imports = await readAccountImports(ctx, [...new Set(matched.values())], keys);
   const imported_at = new Date().toISOString();
+  // A QFX decides only days no CSV covers: the CSV imports that cover some
+  // of its days, once each, for the review to name.
+  const csv = new Map<string, DecidingCsv>();
 
   const accounts = read.accounts.map((a): ReviewedAccount => {
     const rows = rowsOf(a, covers);
@@ -183,15 +206,25 @@ async function review(ctx: Ctx, change: FileChange, read: FileRead, covers: { fr
     const theirs = imports.get(id) ?? [];
     if (theirs.length >= MAX_IMPORTS_PER_ACCOUNT) return { ...base, account, problem: { why: 'full' } };
     if (!sync) return { ...base, account, problem: { why: 'unreached', covers, activity: null } };
-    const file: InvestmentImport = { source: 'vanguard-csv', file_name: change.file_name, imported_at, covers, currency: 'USD', rows };
+    const file: InvestmentImport = { source: read.source, file_name: change.file_name, imported_at, covers, currency: 'USD', rows };
     const effect = effectOf(sync, id, theirs, file);
     if (effect.kind === 'unreached') return { ...base, account, problem: { why: 'unreached', covers: effect.covers, activity: effect.activity } };
+    if (read.source === 'vanguard-qfx') {
+      for (const i of theirs) {
+        if (i.source !== 'vanguard-csv' || i.covers.from > covers.to || i.covers.to < covers.from) continue;
+        const seen = csv.get(i.import_id) ?? csv.set(i.import_id, { import_id: i.import_id, file_name: i.file_name, imported_at: i.imported_at, covers: i.covers, masks: [] }).get(i.import_id)!;
+        if (!seen.masks.includes(a.mask)) seen.masks.push(a.mask);
+      }
+    }
     return { ...base, account, effect };
   });
   const after_today = read.accounts.reduce((n, a) => n + a.rows.filter((r) => r.date > covers.to).length, 0);
   const sheetMask = v.known[change.account_id]?.mask ?? null;
   const sheet_in = !!sheetMask && read.accounts.some((a) => a.mask === sheetMask);
-  return { fingerprint: importsFingerprint(keys), covers, after_today, sheet_in, accounts };
+  // The day a QFX was made, when its days stop the day before it.
+  const stated_end = read.stated_end && dayBefore(read.stated_end) === covers.to ? read.stated_end : null;
+  const csvList = [...csv.values()].sort((a, b) => (a.covers.from < b.covers.from ? -1 : a.covers.from > b.covers.from ? 1 : 0));
+  return { fingerprint: importsFingerprint(keys), source: read.source, covers, stated_end, after_today, sheet_in, csv: csvList, accounts };
 }
 
 export async function POST(req: Request) {
@@ -233,10 +266,13 @@ export async function POST(req: Request) {
       const account = read.accounts.find((a) => a.mask === t.mask);
       if (!account) return bad(`The file has no account ending in ${t.mask}`);
       if (account.repeated) return bad(`The file has more than one account ending in ${t.mask}, so Nya can’t tell them apart`);
-      if (account.unreadable) return bad(`The account ending in ${t.mask} has a line Nya can’t read (line ${account.unreadable.line}), so none of its rows were imported`);
+      if (account.unreadable) {
+        const at = account.unreadable.place === 'transaction' ? `its transaction ${account.unreadable.line}` : `line ${account.unreadable.line}`;
+        return bad(`The account ending in ${t.mask} has a transaction Nya can’t read (${at}), so none of its rows were imported`);
+      }
       const rows = rowsOf(account, covers);
       if (rows.length === 0) return bad(`The file has nothing before today for the account ending in ${t.mask}, so there’s nothing to import for it`);
-      entries.push({ account_id: t.account_id, value: { source: 'vanguard-csv', file_name: change.file_name, imported_at, covers, currency: 'USD', rows } });
+      entries.push({ account_id: t.account_id, value: { source: read.source, file_name: change.file_name, imported_at, covers, currency: 'USD', rows } });
     }
     await addImport(ctx, crypto.randomUUID(), entries, change.counting);
     return NextResponse.json(await listed(ctx, change.account_id));

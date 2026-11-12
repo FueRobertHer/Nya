@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { installDom, trackRoots, click, fakeClock, FakeElement } from './mini-dom';
 import { holdDay, HELD_DAY } from './held-day';
 import { vanguardCsv } from './vanguard-transactions-csv';
+import { vanguardQfx } from './vanguard-transactions-qfx';
 
 holdDay();
 
@@ -28,7 +29,7 @@ for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs
 const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: HistoryImportSheet } = await import('@/components/HistoryImportSheet');
 const { importedText } = await import('@/components/InvestmentActivity');
-const { TransactionsNow } = await import('@/components/TransactionsImport');
+const { TransactionImports, TransactionsNow, undoText } = await import('@/components/TransactionsImport');
 const { renderToStaticMarkup } = await import('react-dom/server');
 type Target = import('@/components/HistoryImportSheet').HistoryImportTarget;
 type ImportsReview = import('@/lib/investment-imports-review').ImportsReview;
@@ -50,6 +51,7 @@ const takes = (rows: number, now_rows: number, file: number, now: number | null,
   rows,
   now_rows,
   flows: { file, now },
+  savings: { file: 0, now: 0 } as { file: number; now: number | null },
   months,
   twins,
 });
@@ -58,9 +60,12 @@ const takes = (rows: number, now_rows: number, file: number, now: number | null,
  *  taken, the Roth has a kind Nya doesn't know, ••8802 isn't one of yours. */
 const REVIEW: ImportsReview = {
   fingerprint: 'fp-1',
+  source: 'vanguard-csv',
   covers: COVERS,
+  stated_end: null,
   after_today: 2,
   sheet_in: true,
+  csv: [],
   accounts: [
     {
       mask: '4421',
@@ -126,7 +131,7 @@ async function mount(target: Target, opts: { review?: ImportsReview; refuse?: { 
         stored = [
           {
             import_id: 'imp-1',
-            source: 'vanguard-csv',
+            source: (opts.review ?? REVIEW).source,
             file_name: body.file_name,
             imported_at: HELD_DAY.toISOString(),
             covers: COVERS,
@@ -198,7 +203,7 @@ async function mount(target: Target, opts: { review?: ImportsReview; refuse?: { 
 describe('the sheet', () => {
   test('a Vanguard account: the download reviewed, imported into every account checked, listed, and undone from all of them', async () => {
     const v = await mount(TARGET);
-    expect(v.text()).toContain('Vanguard’s transactions download, as a CSV');
+    expect(v.text()).toContain('Vanguard’s transactions download: CSV, OFX or QFX');
     await v.choose('OfxDownload.csv');
     expect(v.sent[0].body).toEqual({ action: 'review', account_id: 'ind', file_name: 'OfxDownload.csv', text: FILE, today: '2026-11-06' });
 
@@ -246,7 +251,7 @@ describe('the sheet', () => {
 
     await v.press('Undo the import from today');
     expect(v.text()).toContain(
-      'Undo the import from today? It went into Individual ••4421 and Traditional IRA ••5519, and is undone from both. In Individual ••4421, Jun 1, 2025 to yesterday will come from what Vanguard gave Nya again; in the other, its days will come from an import before it, or from what Vanguard gave Nya, again. Nothing else changes, and you can import the file again later.'
+      'Undo the import from today? It went into Individual ••4421 and Traditional IRA ••5519, and is undone from both. In Individual ••4421, Jun 1, 2025 to yesterday will come from what Vanguard gave Nya again; in the other, its days will come from another import that covers them, or from what Vanguard gave Nya, again. Nothing else changes, and you can import the file again later.'
     );
     await v.press('Undo import');
     expect(v.sent[2].body).toEqual({ action: 'undo', account_id: 'ind', import_id: 'imp-1' });
@@ -293,6 +298,171 @@ describe('the sheet', () => {
     await v.choose('OfxDownload.csv');
     expect(v.text()).toContain('This is Vanguard’s transactions download, which Nya imports only into the Vanguard investment accounts it’s connected to, and Old IRA isn’t one. Import it from one of those.');
     expect(v.sent).toEqual([]);
+    v.unmount();
+  });
+});
+
+describe('the download as QFX', () => {
+  const QFX_FILE = vanguardQfx([{ number: '11114421', txns: [{ kind: 'bank', posted: '2026-01-05', amount: 2000 }] }], { start: '2025-05-13', end: '2026-11-06' });
+  const QFX_COVERS = { from: '2025-05-13', to: '2026-11-05' };
+  const ind = { account_id: 'ind', item_id: 'item_vg', name: 'Individual' };
+  const trad = { account_id: 'trad', item_id: 'item_vg', name: 'Traditional IRA' };
+  const effect = (days: { from: string; to: string }[], ...args: Parameters<typeof takes>) => ({ ...takes(...args), days });
+  /** Made today: the Individual's January isn't what counts now, and its
+   *  May 2025 is before Nya's activity (nothing to differ from). */
+  const QFX_REVIEW: ImportsReview = {
+    ...REVIEW,
+    source: 'vanguard-qfx',
+    covers: QFX_COVERS,
+    stated_end: '2026-11-06',
+    after_today: 1,
+    accounts: [
+      { mask: '4421', lines: 60, rows: 60, account: ind, problem: null, effect: effect([QFX_COVERS], 60, 59, 36_000, 41_000, [{ month: '2025-05', now: null, file: 500 }, { month: '2026-01', now: 7000, file: 2000 }]) },
+      { mask: '5519', lines: 28, rows: 28, account: trad, problem: null, effect: effect([QFX_COVERS], 28, 31, 0, 0) },
+    ],
+  };
+  const CSV_IMPORT = { import_id: 'csv-1', file_name: 'OfxDownload.csv', imported_at: '2026-11-05T12:00:00.000Z', covers: { from: '2025-06-01', to: '2026-11-04' }, masks: ['4421', '5519'] };
+
+  test('it differs from what counts now: said with the months, and the Import waits for a yes', async () => {
+    const v = await mount({ ...TARGET, account_id: 'q1' }, { review: QFX_REVIEW });
+    await v.choose('OfxDownload.qfx', QFX_FILE);
+    expect(v.sent[0].body).toMatchObject({ action: 'review', file_name: 'OfxDownload.qfx', text: QFX_FILE });
+    expect(v.text()).toContain('OfxDownload.qfx · Vanguard’s transactions download, as QFX');
+    expect(v.text()).toContain('The file says it runs to today, the day it was made, which wasn’t over then, so it counts to yesterday. Its 1 transaction from that day is left out.');
+    expect(v.text()).not.toContain('from today is left out');
+    expect(v.text()).toContain(
+      'In Jan 2026 this file’s deposits and withdrawals for Individual ••4421 aren’t what Nya counts now. A QFX file leaves out conversions and shares moved in kind, so it may be the one that’s wrong. Vanguard’s CSV download has them: import that instead if you can.'
+    );
+    expect(v.text()).toContain('MonthNowThis fileIndividual, Jan 2026+$7,000.00+$2,000.00');
+    // Before Nya's activity there is nothing to differ from, and a CSV's table isn't shown.
+    expect(v.text()).not.toContain('May 2025');
+    expect(v.text()).not.toContain('Where deposits & withdrawals change');
+    expect(v.text()).toContain('Use this file anywayIts transactions will count for May 13, 2025 to yesterday.');
+    expect(v.text()).toContain('A QFX file doesn’t say whether money in was a contribution or a rollover, so none of it counts as new savings in your Plan.');
+    expect(v.text()).toContain('Vanguard’s QFX file is the same download as its CSV');
+    const importing = () => v.button('Import 88 transactions into 2 accounts')!;
+    expect(importing().getAttribute('disabled')).not.toBeNull();
+    v.toggle('Use this file anyway', true);
+    expect(importing().getAttribute('disabled')).toBeNull();
+    v.toggle('Use this file anyway', false);
+    // Without the account that differs, nothing waits.
+    v.toggle('Individual ••4421', false);
+    expect(v.text()).not.toContain('aren’t what Nya counts now');
+    expect(v.button('Import 28 transactions into 1 account')!.getAttribute('disabled')).toBeNull();
+    v.toggle('Individual ••4421', true);
+    v.toggle('Use this file anyway', true);
+    await v.press('Import 88 transactions into 2 accounts');
+    expect(v.sent[1].body).toMatchObject({ action: 'import', file_name: 'OfxDownload.qfx', text: QFX_FILE, take: [{ account_id: 'ind', mask: '4421' }, { account_id: 'trad', mask: '5519' }] });
+    expect(v.text()).toContain('88 transactions imported into 2 accounts from OfxDownload.qfx.');
+    v.unmount();
+  });
+
+  test('a CSV import decides some of its days, or all of them: said, and each account’s transactions that count', async () => {
+    const part = [
+      { from: '2025-05-13', to: '2025-05-31' },
+      { from: '2026-11-05', to: '2026-11-05' },
+    ];
+    const some: ImportsReview = {
+      ...QFX_REVIEW,
+      csv: [CSV_IMPORT],
+      accounts: [
+        { ...QFX_REVIEW.accounts[0], effect: effect(part, 3, 2, 0, 0) },
+        { ...QFX_REVIEW.accounts[1], effect: effect(part, 1, 1, 0, 0) },
+      ],
+    };
+    const v = await mount({ ...TARGET, account_id: 'q2' }, { review: some });
+    await v.choose('OfxDownload.qfx', QFX_FILE);
+    expect(v.text()).toMatch(
+      /OfxDownload\.csv, imported [^,]+, covers Jun 1, 2025 to Nov 4\. A CSV decides the days it covers, since it has what a QFX leaves out, so this file counts only for May 13, 2025 to May 31, 2025 and yesterday\./
+    );
+    expect(v.text()).toContain('3 of its 60 transactions count, in place of the 2 there now.');
+    expect(v.text()).toContain('1 of its 28 transactions counts, in place of the 1 there now.');
+    v.unmount();
+
+    const all: ImportsReview = {
+      ...QFX_REVIEW,
+      csv: [CSV_IMPORT],
+      accounts: QFX_REVIEW.accounts.map((a) => ({ ...a, effect: effect([], 0, 0, 0, null) })),
+    };
+    const w = await mount({ ...TARGET, account_id: 'q3' }, { review: all });
+    await w.choose('OfxDownload.qfx', QFX_FILE);
+    expect(w.text()).toMatch(/OfxDownload\.csv, imported [^,]+, covers all of this file’s days, and a CSV decides the days it covers, since it has what a QFX leaves out, so none of this file would count now\. It would if that import were undone\./);
+    expect(w.text()).toContain('None of its 60 transactions would count now.');
+    expect(w.text()).not.toContain('A QFX file doesn’t say whether money in was');
+    // It can still be imported, for when the CSV is undone.
+    expect(w.button('Import 88 transactions into 2 accounts')!.getAttribute('disabled')).toBeNull();
+    w.unmount();
+  });
+
+  test('on an account at another firm: refused like the CSV', async () => {
+    const v = await mount({ ...TARGET, account_id: 'fid2', name: 'Brokerage ••7710', institution_name: 'Fidelity', vanguard: false });
+    await v.choose('OfxDownload.qfx', QFX_FILE);
+    expect(v.text()).toContain('This is Vanguard’s transactions download, and Brokerage ••7710 is at Fidelity. Import it from one of your Vanguard accounts.');
+    expect(v.sent).toEqual([]);
+    v.unmount();
+  });
+
+  test('once imported, one a CSV outranks says so', () => {
+    const at = { covers: { from: '2025-06-01', to: '2026-11-04' }, currency: 'USD', rows: 10, accounts: ['ind'], imported_at: '2026-11-05T12:00:00.000Z' };
+    const list = {
+      imports: [
+        { ...at, import_id: 'qfx-1', source: 'vanguard-qfx' as const, file_name: 'OfxDownload.qfx' },
+        { ...at, import_id: 'csv-1', source: 'vanguard-csv' as const, file_name: 'OfxDownload.csv' },
+      ],
+      fingerprint: 'fp-3',
+      names: {},
+    };
+    const activity = { imported_days: [{ import_id: 'csv-1', ...at.covers, file_name: 'OfxDownload.csv', imported_at: at.imported_at }], imports_unused: [] } as unknown as Parameters<typeof TransactionImports>[0]['activity'];
+    const shown = words(renderToStaticMarkup(<TransactionImports name="Individual ••4421" list={list} activity={activity} busy={false} onUndo={async () => true} />).replace(/<[^>]+>/g, ' '));
+    expect(shown).toContain('· a CSV import decides its days Doesn’t count');
+    // Undoing the CSV hands its days to the QFX, which was never checked against them: said.
+    expect(undoText(list.imports[1], list, activity, 'Individual ••4421')).toMatch(
+      /^Undo the import from [^?]+\? Jun 1, 2025 to Nov 4 will come from the QFX import from [^.]+ again\. A QFX file leaves out conversions and shares moved in kind, and none of its money in counts as new savings\. Nothing else changes/
+    );
+    // Decided partly by a CSV and partly by a newer QFX: neither named alone.
+    const mixed = {
+      ...list,
+      imports: [{ ...list.imports[0], import_id: 'qfx-2' }, ...list.imports.map((i) => (i.import_id === 'csv-1' ? { ...i, covers: { from: '2025-06-01', to: '2025-12-31' } } : i))],
+    };
+    const split = {
+      imported_days: [
+        { import_id: 'csv-1', from: '2025-06-01', to: '2025-12-31', file_name: 'OfxDownload.csv', imported_at: at.imported_at },
+        { import_id: 'qfx-2', from: '2026-01-01', to: '2026-11-04', file_name: 'OfxDownload.qfx', imported_at: at.imported_at },
+      ],
+      imports_unused: [],
+    } as unknown as Parameters<typeof TransactionImports>[0]['activity'];
+    const shownMixed = words(renderToStaticMarkup(<TransactionImports name="Individual ••4421" list={mixed} activity={split} busy={false} onUndo={async () => true} />).replace(/<[^>]+>/g, ' '));
+    expect(shownMixed).toContain('· other imports decide its days Doesn’t count');
+  });
+
+  test('only its new savings fall: said with the figures, and the Import waits for a yes, asked again when the accounts checked change or the file is chosen again', async () => {
+    const savingsOnly: ImportsReview = {
+      ...QFX_REVIEW,
+      accounts: [
+        { ...QFX_REVIEW.accounts[0], effect: { ...effect([QFX_COVERS], 60, 59, 36_000, 36_000), savings: { file: 0, now: 4000 } } },
+        QFX_REVIEW.accounts[1],
+      ],
+    };
+    const v = await mount({ ...TARGET, account_id: 'q4' }, { review: savingsOnly });
+    await v.choose('OfxDownload.qfx', QFX_FILE);
+    expect(v.text()).toContain(
+      'With this file, the new savings your Plan counts in its days would fall from +$4,000.00 to $0.00 in Individual ••4421: a QFX file doesn’t say whether money in was a contribution or a rollover. Vanguard’s CSV download says which: import that instead if you can.'
+    );
+    expect(v.text()).not.toContain('This file+');
+    expect(v.text()).not.toContain('A QFX file doesn’t say whether money in was a contribution or a rollover, so none of it counts');
+    const importing = () => v.button('Import 88 transactions into 2 accounts')!;
+    expect(importing().getAttribute('disabled')).not.toBeNull();
+    v.toggle('Use this file anyway', true);
+    expect(importing().getAttribute('disabled')).toBeNull();
+    // Another account checked or unchecked: the yes is asked again.
+    v.toggle('Traditional IRA ••5519', false);
+    v.toggle('Traditional IRA ••5519', true);
+    expect(v.box('Use this file anyway').checked).toBe(false);
+    expect(importing().getAttribute('disabled')).not.toBeNull();
+    v.toggle('Use this file anyway', true);
+    await v.press('Cancel');
+    await v.choose('OfxDownload.qfx', QFX_FILE);
+    expect(v.box('Use this file anyway').checked).toBe(false);
     v.unmount();
   });
 });
