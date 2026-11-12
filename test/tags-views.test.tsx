@@ -157,7 +157,7 @@ describe('on the Activity tab', () => {
     const t = text(html);
     expect(t).toContain('Taxi Vacation 2026 Reimbursable');
     expect(html).toContain('class="tag-chip tag-blue"');
-    expect(html).toMatch(/<label class="chip chip-select"><span aria-hidden="true">Tag<\/span>/);
+    expect(html).toMatch(/<label class="chip chip-select"><span class="chip-text" aria-hidden="true"><span class="chip-name">Tag<\/span><\/span>/);
     expect(html).toContain('aria-label="Tag"');
     expect(t).toContain('All tags');
     expect(html).toContain('<option value="gift">Gift</option>');

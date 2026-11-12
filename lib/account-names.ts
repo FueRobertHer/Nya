@@ -39,3 +39,34 @@ export function distinctAccountNames(list: readonly NamedAccount[], opts: { mask
   }
   return out;
 }
+
+/** An account's name and the last digits to write after it as "••4421",
+ *  written once: a bank's name that already ends in them ("Brokerage
+ *  ...4421", "Checking x4421", "IRA (4421)") has them taken off, so a name
+ *  cut short with an ellipsis still shows its digits after it. A name that
+ *  ends in them with nothing between ("Account 214421"), or is nothing but
+ *  them, is left whole, with no digits after it. Pure. */
+export function nameAndMask(name: string, mask: string | null | undefined): { name: string; mask: string | null } {
+  const text = name.trimEnd();
+  const digits = (mask ?? '').trim();
+  if (!digits) return { name: text, mask: null };
+  // A run of spaces, dashes, stars, bullets, an ellipsis (two dots or more:
+  // one is the name's own, "No. 4421") or a bracket, maybe with x's or stars
+  // after it; or x's that start a word. Then the digits.
+  const escaped = digits.replace(/[^0-9A-Za-z]/g, (c) => `\\${c}`);
+  const tail = new RegExp(`(?:(?:[\\s\\-_*•#(…]|\\.{2,})+[xX*]*|\\b[xX]+)${escaped}\\)?$`);
+  const cut = tail.exec(text);
+  if (cut) {
+    // What joined the digits to the name goes with them ("Account:x4421").
+    const rest = text.slice(0, cut.index).replace(/[\s:;,/\-]+$/, '');
+    return rest ? { name: rest, mask: digits } : { name: text, mask: null };
+  }
+  return text.endsWith(digits) || text.endsWith(`${digits})`) ? { name: text, mask: null } : { name: text, mask: digits };
+}
+
+/** "Roth IRA ••3302": an account's name with its last digits, once (see
+ *  nameAndMask). */
+export function withMask(name: string, mask: string | null | undefined): string {
+  const n = nameAndMask(name, mask);
+  return n.mask ? `${n.name} ••${n.mask}` : n.name;
+}

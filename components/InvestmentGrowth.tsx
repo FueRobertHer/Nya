@@ -28,6 +28,7 @@
 // which have no investment activity, in an information notice.
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { nameAndMask, withMask } from '@/lib/account-names';
 import { accountBucket, type TaxBucket } from '@/lib/allocation/buckets';
 import { overridesOf } from '@/lib/allocation/settings';
 import { currencyPlural, formatDay, formatMoney, MINUS, roundsToNothing, signedMoney } from '@/lib/format';
@@ -39,8 +40,8 @@ import { joinNames } from '@/lib/month-coverage';
 import type { BalancePoint } from '@/lib/growth';
 import { withPastMonths, type PastMonthsResult } from '@/lib/investment-months';
 import type { Rate } from '@/lib/returns-rate';
+import AccountsChooser, { presetOf, type ChooserPreset } from './AccountsChooser';
 import type { Institution } from './accounts-format';
-import ChipSelect from './ChipSelect';
 import { Hero } from './Hero';
 import { useAmountsHidden } from './hide-amounts';
 import { HeroScrub, type HeroReading } from './hero-scrub';
@@ -133,7 +134,7 @@ export default function InvestmentGrowth({
     .flatMap((inst) =>
       inst.accounts
         .filter((a) => isInvestmentType(a.type))
-        .map((a) => ({ a, words: `${a.name}${a.mask ? ` ••${a.mask}` : ''} (${inst.connector ? `through ${connectorLabel(inst.connector)}` : 'manual'})` }))
+        .map((a) => ({ a, words: `${withMask(a.name, a.mask)} (${inst.connector ? `through ${connectorLabel(inst.connector)}` : 'manual'})` }))
     );
 
   // Keys as `item:account`, the order the tab lists them in.
@@ -142,7 +143,9 @@ export default function InvestmentGrowth({
   const [historyFailed, setHistoryFailed] = useState(false);
   const [activities, setActivities] = useState<Record<string, ActivityState>>({});
   const [picked, setPicked] = useState<RangeKey | null>(null);
-  const [choice, setChoice] = useState('all');
+  // A preset follows its accounts as they come and go; a set the person
+  // checked keeps to its own.
+  const [choice, setChoice] = useState<{ preset: string } | { keys: readonly string[] }>({ preset: 'all' });
   const [infoOpen, setInfoOpen] = useState(false);
   const infoId = useId();
   // Which accounts are retirement ones can be the person's choice (Plan >
@@ -230,7 +233,7 @@ export default function InvestmentGrowth({
           points: past ? past.points : points,
           name: a.name,
           mask: a.mask,
-          title: `${a.name}${a.mask ? ` ••${a.mask}` : ''}`,
+          title: withMask(a.name, a.mask),
           institution: inst.institution_name,
           retirement: isRetirement(a.subtype, buckets.get(a.account_id)),
           raw,
@@ -240,37 +243,39 @@ export default function InvestmentGrowth({
     [linked, activities, histories, buckets]
   );
 
-  // The chooser: all of them, the retirement ones or the others when both
-  // kinds are there, or one.
-  const retirementCount = accounts.filter((a) => a.retirement).length;
-  const kinds = retirementCount > 0 && retirementCount < accounts.length;
-  const options: [string, string][] = [
-    ['all', 'All accounts'],
-    ...(kinds
-      ? ([
-          ['retirement', 'Retirement'],
-          ['other', 'Non-retirement'],
-        ] as [string, string][])
-      : []),
-    ...accounts.map((a) => [`acct:${a.key}`, a.title] as [string, string]),
-  ];
-  const chosen = options.some(([v]) => v === choice) ? choice : 'all';
-  const shownText = chosen === 'all' ? 'Accounts' : `Accounts: ${options.find(([v]) => v === chosen)![1]}`;
+  // The chooser: presets for all of them, and for the retirement ones or the
+  // others when both kinds are there, and any set of accounts.
+  const kindsKey = accounts.map((a) => `${a.key}\t${a.retirement ? 'r' : ''}`).join('\n');
+  const presets = useMemo((): ChooserPreset[] => {
+    const all = accounts.map((a) => a.key);
+    const retirement = accounts.filter((a) => a.retirement).map((a) => a.key);
+    if (retirement.length === 0 || retirement.length === all.length) return [{ value: 'all', name: 'All accounts', keys: all }];
+    return [
+      { value: 'all', name: 'All accounts', keys: all },
+      { value: 'retirement', name: 'Retirement', note: 'Tax-deferred and Roth', keys: retirement },
+      { value: 'other', name: 'Non-retirement', note: 'Brokerage, HSA, 529 and the rest', keys: accounts.filter((a) => !a.retirement).map((a) => a.key) },
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- by the accounts' keys and kinds alone
+  }, [kindsKey]);
+  const kinds = presets.length > 1;
 
+  // A set whose accounts have all gone shows every account again.
   const picks = useMemo(() => {
-    if (chosen === 'retirement') return accounts.filter((a) => a.retirement);
-    if (chosen === 'other') return accounts.filter((a) => !a.retirement);
-    if (chosen.startsWith('acct:')) return accounts.filter((a) => `acct:${a.key}` === chosen);
-    return accounts;
-  }, [accounts, chosen]);
+    const keys = 'preset' in choice ? (presets.find((p) => p.value === choice.preset) ?? presets[0]).keys : choice.keys;
+    const set = new Set(keys);
+    const chosen = accounts.filter((a) => set.has(a.key));
+    return chosen.length > 0 ? chosen : accounts;
+  }, [accounts, choice, presets]);
+  const preset = presetOf(presets, picks.map((a) => a.key))?.value ?? null;
   const historyLoading = histories === null && !historyFailed;
   const s = useMemo(() => summarizeGrowth<Shown>(picks, picked, main, historyLoading), [picks, picked, main, historyLoading]);
 
-  // Manual and SimpleFIN or Lunch Flow accounts in the accounts chosen.
+  // Manual and SimpleFIN or Lunch Flow accounts under the preset shown; a set
+  // of accounts chosen one by one has none.
   const notCounted = unlinked
-      .filter(({ a }) => {
-      if (chosen === 'all') return true;
-      if (chosen === 'retirement' || chosen === 'other') return isRetirement(a.subtype, buckets.get(a.account_id)) === (chosen === 'retirement');
+    .filter(({ a }) => {
+      if (preset === 'all') return true;
+      if (preset === 'retirement' || preset === 'other') return isRetirement(a.subtype, buckets.get(a.account_id)) === (preset === 'retirement');
       return false;
     })
     .map((u) => u.words);
@@ -331,13 +336,17 @@ export default function InvestmentGrowth({
     <>
       {accounts.length > 1 && (
         <div className="chip-row">
-          <ChipSelect label="Accounts" shown={shownText} on={chosen !== 'all'} value={chosen} onChange={setChoice}>
-            {options.map(([value, text]) => (
-              <option key={value} value={value}>
-                {text}
-              </option>
-            ))}
-          </ChipSelect>
+          <AccountsChooser
+            accounts={accounts.map((a) => ({
+              key: a.key,
+              name: a.name,
+              mask: a.mask,
+              sub: kinds ? `${a.institution} · ${a.retirement ? 'Retirement' : 'Non-retirement'}` : a.institution,
+            }))}
+            presets={presets}
+            shown={picks.map((a) => a.key)}
+            onChoose={(keys, value) => setChoice(value ? { preset: value } : { keys })}
+          />
         </div>
       )}
 
@@ -778,6 +787,7 @@ function Row({
   onOpen: () => void;
 }) {
   const a = r.account;
+  const named = nameAndMask(a.name, a.mask);
   let status: string | null = null;
   if (r.status === 'loading') status = 'Loading its activity';
   else if (r.status === 'busy') status = 'Its activity is still loading';
@@ -792,8 +802,8 @@ function Row({
     <button className="list-row" onClick={onOpen}>
       <span className="list-row-text">
         <span className="list-row-title">
-          {a.name}
-          {a.mask && <span className="acct-mask">{` ••${a.mask}`}</span>}
+          {named.name}
+          {named.mask && <span className="acct-mask">{` ••${named.mask}`}</span>}
         </span>
         <span className="list-row-sub">{sub}</span>
       </span>

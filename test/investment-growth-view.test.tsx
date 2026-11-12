@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, trackRoots, click, fakeClock, type, FakeElement, FakeEvent, type FakeNode } from './mini-dom';
+import { installDom, trackRoots, click, fakeClock, pressThrough, type, FakeElement, FakeEvent, type FakeNode } from './mini-dom';
 import { holdDay, HELD_DAY } from './held-day';
 
 holdDay();
@@ -98,13 +98,15 @@ function setup(
     buckets?: Record<string, string>;
     /** Months imported from Vanguard's Performance page, by fixture key. */
     months?: Record<string, import('@/lib/investment-months').InvestmentMonths>;
+    /** Names other than the fixtures', by fixture key. */
+    names?: Record<string, string>;
   } = {}
 ) {
   run++;
   const id = (k: string) => `${k}_${run}`;
   const acct = (k: string, name: string, mask: string, balance: number) => ({
     account_id: id(k),
-    name,
+    name: opts.names?.[k] ?? name,
     official_name: null,
     mask,
     type: 'investment',
@@ -122,11 +124,12 @@ function setup(
     needs_reauth: false,
     ...more,
   });
-  const only = (k: string) => !opts.only || opts.only.includes(k);
-  const institutions: Institution[] = [
+  let linked = opts.only;
+  const only = (k: string) => !linked || linked.includes(k);
+  const build = (): Institution[] => [
     inst('vg', 'Vanguard', [...(only('ind') ? [acct('ind', 'Individual', '4421', 120_500)] : []), ...(only('roth') ? [acct('roth', 'Roth IRA', '3302', 45_600)] : [])]),
     inst('fid', 'Fidelity', only('k401') ? [acct('k401', '401(k)', '8810', 56_200)] : []),
-    ...(opts.currencies?.tfsa ? [inst('q', 'Questrade', [acct('tfsa', 'TFSA', '5506', 17_000)])] : []),
+    ...(opts.currencies?.tfsa || linked?.includes('tfsa') ? [inst('q', 'Questrade', [acct('tfsa', 'TFSA', '5506', 17_000)])] : []),
     ...(opts.manual
       ? [
           inst('manual', 'Manual', [acct('rh', 'Robinhood', '1290', 9000)], { manual: true }),
@@ -134,6 +137,7 @@ function setup(
         ]
       : []),
   ].filter((i) => i.accounts.length > 0);
+  let institutions = build();
 
   const calls: string[] = [];
   globalThis.fetch = (async (url: string) => {
@@ -177,7 +181,7 @@ function setup(
   // The money sheet the tab opens from a Set button, as a sheet with nothing
   // in it: what a test of focus needs.
   let closeSheet = () => {};
-  function Tab({ refreshKey }: { refreshKey: string | null }) {
+  function Tab({ refreshKey, institutions }: { refreshKey: string | null; institutions: Institution[] }) {
     const [target, setTarget] = React.useState<Target | null>(null);
     closeSheet = () => setTarget(null);
     return (
@@ -199,9 +203,28 @@ function setup(
     );
   }
   let refreshes = 0;
-  const draw = (refreshKey: string | null) => act(() => root.render(<Tab refreshKey={refreshKey} />));
+  let drawn: string | null = null;
+  const draw = (refreshKey: string | null) => {
+    drawn = refreshKey;
+    act(() => root.render(<Tab refreshKey={refreshKey} institutions={institutions} />));
+  };
   draw(null);
   const buttons = (text: string) => host.findAll((e) => e.tagName === 'BUTTON' && words(e) === text);
+  const chooser = () => host.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('aria-haspopup') === 'dialog')[0] ?? null;
+  const sheet = () => host.findAll((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('aria-label') === 'Accounts')[0] ?? null;
+  const inputs = (kind: string) =>
+    sheet()!
+      .findAll((e) => e.tagName === 'LABEL')
+      .map((label) => ({ label, input: label.findAll((e) => e.tagName === 'INPUT' && e.getAttribute('type') === kind)[0] }))
+      .filter((r) => r.input)
+      .map((r) => ({ name: words(r.label), checked: !!(r.input as unknown as { checked: boolean }).checked, input: r.input }));
+  const change = async (input: FakeElement, on: boolean) => {
+    act(() => {
+      (input as unknown as { checked: boolean }).checked = on;
+      click(input);
+    });
+    await pass(10);
+  };
   return {
     host,
     root,
@@ -210,12 +233,34 @@ function setup(
     forms,
     id,
     refresh: () => draw(`refresh ${++refreshes}`),
+    /** The tab drawn again with these accounts linked (by fixture key). */
+    relink: async (keys: string[]) => {
+      linked = keys;
+      institutions = build();
+      draw(drawn);
+      await pass(50);
+    },
     close: () => act(() => closeSheet()),
     buttons,
     /** The chart's range switch. */
     range: (text: string) => act(() => click(buttons(text)[0])),
-    /** The Accounts chip's select. */
-    chooser: () => host.findAll((e) => e.tagName === 'SELECT' && e.getAttribute('aria-label') === 'Accounts')[0] ?? null,
+    /** The Accounts chip, which opens the sheet. */
+    chooser,
+    /** The sheet it opens. */
+    sheet,
+    /** The sheet's presets, by their words, and whether each is chosen. */
+    presets: () => inputs('radio'),
+    /** The sheet's accounts, by their words, and whether each is checked. */
+    boxes: () => inputs('checkbox'),
+    /** Choosing a preset by its name. */
+    choose: (name: string) => change(inputs('radio').find((r) => r.name.startsWith(name))!.input, true),
+    /** Checking or unchecking an account by its name. */
+    tick: (name: string, on: boolean) => change(inputs('checkbox').find((b) => b.name.startsWith(name))!.input, on),
+    /** A press, and what it starts let settle (a sheet slides in a frame later). */
+    press: async (el: FakeElement) => {
+      act(() => click(el));
+      await pass(400);
+    },
   };
 }
 
@@ -379,54 +424,213 @@ describe('the screen', () => {
 });
 
 describe('the chooser', () => {
-  test('all, retirement or not, or one account', async () => {
-    const { host, root, chooser } = setup({ manual: true });
+  test('presets check their accounts, and any set of accounts can be shown', async () => {
+    const { host, root, chooser, sheet, presets, boxes, choose, tick, press } = setup({ manual: true });
     try {
       await pass(50);
-      const select = chooser()!;
-      expect(select.findAll((e) => e.tagName === 'OPTION').map(words)).toEqual([
-        'All accounts',
-        'Retirement',
-        'Non-retirement',
-        'Individual ••4421',
-        'Roth IRA ••3302',
-        '401(k) ••8810',
-      ]);
-      expect(words(byClass(host, 'chip-select')[0])).toStartWith('Accounts');
+      expect(words(chooser()!)).toBe('Accounts');
+      expect(chooser()!.getAttribute('data-on')).toBeNull();
 
-      act(() => type(select, 'retirement'));
-      await pass(50);
-      expect(words(byClass(host, 'chip-select')[0])).toStartWith('Accounts: Retirement');
+      await press(chooser()!);
+      expect(presets().map((r) => [r.name, r.checked])).toEqual([
+        ['All accounts', true],
+        ['Retirement Tax-deferred and Roth', false],
+        ['Non-retirement Brokerage, HSA, 529 and the rest', false],
+      ]);
+      expect(boxes().map((b) => [b.name, b.checked])).toEqual([
+        ['Individual ••4421 Vanguard · Non-retirement', true],
+        ['Roth IRA ••3302 Vanguard · Retirement', true],
+        ['401(k) ••8810 Fidelity · Retirement', true],
+      ]);
+
+      // A preset checks its accounts; Show shows them.
+      await choose('Retirement');
+      expect(boxes().map((b) => b.checked)).toEqual([false, true, true]);
+      await press(sheet()!.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Show')[0]);
+      expect(sheet()).toBeNull();
+      expect(words(chooser()!)).toBe('Accounts: Retirement');
+      expect(chooser()!.getAttribute('data-on')).toBe('');
       expect(card(host)).toContain('Beginning balance $91,000.00 Deposits & withdrawals +$3,000.00 Investment returns +$7,500.00 Ending balance $101,500.00');
       expect(rows(host).map((r) => r.split(' Vanguard')[0].split(' Fidelity')[0])).toEqual(['Roth IRA ••3302', '401(k) ••8810']);
-      // The accounts not counted go with the ones chosen.
+      // The accounts not counted go with the preset.
       expect(words(host)).toContain('Not counted: Wealthfront ••7781 (through SimpleFIN). Nya has no investment activity for it.');
       expect(words(host)).not.toContain('Robinhood');
 
-      act(() => type(chooser()!, 'other'));
-      await pass(50);
+      // Any set: no preset is its own, so none shows as chosen.
+      await press(chooser()!);
+      expect(presets().map((r) => r.checked)).toEqual([false, true, false]);
+      await tick('Roth IRA ••3302', false);
+      await tick('Individual ••4421', true);
+      expect(presets().map((r) => r.checked)).toEqual([false, false, false]);
+      await press(sheet()!.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Show')[0]);
+      expect(words(chooser()!)).toBe('Accounts: 2 of 3');
+      // The hero, the range's card, its rows and the rate follow the set.
+      expect(figure(host)).toBe('+$20,000.00');
+      expect(card(host)).toContain('Beginning balance $150,000.00 Deposits & withdrawals +$6,000.00 Investment returns +$20,000.00 Ending balance $176,000.00');
+      expect(rows(host).map((r) => r.split(' Vanguard')[0].split(' Fidelity')[0])).toEqual(['Individual ••4421', '401(k) ••8810']);
+      expect(heroLine(host)).toContain('rate of return');
+      expect(words(host)).not.toContain('Not counted');
+
+      // Checking the rest is All again; Cancel keeps what was shown.
+      await press(chooser()!);
+      await tick('Roth IRA ••3302', true);
+      expect(presets().map((r) => r.checked)).toEqual([true, false, false]);
+      await press(sheet()!.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Cancel')[0]);
+      expect(sheet()).toBeNull();
+      expect(words(chooser()!)).toBe('Accounts: 2 of 3');
+      expect(figure(host)).toBe('+$20,000.00');
+
+      // Non-retirement is one account here: shown by the preset's name.
+      await press(chooser()!);
+      await choose('Non-retirement');
+      await press(sheet()!.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Show')[0]);
+      expect(words(chooser()!)).toBe('Accounts: Non-retirement');
       expect(figure(host)).toBe('+$15,000.00');
       expect(words(host)).toContain('Not counted: Robinhood ••1290 (manual).');
-
-      // One account: its own figures, and no rows to repeat them.
-      const ind = chooser()!.findAll((e) => e.tagName === 'OPTION' && words(e) === 'Individual ••4421')[0].getAttribute('value')!;
-      act(() => type(chooser()!, ind));
-      await pass(50);
-      expect(words(byClass(host, 'chip-select')[0])).toStartWith('Accounts: Individual ••4421');
-      expect(card(host)).toContain('Beginning balance $100,000.00 Deposits & withdrawals +$5,000.00 Investment returns +$15,000.00 Ending balance $120,000.00');
-      expect(rows(host)).toEqual([]);
-      expect(words(host)).not.toContain('Not counted');
     } finally {
       act(() => root.unmount());
     }
   });
 
+  test('nothing checked: Show waits, and says to choose one', async () => {
+    const { root, chooser, sheet, choose, tick, press } = setup();
+    const show = () => sheet()!.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Show')[0];
+    try {
+      await pass(50);
+      await press(chooser()!);
+      await choose('Retirement');
+      await press(show());
+      expect(words(chooser()!)).toBe('Accounts: Retirement');
+
+      await press(chooser()!);
+      // On the page throughout, so it is said as its words come.
+      const status = () => sheet()!.findAll((e) => e.getAttribute('role') === 'status')[0];
+      expect(words(status())).toBe('');
+      for (const name of ['Roth IRA ••3302', '401(k) ••8810']) await tick(name, false);
+      expect(show().getAttribute('disabled')).not.toBeNull();
+      expect(words(status())).toBe('Choose at least one account.');
+      // A press that gets past it anyway changes nothing: the sheet stays,
+      // and what was shown is shown.
+      await act(async () => void pressThrough(show()));
+      await pass(400);
+      expect(sheet()).not.toBeNull();
+      expect(words(chooser()!)).toBe('Accounts: Retirement');
+      await tick('Roth IRA ••3302', true);
+      expect(show().getAttribute('disabled')).toBeNull();
+      expect(words(status())).toBe('');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  test('a preset follows its accounts as they are linked; a set checked keeps to its own', async () => {
+    const first = setup({ only: ['ind', 'roth'] });
+    try {
+      await pass(50);
+      await first.press(first.chooser()!);
+      await first.choose('Retirement');
+      await first.press(first.sheet()!.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Show')[0]);
+      expect(words(first.chooser()!)).toBe('Accounts: Retirement');
+      expect(figure(first.host)).toBe('+$2,500.00');
+      // A 401(k) is linked: Retirement takes it in.
+      await first.relink(['ind', 'roth', 'k401']);
+      expect(words(first.chooser()!)).toBe('Accounts: Retirement');
+      expect(figure(first.host)).toBe('+$7,500.00');
+    } finally {
+      act(() => first.root.unmount());
+    }
+
+    const second = setup();
+    try {
+      await pass(50);
+      await second.press(second.chooser()!);
+      await second.tick('401(k) ••8810', false);
+      await second.press(second.sheet()!.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Show')[0]);
+      expect(words(second.chooser()!)).toBe('Accounts: 2 of 3');
+      expect(figure(second.host)).toBe('+$17,500.00');
+      // A TFSA is linked: the set checked doesn't take it in.
+      await second.relink(['ind', 'roth', 'k401', 'tfsa']);
+      expect(words(second.chooser()!)).toBe('Accounts: 2 of 4');
+      expect(figure(second.host)).toBe('+$17,500.00');
+      // Both of its accounts go: every account is shown again.
+      await second.relink(['k401', 'tfsa']);
+      expect(words(second.chooser()!)).toBe('Accounts');
+      expect(figure(second.host)).toBe('+$5,500.00');
+    } finally {
+      act(() => second.root.unmount());
+    }
+  });
+
+  test('an account that goes while the sheet is open is no longer checked', async () => {
+    const { host, root, chooser, sheet, presets, boxes, press, relink } = setup();
+    try {
+      await pass(50);
+      await press(chooser()!);
+      await relink(['ind', 'k401']);
+      // Every account left is checked: All, not a set of its own.
+      expect(boxes().map((b) => [b.name.split(' ••')[0], b.checked])).toEqual([
+        ['Individual', true],
+        ['401(k)', true],
+      ]);
+      expect(presets().map((r) => [r.name.split(' ')[0], r.checked])).toEqual([
+        ['All', true],
+        ['Retirement', false],
+        ['Non-retirement', false],
+      ]);
+      await press(sheet()!.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Show')[0]);
+      expect(words(chooser()!)).toBe('Accounts');
+      // So it follows the accounts: the Roth IRA comes back with them.
+      await relink(['ind', 'roth', 'k401']);
+      expect(words(chooser()!)).toBe('Accounts');
+      expect(figure(host)).toBe('+$22,500.00');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  // The bank's name may end in the account's last digits already: they are
+  // written once, after the name, and stay in view when the chip cuts the
+  // name short.
+  test('one account: its own name, its last digits once', async () => {
+    const { host, root, chooser, sheet, boxes, tick, press } = setup({ names: { ind: 'Brokerage Account Alex Morgan Joint ...4421' } });
+    try {
+      await pass(50);
+      expect(rows(host)[0]).toStartWith('Brokerage Account Alex Morgan Joint ••4421 Vanguard');
+      await press(chooser()!);
+      expect(boxes()[0].name).toBe('Brokerage Account Alex Morgan Joint ••4421 Vanguard · Non-retirement');
+      await tick('Roth IRA ••3302', false);
+      await tick('401(k) ••8810', false);
+      await press(sheet()!.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Show')[0]);
+      // Non-retirement's own account: the preset's name wins.
+      expect(words(chooser()!)).toBe('Accounts: Non-retirement');
+    } finally {
+      act(() => root.unmount());
+    }
+    const two = setup({ names: { roth: 'Roth IRA Alex Morgan x3302' } });
+    try {
+      await pass(50);
+      await two.press(two.chooser()!);
+      await two.tick('Individual ••4421', false);
+      await two.tick('401(k) ••8810', false);
+      await two.press(two.sheet()!.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Show')[0]);
+      const chip = two.chooser()!;
+      expect(words(byClass(chip, 'chip-name')[0])).toBe('Accounts: Roth IRA Alex Morgan');
+      expect(byClass(chip, 'chip-mask')[0].textContent).toBe(' ••3302');
+      expect(figure(two.host)).toBe('+$2,500.00');
+      expect(rows(two.host)).toEqual([]);
+    } finally {
+      act(() => two.root.unmount());
+    }
+  });
+
   test('the buckets the person set win over the kind of account', async () => {
-    const { root, chooser } = setup({ buckets: { ind: 'roth' } });
+    const { root, chooser, presets, boxes, press } = setup({ buckets: { ind: 'roth' } });
     try {
       await pass(50);
       // All three are retirement accounts now: no kinds to choose between.
-      expect(chooser()!.findAll((e) => e.tagName === 'OPTION').map(words)).toEqual(['All accounts', 'Individual ••4421', 'Roth IRA ••3302', '401(k) ••8810']);
+      await press(chooser()!);
+      expect(presets().map((r) => r.name)).toEqual(['All accounts']);
+      expect(boxes().map((b) => b.name)).toEqual(['Individual ••4421 Vanguard', 'Roth IRA ••3302 Vanguard', '401(k) ••8810 Fidelity']);
     } finally {
       act(() => root.unmount());
     }
