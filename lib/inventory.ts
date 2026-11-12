@@ -911,6 +911,14 @@ const STORES: Readonly<Record<string, Entry>> = {
     seen: ['connector', 'shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
+  'investment-imports': {
+    group: 'accounts',
+    name: 'Transactions you imported for investment accounts',
+    about: 'Each account’s transactions from a file your brokerage gives you (Vanguard’s transaction download), and the days the file covers, one record for each account and import.',
+    unit: IMPORT,
+    kept: 'Your data',
+    plain: 'Account ids and random import ids, as field names.',
+  },
   'investment-months': {
     group: 'accounts',
     name: 'Months you imported for investment accounts',

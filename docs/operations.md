@@ -591,6 +591,14 @@ The months imported for an investment account from Vanguard's Performance page (
 
 **Rolling forward again.** Nothing to run: the imports are where they were, joined on read to whatever was recorded meanwhile.
 
+## Transactions from Vanguard's download, and rolling back
+
+The transactions imported for an investment account from Vanguard's download keep a map store of their own, `investment-imports` ([architecture.md](architecture.md#transactions-imported-on-an-investment-account)). Nothing to run: it is empty until someone imports a file.
+
+**What a rollback sees.** The release before never reads the store: the account's activity, chart and Investments count Plaid's rows alone again once the activity copies this release cached have aged out (15 minutes, or six hours with webhooks), since they pass the release before's own checks and are served until then. The imports stay where they are; it never deletes them. **It refuses every download made by this release**, as with `money-in-out` above: each has an `investment-imports` part, empty or not. This release ships without a reader a release ahead, since no rollback is planned while one person uses Nya: `test/release-before-plans.test.ts` names this part among those the release before doesn't know.
+
+**Rolling forward again.** Nothing to run: the imports are where they were, joined on read to Plaid's rows. A cached activity copy written by the release before has no `imports_fingerprint`, so it is a miss and built again.
+
 ## The tax law tables, each year
 
 The detailed model's law is code (`lib/fire/tax/law/<year>.ts`, [architecture.md](architecture.md#tax-law-and-the-year)): a value changes only through a reviewed pull request whose golden tests pass. A detailed plan reads the tables through `lawFor` (`lib/fire/tax/law/index.ts`): the law of today's year once every part of it is in, until then the newest complete year, and the plan says so. The admin page's Tax law card and the upkeep job read the tables too, for their sources. Each year:
