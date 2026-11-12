@@ -91,8 +91,18 @@ describe('the figures', () => {
 
   test('none set on a Vanguard account with nothing imported: the Performance page named too', () => {
     expect(text(figures({ totals: null }, { importable: true }))).toBe(
-      'Set your deposits and withdrawals to see your all-time returns. For now, returns count from the start of the range shown. To see further back, import Vanguard’s Performance page from ⋯. Set deposits and withdrawals'
+      'Set your deposits and withdrawals, or import Vanguard’s Performance page from ⋯, to see your all-time returns. For now, returns count from the start of the range shown. Set deposits and withdrawals'
     );
+  });
+
+  // Months from the Performance page that start at $0.00 make All all time
+  // with no totals (lib/investment-months.ts allTimeFromMonths).
+  test('none carried, months that start when it opened: where all time counts from, and no button', () => {
+    const html = figures({ totals: null }, { opened: '2023-01-01' });
+    expect(text(html)).toBe('All time counts from the months you imported from Vanguard’s Performance page, back to Jan 2023, when the account opened.');
+    expect(html).not.toContain('<button');
+    // Totals for a day before Nya's activity can't be carried: the months stand.
+    expect(text(figures({ totals: { ...TOTALS, as_of: '2026-05-01' } }, { opened: '2023-01-01' }))).toStartWith('All time counts from the months you imported');
   });
 
   test('set for a day before the activity Nya now has: a note, no figures', () => {
@@ -142,6 +152,54 @@ describe('on the account’s sheet', () => {
       expect(host.textContent).toContain('Not enough history for this account yet');
     } finally {
       act(() => root.unmount());
+    }
+  });
+});
+
+describe('on the account’s sheet, months that start when it opened', () => {
+  // Imported from $0.00 in Jan 2025: $2,000 in and $500 of returns a month to
+  // June 2026, then Nya's own from Jul 1, recorded from Jul 12. No totals.
+  const months = Array.from({ length: 18 }, (_, k) => ({ month: `${2025 + Math.floor(k / 12)}-${String((k % 12) + 1).padStart(2, '0')}`, net: 2000, returns: 500, end: 2500 * (k + 1) }));
+  const investment_months = {
+    imports: [{ id: 'imp-1', source: 'vanguard-performance', file_name: 'Performance.pdf', imported_at: '2026-11-01T12:00:00.000Z', start: { month: '2025-01', balance: 0 }, months, currency: 'USD' }],
+  };
+  const answer = (over: Record<string, unknown> = {}) =>
+    (async (url: string) =>
+      url.startsWith('/api/account-history')
+        ? Response.json({ points: [{ date: '2026-07-12', value: 46_000 }, { date: '2026-11-02', value: 55_000 }] })
+        : Response.json({ txns: [{}], ytd_contributions: 0, ytd_rollovers: 0, flows: monthly, flows_from: '2026-07-01', flows_to: '2026-11-05', note: null, money_in_out: null, investment_months, ...over })) as unknown as typeof fetch;
+  const mount = async (id: string, over: Record<string, unknown> = {}) => {
+    globalThis.fetch = answer(over);
+    const host = dom.document.createElement('div');
+    dom.document.body.appendChild(host);
+    const root = createRoot(host as unknown as HTMLElement);
+    act(() => root.render(<AccountSparkline accountId={id} itemId={`item_${id}`} investment moneyInOut={{ balance: 55_000, label: 'Individual', onEdit: () => {}, vanguard: true }} />));
+    await pass(20);
+    const all = host.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'All')[0];
+    act(() => click(all));
+    return { host, unmount: () => act(() => root.unmount()) };
+  };
+
+  test('All is all time from the months, and the line above says so with no button', async () => {
+    const v = await mount('acc_opened');
+    try {
+      expect(v.host.textContent).toContain('All time counts from the months you imported from Vanguard’s Performance page, back to Jan 2025, when the account opened.');
+      expect(v.host.textContent).not.toContain('Set deposits and withdrawals');
+      expect(v.host.textContent).toContain('All time: +$44,000.00 deposits & withdrawals · +$11,000.00 returns');
+      const readout = v.host.findAll((e) => (e.getAttribute('class') ?? '') === 'chart-readout-date')[0];
+      expect(readout.textContent).toBe('All time');
+    } finally {
+      v.unmount();
+    }
+  });
+
+  test('totals set stand instead', async () => {
+    const v = await mount('acc_opened_set', { money_in_out: TOTALS });
+    try {
+      expect(v.host.textContent).toContain('All time counts from your totals for Oct 15');
+      expect(v.host.textContent).not.toContain('months you imported');
+    } finally {
+      v.unmount();
     }
   });
 });

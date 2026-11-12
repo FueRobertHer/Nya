@@ -22,14 +22,16 @@
 // before the first recorded day, and each month's deposits and withdrawals
 // before Nya's activity, so the grey line and the split reach back. The
 // figures above keep Nya's own activity, which the totals are set against.
-// An import or an undo reloads the payload too.
+// Months that start at $0.00, when the account opened, make All all time
+// with no totals typed (lib/investment-months.ts allTimeFromMonths), and the
+// figures say so. An import or an undo reloads the payload too.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import NetWorthChart, { type HistoryPoint, type MonthsInfo } from './NetWorthChart';
 import { loadInvestmentActivity, onMoneyInOutSaved, type InvestmentActivityPayload } from './InvestmentActivity';
 import MoneyInOutFigures, { MoneyInOutSkeleton, type MoneyInOutTarget } from './MoneyInOutFigures';
 import { contributionBaseline, usableTotals } from '@/lib/growth';
-import { countingImport, withPastMonths } from '@/lib/investment-months';
+import { allTimeFromMonths, countingImport, withPastMonths } from '@/lib/investment-months';
 import { Notice } from './TotalCaveats';
 
 export default function AccountSparkline({
@@ -121,6 +123,8 @@ export default function AccountSparkline({
   // Nya's own activity, never the months.
   const totals = activity?.money_in_out ?? null;
   const carried = usableTotals(totals, past ? past.totals_from : activity?.flows_from) ? totals : null;
+  // Or all time from the months, from when it opened, with no totals.
+  const opened = allTimeFromMonths(past, totals, !!activity?.money_in_out_unreadable);
   // Given the selected range's points, so money in, out and growth count from
   // the start of the range.
   const baselineFor = useCallback(
@@ -155,6 +159,7 @@ export default function AccountSparkline({
           points={points}
           onEdit={moneyInOut.onEdit}
           importable={!!moneyInOut.vanguard && !countingImport(activity.investment_months)}
+          opened={opened}
         />
       );
     }
@@ -200,8 +205,9 @@ export default function AccountSparkline({
         label="Balance"
         baselineFor={activity ? baselineFor : null}
         baselineFrom={carried?.as_of ?? null}
-        // Its All is all time once the totals are carried.
-        allTime={!!carried && !!moneyInOut && !previewWith}
+        // Its All is all time once the totals are carried, or the months
+        // start when it opened.
+        allTime={(!!carried || !!opened) && !!moneyInOut && !previewWith}
         currency={currency}
         rangeSet={investment ? 'investment' : 'balance'}
         // A preview is for checking the joined history, all of it.

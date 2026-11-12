@@ -907,6 +907,8 @@ describe('imported months', () => {
       expect(hero(host)).toContain('Before Dec 1, 2025, the first recorded day, it is each month’s end from Vanguard’s Performance page.');
       expect(hero(host)).toContain('Until Jun 1, 2025, Vanguard gives one figure a month, so each counts from the middle of its month.');
       expect(card(host)).toContain('Before Jun 1, 2025, when Nya’s activity for this account starts, each month’s figures are Vanguard’s, from the Performance page you imported.');
+      // The range starts between two of the months' ends.
+      expect(hero(host)).toContain('Individual ••4421 counts from the end of Nov 2023, the first balance in the range from Vanguard’s Performance page.');
     } finally {
       act(() => root.unmount());
     }
@@ -921,6 +923,81 @@ describe('imported months', () => {
       await pass(10);
       expect(hero(host)).toContain('Until Sep 1, 2025, it is each month’s end from Vanguard’s Performance page.');
       expect(hero(host)).not.toContain('the first recorded day, it is');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  // From $0.00 in Jan 2023, when the account opened: $2,000 in and $500 of
+  // returns a month.
+  const opening = { imports: [{ ...MONTHS.imports[0], start: { month: '2023-01', balance: 0 }, months: months.map((m, k) => ({ ...m, net: 2000, returns: 500, end: 2500 * (k + 1) })) }] };
+
+  test('All from months that start when it opened: all time with no totals, and a rate', async () => {
+    const { host, root, range } = setup({ only: ['ind'], months: { ind: opening }, answers: { ind: { totals: null } } });
+    try {
+      await pass(50);
+      range('All');
+      await pass(10);
+      expect(heroLine(host)).toMatch(/^▲ \+[\d.]+% a year rate of return · since Jan 2023$/);
+      expect(hero(host)).toContain('Grey line: your deposits less withdrawals since it opened, by each day from Jan 1, 2023. The gap between them is your investment returns so far.');
+      expect(hero(host)).toContain(
+        'The rate of return weighs each deposit and withdrawal by how long it was invested. Until Jun 1, 2025, Vanguard gives one figure a month, so each counts from the middle of its month. Past a year it is given a year.'
+      );
+      expect(card(host)).toContain(
+        'All time Beginning balance $0.00 Deposits & withdrawals +$63,000.00 Investment returns +$57,000.00 Ending balance $120,000.00 Since Jan 2023, when the account opened: Vanguard’s months until Jun 1, 2025, then Nya’s activity.'
+      );
+      expect(card(host)).toContain(
+        'All time starts at $0.00, when the account opened, and counts from the months you imported from Vanguard’s Performance page, then the activity Nya has had since. Before Jun 1, 2025, when Nya’s activity for this account starts, each month’s figures are Vanguard’s.'
+      );
+      expect(words(host)).not.toContain('There’s no rate of return');
+      expect(words(host)).not.toContain('Set deposits and withdrawals');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  test('the same months with totals set: all time from the totals, with no rate', async () => {
+    const { host, root, range } = setup({ only: ['ind'], months: { ind: opening } });
+    try {
+      await pass(50);
+      range('All');
+      await pass(10);
+      expect(heroLine(host)).toBe('All time, since each account opened');
+      expect(hero(host)).toContain('Grey line: your deposits less withdrawals since it opened, from the totals you set, by each day from Jan 1, 2023.');
+      expect(card(host)).toContain('Deposits & withdrawals +$80,000.00 Investment returns +$40,000.00 Ending balance $120,000.00 Since each account opened, from the deposits and withdrawals you set for it.');
+      expect(words(host)).toContain('There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  test('totals that can’t be read: All counts from the months’ first day, as a range does', async () => {
+    const { host, root, range } = setup({ only: ['ind'], months: { ind: opening }, answers: { ind: { unreadable: true } } });
+    try {
+      await pass(50);
+      range('All');
+      await pass(10);
+      expect(card(host)).toContain('Since Jan 1, 2023 Beginning balance $0.00');
+      expect(card(host)).toContain('Deposits and withdrawals for Individual ••4421 can’t be read just now, so all-time returns across these accounts aren’t shown.');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  test('two accounts, one opening from months and one with totals: all time, no rate for the two, each said', async () => {
+    const { host, root, range } = setup({ only: ['ind', 'roth'], months: { ind: opening }, answers: { ind: { totals: null }, ...ROTH_SET } });
+    try {
+      await pass(50);
+      range('All');
+      await pass(10);
+      expect(heroLine(host)).toBe('All time, since each account opened');
+      expect(hero(host)).toContain('Grey line: your deposits less withdrawals since each account opened, from the totals you set and the months you imported, by each day');
+      expect(hero(host)).toContain('There’s no rate of return for all time across these accounts: Nya doesn’t know when the money before its records went in for Roth IRA ••3302.');
+      expect(card(host)).toContain(
+        'Since each account opened: Individual ••4421’s from Vanguard’s months until Jun 1, 2025, then Nya’s activity; Roth IRA ••3302’s from the deposits and withdrawals you set.'
+      );
+      // Individual's own months say when its money went in.
+      expect(rows(host)[0]).toMatch(/^Individual ••4421 Vanguard \+\$[\d,.]+ returns · \+[\d.]+% a year$/);
     } finally {
       act(() => root.unmount());
     }

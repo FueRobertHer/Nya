@@ -16,18 +16,25 @@
 // or to an account not chosen counts.
 //
 // ALL IS ALL TIME once every counted account has deposits and withdrawals
-// Nya can carry (usableTotals) and a recorded day on its line: the beginning
-// balance is $0.00, when each account opened, the net is its line there (its
-// deposits less withdrawals since it opened, carried from the totals), and
-// the returns are its balance less that. Measured on the last recorded day
-// its line reaches, as every range is, never the live balance, so the figure
-// is the gap on the chart. Short of that, All counts from the first recorded
-// day, as every other range does from its start. The rows follow the group's
-// basis, so they add up to its figures.
+// Nya can carry (usableTotals) and a recorded day on its line, or OPENS: its
+// line on All starts on the $0.00 a brokerage's months begin at, when it
+// opened (lib/investment-months.ts withPastMonths), so the line is its
+// deposits less withdrawals since then with no totals typed (unless they
+// can't be read, which might say otherwise). The beginning balance is $0.00,
+// when each account opened, the net is its line there (its deposits less
+// withdrawals since it opened, carried from the totals or added up from the
+// months), and the returns are its balance less that. Measured on the last
+// recorded day its line reaches, as every range is, never the live balance,
+// so the figure is the gap on the chart. Short of that, All counts from the
+// first recorded day, as every other range does from its start. The rows
+// follow the group's basis, so they add up to its figures.
 //
 // THE RATE OF RETURN is money-weighted over the range (lib/returns-rate.ts),
-// each account a leg from its own first day. None for all time: Nya doesn't
-// know when the money before its records went in.
+// each account a leg from its own first day. For all time only an account
+// that opens with no totals carried has one, the months saying when each
+// month's money went in, and the group only when every account does: typed
+// totals don't say when the money before Nya's records went in, and can
+// differ from the months' own sum.
 //
 // THE CHART (the hero's): the counted accounts' balances added up by day,
 // from the first day every one of them has a balance, to the last day one is
@@ -97,8 +104,11 @@ export type GrowthAccount = {
 export type RowStatus = 'loading' | 'failed' | 'busy' | 'none' | 'counted';
 
 /** Why an account's split starts or ends where it does: its own recorded
- *  days, or the activity Nya has for it. */
-export type Edge = { day: string; cause: 'recorded' | 'activity' };
+ *  days, the activity Nya has for it, or a brokerage's months: from their
+ *  first month (`months`), from when it opened (`opened`, at $0.00), or
+ *  from a month's end inside them, since they give one balance a month
+ *  (`month-end`). */
+export type Edge = { day: string; cause: 'recorded' | 'activity' | 'months' | 'opened' | 'month-end' };
 
 export type TotalsState = 'set' | 'unset' | 'outdated' | 'unreadable';
 
@@ -125,7 +135,8 @@ export type GrowthRow<A extends GrowthAccount = GrowthAccount> = {
   totals: TotalsState | null;
   /** Its figures on the group's basis; null when it has none. */
   figures: Figures | null;
-  /** Its rate of return over the range (never for all time). */
+  /** Its rate of return over the range (for all time only when it opens
+   *  with no totals carried, see the header). */
   rate: Rate | null;
 };
 
@@ -195,6 +206,19 @@ function totalsOf(a: GrowthActivity): TotalsState {
   return usableTotals(a.money_in_out, a.totals_from ?? a.flows_from) ? 'set' : 'outdated';
 }
 
+/** Why a split starts on `from`: a brokerage's month (its first, from
+ *  $0.00: when it opened; a later one: a month's end), a day Nya recorded
+ *  before it in `shown` (its activity starts later), or its first recorded
+ *  day. `points` is the account's whole history. */
+function startCause(shown: readonly BalancePoint[], points: readonly BalancePoint[], from: string): Edge['cause'] {
+  const at = shown.find((p) => p.date === from);
+  if (at?.entered) {
+    if (points.some((p) => p.entered && p.date < from)) return 'month-end';
+    return at.value === 0 ? 'opened' : 'months';
+  }
+  return shown.some((p) => !p.estimated && p.date < from) ? 'activity' : 'recorded';
+}
+
 const add = (rows: readonly Figures[]): Figures => {
   const total = (k: keyof Figures) => cents(rows.reduce((t, f) => t + f[k], 0));
   return { begin: total('begin'), dw: total('dw'), returns: total('returns'), end: total('end') };
@@ -237,6 +261,8 @@ export function summarizeGrowth<A extends GrowthAccount>(
   // Each counted account's line over the range, for its figures, its rate
   // and the chart.
   const tracks = new Map<GrowthRow<A>, Track>();
+  // On All, those whose line starts on a brokerage's $0.00 (see the header).
+  const opening = new Set<GrowthRow<A>>();
 
   const rows: GrowthRow<A>[] = accounts.map((account) => {
     const status = statusOf(account.activity);
@@ -271,8 +297,10 @@ export function summarizeGrowth<A extends GrowthAccount>(
           return { date: b.date, balance: p.value, line: b.value, in: b.in, out: b.out, ...(p.entered ? { entered: true } : {}) };
         })
     );
+    const track = tracks.get(row)!;
+    if (start === null && track[0]?.entered && track[0].balance === 0) opening.add(row);
     if (start !== null && daysBetween(start, split.from) > LATE_START_DAYS) {
-      row.from = { day: split.from, cause: shown.some((p) => !p.estimated && p.date < split.from) ? 'activity' : 'recorded' };
+      row.from = { day: split.from, cause: startCause(shown, account.points, split.from) };
     }
     if (last && split.to < shiftDays(last, -1)) {
       const lastReal = [...shown].reverse().find((p) => !p.estimated);
@@ -302,9 +330,7 @@ export function summarizeGrowth<A extends GrowthAccount>(
       const earliest = froms.length ? froms.reduce((m, d) => (d < m ? d : m)) : null;
       for (const r of list) {
         if (!r.split || !earliest || daysBetween(earliest, r.split.from) <= LATE_START_DAYS) continue;
-        const shown = r.account.points ?? [];
-        const from = r.split.from;
-        r.from = { day: from, cause: shown.some((p) => !p.estimated && p.date < from) ? 'activity' : 'recorded' };
+        r.from = { day: r.split.from, cause: startCause(r.account.points ?? [], r.account.points ?? [], r.split.from) };
       }
     }
     const loading = historyLoading || list.some((r) => r.status === 'loading');
@@ -312,17 +338,21 @@ export function summarizeGrowth<A extends GrowthAccount>(
     const failed = list.filter((r) => r.status === 'failed');
     const busy = list.filter((r) => r.status === 'busy');
     // All time: every account with a line has it as its deposits less
-    // withdrawals since it opened (its totals carried), with a recorded day.
-    // One with no line adds nothing either way, and is said as not counted.
+    // withdrawals since it opened (its totals carried, or it opens), with a
+    // recorded day. One with no line adds nothing either way, and is said as
+    // not counted.
     const lined = counted.filter((r) => r.split);
+    const opens = (r: GrowthRow<A>) => opening.has(r) && r.totals !== 'unreadable';
     const whole =
       range === 'ALL' &&
       !loading &&
       failed.length === 0 &&
       busy.length === 0 &&
       lined.length > 0 &&
-      lined.every((r) => r.totals === 'set' && (tracks.get(r)?.length ?? 0) > 0);
+      lined.every((r) => (r.totals === 'set' || opens(r)) && (tracks.get(r)?.length ?? 0) > 0);
     const basis: Basis = whole ? 'all' : 'range';
+    // Its rate for all time: from the months alone, with no totals carried.
+    const timed = (r: GrowthRow<A>) => opens(r) && r.totals !== 'set';
 
     const legs: RateLeg[] = [];
     if (!loading) {
@@ -333,9 +363,8 @@ export function summarizeGrowth<A extends GrowthAccount>(
         const end = t[t.length - 1];
         if (whole) {
           r.figures = { begin: 0, dw: end.line, returns: cents(end.balance - end.line), end: end.balance };
-          continue;
-        }
-        r.figures = { begin: first.balance, dw: cents(r.split.in - r.split.out), returns: r.split.growth, end: end.balance };
+          if (!timed(r)) continue;
+        } else r.figures = { begin: first.balance, dw: cents(r.split.in - r.split.out), returns: r.split.growth, end: end.balance };
         const split = r.split;
         const all = r.account.activity.state === 'ready' ? (r.account.activity.data.flows ?? []) : [];
         const leg: RateLeg = { from: split.from, to: split.to, begin: first.balance, end: end.balance, flows: all.filter((f) => f.date >= split.from && f.date < split.to) };
@@ -354,14 +383,15 @@ export function summarizeGrowth<A extends GrowthAccount>(
       loading,
       basis,
       figures: shown.length > 0 ? add(shown.map((r) => r.figures!)) : null,
-      rate: whole ? null : returnsRate(legs),
+      rate: whole && !lined.every(timed) ? null : returnsRate(legs),
       span: shown.length > 0 ? { from: froms[0], to: tos[tos.length - 1] } : null,
       firstRecorded: recorded[0] ?? null,
       chart: shown.length > 0 ? chartOf(shown, tracks, basis, start) : null,
       failed,
       busy,
       uncounted: loading ? [] : counted.filter((r) => !r.split),
-      missing: lined.filter((r) => r.totals === 'unset' || r.totals === 'outdated'),
+      // One that opens needs none.
+      missing: lined.filter((r) => (r.totals === 'unset' || r.totals === 'outdated') && !opens(r)),
       unreadable: lined.filter((r) => r.totals === 'unreadable'),
     };
   });
