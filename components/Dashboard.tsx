@@ -66,6 +66,7 @@ import DisconnectSplitsNote from './DisconnectSplitsNote';
 import ManualTxnSheet from './ManualTxnSheet';
 import type { ImportTarget } from './ImportSheet';
 import type { HistoryImportTarget } from './HistoryImportSheet';
+import { vanguardBalances } from './performance-balances';
 import type { ClientFlags } from '@/lib/flag-read';
 import type { OpsOpen } from '@/lib/flag-view';
 import type { LawAttention } from '@/lib/law-card';
@@ -3255,7 +3256,9 @@ export default function Dashboard({
         onUpdate={startEditManual}
         onAddTransaction={(account_id) => txnEdits.openAdd(account_id)}
         onImport={(account_id) => setImportTarget({ account_id })}
-        onImportHistory={setHistoryTarget}
+        // A Vanguard account's file is checked against every Vanguard
+        // account's balance together (components/PerformanceImport.tsx).
+        onImportHistory={(t) => setHistoryTarget(t.vanguard ? { ...t, vanguard_balances: vanguardBalances(institutions) } : t)}
         onMoneyInOut={(target) => {
           moneyFromInvestments.current = false;
           setMoneyTarget(target);

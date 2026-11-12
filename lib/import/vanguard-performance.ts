@@ -103,6 +103,11 @@ export type PerformanceRead =
       months: PerformanceMonth[];
       /** The Total row's columns that aren't the sum of the months. */
       total_differs: TotalColumn[];
+      /** The Total row and the summary as read, in cents (a column of the
+       *  Total row not found is null), so the checks can be run again on a
+       *  month the person corrects. */
+      total: Record<TotalColumn, Cents | null>;
+      summary: Record<SummaryFigure, Cents>;
       /** The summary's figures that don't match the table. */
       summary_differs: SummaryFigure[];
       /** The oldest month began at $0.00. Most often the account opened in
@@ -426,6 +431,8 @@ export function readPerformance(pages: PdfPage[]): PerformanceRead {
     range,
     months,
     total_differs,
+    total: { net: total!.net ?? null, market: total!.market ?? null, income: total!.income ?? null, returns: total!.returns ?? null },
+    summary: { ...summary! },
     summary_differs,
     begins_at_zero: oldest.figures.begin === 0,
     last: { day: range.to, balance: newest.figures.end },

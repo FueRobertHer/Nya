@@ -145,7 +145,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `api_tokens` | The API tokens you made, by name, with what each can do and when it was made and last used. |
 | `attachments` | The receipts and documents you attached: what each is and which transaction it is on, never the file ([below](#attachments)). |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `api-changes`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan-saved`, `fire-plans`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `money-in-out`, `plan-facts`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `api-changes`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan-saved`, `fire-plans`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `investment-months`, `manual-transactions`, `money-in-out`, `plan-facts`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
 
 ### `problems`
 
@@ -386,6 +386,23 @@ The deposits and withdrawals you set for your investment accounts (`lib/money-in
 | `set_at` | When they were saved. |
 
 An entry that can't be read is named under [`problems`](#problems) by the id it is stored under, and the account's sheet says its deposits and withdrawals can't be read just now.
+
+#### `investment-months`
+
+The months you imported for your investment accounts from your brokerage's own record of them (`lib/investment-months.ts`, [features.md](features.md#past-months-from-vanguard)): today only Vanguard's Performance page, printed to a PDF. One entry per account under the id it was imported on; an account linked to an earlier one reads the imports on all its ids. Each `value` is `{ "imports": [...] }`, oldest first, each import as it was read and never changed afterwards. The newest one counts, whole; undoing one takes out only its record. The file itself is never kept or sent: only the months read from it.
+
+| Field | Meaning |
+| --- | --- |
+| `id` | The import's id. |
+| `source` | Where it came from: `vanguard-performance`. |
+| `file_name` | The file's name as your device gave it, or `null`. |
+| `imported_at` | When it was imported. |
+| `start` | `{ "month": "YYYY-MM", "balance": number }`: the first month and its beginning balance. |
+| `months[]` | Every whole month in the file, oldest first: `month` (`YYYY-MM`), `net` (deposits less withdrawals, below zero when more came out), `returns` (market gain or loss plus income) and `end` (its ending balance). Each month's beginning balance (the month before's `end`, or `start.balance`) plus `net` plus `returns` is its `end`, to the cent. |
+| `currency` | The account's currency when it was imported (an ISO code), or `null`. |
+| `typed` | The months whose figures you typed in the review because the file's didn't add up. Absent when none. |
+
+Nya joins the counting import to what it recorded on every read: its month ends are drawn before the first day Nya recorded a balance, and its nets count as the money in and out before Nya's own activity. Nothing it works out is stored. An entry that can't be read is named under [`problems`](#problems) by the id it is stored under.
 
 #### `allocation-settings`
 

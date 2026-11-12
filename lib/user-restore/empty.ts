@@ -92,6 +92,7 @@ const GROUPS: readonly (readonly [words: string, families: readonly string[]])[]
   ['notes on the timeline', ['timeline-notes']],
   ['holdings history', ['holdings:history']],
   ['deposits and withdrawals you set for investment accounts', ['money-in-out']],
+  ['months you imported for investment accounts', ['investment-months']],
   ['planned bills and income', ['planned-items']],
   ['runway scenarios you saved', ['runway-scenarios']],
   ['copies of your plan', ['fire-plans']],
