@@ -12,11 +12,17 @@
 //   known), a connection that ends in five days, new accounts to review, an
 //   old savings account sitting at $0, and deposits and withdrawals typed as
 //   of a day before the Roth's activity starts, so they can't be carried.
-// - Alex with the brokerage at Vanguard: its months since it opened four
-//   years back imported from Vanguard's Performance page (made up, lib/demo-
-//   seed/past-months.ts), before the two years of activity Plaid shares and
-//   the year Nya recorded. A scenario of its own, since Vanguard may be OAuth
-//   at Plaid, where a custom user may not link as asked.
+// - Alex with the brokerage and the Roth at Vanguard: the brokerage's months
+//   since it opened four years back imported from Vanguard's Performance page
+//   (made up, lib/demo-seed/past-months.ts), before the two years of activity
+//   Plaid shares and the year Nya recorded; and Vanguard's transactions
+//   download imported (lib/demo-seed/imports.ts): a CSV of the last year
+//   into both, which says the Roth's conversion two months back is one, and
+//   a QFX taken into the brokerage half a year back, whose days the CSV
+//   decides from where they meet. Two connections to Vanguard, since the
+//   sandbox puts each investment transaction on every investment account of
+//   an Item. A scenario of its own, since Vanguard may be OAuth at Plaid,
+//   where a custom user may not link as asked.
 //
 // Pure and deterministic, as lib/demo-seed/profiles.ts is.
 
@@ -213,22 +219,49 @@ export function needsAttention(today: string): DemoProfile {
   };
 }
 
-/** Alex's money, the brokerage at Vanguard with its months imported. */
+/** Alex's money, the brokerage and the Roth at Vanguard, with their history
+ *  imported from Vanguard's own files. */
 export function vanguardHistory(today: string): DemoProfile {
   const alex = demoProfile('Alex', today);
+  const months = historyMonths(today);
   // The eleven months before the history: Plaid shares two years of an
   // investment account's activity, a bank's one here.
   const earlier = new Portfolio(today, 0, {});
   for (const mo of monthsBeforeHistory(today, 11)) earlier.contribute(on(mo, 16), 1_500, 'VTI', 'ACH CONTRIBUTION');
+  // An old Traditional IRA's money, not in Nya, converted to the Roth: Plaid
+  // says only that it came in, Vanguard's CSV that it was a conversion.
+  const converted = new Portfolio(today, 0, {});
+  converted.contribute(on(months[9], 6), 5_000, 'VTI', 'ROTH CONVERSION');
   const institutions = alex.institutions.map((inst) => {
     const brokerage = inst.accounts.find((a) => a.mask === '7788');
-    if (!brokerage) return inst;
-    return { ...inst, ...VANGUARD, accounts: [{ ...brokerage, investment_transactions: [...earlier.txns, ...(brokerage.investment_transactions ?? [])] }] };
+    if (brokerage) return { ...inst, ...VANGUARD, accounts: [{ ...brokerage, investment_transactions: [...earlier.txns, ...(brokerage.investment_transactions ?? [])] }] };
+    const roth = inst.accounts.find((a) => a.mask === '5521');
+    if (roth) {
+      const rows = [...(roth.investment_transactions ?? []), ...converted.txns].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+      return { ...inst, ...VANGUARD, accounts: [{ ...roth, investment_transactions: rows }] };
+    }
+    return inst;
   });
   return {
     ...alex,
     name: 'Alex, Vanguard history',
     institutions,
-    extras: { ...alex.extras, investmentMonths: { mask: '7788', file_name: 'Vanguard performance.pdf', openedMonthsBack: 48, monthlyBefore: 300 } },
+    extras: {
+      ...alex.extras,
+      investmentMonths: { mask: '7788', file_name: 'Vanguard performance.pdf', openedMonthsBack: 48, monthlyBefore: 300 },
+      transactionImports: [
+        // The brokerage's eighteen months to half a year back, as a QFX.
+        { source: 'vanguard-qfx', file_name: 'Vanguard transactions.qfx', masks: ['7788'], from: on(monthsBeforeHistory(today, 7)[0], 1), made: on(months[5], 5) },
+        // The last year of both, as a CSV, downloaded nine days back.
+        {
+          source: 'vanguard-csv',
+          file_name: 'Vanguard transactions.csv',
+          masks: ['7788', '5521'],
+          from: on(monthsBeforeHistory(today, 1)[0], 1),
+          made: addDays(today, -9),
+          kinds: { 'ACH CONTRIBUTION': 'Funds Received', 'ROTH CONTRIBUTION': 'Contribution', 'ROTH CONVERSION': 'Conversion (incoming)' },
+        },
+      ],
+    },
   };
 }

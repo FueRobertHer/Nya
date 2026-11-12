@@ -60,6 +60,20 @@ export type SeedRule = {
   off?: true;
 };
 
+/** A transactions download from Vanguard, imported (lib/demo-seed/
+ *  imports.ts): the profile's rows for the accounts `masks` names, from
+ *  `from` to the day before `made`, the day it was downloaded and imported. */
+export type SeedImport = {
+  source: 'vanguard-csv' | 'vanguard-qfx';
+  file_name: string;
+  masks: string[];
+  from: string;
+  made: string;
+  /** A CSV's Transaction Type for each cash row, by the profile's name for
+   *  it ('Funds Received', 'Contribution', 'Conversion (incoming)'). */
+  kinds?: Record<string, string>;
+};
+
 /** A copy of your plan, as Duplicate makes one: your plan with `set` over it,
  *  the items `drop` names taken out and `add` put in. */
 export type SeedCopy = { name: string; set?: Partial<FirePlanV2>; drop?: string[]; add?: PlanItem[] };
@@ -99,6 +113,8 @@ export type SeedExtras = {
    *  many months back, to last month, with `monthlyBefore` paid in each month
    *  before the activity Plaid shares. */
   investmentMonths?: { mask: string; file_name: string; openedMonthsBack: number; monthlyBefore: number };
+  /** Transactions imported from Vanguard's download, made up, oldest first. */
+  transactionImports?: SeedImport[];
   /** Accounts hidden, by mask. */
   hidden?: string[];
   /** Accounts that ended: closed on a day, with a note. */

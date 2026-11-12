@@ -36,8 +36,9 @@
 //    totals for the year either. Then what is keyed by
 //    an account (deposits and withdrawals, hidden, ended, notes) and by a
 //    transaction (tags, notes, splits, groups, shares), the recorded year and
-//    the saved plan (lib/demo-seed/recorded.ts), the months a scenario
-//    imports from its brokerage (lib/demo-seed/past-months.ts), and last what a scenario puts
+//    the saved plan (lib/demo-seed/recorded.ts), the months and the
+//    transactions a scenario imports from its brokerage (lib/demo-seed/
+//    past-months.ts, lib/demo-seed/imports.ts), and last what a scenario puts
 //    wrong with a connection. The caches and the estimated history go last.
 
 import type { Products } from 'plaid';
@@ -66,6 +67,7 @@ import { customUserConfig, txnCount, type DemoProfile, type SeedInstitution } fr
 import { checkProfile, fillAccounts, fillPlan, fillSettings, fillTransactions, fillTrouble, savedPlanDay, type Linked, type SeedRun } from './fill';
 import { measuredOf, recordedYear, writeHoldingsMonths, writeRecordedYear, writeSavedPlan } from './recorded';
 import { writePastMonths } from './past-months';
+import { writeTransactionImports } from './imports';
 
 export type SeedReport = {
   removed: string[];
@@ -162,6 +164,7 @@ export async function seedDemoAccount(ctx: Ctx, userId: string, profile: DemoPro
   const days = recordedYear(profile, today, measured, accountIds, manualIds);
   await writeRecordedYear(ctx, days, fetched.date !== null);
   await writePastMonths(run, days, measured);
+  await writeTransactionImports(run);
   const savedOn = savedPlanDay(profile, today);
   if (savedOn) await writeSavedPlan(ctx, profile, plans.main, savedOn);
   await fillTrouble(run);
