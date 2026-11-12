@@ -3226,12 +3226,15 @@ export default function Dashboard({
       <HistoryImportSheet
         target={historyTarget}
         onClose={() => setHistoryTarget(null)}
-        onImported={() => {
+        onImported={(what) => {
           loadTransactions();
           // The backfill draws it, running again first when rows after its
           // earliest point changed (lib/history-import/extend.ts).
           requestBackfill(() => loadNetWorth());
           void loadNetWorth();
+          // Vanguard's transactions download changes what an account's
+          // activity counts, and so the Plan's inputs.
+          if (what?.investments) planInputsRef.current.invalidate();
         }}
       />
       <MoneyInOutSheet

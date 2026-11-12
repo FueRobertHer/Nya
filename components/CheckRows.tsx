@@ -4,6 +4,7 @@
 // one 44px row each, the whole row the target, under a legend. Above a
 // sheet's footer, for what a save does besides (Also change it in,
 // components/AlsoChange.tsx). Nothing is checked until the person checks it.
+// A row that can't be chosen is disabled, its sub saying why.
 
 import type { ReactNode } from 'react';
 
@@ -12,6 +13,8 @@ export type CheckRow = {
   title: string;
   /** One line under the title: its value, say. */
   sub?: ReactNode;
+  /** Can't be chosen now: its sub says why. */
+  disabled?: boolean;
 };
 
 export default function CheckRows({
@@ -40,7 +43,7 @@ export default function CheckRows({
       <legend className="section-label">{legend}</legend>
       {rows.map((r) => (
         <label key={r.key} className="check-row">
-          <input type="checkbox" checked={checked.includes(r.key)} onChange={(e) => toggle(r.key, e.target.checked)} disabled={disabled} />
+          <input type="checkbox" checked={checked.includes(r.key)} onChange={(e) => toggle(r.key, e.target.checked)} disabled={disabled || r.disabled} />
           <span className="check-row-text">
             <span className="check-row-title">{r.title}</span>
             {r.sub && <span className="check-row-sub">{r.sub}</span>}

@@ -154,6 +154,10 @@ export type InvestmentActivity = ReturnType<typeof activityFromSync>;
  *  alone, and isn't cached, so the next load tries them again. */
 export const IMPORTS_UNREADABLE = 'Your imported transactions can’t be read just now, so this is Plaid’s activity alone';
 
+/** Days an import decides, with its file's name and when it was imported,
+ *  for the activity list's line. */
+export type DecidedDays = ImportedDays & { file_name: string | null; imported_at: string };
+
 /** The activity as both routes answer it: with the account's imports
  *  joined, what they decide and which can't be used, and the fingerprint of
  *  the imports it was built under (lib/investment-imports-store.ts
@@ -164,14 +168,18 @@ export function activityWithImports(
   account_id: string,
   imports: readonly AccountImport[] | null,
   imports_fingerprint: string
-): { payload: InvestmentActivity & { imported_days: ImportedDays[]; imports_unused: string[]; imports_fingerprint: string }; cacheable: boolean } {
+): { payload: InvestmentActivity & { imported_days: DecidedDays[]; imports_unused: string[]; imports_fingerprint: string }; cacheable: boolean } {
   if (imports === null) {
     const payload = activityFromSync({ ...sync, storeNote: [sync.storeNote, IMPORTS_UNREADABLE].filter(Boolean).join('. ') }, account_id);
     return { payload: { ...payload, imported_days: [], imports_unused: [], imports_fingerprint }, cacheable: false };
   }
   const merged = withImportedRows(sync, account_id, imports);
   const payload = activityFromSync(merged.sync, account_id, merged.counted);
-  return { payload: { ...payload, imported_days: merged.decided, imports_unused: merged.unused, imports_fingerprint }, cacheable: cacheable(sync) };
+  const imported_days = merged.decided.map((d) => {
+    const i = imports.find((x) => x.import_id === d.import_id);
+    return { ...d, file_name: i?.file_name ?? null, imported_at: i?.imported_at ?? '' };
+  });
+  return { payload: { ...payload, imported_days, imports_unused: merged.unused, imports_fingerprint }, cacheable: cacheable(sync) };
 }
 
 /** A cached entry built under the imports there are now: one built from
