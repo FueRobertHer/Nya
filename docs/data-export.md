@@ -406,14 +406,14 @@ Nya joins the counting import to what it recorded on every read: its month ends 
 
 #### `investment-imports`
 
-The transactions you imported for your investment accounts from your brokerage's own download (`lib/investment-imports.ts`): today only Vanguard's transaction history CSV. One entry per account and import, its `id` `<account id>:<import id>`, under the id the account had when it was imported; an account linked to an earlier one reads the imports on all its ids. A file that took several accounts has an entry for each, with the same import id. Each `value` is the account's part of the file as it was read, never changed afterwards. The file itself is never kept: only these rows and the days it covers.
+The transactions you imported for your investment accounts from your brokerage's own download (`lib/investment-imports.ts`): today only Vanguard's transactions download, as its CSV or its QFX. One entry per account and import, its `id` `<account id>:<import id>`, under the id the account had when it was imported; an account linked to an earlier one reads the imports on all its ids. A file that took several accounts has an entry for each, with the same import id. Each `value` is the account's part of the file as it was read, never changed afterwards. The file itself is never kept: only these rows and the days it covers.
 
 | Field | Meaning |
 | --- | --- |
-| `source` | Where it came from: `vanguard-csv` (and, later, `vanguard-qfx`). |
+| `source` | Where it came from: `vanguard-csv` or `vanguard-qfx`. |
 | `file_name` | The file's name as your device gave it, or `null`. |
 | `imported_at` | When it was imported. |
-| `covers` | `{ "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" }`: the days the file holds every transaction of, its first to last trade date across its accounts, ending at the latest the day before you imported it. |
+| `covers` | `{ "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" }`: the days the file holds every transaction of: a CSV's first to last trade date across its accounts, or the days a QFX says it covers, to the day before the one it was made; either ending at the latest the day before you imported it. |
 | `currency` | The amounts' currency (an ISO code), or `null`. |
 | `rows[]` | The account's transactions in those days, in the file's order, each as Plaid would give it: `date` (the trade date), `name`, `type` and `subtype`, `quantity`, `price`, `amount` (positive when cash leaves the account, as Plaid's), `fees`, `currency` and `security` (the fund's name, or `null`). |
 

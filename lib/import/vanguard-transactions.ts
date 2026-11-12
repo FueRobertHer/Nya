@@ -77,14 +77,17 @@ export type VanguardTxn = Omit<InvestmentTxn, 'investment_transaction_id' | 'acc
 
 /** Why none of an account's rows can be used: a Transaction Type not in the
  *  list, a row whose date or amount can't be read, shares moved with no
- *  value in the file, or a fee, accrued interest or a principal unlike the
- *  net amount, which no file Nya was checked on has had, so how they add up
- *  isn't known. `line` is the first such row's. */
-export type Unreadable =
+ *  value in the file, or a fee, tax withheld, accrued interest or a
+ *  principal unlike the net amount, which no file Nya was checked on has
+ *  had, so how they add up isn't known. `line` is the first such row's: the
+ *  file's line, or with `place` 'transaction' its place among the account's
+ *  transactions (a QFX, lib/import/vanguard-qfx.ts, is written on one line). */
+export type Unreadable = (
   | { reason: 'unknown-type'; type: string; line: number }
   | { reason: 'bad-row'; field: 'date' | 'amount'; line: number }
   | { reason: 'no-value'; type: string; line: number }
-  | { reason: 'not-yet-read'; field: 'fees' | 'accrued-interest' | 'principal'; line: number };
+  | { reason: 'not-yet-read'; field: 'fees' | 'withholding' | 'accrued-interest' | 'principal'; line: number }
+) & { place?: 'transaction' };
 
 export type VanguardAccount = {
   /** The account number's last four digits. */

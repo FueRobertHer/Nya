@@ -15,13 +15,15 @@
 //   - deposits & withdrawals over those days, the file's and what counts now
 //     (null where nothing counts now: days before Nya's activity starts), in
 //     all and by month, each month where they differ;
+//   - the new savings over those days each way, as the Plan counts them;
 //   - the rows just outside those days left out as the same event as one of
 //     the file's (the edge twins), what they count now said in the month
 //     their file row lands in;
 //   - or that its days don't reach Nya's activity, so it would never be used.
 
 import { activityFromSync } from './investment-activity';
-import { withImportedRows, type AccountImport, type InvestmentImport } from './investment-imports';
+import { withImportedRows, type AccountImport, type ImportSource, type InvestmentImport } from './investment-imports';
+import { contributedAmount, isContribution } from './investments';
 import type { InvSync } from './invstore';
 import type { Unreadable } from './import/vanguard-transactions';
 
@@ -55,6 +57,10 @@ export type AccountEffect =
       now_rows: number;
       /** Deposits & withdrawals over those days. */
       flows: { file: number; now: number | null };
+      /** New savings over those days, as the Plan counts them: contributions,
+       *  never rollovers (lib/investments.ts isContribution). `now` only over
+       *  days that count now, null where none does. */
+      savings: { file: number; now: number | null };
       months: MonthChange[];
       twins: TwinShown[];
     };
@@ -85,11 +91,29 @@ export type ReviewedAccount = {
   effect: Extract<AccountEffect, { kind: 'takes' }> | null;
 };
 
+/** A CSV import that covers some of a QFX's days, and so decides them, with
+ *  the last four digits of the file's accounts it does that in. */
+export type DecidingCsv = { import_id: string; file_name: string | null; imported_at: string; covers: { from: string; to: string }; masks: string[] };
+
 /** The review: the fingerprint of the imports it was made under (an import
- *  names it), the file's days, how many of its rows are from today or later
- *  (left out), whether any of its accounts ends in the sheet's account's four
- *  digits (taken or not), and each of its accounts in its order. */
-export type ImportsReview = { fingerprint: string; covers: { from: string; to: string }; after_today: number; sheet_in: boolean; accounts: ReviewedAccount[] };
+ *  names it), which download it is, the file's days, how many of its rows
+ *  are from today or later (left out), whether any of its accounts ends in
+ *  the sheet's account's four digits (taken or not), and each of its accounts
+ *  in its order. A QFX's says too the day it was made when its days stop the
+ *  day before (`stated_end`: the file states that day, which can be
+ *  partial), and the CSV imports that cover some of its days in an account
+ *  it can be imported into (`csv`, by their first day), which decide those
+ *  days there. */
+export type ImportsReview = {
+  fingerprint: string;
+  source: ImportSource;
+  covers: { from: string; to: string };
+  stated_end: string | null;
+  after_today: number;
+  sheet_in: boolean;
+  csv: DecidingCsv[];
+  accounts: ReviewedAccount[];
+};
 
 const cents = (n: number) => Math.round(n * 100);
 const inside = (d: string, spans: readonly { from: string; to: string }[]) => spans.some((s) => d >= s.from && d <= s.to);
@@ -162,7 +186,15 @@ export function effectOf(sync: InvSync, account_id: string, imports: readonly Ac
 
   const twins = twinPairs.map(({ plaid, file: f }) =>({ date: plaid.date, file_date: f.date, name: plaid.name, type: plaid.type, subtype: plaid.subtype, amount: plaid.amount }));
 
-  return { kind: 'takes', days, rows, now_rows, flows: { file: round(fileTotal), now: anyKnown ? round(nowTotal) : null }, months: changed, twins };
+  // New savings each way: a QFX can't say what money in was, so its days can
+  // count less than they do now even where the flows agree.
+  const saved = (m: ReturnType<typeof withImportedRows>, within: (d: string) => boolean) =>
+    mine(m.sync)
+      .filter((t) => inside(t.date, days) && within(t.date) && isContribution(t, m.counted))
+      .reduce((n, t) => n + contributedAmount(t, m.counted), 0);
+  const savings = { file: round(saved(after, () => true)), now: known ? round(saved(now, (d) => d >= known.from && d <= known.to)) : null };
+
+  return { kind: 'takes', days, rows, now_rows, flows: { file: round(fileTotal), now: anyKnown ? round(nowTotal) : null }, savings, months: changed, twins };
 }
 
 const round = (n: number) => {

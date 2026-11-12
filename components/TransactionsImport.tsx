@@ -1,11 +1,13 @@
 'use client';
 
-// Vanguard's transactions download (a CSV) inside an investment account's ⋯,
-// Import history from a file (components/HistoryImportSheet.tsx), on an
-// account at Vanguard only. The file's rows take the place of what Vanguard
-// gave Nya for the days it covers (lib/investment-imports.ts), worked out on
-// every read, so each import is its own record and its Undo hands its days
-// back exactly.
+// Vanguard's transactions download (its CSV, or its QFX or OFX) inside an
+// investment account's ⋯, Import history from a file (components/
+// HistoryImportSheet.tsx), on an account at Vanguard only. The file's rows
+// take the place of what Vanguard gave Nya for the days it covers
+// (lib/investment-imports.ts), worked out on every read, so each import is
+// its own record and its Undo hands its days back exactly. A CSV decides the
+// days it covers over a QFX, which leaves out conversions and shares moved
+// in kind.
 //
 //   - The review (TransactionsReview), from the server (app/api/investment-
 //     imports, action 'review'): each of the file's accounts, checked when it
@@ -16,7 +18,11 @@
 //     it keeps, days that don't reach Nya's activity); each month where
 //     deposits & withdrawals change; the rows just outside its days left out
 //     as the same event as one of its own. One import takes every account
-//     checked, with one Undo (Fue, 2026-11-12).
+//     checked, with one Undo (Fue, 2026-11-12). A QFX's review says too the
+//     day it was made (left out), the CSV imports that decide some or all
+//     of its days, and that its money in or out never counts as new savings;
+//     where its deposits & withdrawals aren't what counts now, a caution,
+//     and Import waits for a yes (qfxDiffers).
 //   - Once imported: which days come from a download (TransactionsNow), and
 //     every import of the account listed (TransactionImports), each saying
 //     whether it counts, with Undo, confirmed in place with what comes back
@@ -31,7 +37,7 @@ import { withMask } from '@/lib/account-names';
 import { displayName } from '@/lib/categories';
 import { monthText } from '@/lib/investment-months';
 import { afterUndo, daysApart, MAX_IMPORTS_PER_ACCOUNT, type DecidedBy } from '@/lib/investment-imports';
-import type { ImportsReview, ReviewedAccount } from '@/lib/investment-imports-review';
+import type { DecidingCsv, ImportsReview, ReviewedAccount } from '@/lib/investment-imports-review';
 import type { ListedImport } from '@/lib/investment-imports-store';
 import type { Unreadable } from '@/lib/import/vanguard-transactions';
 import type { InvestmentActivityPayload } from './InvestmentActivity';
@@ -45,7 +51,20 @@ const spanText = (from: string, to: string) => (from === to ? day(from) : `${day
 const capital = (s: string) => `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
 const importedDay = (i: { imported_at: string }) => formatInstantDay(i.imported_at, { sentence: true }) ?? i.imported_at.slice(0, 10);
 const listed = (words: readonly string[]) => (words.length <= 1 ? (words[0] ?? '') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`);
-const money = (n: number) => <Masked>{signedMoney(n, CURRENCY, { always: true })}</Masked>;
+// Signed except zero, which reads as no change ("$0.00", never "+$0.00").
+const money = (n: number) => <Masked>{signedMoney(n, CURRENCY)}</Masked>;
+
+/** Stretches of days in order, those that meet joined. */
+function runsOf(spans: readonly { from: string; to: string }[]): { from: string; to: string }[] {
+  const runs: { from: string; to: string }[] = [];
+  for (const d of [...spans].sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0))) {
+    const last = runs[runs.length - 1];
+    if (last && daysApart(last.to, d.from) <= 1) last.to = d.to > last.to ? d.to : last.to;
+    else runs.push({ from: d.from, to: d.to });
+  }
+  return runs;
+}
+const runsText = (spans: readonly { from: string; to: string }[]) => listed(runsOf(spans).map((r) => spanText(r.from, r.to)));
 
 // ---- The account's imports --------------------------------------------------
 
@@ -111,6 +130,30 @@ export const takeOf = (r: ImportsReview, checked: readonly string[]) =>
 /** The rows the accounts checked would bring. */
 export const rowsTaken = (r: ImportsReview, checked: readonly string[]) => r.accounts.filter((a) => takeable(a) && checked.includes(a.mask)).reduce((n, a) => n + a.rows, 0);
 
+/** The months, in the accounts checked, where a QFX's deposits & withdrawals
+ *  aren't what counts now (not those where nothing counts now: there it
+ *  only adds what Nya didn't have). */
+const qfxChanges = (r: ImportsReview, checked: readonly string[]) =>
+  r.source !== 'vanguard-qfx'
+    ? []
+    : r.accounts.filter((a) => takeable(a) && checked.includes(a.mask)).flatMap((a) => (a.effect?.months ?? []).filter((m) => m.now !== null).map((m) => ({ a, m })));
+
+const cents = (n: number) => Math.round(n * 100);
+
+/** The accounts checked whose new savings in a QFX's days would count for
+ *  less than they do now: a QFX doesn't say what money in was, so none of
+ *  its own counts as savings, even where its deposits & withdrawals agree. */
+const qfxSavingsFall = (r: ImportsReview, checked: readonly string[]) =>
+  r.source !== 'vanguard-qfx'
+    ? []
+    : r.accounts.filter((a) => takeable(a) && checked.includes(a.mask) && a.effect!.savings.now !== null && cents(a.effect!.savings.now) > cents(a.effect!.savings.file));
+
+/** Whether a QFX differs from what counts now in an account checked, so
+ *  Import waits for the person's yes: in its deposits & withdrawals (a QFX
+ *  leaves out conversions and shares moved in kind, so it may be the one
+ *  that's wrong) or in the Plan's new savings. */
+export const qfxDiffers = (r: ImportsReview, checked: readonly string[]) => qfxChanges(r, checked).length > 0 || qfxSavingsFall(r, checked).length > 0;
+
 /** None of the file's accounts is one of the person's Vanguard accounts in
  *  Nya: said where the file is chosen, as nothing in it can be imported. */
 export function noneOfYours(r: ImportsReview, name: string): string | null {
@@ -118,13 +161,15 @@ export function noneOfYours(r: ImportsReview, name: string): string | null {
   return `None of this file’s accounts (${listed(r.accounts.map((a) => `••${a.mask}`))}) is one of your Vanguard accounts in Nya, so nothing can be imported. Download it from the Vanguard login ${name} is in.`;
 }
 
-/** What makes a line unreadable, mid sentence. */
+/** What makes a line unreadable, mid sentence: a CSV's by its line, a QFX's
+ *  by its place among the account's transactions. */
 export function unreadableText(u: Unreadable, lines: number): string {
+  const at = `${u.place === 'transaction' ? 'transaction' : 'line'} ${plainNumber(u.line)}`;
   if (u.reason === 'unknown-type') return `one of its ${plural(lines, 'transaction')} is “${u.type}”, a kind Nya doesn’t know yet`;
-  if (u.reason === 'bad-row') return `the ${u.field} on line ${plainNumber(u.line)} can’t be read`;
-  if (u.reason === 'no-value') return `line ${plainNumber(u.line)} moves shares (“${u.type}”) with no value in the file`;
-  const what = { fees: 'a fee', 'accrued-interest': 'accrued interest', principal: 'a principal amount unlike its net amount' }[u.field];
-  return `line ${plainNumber(u.line)} has ${what}, which Nya doesn’t read yet`;
+  if (u.reason === 'bad-row') return `the ${u.field} ${u.place === 'transaction' ? 'of' : 'on'} ${at} can’t be read`;
+  if (u.reason === 'no-value') return `${at} moves shares (“${u.type}”) with no value in the file`;
+  const what = { fees: 'a fee', withholding: 'tax withheld', 'accrued-interest': 'accrued interest', principal: 'a principal amount unlike its net amount' }[u.field];
+  return `${at} has ${what}, which Nya doesn’t read yet`;
 }
 
 /** Why an account can't be taken, under its name. */
@@ -143,11 +188,21 @@ function problemSub(a: ReviewedAccount): string {
   return '';
 }
 
-/** What taking an account would do, under its name. */
-function takesSub(e: NonNullable<ReviewedAccount['effect']>) {
+/** What taking an account would do, under its name: its rows that would
+ *  count (all of them, unless a CSV import decides some of their days). */
+function takesSub(a: ReviewedAccount, e: NonNullable<ReviewedAccount['effect']>) {
+  if (e.days.length === 0) return a.rows === 1 ? 'Its one transaction wouldn’t count now.' : `None of its ${plural(a.rows, 'transaction')} would count now.`;
+  const counts =
+    e.rows >= a.rows
+      ? plural(e.rows, 'transaction')
+      : e.rows === 0
+        ? a.rows === 1
+          ? 'Its one transaction doesn’t count'
+          : `None of its ${plural(a.rows, 'transaction')} count`
+        : `${plainNumber(e.rows)} of its ${plural(a.rows, 'transaction')} ${e.rows === 1 ? 'counts' : 'count'}`;
   return (
     <>
-      {`${plural(e.rows, 'transaction')}, in place of ${e.now_rows === 0 ? 'none' : `the ${plainNumber(e.now_rows)} there now`}. Deposits & withdrawals `}
+      {`${counts}, in place of ${e.now_rows === 0 ? 'none' : `the ${plainNumber(e.now_rows)} there now`}. Deposits & withdrawals `}
       {money(e.flows.file)}
       {e.flows.now === null ? ', none counted for these days now.' : <>, now {money(e.flows.now)}.</>}
     </>
@@ -156,12 +211,34 @@ function takesSub(e: NonNullable<ReviewedAccount['effect']>) {
 
 const nameIn = (a: ReviewedAccount) => withMask(a.account?.name ?? 'Account', a.mask);
 
+/** A CSV import, named for a sentence's start. */
+const csvNamed = (c: DecidingCsv) => `${c.file_name ?? 'A CSV download'}, imported ${importedDay(c)}`;
+
+/** What the CSV imports that decide some of a QFX's days in the accounts
+ *  checked mean for it: a note, or null. */
+function csvNote(review: ImportsReview, on: readonly ReviewedAccount[]): string | null {
+  const masks = on.map((a) => a.mask);
+  const csvs = review.csv.filter((c) => c.masks.some((m) => masks.includes(m)));
+  if (review.source !== 'vanguard-qfx' || csvs.length === 0) return null;
+  const why = 'a CSV decides the days it covers, since it has what a QFX leaves out';
+  if (on.every((a) => a.effect && a.effect.days.length === 0)) {
+    return `${listed(csvs.map(csvNamed))}, ${csvs.length === 1 ? 'covers' : 'cover'} all of this file’s days, and ${why}, so none of this file would count now. It would if ${csvs.length === 1 ? 'that import were' : 'those imports were'} undone.`;
+  }
+  const each = csvs.map((c) => `${csvNamed(c)}, covers ${spanText(c.covers.from, c.covers.to)}`).join('; ');
+  // The days it would count, said when they are the same in every account.
+  const days = on.map((a) => runsText(a.effect?.days ?? []));
+  const where = days.every((d) => d === days[0]) && days[0] ? `only for ${days[0]}` : 'only for the days no CSV covers, as each account says';
+  return `${each}. ${capital(why)}, so this file counts ${where}.`;
+}
+
 export function TransactionsReview({
   fileName,
   review,
   sheet,
   checked,
   onChecked,
+  yes,
+  onYes,
   disabled,
 }: {
   fileName: string;
@@ -170,14 +247,18 @@ export function TransactionsReview({
   sheet: { account_id: string; name: string };
   checked: string[];
   onChecked: (masks: string[]) => void;
+  /** Whether the person said to use a QFX that differs (qfxDiffers). */
+  yes: boolean;
+  onYes: (yes: boolean) => void;
   disabled: boolean;
 }) {
+  const qfx = review.source === 'vanguard-qfx';
   const accounts = review.accounts;
   const mine = accounts.filter((a) => a.account);
   const rows: CheckRow[] = mine.map((a) => ({
     key: a.mask,
     title: nameIn(a),
-    sub: a.problem ? problemSub(a) : a.effect ? takesSub(a.effect) : undefined,
+    sub: a.problem ? problemSub(a) : a.effect ? takesSub(a, a.effect) : undefined,
     disabled: !takeable(a),
   }));
   const lines = accounts.reduce((n, a) => n + a.lines, 0);
@@ -204,15 +285,31 @@ export function TransactionsReview({
     cautions.push(`The file has more than one account ending in ${mask}, so Nya can’t tell them apart: their transactions are left out.`);
   const strangers = accounts.filter((a) => a.problem?.why === 'not-in-nya');
 
-  const changes = on.flatMap((a) => (a.effect?.months ?? []).map((m) => ({ a, m })));
+  // A QFX's months that differ go in its caution, needing a yes; a CSV's in
+  // the table under the list, as what the file corrects.
+  const changes = qfx ? [] : on.flatMap((a) => (a.effect?.months ?? []).map((m) => ({ a, m })));
+  const differs = qfxChanges(review, checked);
+  const falls = qfxSavingsFall(review, checked);
+  const differing = [...new Set([...differs.map(({ a }) => a), ...falls])];
+  const differMonths = [...new Set(differs.map(({ m }) => m.month))].sort();
+  const differWhen = differMonths.length <= 3 ? `In ${listed(differMonths.map((m) => monthText(m)))}` : `In ${plainNumber(differMonths.length)} months`;
   const twins = on.flatMap((a) => (a.effect?.twins ?? []).map((t) => ({ a, t })));
   const several = on.length > 1;
+  const note = csvNote(review, on);
+  const month = (a: ReviewedAccount, m: string) => (several ? `${a.account!.name}, ${monthText(m)}` : monthText(m));
 
   return (
     <div className="stack">
-      <p className="helper">{`${fileName} · ${TXN_SOURCE}`}</p>
+      <p className="helper">{`${fileName} · ${TXN_SOURCE}${qfx ? `, as ${/\.ofx$/i.test(fileName) ? 'OFX' : 'QFX'}` : ''}`}</p>
       <div className="stack tight">
         <h3 className="section-label">{`${plural(lines, 'transaction')} in ${plural(accounts.length, 'account')}, ${spanText(review.covers.from, review.covers.to)}`}</h3>
+        {review.stated_end && (
+          <p className="helper">
+            {`The file says it runs to ${day(review.stated_end)}, the day it was made, which wasn’t over then, so it counts to ${day(review.covers.to)}.${
+              review.after_today > 0 ? ` Its ${plural(review.after_today, 'transaction')} from that day ${review.after_today === 1 ? 'is' : 'are'} left out.` : ''
+            }`}
+          </p>
+        )}
         <p className="helper">For each account you import it into, the file’s transactions take the place of the ones Vanguard gave Nya for these days. Before and after them, nothing changes.</p>
       </div>
       {cautions.map((c) => (
@@ -220,7 +317,76 @@ export function TransactionsReview({
           {c}
         </Notice>
       ))}
+      {differing.length > 0 && (
+        <div className="stack tight">
+          <Notice level="caution" role="status">
+            {differs.length > 0 &&
+              `${differWhen} this file’s deposits and withdrawals for ${listed([...new Set(differs.map(({ a }) => a))].map(nameIn))} aren’t what Nya counts now. `}
+            {falls.length > 0 && (
+              <>
+                {`${differs.length > 0 ? 'And with it' : 'With this file'}, the new savings your Plan counts in its days would fall `}
+                {falls.map((a, k) => (
+                  <span key={a.mask}>
+                    {k === 0 ? '' : k === falls.length - 1 ? ' and ' : ', '}
+                    {'from '}
+                    {money(a.effect!.savings.now!)}
+                    {' to '}
+                    {money(a.effect!.savings.file)}
+                    {` in ${nameIn(a)}`}
+                  </span>
+                ))}
+                {': a QFX file doesn’t say whether money in was a contribution or a rollover. '}
+              </>
+            )}
+            {differs.length > 0
+              ? 'A QFX file leaves out conversions and shares moved in kind, so it may be the one that’s wrong. Vanguard’s CSV download has them: import that instead if you can.'
+              : 'Vanguard’s CSV download says which: import that instead if you can.'}
+          </Notice>
+          {differs.length > 0 && (
+          <table className="report-table">
+            <thead>
+              <tr>
+                <th scope="col">Month</th>
+                <th scope="col" className="num">
+                  Now
+                </th>
+                <th scope="col" className="num">
+                  This file
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {differs.map(({ a, m }) => (
+                <tr key={`${a.mask}:${m.month}`}>
+                  <td>{month(a, m.month)}</td>
+                  <td className="num">{m.now === null ? 'None counted' : money(m.now)}</td>
+                  <td className="num">{money(m.file)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          )}
+          <label className="check-row">
+            <input type="checkbox" checked={yes} onChange={(e) => onYes(e.target.checked)} disabled={disabled} />
+            <span className="check-row-text">
+              <span className="check-row-title">Use this file anyway</span>
+              <span className="check-row-sub">{`Its transactions will count for ${runsText(differing.flatMap((a) => a.effect?.days ?? []))}.`}</span>
+            </span>
+          </label>
+        </div>
+      )}
+      {note && (
+        <Notice level="info" role="status">
+          {note}
+        </Notice>
+      )}
       <CheckRows legend="Import into" rows={rows} checked={checked.filter((k) => rows.some((r) => r.key === k && !r.disabled))} onChange={onChecked} disabled={disabled} />
+      {qfx && falls.length === 0 && on.some((a) => (a.effect?.rows ?? 0) > 0) && (
+        <p className="helper">
+          A QFX file doesn’t say whether money in was a contribution or a rollover, so none of it counts as new savings in your Plan. Vanguard’s CSV download says
+          which: import that instead if you can.
+        </p>
+      )}
       {strangers.length > 0 && (
         <p className="helper">
           {strangers.length === 1
@@ -229,7 +395,7 @@ export function TransactionsReview({
         </p>
       )}
       {!review.sheet_in && <p className="helper">{`${capital(sheet.name)} isn’t in this file. Its other accounts can still be imported.`}</p>}
-      {review.after_today > 0 && (
+      {review.after_today > 0 && !review.stated_end && (
         <p className="helper">{`The file’s ${plural(review.after_today, 'transaction')} from today ${review.after_today === 1 ? 'is' : 'are'} left out: today may not be complete yet.`}</p>
       )}
       {changes.length > 0 && (
@@ -250,7 +416,7 @@ export function TransactionsReview({
             <tbody>
               {changes.map(({ a, m }) => (
                 <tr key={`${a.mask}:${m.month}`}>
-                  <td>{several ? `${a.account!.name}, ${monthText(m.month)}` : monthText(m.month)}</td>
+                  <td>{month(a, m.month)}</td>
                   <td className="num">{m.now === null ? 'None counted' : money(m.now)}</td>
                   <td className="num">{money(m.file)}</td>
                 </tr>
@@ -286,30 +452,33 @@ export function TransactionsNow({ name, activity }: { name: string; activity: In
   if (days.length === 0) return null;
   const files = new Set(days.map((d) => d.import_id)).size;
   // Stretches that meet are one run; days between runs are Vanguard's.
-  const runs: { from: string; to: string }[] = [];
-  for (const d of days) {
-    const last = runs[runs.length - 1];
-    if (last && daysApart(last.to, d.from) <= 1) last.to = d.to > last.to ? d.to : last.to;
-    else runs.push({ from: d.from, to: d.to });
-  }
   return (
     <div className="stack tight">
-      <h3 className="section-label">{`${capital(listed(runs.map((r) => spanText(r.from, r.to))))}, from ${files === 1 ? TXN_SOURCE : 'Vanguard’s transactions downloads'}`}</h3>
+      <h3 className="section-label">{`${capital(runsText(days))}, from ${files === 1 ? TXN_SOURCE : 'Vanguard’s transactions downloads'}`}</h3>
       <p className="helper">{`For those days ${name}’s activity is the ${files === 1 ? 'file’s' : 'files’'}, in place of what Vanguard gave Nya.`}</p>
     </div>
   );
 }
 
 /** Whether an import counts now, by what the activity says each one
- *  decides: null until it has loaded. */
-function standing(i: ListedImport, activity: InvestmentActivityPayload | null): { badge: string; sub: string; days: { from: string; to: string }[] } | null {
+ *  decides: null until it has loaded. One that doesn't says why: its days
+ *  don't reach Nya's activity, or other imports decide them (for a QFX, a
+ *  CSV when one decides any of them, as a CSV always comes first). */
+function standing(i: ListedImport, list: TxnImports, activity: InvestmentActivityPayload | null): { badge: string; sub: string; days: { from: string; to: string }[] } | null {
   if (!activity?.imported_days) return null;
   const days = activity.imported_days.filter((d) => d.import_id === i.import_id).map(({ from, to }) => ({ from, to }));
   const has = days.reduce((n, d) => n + daysApart(d.from, d.to) + 1, 0);
   const all = daysApart(i.covers.from, i.covers.to) + 1;
   if (has >= all) return { badge: 'Counts', sub: '', days };
   if (has > 0) return { badge: 'Counts in part', sub: ` · counts ${listed(days.map((d) => spanText(d.from, d.to)))}`, days };
-  const why = activity.imports_unused?.includes(i.import_id) ? 'its days don’t reach Nya’s activity' : 'newer imports decide its days';
+  if (activity.imports_unused?.includes(i.import_id)) return { badge: 'Doesn’t count', sub: ' · its days don’t reach Nya’s activity', days };
+  // The imports that decide its days instead, by their kind.
+  const deciders = new Set(activity.imported_days.filter((d) => d.from <= i.covers.to && d.to >= i.covers.from).map((d) => d.import_id));
+  const kinds = new Set(list.imports.filter((o) => deciders.has(o.import_id)).map((o) => o.source));
+  const why =
+    i.source !== 'vanguard-qfx' ? 'newer imports decide its days'
+    : kinds.size === 1 && kinds.has('vanguard-csv') ? (deciders.size === 1 ? 'a CSV import decides its days' : 'CSV imports decide its days')
+    : 'other imports decide its days';
   return { badge: 'Doesn’t count', sub: ` · ${why}`, days };
 }
 
@@ -322,25 +491,30 @@ export function undoText(i: ListedImport, list: TxnImports, activity: Investment
   const n = i.accounts.length;
   const names = i.accounts.map((id) => (list.names[id] ? withMask(list.names[id].name, list.names[id].mask) : 'an account Nya no longer lists'));
   const went = n > 1 ? `It went into ${listed(names)}, and is undone from ${n === 2 ? 'both' : `all ${NUMBER_WORDS[n] ?? plainNumber(n)}`}` : '';
-  const rule = 'its days will come from an import before it, or from what Vanguard gave Nya, again';
-  const now = standing(i, activity);
+  const rule = 'its days will come from another import that covers them, or from what Vanguard gave Nya, again';
+  const now = standing(i, list, activity);
   if (!now) return `Undo the import from ${importedDay(i)}? ${went ? `${went}: in each, ${rule}` : capital(rule)}. Nothing else changes, and you can import the file again later.`;
   let back: string;
+  // A CSV undone can hand its days to a QFX, which was never checked
+  // against them: said, so the person knows what they'd count.
+  let qfxNote = '';
   if (now.days.length === 0) back = 'nothing you see changes, as it doesn’t count now';
   else {
     const others = list.imports.filter((o) => o.import_id !== i.import_id);
     const parts: DecidedBy[] = afterUndo(now.days, others);
+    if (i.source === 'vanguard-csv' && parts.some((p) => others.find((o) => o.import_id === p.by)?.source === 'vanguard-qfx'))
+      qfxNote = ' A QFX file leaves out conversions and shares moved in kind, and none of its money in counts as new savings.';
     back = parts
       .map((p, k) => {
         const by = p.by ? others.find((o) => o.import_id === p.by) : null;
-        const from = by ? `the import from ${importedDay(by)}` : 'what Vanguard gave Nya';
+        const from = by ? `the ${by.source === 'vanguard-qfx' ? 'QFX ' : ''}import from ${importedDay(by)}` : 'what Vanguard gave Nya';
         return `${spanText(p.from, p.to)} ${k === 0 ? 'will come ' : ''}from ${from}${k === 0 ? ' again' : ''}`;
       })
       .join(', and ');
   }
   const rest = n - 1;
   const theirs = went ? `. In ${name}, ${back}; in the other${rest > 1 ? ` ${NUMBER_WORDS[rest] ?? plainNumber(rest)}` : ''}, ${rule}` : '';
-  return `Undo the import from ${importedDay(i)}? ${went ? `${went}${theirs}` : capital(back)}. Nothing else changes, and you can import the file again later.`;
+  return `Undo the import from ${importedDay(i)}? ${went ? `${went}${theirs}` : capital(back)}.${qfxNote} Nothing else changes, and you can import the file again later.`;
 }
 
 export function TransactionImports({
@@ -363,7 +537,7 @@ export function TransactionImports({
   return (
     <ul className="list-rows">
       {list.imports.map((i) => {
-        const now = standing(i, activity);
+        const now = standing(i, list, activity);
         const others = i.accounts.length - 1;
         return (
           <li key={i.import_id}>
