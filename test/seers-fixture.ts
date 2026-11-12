@@ -169,6 +169,15 @@ export async function seedEveryKind(
   await lifecycleStore.set(ctx, 'acc_save', { lifecycle: { state: 'active' }, type: null, label: { name: '', institution: '', mask: null }, item_id: null, set_at: at } as never);
   const { moneyInOutStore } = await import('@/lib/money-in-out-store');
   await moneyInOutStore.set(ctx, 'acc_save', { in: 1000, out: 0, as_of: ago(20), currency: 'USD', set_at: at });
+  const { investmentImportsStore } = await import('@/lib/investment-imports-store');
+  await investmentImportsStore.set(ctx, 'acc_save:import-seers-2', {
+    source: 'vanguard-csv',
+    file_name: 'OfxDownload.csv',
+    imported_at: at,
+    covers: { from: '2020-01-02', to: '2020-01-31' },
+    currency: 'USD',
+    rows: [{ date: '2020-01-02', name: 'Funds Received', type: 'cash', subtype: 'deposit', quantity: 0, price: 0, amount: -1000, fees: 0, currency: 'USD', security: null }],
+  });
   const { investmentMonthsStore } = await import('@/lib/investment-months-store');
   await investmentMonthsStore.set(ctx, 'acc_save', {
     imports: [{ id: 'import-seers-1', source: 'vanguard-performance', file_name: 'Performance.pdf', imported_at: at, start: { month: '2020-01', balance: 0 }, months: [{ month: '2020-01', net: 1000, returns: 12.5, end: 1012.5 }], currency: 'USD' }],

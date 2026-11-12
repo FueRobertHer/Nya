@@ -216,8 +216,9 @@ describe('the rows', () => {
     const answer = await json(await ask(PLANS));
     expect(answer.body.plans).toEqual(expected);
     // The plan's three reads (the facts, your plan's entry and how many plans
-    // there are) and every row, the rows one HMGET.
-    expect(sent.sort()).toEqual(['eval', 'get', 'hlen', 'hmget']);
+    // there are), every row, the rows one HMGET, and which imports there are
+    // (one HKEYS), that the rows were built under them.
+    expect(sent.sort()).toEqual(['eval', 'get', 'hkeys', 'hlen', 'hmget']);
   });
 
   test('with no workplace plan, the plan alone: its three reads, no HMGET', async () => {

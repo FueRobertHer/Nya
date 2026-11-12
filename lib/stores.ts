@@ -42,6 +42,7 @@ import './lifecycle';
 import './manual-txns';
 import './migration/store';
 import './investment-months-store';
+import './investment-imports-store';
 import './money-in-out-store';
 import './nightly-run-limit';
 import './plan-copies';

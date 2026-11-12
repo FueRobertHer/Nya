@@ -104,6 +104,7 @@ export const SEAM: Readonly<Record<string, SeamPart>> = {
   'imported-twins': { kind: 'map', restore: 'write' },
   imports: { kind: 'map', restore: 'write', split: { field: 'records', as: 'list' } },
   'income-carryover': { kind: 'value', restore: 'write' },
+  'investment-imports': { kind: 'map', restore: 'write', split: { field: 'rows', as: 'list' } },
   'investment-months': { kind: 'map', restore: 'write' },
   'manual-transactions': { kind: 'map', restore: 'write', split: { field: 'rows', as: 'list' } },
   'money-in-out': { kind: 'map', restore: 'write' },

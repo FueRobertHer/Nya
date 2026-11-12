@@ -32,6 +32,7 @@ import { MAX_GOALS } from '../goal-model';
 import { isCalendarDay, isCount, isInstant, isRecord, ID, onlyKeys } from './records';
 import { isPlaidId, isRestoredId, isUserRestoreId, PART, restoredBookId, BOOK_ROWS, MAX_BOOKS } from './ids';
 import { SEAM } from './parts';
+import { keyParts } from '../investment-imports';
 import { literal, nullable, number, object, text, textOrNull, type Check } from './shapes';
 
 /** A batch refused, with what is wrong, for the page: never a value. */
@@ -250,6 +251,7 @@ function idMatches(name: string, id: string, value: unknown, at: string): void {
   if (name === 'restored-transactions' && id !== restoredBookId(String(v.account_id), Number(v.part))) fail(`${at}.id: isn’t its book’s`);
   if ((name === 'imported-transactions' || name === 'manual-transactions') && rowsOf(v.rows).some((r) => !isRecord(r) || r.account_id !== id)) fail(`${at}.id: isn’t its rows’ account`);
   if (name === 'restored-investment-transactions' && !id.startsWith(`${String(v.item_id)}.`)) fail(`${at}.id: isn’t its connection’s`);
+  if (name === 'investment-imports' && keyParts(id) === null) fail(`${at}.id: isn’t an account’s and an import’s`);
 }
 
 /** A piece of a large entry (parts.ts SEAM `split`): where it starts in the
