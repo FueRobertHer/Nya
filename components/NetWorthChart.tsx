@@ -38,10 +38,11 @@
 //
 // A month's end from a brokerage's own record (`entered`, imported from
 // Vanguard's Performance page, lib/investment-months.ts) is a real balance,
-// on the next month's 1st: a segment touching one draws solid however long,
-// since the record says where the balance was at each end, and the dashed
-// note leaves it out. Scrubbed or in the table it reads "End of Mar 2022",
-// and the info says where it comes from (`months`).
+// on the next month's 1st: a segment touching one draws solid across the
+// month or less to the next point, since the record says where the balance
+// was at each end, and the dashed note leaves it out. Longer, it is days
+// with no data like any other. Scrubbed or in the table it reads "End of
+// Mar 2022", and the info says where it comes from (`months`).
 //
 // Notes on the timeline (#50, lib/timeline-notes.ts) mark their days: a
 // dotted rule and a small marker, never a change to the line, so a step (an
@@ -100,13 +101,16 @@ import {
   type RangeKey,
   type RangeSet,
 } from '@/lib/chart-range';
+import { JOINED_DAYS } from '@/lib/investment-months';
 
 export type HistoryPoint = { date: string; value: number; estimated?: boolean; entered?: boolean };
 /** Where an account's entered points come from, for the info: the record
  *  ("Vanguard’s Performance page"), the firm, the first day Nya recorded a
- *  balance and the first day of its own activity, before which each month's
- *  deposits and withdrawals are one figure at its middle. */
-export type MonthsInfo = { source: string; firm: string; first_recorded: string; activity_from: string };
+ *  balance, the first day of its own activity, before which each month's
+ *  deposits and withdrawals are one figure at its middle, and the last
+ *  entered point's day, joined straight on to the first recorded day or not
+ *  (lib/investment-months.ts `applied`). */
+export type MonthsInfo = { source: string; firm: string; first_recorded: string; activity_from: string; entered_to: string; joined: boolean };
 /** The grey line by date (lib/growth.ts BaselinePoint): its value, and the
  *  money in and out it holds, whose changes between two points say what
  *  moved between them. */
@@ -355,8 +359,10 @@ export default function NetWorthChart({
     // estimated Sunday beside a recorded Monday). Then the line is one solid
     // run, said in words instead.
     // A month's end from a brokerage's record is a real balance at its day,
-    // so the days between it and the next point aren't unmeasured.
-    const gaps = points.map((p, i) => i > 0 && ts[i] - ts[i - 1] > DAY_MS && !p.entered && !points[i - 1].entered);
+    // so the month or less between it and the next point isn't unmeasured.
+    const gaps = points.map(
+      (p, i) => i > 0 && ts[i] - ts[i - 1] > DAY_MS && !((p.entered || points[i - 1].entered) && ts[i] - ts[i - 1] <= JOINED_DAYS * DAY_MS)
+    );
     const touches = (i: number) => !!(points[i].estimated || points[i - 1].estimated);
     let recordedSegment = false;
     for (let i = 1; i < points.length; i++) if (!touches(i)) recordedSegment = true;
@@ -567,7 +573,9 @@ export default function NetWorthChart({
   // Outside the chart, the hero says what its lines are and where they
   // count from; where the grey line stops is still said here.
   if (months && !outside && points.some((p) => p.entered))
-    info.push(`Before ${fmtDay(months.first_recorded, true)}, the first recorded day, the balance is each month’s end from ${months.source}, joined by straight lines.`);
+    info.push(
+      `${months.joined ? `Before ${fmtDay(months.first_recorded, true)}, the first recorded day,` : `Until ${fmtDay(months.entered_to, true)},`} the balance is each month’s end from ${months.source}, joined by straight lines.`
+    );
   if (baseStart >= 0) {
     // Below zero the line isn't drawn (see geo): said, with the day it
     // stopped when it went below once and stayed there.

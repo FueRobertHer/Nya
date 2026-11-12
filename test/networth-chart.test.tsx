@@ -666,7 +666,7 @@ describe('NetWorthChart as the hero', () => {
 // months.ts): solid, though a month apart, since the record says where the
 // balance was at each end; and the info says so.
 describe('months from a brokerage’s record', () => {
-  const MONTHS = { source: 'Vanguard’s Performance page', firm: 'Vanguard', first_recorded: '2026-05-15', activity_from: '2026-06-01' };
+  const MONTHS = { source: 'Vanguard’s Performance page', firm: 'Vanguard', first_recorded: '2026-05-15', activity_from: '2026-06-01', entered_to: '2026-05-01', joined: true };
   const entered = ['2026-01-01', '2026-02-01', '2026-03-01', '2026-04-01', '2026-05-01'].map((date, i) => ({ date, value: 10_000 + i * 1000, entered: true }));
   const recorded: P[] = [];
   for (let t = Date.parse('2026-05-15T00:00:00Z'); t <= Date.parse('2026-10-28T00:00:00Z'); t += 86_400_000)
@@ -686,6 +686,13 @@ describe('months from a brokerage’s record', () => {
     expect(words(chart([...entered, ...recorded]))).toContain(
       'Before May 15, the first recorded day, the balance is each month’s end from Vanguard’s Performance page, joined by straight lines.'
     );
+  });
+
+  test('months that stop over a month before the first recorded day: said until their last end, and dashed across the days with no data', () => {
+    const early = { ...MONTHS, entered_to: '2026-03-01', joined: false };
+    const points = [...entered.slice(0, 3), ...recorded];
+    expect(words(chart(points, { months: early }))).toContain('Until Mar 1, the balance is each month’s end from Vanguard’s Performance page, joined by straight lines.');
+    expect(runsOf(chart(points, { months: early }))).toEqual(['solid', 'dashed', 'solid']);
   });
 
   test('a range after the record says nothing of it', () => {

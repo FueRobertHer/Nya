@@ -25,7 +25,7 @@ const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
 const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { PerformanceReview, PerformanceImports, usePerformanceReview } = await import('@/components/PerformanceImport');
+const { PerformanceReview, PerformanceImports, usePerformanceData, usePerformanceReview } = await import('@/components/PerformanceImport');
 const { default: HistoryImportSheet } = await import('@/components/HistoryImportSheet');
 const { formatMoney } = await import('@/lib/format');
 type ReviewContext = import('@/components/PerformanceImport').ReviewContext;
@@ -161,6 +161,38 @@ describe('the review', () => {
     expect(r.state.body).toBeNull();
   });
 
+  test('a file with no day to compare with the account’s balances: said, imported only on a yes', () => {
+    const r = review(readOf(MONTHS), ctx({ points: null, balance: null }));
+    expect(r.html).toContain('notice caution');
+    expect(r.text).toContain('Nya can’t tell whether this file is Individual’s: it has no balance of the account’s on a day the file has. It’s Individual’s');
+    expect(r.text).toContain('It’s Individual’s Import it for this account anyway.');
+    expect(r.state.body).toBeNull();
+    // With a balance now, a newer file is how to have it checked.
+    const old = review(readOf(MONTHS), ctx({ points: null, today: '2026-12-20' }));
+    expect(old.text).toContain('on a day the file has. A file printed up to today is checked against the balance now.');
+  });
+
+  test('an oldest beginning balance that couldn’t be read: nothing to correct, another file asked for', () => {
+    const r = review(readOf(MONTHS, { figures: { '2024-01': { begin: null } }, failed: { '2024-01': ['cells'] } }));
+    expect(r.html).toContain('notice critical');
+    expect(r.text).toContain('Jan 2024’s beginning balance couldn’t be read, so this file can’t be checked. Print Vanguard’s page again and choose that file.');
+    expect(r.text).toContain('Choose another file');
+    expect(r.html).not.toContain('<fieldset');
+    expect(r.text).not.toContain('don’t add up');
+    expect(r.state.body).toBeNull();
+  });
+
+  test('a file inside the one that counts: the months at both ends that would stop counting', () => {
+    const older = makeMonths('2020-01-01', '2026-10-31');
+    const counting = anImport({ start: { month: '2020-01', balance: 0 }, months: older.map((m) => ({ month: m.month, net: dollars(m.net), returns: dollars(m.returns), end: dollars(m.end) })) });
+    const inside = makeMonths('2024-01-01', '2025-12-31');
+    const r = review(readOf(inside, { range: { from: '2024-01-01', to: '2025-12-31' } }), ctx({ imports: { imports: [counting] } }));
+    expect(r.text).toContain(
+      'Jan 2020 to Dec 2023 and Jan 2026 to Oct 2026 would stop counting: this file runs from Jan 2024 to Dec 2025, and only the newest import counts. To keep them, print Vanguard’s page from Jan 2020, when the account opened, up to today.'
+    );
+    expect(r.text).toContain('Use this file’s months only Before Jan 2024 and after Dec 2025, the chart and your returns would come from Nya’s own records again.');
+  });
+
   test('months Nya has activity for whose deposits and withdrawals differ: listed, and Nya’s kept', () => {
     const flows = ACTIVITY.flows.map((f) => (f.date === '2026-08-15' ? { ...f, amount: f.amount + 500 } : f));
     const r = review(readOf(MONTHS), ctx({ activity: { ...ACTIVITY, flows } }));
@@ -247,9 +279,9 @@ describe('the sheet', () => {
 
   /** The sheet open on `target`, the server keeping the imports, and pdf.js
    *  stood in for by `readPdf`. */
-  async function mount(target: Target, readPdf: PdfReader) {
+  async function mount(target: Target, readPdf: PdfReader, opts: { already?: MonthsImport[]; wrap?: (inner: typeof fetch) => typeof fetch } = {}) {
     const sent: Sent[] = [];
-    let stored: MonthsImport[] = [];
+    let stored: MonthsImport[] = opts.already ?? [];
     let n = 0;
     globalThis.fetch = (async (url: string, init?: RequestInit) => {
       if (init?.method === 'POST' && url === '/api/investment-months') {
@@ -266,12 +298,14 @@ describe('the sheet', () => {
       if (url.startsWith('/api/history-import')) return Response.json({ imports: [], settings: null, bank_from: null, history_pending: false, walked: true, reach: null });
       return Response.json({ error: 'Unexpected' }, { status: 500 });
     }) as unknown as typeof fetch;
+    if (opts.wrap) globalThis.fetch = opts.wrap(globalThis.fetch);
     const host = dom.document.createElement('div');
     dom.document.body.appendChild(host);
     const root = createRoot(host as unknown as HTMLElement);
     let imported = 0;
     act(() => root.render(<HistoryImportSheet target={target} onClose={() => {}} onImported={() => imported++} readPdf={readPdf} />));
     await pass(20);
+    const checkRow = (title: string) => host.findAll((e) => e.tagName === 'LABEL' && e.getAttribute('class') === 'check-row' && e.textContent.startsWith(title))[0];
     const button = (label: string) => host.findAll((e) => e.tagName === 'BUTTON' && (e.getAttribute('aria-label') ?? e.textContent.trim()) === label)[0] ?? null;
     return {
       host,
@@ -296,6 +330,13 @@ describe('the sheet', () => {
         await act(async () => click(button(label)));
         await pass(20);
       },
+      /** A check row's box ticked, by its title. */
+      tick: (title: string) => {
+        const input = checkRow(title).findAll((e) => e.tagName === 'INPUT')[0];
+        const key = Object.keys(input).find((k) => k.startsWith('__reactProps$'))!;
+        act(() => (input as unknown as Record<string, { onChange: (e: unknown) => void }>)[key].onChange({ target: { checked: true } }));
+      },
+      ticked: (title: string) => (checkRow(title).findAll((e) => e.tagName === 'INPUT')[0] as unknown as { checked: boolean }).checked,
       field: (month: string, label: string) =>
         host
           .findAll((e) => e.tagName === 'FIELDSET' && e.textContent.startsWith(month))[0]
@@ -350,6 +391,65 @@ describe('the sheet', () => {
     v.unmount();
   });
 
+  test('a typed month that adds up but doesn’t end where the next month begins: said on it', async () => {
+    const bad = MONTHS.find((m) => m.month === '2025-03')!;
+    const next = MONTHS.find((m) => m.month === '2025-04')!;
+    const read = readOf(MONTHS, { figures: { '2025-03': { end: bad.end + 9_000 } }, failed: { '2025-03': ['adds-up'], '2025-04': ['begins-at-last-end'] } });
+    const v = await mount({ ...TARGET, account_id: 'acc_vg5' }, async () => read);
+    await v.choose('Performance.pdf');
+    const returns = bad.returns + 100;
+    act(() => type(v.field('Mar 2025', 'Investment returns'), `${returns < 0 ? '−' : '+'}${(Math.abs(returns) / 100).toFixed(2)}`));
+    act(() => type(v.field('Mar 2025', 'Ending balance'), ((bad.end + 100) / 100).toFixed(2)));
+    expect(v.text()).toContain(
+      `It ends at ${formatMoney(dollars(bad.end + 100), 'USD')}, but Apr 2025 began at ${formatMoney(dollars(next.begin), 'USD')}. Check its ending balance against Vanguard’s page.`
+    );
+    expect(v.button('Import 34 months')!.getAttribute('disabled')).not.toBeNull();
+    v.unmount();
+  });
+
+  test('imports changed on another device: checked again, the yes asked again, and gone on Cancel', async () => {
+    const older = makeMonths('2020-01-01', '2026-10-31');
+    const counting = anImport({ id: 'imp-old', start: { month: '2020-01', balance: 0 }, months: older.map((m) => ({ month: m.month, net: dollars(m.net), returns: dollars(m.returns), end: dollars(m.end) })) });
+    let now: MonthsImport[] | null = null;
+    const wrap = (inner: typeof fetch) =>
+      (async (url: string, init?: RequestInit) => {
+        if (init?.method === 'POST' && now === null) {
+          now = [counting, { ...counting, id: 'imp-other', imported_at: '2026-11-06T13:00:00.000Z' }];
+          return Response.json({ error: 'The imports changed on another device.', needs: 'review' }, { status: 409 });
+        }
+        if (now && url.startsWith('/api/investment-months')) return Response.json({ investment_months: { imports: now } });
+        return inner(url, init);
+      }) as unknown as typeof fetch;
+    const v = await mount({ ...TARGET, account_id: 'acc_vg6' }, async () => readOf(MONTHS), { already: [counting], wrap });
+    await v.choose('Performance.pdf');
+    expect(v.text()).toContain('Jan 2020 to Dec 2023 would stop counting');
+    v.tick('Use this file’s months only');
+    expect(v.ticked('Use this file’s months only')).toBe(true);
+    expect(v.button('Import 34 months')!.getAttribute('disabled')).toBeNull();
+    await v.press('Import 34 months');
+    expect(v.text()).toContain('The imports changed on another device.');
+    await v.press('Check the file again');
+    // The yes was to what counted then.
+    expect(v.ticked('Use this file’s months only')).toBe(false);
+    expect(v.button('Import 34 months')!.getAttribute('disabled')).not.toBeNull();
+    await v.press('Cancel');
+    expect(v.text()).not.toContain('changed on another device');
+    v.unmount();
+  });
+
+  test('imports that couldn’t be loaded: said beside the review', async () => {
+    const wrap = (inner: typeof fetch) =>
+      (async (url: string, init?: RequestInit) =>
+        !init?.method && url.startsWith('/api/investment-months')
+          ? Response.json({ error: 'The imported months couldn’t be loaded.' }, { status: 500 })
+          : inner(url, init)) as unknown as typeof fetch;
+    const v = await mount({ ...TARGET, account_id: 'acc_vg7' }, async () => readOf(MONTHS), { wrap });
+    await v.choose('Performance.pdf');
+    expect(v.text()).toContain('34 months, Jan 2024 to Oct 2026');
+    expect(v.host.findAll((e) => e.getAttribute('class')?.includes('notice caution') === true && e.textContent.includes('The imported months couldn’t be loaded.'))).toHaveLength(1);
+    v.unmount();
+  });
+
   test('a PDF that isn’t the Performance page: said, and back to choosing a file', async () => {
     const v = await mount({ ...TARGET, account_id: 'acc_vg3' }, async () => ({ kind: 'not-performance' }));
     await v.choose('statement.pdf');
@@ -365,5 +465,37 @@ describe('the sheet', () => {
     expect(reads).toBe(0);
     expect(v.text()).toContain('Nya reads a PDF only from Vanguard’s Performance page, and Brokerage is at Fidelity. Download its transactions from Fidelity as OFX or QFX, CSV or QIF instead.');
     v.unmount();
+  });
+});
+
+describe('the imports, loaded', () => {
+  const load = async () => ({});
+  test('an answer for an account the sheet has left is dropped', async () => {
+    const answers: Record<string, (r: Response) => void> = {};
+    globalThis.fetch = ((url: string) => {
+      if (url.startsWith('/api/investment-months')) {
+        const id = new URL(url, 'http://nya.test').searchParams.get('account_id')!;
+        return new Promise<Response>((resolve) => (answers[id] = resolve));
+      }
+      return Promise.resolve(Response.json({}));
+    }) as unknown as typeof fetch;
+    let seen: ReturnType<typeof usePerformanceData> | null = null;
+    function Probe({ id }: { id: string }) {
+      seen = usePerformanceData({ account_id: id, item_id: null }, load);
+      return null;
+    }
+    const host = dom.document.createElement('div');
+    const root = createRoot(host as unknown as HTMLElement);
+    act(() => root.render(<Probe id="acc_a" />));
+    await pass(10);
+    act(() => root.render(<Probe id="acc_b" />));
+    await pass(10);
+    answers.acc_a(Response.json({ investment_months: { imports: [anImport({ id: 'imp-a' })] } }));
+    await pass(10);
+    expect(seen!.imports).toBeNull();
+    answers.acc_b(Response.json({ investment_months: { imports: [anImport({ id: 'imp-b' })] } }));
+    await pass(10);
+    expect(seen!.imports!.imports[0].id).toBe('imp-b');
+    act(() => root.unmount());
   });
 });

@@ -23,12 +23,12 @@
 //     newest marked Counts, each with Undo, confirmed in place with what
 //     will change.
 
-import { useCallback, useEffect, useId, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { fieldAmount, formatDay, formatInstantDay, formatMoney, MINUS, onDay, signedMoney, zeroExample } from '@/lib/format';
 import { normalizedAmountText } from '@/lib/manual-txn-input';
 import { pdfTextPages, MAX_PDF_BYTES, MAX_PDF_PAGES, type PdfJs, type PdfTextError } from '@/lib/import/pdf-text';
 import { readPerformance, type Cents, type PerformanceRead } from '@/lib/import/vanguard-performance';
-import { accountCheck, reviewMonths, type AccountCheck, type MonthState, type Read, type TypedMonth } from '@/lib/import/performance-review';
+import { accountCheck, addsUpAsRead, reviewMonths, type AccountCheck, type MonthState, type Read, type TypedMonth } from '@/lib/import/performance-review';
 import {
   countingImport,
   importSpan,
@@ -143,12 +143,15 @@ export function usePerformanceData(account: { account_id: string; item_id: strin
   const [loaded, setLoaded] = useState(false);
   const [points, setPoints] = useState<BalancePoint[] | null>(null);
   const [activity, setActivity] = useState<MonthsActivity | null>(null);
+  // The account shown now: an answer for one the sheet has left is dropped.
+  const current = useRef<string | null>(null);
 
   const reload = useCallback(async (id: string) => {
     setImportsError('');
     try {
       const res = await fetch(`/api/investment-months?account_id=${encodeURIComponent(id)}`);
       const data = await res.json().catch(() => null);
+      if (current.current !== id) return null;
       if (!res.ok) {
         setImportsError(typeof data?.error === 'string' ? data.error : 'The imported months couldn’t be loaded.');
         return null;
@@ -158,7 +161,7 @@ export function usePerformanceData(account: { account_id: string; item_id: strin
       setLoaded(true);
       return next;
     } catch {
-      setImportsError('The imported months couldn’t be loaded: the server couldn’t be reached.');
+      if (current.current === id) setImportsError('The imported months couldn’t be loaded: the server couldn’t be reached.');
       return null;
     }
   }, []);
@@ -166,6 +169,7 @@ export function usePerformanceData(account: { account_id: string; item_id: strin
   const id = account?.account_id ?? null;
   const item = account?.item_id ?? null;
   useEffect(() => {
+    current.current = id;
     setImports(null);
     setLoaded(false);
     setPoints(null);
@@ -212,7 +216,7 @@ export function PerformanceNow({
     <div className="stack tight">
       <h3 className="section-label">{`${spanText(span.from, span.to)}, from ${SOURCE}`}</h3>
       {past?.applied && (
-        <p className="helper">{`Nya uses them where it has nothing of its own: balances before ${day(past.applied.first_recorded)}, and deposits and withdrawals before ${day(past.applied.activity_from)}.`}</p>
+        <p className="helper">{`Nya uses them where it has nothing of its own: balances ${past.applied.joined ? `before ${day(past.applied.first_recorded)}` : `until ${day(past.applied.entered_to)}, then its own estimates`}, and deposits and withdrawals before ${day(past.applied.activity_from)}.`}</p>
       )}
       {past?.unused && (
         <Notice level="caution" role="status">
@@ -428,13 +432,10 @@ export type ImportBody = {
  *  footer's Import knows whether it may go. */
 export function usePerformanceReview(read: Read | null, ctx: ReviewContext, fileName: string | null) {
   const [typedText, setTypedText] = useState<Record<Month, FieldText>>({});
-  const [yesAnother, setYesAnother] = useState(false);
-  const [yesDropped, setYesDropped] = useState(false);
-  useEffect(() => {
-    setTypedText({});
-    setYesAnother(false);
-    setYesDropped(false);
-  }, [read]);
+  // Each yes is kept with the question it answered (see below).
+  const [another, setAnother] = useState<{ read: Read; kind: string | null } | null>(null);
+  const [droppedYes, setDroppedYes] = useState<{ read: Read; counting: string | null } | null>(null);
+  useEffect(() => setTypedText({}), [read]);
 
   const typed = useMemo(() => {
     const out: Record<Month, TypedMonth> = {};
@@ -459,6 +460,16 @@ export function usePerformanceReview(read: Read | null, ctx: ReviewContext, file
     [importable, read, last, ctx.points, ctx.balance, ctx.vanguard, ctx.today]
   );
   const counting = countingImport(ctx.imports);
+  // A yes is to the question asked: asked again once it changes, as when
+  // another device's import counts now, or the balances arrive. Kept with
+  // what it answered, so a yes to the old question never counts, not even
+  // for the one render before an effect could clear it.
+  const checkKind = check?.kind ?? null;
+  const countingId = counting?.id ?? null;
+  const yesAnother = !!read && another !== null && another.read === read && another.kind === checkKind;
+  const yesDropped = !!read && droppedYes !== null && droppedYes.read === read && droppedYes.counting === countingId;
+  const setYesAnother = (yes: boolean) => setAnother(yes && read ? { read, kind: checkKind } : null);
+  const setYesDropped = (yes: boolean) => setDroppedYes(yes && read ? { read, counting: countingId } : null);
   const dropped = importable ? monthsDropped(counting, importable) : { before: null, after: null };
   const future: PastMonthsResult | null = useMemo(() => {
     if (!importable || !ctx.points || !ctx.activity) return null;
@@ -477,7 +488,7 @@ export function usePerformanceReview(read: Read | null, ctx: ReviewContext, file
   const waits =
     !importable ||
     check?.kind === 'all-accounts' ||
-    (check?.kind === 'another' && !yesAnother) ||
+    ((check?.kind === 'another' || check?.kind === 'unchecked') && !yesAnother) ||
     ((dropped.before !== null || dropped.after !== null) && !yesDropped);
   const body: ImportBody | null =
     importable && !waits
@@ -511,6 +522,9 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
   // The months to correct: those that fail, and those already typed, so a
   // month's fields stay put once its figures add up.
   const fixes = review.months.filter((m) => !m.ok || m.typed);
+  // With no beginning balance nothing can be checked, and none of the
+  // fields would bring one.
+  const unreadable = review.months.length > 0 && review.months[0].begin === null;
 
   const leftOut = review.left_out
     .map((m) => (m === review.months[review.months.length - 1].month ? `${monthText(m)} is left out until it ends.` : `${monthText(m)} is left out: the file starts after its 1st.`))
@@ -538,7 +552,19 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
         {(addsUp || leftOut) && <p className="helper">{[addsUp, leftOut].filter(Boolean).join(' ')}</p>}
       </div>
 
-      {fixes.length > 0 && (
+      {unreadable && (
+        <div className="stack tight">
+          <Notice level="critical" role="alert">
+            {`${monthText(review.months[0].month)}’s beginning balance couldn’t be read, so this file can’t be checked. Print Vanguard’s page again and choose that file.`}
+          </Notice>
+          <div>
+            <button type="button" className="btn secondary" onClick={onAgain}>
+              Choose another file
+            </button>
+          </div>
+        </div>
+      )}
+      {!unreadable && fixes.length > 0 && (
         <div className="stack">
           {failing.length > 0 && (
             <Notice level="critical" role="alert">
@@ -577,14 +603,20 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
         />
       )}
 
-      {check?.kind === 'another' && (
+      {(check?.kind === 'another' || check?.kind === 'unchecked') && (
         <div className="stack tight">
-          <Notice level="caution" role="status">
-            {`This file may be for another account: its balance ${onDay(day(check.day))} is `}
-            <Masked>{money(check.balance)}</Masked>
-            {`, and ${ctx.name}’s is `}
-            <Masked>{money(check.account)}</Masked>.
-          </Notice>
+          {check.kind === 'another' ? (
+            <Notice level="caution" role="status">
+              {`This file may be for another account: its balance ${onDay(day(check.day))} is `}
+              <Masked>{money(check.balance)}</Masked>
+              {`, and ${ctx.name}’s is `}
+              <Masked>{money(check.account)}</Masked>.
+            </Notice>
+          ) : (
+            <Notice level="caution" role="status">
+              {`Nya can’t tell whether this file is ${ctx.name}’s: it has no balance of the account’s on a day the file has.${ctx.balance !== null ? ' A file printed up to today is checked against the balance now.' : ''}`}
+            </Notice>
+          )}
           <label className="check-row">
             <input type="checkbox" checked={state.yesAnother} onChange={(e) => state.setYesAnother(e.target.checked)} />
             <span className="check-row-text">
@@ -628,9 +660,11 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
             <span className="check-row-text">
               <span className="check-row-title">Use this file’s months only</span>
               <span className="check-row-sub">
-                {dropped.before
-                  ? `Before ${monthText(imp!.start.month)}, the chart and your returns would come from Nya’s own records again.`
-                  : `The months after ${monthText(imp!.months[imp!.months.length - 1].month)} would come from Nya’s own records again.`}
+                {dropped.before && dropped.after
+                  ? `Before ${monthText(imp!.start.month)} and after ${monthText(imp!.months[imp!.months.length - 1].month)}, the chart and your returns would come from Nya’s own records again.`
+                  : dropped.before
+                    ? `Before ${monthText(imp!.start.month)}, the chart and your returns would come from Nya’s own records again.`
+                    : `The months after ${monthText(imp!.months[imp!.months.length - 1].month)} would come from Nya’s own records again.`}
               </span>
             </span>
           </label>
@@ -714,10 +748,13 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
 function droppedWords(d: ReturnType<typeof monthsDropped>, counting: MonthsImport, next: { start: { month: Month }; months: PastMonth[] }): string {
   const from = counting.start.month;
   const opened = counting.start.balance === 0 ? ', when the account opened' : '';
+  const to = next.months[next.months.length - 1].month;
+  if (d.before && d.after)
+    return `${spanText(d.before.from, d.before.to)} and ${spanText(d.after.from, d.after.to)} would stop counting: this file runs from ${monthText(next.start.month)} to ${monthText(to)}, and only the newest import counts. To keep them, print Vanguard’s page from ${monthText(from)}${opened ? `${opened},` : ''} up to today.`;
   if (d.before)
     return `${spanText(d.before.from, d.before.to)} would stop counting: this file starts in ${monthText(next.start.month)}, and only the newest import counts. To keep them, print Vanguard’s page from ${monthText(from)}${opened}.`;
   const a = d.after!;
-  return `${spanText(a.from, a.to)} would stop counting: this file ends in ${monthText(next.months[next.months.length - 1].month)}, and only the newest import counts. To keep them, print Vanguard’s page up to today.`;
+  return `${spanText(a.from, a.to)} would stop counting: this file ends in ${monthText(to)}, and only the newest import counts. To keep them, print Vanguard’s page up to today.`;
 }
 
 /** A month the review can't vouch for, with its three figures to correct. */
@@ -756,7 +793,17 @@ function FailingMonth({ id, m, state, currency }: { id: string; m: MonthState; s
         )}
       </>
     );
-  } else if (!m.typed && read.failed.includes('returns')) problem = 'Its returns aren’t its market gain or loss plus its income, so one of them was read wrong. Check its returns against Vanguard’s page.';
+  } else if (m.typed && next && !state.typedText[next.month] && addsUpAsRead(next.figures) && m.end !== next.figures.begin)
+    problem = (
+      <>
+        {'It ends at '}
+        <Masked>{money(m.end)}</Masked>
+        {`, but ${monthText(next.month)} began at `}
+        <Masked>{money(next.figures.begin!)}</Masked>
+        {'. Check its ending balance against Vanguard’s page.'}
+      </>
+    );
+  else if (!m.typed && read.failed.includes('returns')) problem = 'Its returns aren’t its market gain or loss plus its income, so one of them was read wrong. Check its returns against Vanguard’s page.';
   else if (!m.typed && read.figures.begin !== m.begin && prev)
     problem = (
       <>

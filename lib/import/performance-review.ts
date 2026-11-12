@@ -12,7 +12,10 @@
 // deposits and withdrawals, returns and ending balance, typed from
 // Vanguard's own page. Its beginning balance is the month before's end, as
 // corrected. Every check is run again on what is then there: each month adds
-// up and begins where the one before ended, the cumulative returns follow
+// up and begins where the one before ended (a typed month has to end where
+// the next begins, when that month adds up as read, so a typed ending
+// balance that is off shows on the month typed; not when the next is typed
+// too), the cumulative returns follow
 // (for the months not typed: from the months as corrected, or else from the
 // page's own month before, so a typed month that is off shows once, in the
 // total, not in every month after it), and the Total row and the summary
@@ -28,10 +31,11 @@
 // balance recorded that day (or the account's balance now, for a file that
 // ends within a few days of today). Within 2% everywhere it is the account's.
 // A last balance within 2% of every Vanguard account's together (two or
-// more) is all of them: never imported. Anything else more than 2% off may be
-// another account's, and waits for the person's yes.
+// more), and not of the account's own, is all of them: never imported.
+// Anything else more than 2% off may be another account's, and waits for the
+// person's yes; so does a file with no day to compare.
 
-import type { Cents, PerformanceRead, TotalColumn } from './vanguard-performance';
+import type { Cents, Figure, PerformanceRead, TotalColumn } from './vanguard-performance';
 import type { BalancePoint } from '../growth';
 import { lastDayOf, nextMonth, type Month, type PastMonth } from '../investment-months';
 
@@ -74,6 +78,12 @@ export type MonthsReview = {
 
 const dollars = (c: Cents) => c / 100;
 
+/** A month adds up as the file has it: beginning balance, plus deposits and
+ *  withdrawals, plus returns, is its ending balance. */
+export function addsUpAsRead(f: Readonly<Record<Figure, Cents | null>>): boolean {
+  return f.begin !== null && f.net !== null && f.returns !== null && f.end !== null && f.begin + f.net + f.returns === f.end;
+}
+
 export function reviewMonths(read: Read, typed: Readonly<Record<Month, TypedMonth>>): MonthsReview {
   const months: MonthState[] = [];
   let prevEnd: Cents | null = null;
@@ -94,7 +104,11 @@ export function reviewMonths(read: Read, typed: Readonly<Record<Month, TypedMont
       returns !== null &&
       ((cumulative !== null && f.cumulative === cumulative + returns) || (before !== null && f.cumulative === before + returns));
     cumulative = follows ? f.cumulative : cumulative !== null && returns !== null ? cumulative + returns : null;
-    const ok = t ? addsUp : addsUp && !m.failed.some((c) => c === 'cells' || c === 'returns') && f.begin === begin && follows;
+    // A typed month ends where the next begins, when that one adds up as
+    // read and isn't typed too (then its own figures decide).
+    const after = read.months[k + 1];
+    const meets = !after || !!typed[after.month] || !addsUpAsRead(after.figures) || end === after.figures.begin;
+    const ok = t ? addsUp && meets : addsUp && !m.failed.some((c) => c === 'cells' || c === 'returns') && f.begin === begin && follows;
     months.push({ month: m.month, begin, net, returns, end, whole: m.whole, typed: !!t, ok, read: { net: f.net, returns: f.returns, end: f.end } });
     prevEnd = end;
   });
@@ -143,6 +157,9 @@ export type AccountCheck =
   | { kind: 'another'; day: string; balance: number; account: number }
   /** Every Vanguard account's together. */
   | { kind: 'all-accounts'; day: string; balance: number; together: number; account: number | null }
+  /** No day the file has with a balance of the account's to compare. */
+  | { kind: 'unchecked' }
+  /** Not checked yet: nothing to import. */
   | null;
 
 /**
@@ -150,7 +167,7 @@ export type AccountCheck =
  * last day and balance (dollars); `months` what would be imported;
  * `points` the account's history; `balance` its balance now; `vanguard` the
  * balances now of every account at a Vanguard connection, this one with
- * them. Null with nothing to compare.
+ * them. Unchecked with nothing to compare.
  */
 export function accountCheck(o: {
   last: { day: string; balance: number | null };
@@ -173,7 +190,9 @@ export function accountCheck(o: {
 
   const recent = o.last.balance !== null && o.last.day <= o.today && days(o.last.day, o.today) <= LIVE_DAYS;
   const together = o.vanguard.reduce((s, b) => s + b, 0);
-  const allOfThem = recent && o.vanguard.length >= 2 && together > 0 && near(o.last.balance!, together);
+  // Not when it is the account's own too, as when the others hold nothing.
+  const own = lastAccount ?? o.balance;
+  const allOfThem = recent && o.vanguard.length >= 2 && together > 0 && near(o.last.balance!, together) && !(own !== null && near(o.last.balance!, own));
   const off = compared.find((c) => !near(c.file, c.account));
   if (!off && compared.length > 0) {
     // The account's own balance, though it is nearly all of them.
@@ -186,5 +205,5 @@ export function accountCheck(o: {
     const said = compared[compared.length - 1].day === o.last.day && !near(compared[compared.length - 1].file, compared[compared.length - 1].account) ? compared[compared.length - 1] : off;
     return { kind: 'another', day: said.day, balance: said.file, account: said.account };
   }
-  return null;
+  return { kind: 'unchecked' };
 }

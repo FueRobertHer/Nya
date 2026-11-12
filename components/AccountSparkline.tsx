@@ -128,7 +128,7 @@ export default function AccountSparkline({
     [activity, flows, flowsFrom, carried]
   );
   const months: MonthsInfo | null = past?.applied
-    ? { source: 'Vanguard’s Performance page', firm: 'Vanguard', first_recorded: past.applied.first_recorded, activity_from: past.applied.activity_from }
+    ? { source: 'Vanguard’s Performance page', firm: 'Vanguard', first_recorded: past.applied.first_recorded, activity_from: past.applied.activity_from, entered_to: past.applied.entered_to, joined: past.applied.joined }
     : null;
 
   // Above the chart, whatever the chart's own state: it reads the history

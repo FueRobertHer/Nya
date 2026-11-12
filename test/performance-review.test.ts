@@ -68,6 +68,23 @@ describe('reviewMonths', () => {
     expect(reviewMonths(readOf(MONTHS), { [m.month]: typedOf(m, { net: null }) }).failing[0].month).toBe(m.month);
   });
 
+  test('a typed month that adds up has to end where the next month begins, when that one adds up as read', () => {
+    const m = MONTHS[5];
+    const off = typedOf(m, { returns: m.returns + 100, end: m.end + 100 });
+    expect(reviewMonths(readOf(MONTHS), { [m.month]: off }).failing.map((x) => x.month)).toEqual([m.month, MONTHS[6].month]);
+    // The next month's beginning read wrong: it doesn't add up as read, so
+    // the typed month is let be and the next one is the one to correct.
+    const n = MONTHS[6];
+    const read = readOf(MONTHS, { figures: { [n.month]: { begin: n.begin + 9_000 } }, failed: { [n.month]: ['begins-at-last-end', 'adds-up'] } });
+    expect(reviewMonths(read, { [m.month]: typedOf(m) }).failing.map((x) => x.month)).toEqual([n.month]);
+    expect(reviewMonths(read, { [m.month]: typedOf(m), [n.month]: typedOf(n) }).failing).toEqual([]);
+    // The next month's beginning and ending balance both read wrong by the
+    // same amount, so it adds up as read: typing it too is the way out.
+    const both = readOf(MONTHS, { figures: { [n.month]: { begin: n.begin + 9_000, end: n.end + 9_000 } }, failed: { [n.month]: ['begins-at-last-end'], [MONTHS[7].month]: ['begins-at-last-end'] } });
+    expect(reviewMonths(both, { [m.month]: typedOf(m) }).failing.map((x) => x.month)).toContain(m.month);
+    expect(reviewMonths(both, { [m.month]: typedOf(m), [n.month]: typedOf(n) }).failing).toEqual([]);
+  });
+
   test('a market figure not found: the month waits for the person’s figures, then the total’s market column is let go', () => {
     const m = MONTHS[7];
     const read = { ...readOf(MONTHS, { figures: { [m.month]: { market: null } }, failed: { [m.month]: ['cells'] } }), total_differs: ['market' as const] };
@@ -131,17 +148,22 @@ describe('accountCheck', () => {
     expect(c).toEqual({ kind: 'all-accounts', day: RANGE.to, balance: lastEnd, together: lastEnd, account: lastEnd * 0.3 });
   });
 
+  test('every account’s together that is also the account’s own, as when the others hold nothing, is never all of them', () => {
+    const c = accountCheck({ ...base, points: points(0.5), balance: lastEnd, vanguard: [lastEnd, 0] });
+    expect(c!.kind).toBe('another');
+  });
+
   test('one Vanguard account alone is never all of them', () => {
     expect(accountCheck({ ...base, points: null, balance: lastEnd, vanguard: [lastEnd] })!.kind).toBe('matches');
   });
 
   test('a file that ended weeks ago isn’t compared with the balance now', () => {
     const c = accountCheck({ ...base, today: '2026-12-20', points: null, balance: lastEnd * 2, vanguard: [lastEnd, lastEnd] });
-    expect(c).toBeNull();
+    expect(c).toEqual({ kind: 'unchecked' });
   });
 
-  test('nothing to compare: no answer', () => {
-    expect(accountCheck({ ...base, points: null, balance: null, vanguard: [] })).toBeNull();
+  test('nothing to compare: unchecked, which waits for a yes', () => {
+    expect(accountCheck({ ...base, points: null, balance: null, vanguard: [] })).toEqual({ kind: 'unchecked' });
   });
 });
 

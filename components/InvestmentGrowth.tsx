@@ -414,12 +414,24 @@ function rangeTitle(g: CurrencyGroup<Shown>, label: string, several: boolean): s
 }
 
 /** The accounts whose figures reach into their imported months: before
- *  their first recorded day (`balances`) or Nya's activity (`flows`). */
-function monthsIn(g: CurrencyGroup<Shown>, k: 'first_recorded' | 'activity_from'): { title: string; day: string }[] {
+ *  Nya's activity (`activity_from`), with that day. */
+function monthsIn(g: CurrencyGroup<Shown>): { title: string; day: string }[] {
   return g.rows.flatMap((r) => {
     const applied = r.account.past?.applied;
     const from = r.split?.from ?? null;
-    return applied && from !== null && from < applied[k] ? [{ title: r.account.title, day: applied[k] }] : [];
+    return applied && from !== null && from < applied.activity_from ? [{ title: r.account.title, day: applied.activity_from }] : [];
+  });
+}
+
+/** The accounts whose line reaches into their imported months' ends, with
+ *  where those stop: before the first recorded day when they're joined to
+ *  it, else until their last end (lib/investment-months.ts `applied`). */
+function endsIn(g: CurrencyGroup<Shown>): { title: string; joined: boolean; day: string }[] {
+  return g.rows.flatMap((r) => {
+    const a = r.account.past?.applied;
+    const from = r.split?.from ?? null;
+    if (!a || from === null || (a.joined ? from >= a.first_recorded : from > a.entered_to)) return [];
+    return [{ title: r.account.title, joined: a.joined, day: a.joined ? a.first_recorded : a.entered_to }];
   });
 }
 
@@ -427,11 +439,15 @@ function monthsIn(g: CurrencyGroup<Shown>, k: 'first_recorded' | 'activity_from'
 function heroInfo(g: CurrencyGroup<Shown>, one: boolean): string[] {
   const these = one ? 'this account' : 'these accounts';
   // Where a line is each month's end from Vanguard's Performance page.
-  const ends = monthsIn(g, 'first_recorded')
-    .map((m) => (one ? ` Before ${day(m.day)}, the first recorded day, it is each month’s end from Vanguard’s Performance page.` : ` ${m.title}’s, before ${day(m.day)}, is each month’s end from Vanguard’s Performance page.`))
+  const ends = endsIn(g)
+    .map((m) =>
+      one
+        ? ` ${m.joined ? `Before ${day(m.day)}, the first recorded day,` : `Until ${day(m.day)},`} it is each month’s end from Vanguard’s Performance page.`
+        : ` ${m.title}’s, ${m.joined ? 'before' : 'until'} ${day(m.day)}, is each month’s end from Vanguard’s Performance page.`
+    )
     .join('');
   const gold = `Gold line: the balance of ${these}.${ends}`;
-  const middles = monthsIn(g, 'activity_from')
+  const middles = monthsIn(g)
     .map((m) => (one ? ` Until ${day(m.day)}, Vanguard gives one figure a month, so each counts from the middle of its month.` : ` For ${m.title}, until ${day(m.day)}, Vanguard gives one figure a month, so each counts from the middle of its month.`))
     .join('');
   if (g.basis === 'all') {
@@ -711,7 +727,7 @@ function RangeCard({
         <Masked>
           {all
             ? `All time starts at ${formatMoney(0, g.currency)}, when each account opened, and counts from the deposits and withdrawals you set for each account, carried through the activity Nya has had since. ${WHY_DW} There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.`
-            : `${WHY_DW}${monthsIn(g, 'activity_from')
+            : `${WHY_DW}${monthsIn(g)
                 .map((m) => ` Before ${day(m.day)}, when Nya’s activity for ${g.rows.length === 1 ? 'this account' : m.title} starts, each month’s figures are Vanguard’s, from the Performance page you imported.`)
                 .join('')}`}
         </Masked>

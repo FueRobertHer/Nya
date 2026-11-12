@@ -700,6 +700,7 @@ export default function HistoryImportSheet({
 
   function chooseAgain() {
     setPdf(null);
+    setMonthsError(null);
     setFile(null);
     setInputKey((k) => k + 1);
     setOptions({});
@@ -863,6 +864,11 @@ export default function HistoryImportSheet({
             </>
           ) : (
             <>
+              {perf.importsError && (
+                <Notice level="caution" role="status">
+                  {perf.importsError}
+                </Notice>
+              )}
               {monthsError && (
                 <div className="stack tight">
                   <Notice level={monthsError.level} role={monthsError.level === 'critical' ? 'alert' : 'status'}>

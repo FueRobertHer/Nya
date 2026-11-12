@@ -708,6 +708,20 @@ describe('imported months', () => {
     }
   });
 
+  test('months that stop over a month before the first recorded day: the line is theirs until their last end', async () => {
+    const early = { imports: [{ ...MONTHS.imports[0], months: months.slice(0, 32) }] };
+    const { host, root, range } = setup({ only: ['ind'], months: { ind: early } });
+    try {
+      await pass(50);
+      range('3Y');
+      await pass(10);
+      expect(hero(host)).toContain('Until Sep 1, 2025, it is each month’s end from Vanguard’s Performance page.');
+      expect(hero(host)).not.toContain('the first recorded day, it is');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
   test('a range after them says nothing of them', async () => {
     const { host, root } = setup({ only: ['ind'], months: { ind: MONTHS } });
     try {

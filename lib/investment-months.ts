@@ -24,12 +24,16 @@
 //   - Each month's ending balance is a real point on the 1st of the next
 //     month (Nya's points don't include flows dated that day; a month's end
 //     includes its last day's), and the first month's beginning balance one
-//     on its 1st. They carry `entered`, so the chart draws them solid however
-//     far apart and says where they come from. Months whose point would fall
-//     on or after the first recorded day are left out: Nya's own are there.
-//   - Estimated points before the first recorded day are dropped (the
-//     backfill walks the balance back through flows with no market in it,
-//     which Vanguard's real balances contradict). Those after it stay. The
+//     on its 1st. They carry `entered`, so the chart draws them solid, a
+//     month apart, and says where they come from. Months whose point would
+//     fall on or after the first recorded day are left out: Nya's own are
+//     there.
+//   - Estimated points the months reach over are dropped (the backfill
+//     walks the balance back through flows with no market in it, which
+//     Vanguard's real balances contradict). The months reach to the first
+//     recorded day when their last end is a month or less before it, joined
+//     straight on to it (`joined`); otherwise only to their last end
+//     (`entered_to`), and Nya's estimates fill the days from there. The
 //     net-worth chart and the stored history are untouched (lib/history.ts).
 //   - Each month before Nya's activity starts is one flow, its net, at the
 //     middle of its days; the month the activity starts in gives the part
@@ -306,11 +310,16 @@ export type PastMonthsResult = {
   /** The import that counts, used or not. */
   counting: MonthsImport | null;
   unused: MonthsUnused | null;
-  /** Where the months apply: their first day, the first recorded day and
-   *  Nya's activity's first day. */
-  applied: { from: string; first_recorded: string; activity_from: string } | null;
+  /** Where the months apply: their first day, the first recorded day,
+   *  Nya's activity's first day, and their last end's day. `joined`: the
+   *  line runs straight on from that end to the first recorded day, a month
+   *  or less on; otherwise Nya's estimates fill the days between. */
+  applied: { from: string; first_recorded: string; activity_from: string; entered_to: string; joined: boolean } | null;
   differs: MonthDiffers[];
 };
+
+/** The longest a line is joined straight from a month's end: a month. */
+export const JOINED_DAYS = 31;
 
 /** The middle of the days from `from` to `to`: the 16th of a 31-day month. */
 function middleDay(from: string, to: string): string {
@@ -385,7 +394,11 @@ export function withPastMonths(
     if (toCents(amount) !== 0) lumps.push({ date: middleDay(first, uncoveredTo), amount });
   }
 
-  const kept = points.filter((p) => !(p.estimated && p.date < firstRecorded));
+  // The estimates the months reach over: to the first recorded day when
+  // their last end is a month or less before it, else to that end.
+  const enteredTo = entered[entered.length - 1].date;
+  const joined = daysBetween(enteredTo, firstRecorded) <= JOINED_DAYS;
+  const kept = points.filter((p) => !(p.estimated && (joined ? p.date < firstRecorded : p.date <= enteredTo)));
   return {
     points: [...entered, ...kept],
     flows: [...lumps, ...flows].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0)),
@@ -393,7 +406,7 @@ export function withPastMonths(
     totals_from: from,
     counting,
     unused: null,
-    applied: { from: startDay, first_recorded: firstRecorded, activity_from: from },
+    applied: { from: startDay, first_recorded: firstRecorded, activity_from: from, entered_to: enteredTo, joined },
     differs,
   };
 }

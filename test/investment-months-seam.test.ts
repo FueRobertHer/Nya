@@ -73,6 +73,14 @@ describe('applied', () => {
     expect(out.points.filter((p) => !p.entered)).toEqual(POINTS.slice(2));
   });
 
+  test('months that stop over a month before the first recorded day: Nya’s estimates fill the days after their last end', () => {
+    const early = withPastMonths([{ date: '2024-09-01', value: 2900, estimated: true }, ...POINTS], { ...ACTIVITY, flows_from: '2024-09-01' }, entry(record({ months: months('2023-01', 20, 1000) })), 'USD');
+    expect(early.points.filter((p) => p.entered).at(-1)).toEqual({ date: '2024-09-01', value: 3200, entered: true });
+    // The estimate on the last end's own day goes; those after it stay.
+    expect(early.points.filter((p) => !p.entered)).toEqual(POINTS);
+    expect(early.applied).toMatchObject({ entered_to: '2024-09-01', joined: false });
+  });
+
   test('one flow a month before the activity, at the middle of its days; the straddle month less Nya’s own; none inside the activity', () => {
     const before = out.flows!.filter((f) => f.date < '2024-11-12');
     expect(before).toHaveLength(23);
@@ -90,7 +98,7 @@ describe('applied', () => {
 
   test('flows_from reaches back to the first month; typed totals stay bound to Nya’s own activity', () => {
     expect(out).toMatchObject({ flows_from: '2023-01-01', totals_from: '2024-11-12', unused: null });
-    expect(out.applied).toEqual({ from: '2023-01-01', first_recorded: '2026-11-11', activity_from: '2024-11-12' });
+    expect(out.applied).toEqual({ from: '2023-01-01', first_recorded: '2026-11-11', activity_from: '2024-11-12', entered_to: '2026-11-01', joined: true });
     expect(out.counting?.id).toBe('import-0001');
   });
 
