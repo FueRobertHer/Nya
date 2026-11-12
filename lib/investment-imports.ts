@@ -151,10 +151,14 @@ export function isInvestmentImport(v: unknown): v is InvestmentImport {
 
 // ---- The order imports decide in -------------------------------------------
 
+/** What decides between two imports: where each came from, when it was
+ *  imported and its id. */
+export type Ranked = Pick<AccountImport, 'source' | 'imported_at' | 'import_id'>;
+
 /** First the import that decides a day both cover: a CSV before a QFX, then
  *  the newer (by when imported, then by id, so every reader agrees). */
-export function byDeciding(a: AccountImport, b: AccountImport): number {
-  const rank = (i: AccountImport) => (i.source === 'vanguard-csv' ? 0 : 1);
+export function byDeciding(a: Ranked, b: Ranked): number {
+  const rank = (i: Ranked) => (i.source === 'vanguard-csv' ? 0 : 1);
   if (rank(a) !== rank(b)) return rank(a) - rank(b);
   if (a.imported_at !== b.imported_at) return a.imported_at > b.imported_at ? -1 : 1;
   return a.import_id > b.import_id ? -1 : a.import_id < b.import_id ? 1 : 0;
@@ -213,6 +217,8 @@ export type MergedActivity = {
   replaced: InvestmentTxn[];
   /** Plaid's rows just outside, left out as the same event as a file row. */
   twins: InvestmentTxn[];
+  /** Each twin with the file row it was taken for, in the twins' order. */
+  pairs: { plaid: InvestmentTxn; file: InvestmentTxn }[];
 };
 
 const cents = (n: number) => Math.round(n * 100);
@@ -226,7 +232,7 @@ export function withImportedRows(sync: InvSync, account_id: string, imports: rea
   const plaid = sync.rows.filter((t) => t.account_id === account_id);
   const plaidCounted = countedTrades(plaid);
   const cov = sync.coverage[account_id];
-  const unchanged = (unused: string[]): MergedActivity => ({ sync, counted: plaidCounted, decided: [], unused, replaced: [], twins: [] });
+  const unchanged = (unused: string[]): MergedActivity => ({ sync, counted: plaidCounted, decided: [], unused, replaced: [], twins: [], pairs: [] });
   if (imports.length === 0) return unchanged([]);
   // No verified days to join: nothing is used.
   if (!cov) return unchanged(imports.map((i) => i.import_id));
@@ -288,14 +294,15 @@ export function withImportedRows(sync: InvSync, account_id: string, imports: rea
   const byDay = (a: InvestmentTxn, b: InvestmentTxn) =>
     a.date !== b.date ? (a.date < b.date ? -1 : 1) : a.investment_transaction_id < b.investment_transaction_id ? -1 : a.investment_transaction_id > b.investment_transaction_id ? 1 : 0;
   pairs.sort((a, b) => a.gap - b.gap || byDay(outside[a.p], outside[b.p]) || a.f - b.f);
-  const paired = new Set<number>();
+  const paired = new Map<number, number>(); // Plaid's row -> the file row it is
   const matched = new Set<number>();
   for (const { p, f } of pairs) {
     if (paired.has(p) || matched.has(f)) continue;
-    paired.add(p);
+    paired.set(p, f);
     matched.add(f);
   }
-  const twins = outside.filter((_, p) => paired.has(p)).sort(byDay);
+  const twinPairs = [...paired].map(([p, f]) => ({ plaid: outside[p], file: fileRows[f] })).sort((a, b) => byDay(a.plaid, b.plaid));
+  const twins = twinPairs.map((t) => t.plaid);
   const kept = outside.filter((_, p) => !paired.has(p));
 
   const rows = [...sync.rows.filter((t) => t.account_id !== account_id), ...kept, ...fileRows];
@@ -307,6 +314,7 @@ export function withImportedRows(sync: InvSync, account_id: string, imports: rea
     unused,
     replaced,
     twins,
+    pairs: twinPairs,
   };
 }
 
@@ -317,6 +325,14 @@ export function withImportedRows(sync: InvSync, account_id: string, imports: rea
 export const MAX_FILE_CHARS = 3 * 1024 * 1024;
 
 export type ImportsChange =
+  | {
+      /** What importing the file would do, for the review. */
+      action: 'review';
+      account_id: string;
+      file_name: string | null;
+      text: string;
+      today: string;
+    }
   | {
       action: 'import';
       /** The account whose sheet it is: answered with its imports. */
@@ -342,6 +358,7 @@ const isAccountId = (v: unknown): v is string => typeof v === 'string' && ACCOUN
 /**
  * A request to the route, or what is wrong with it in the person's words:
  *
+ *   { action: 'review', account_id, file_name, text, today }
  *   { action: 'import', account_id, file_name, text, today, take, counting }
  *   { action: 'undo', account_id, import_id }
  */
@@ -354,13 +371,15 @@ export function parseImportsChange(body: unknown): ImportsChange | string {
     if (typeof body.import_id !== 'string' || !IMPORT_ID.test(body.import_id)) return 'Invalid import id';
     return { action: 'undo', account_id, import_id: body.import_id };
   }
-  if (action !== 'import') return 'Say whether to import or undo';
-  const extra = Object.keys(body).find((k) => !['action', 'account_id', 'file_name', 'text', 'today', 'take', 'counting'].includes(k));
-  if (extra) return `${extra.slice(0, 40)} isn’t part of an import`;
+  if (action !== 'import' && action !== 'review') return 'Say whether to review, import or undo';
+  const fields = action === 'review' ? ['action', 'account_id', 'file_name', 'text', 'today'] : ['action', 'account_id', 'file_name', 'text', 'today', 'take', 'counting'];
+  const extra = Object.keys(body).find((k) => !fields.includes(k));
+  if (extra) return `${extra.slice(0, 40)} isn’t part of ${action === 'review' ? 'a review' : 'an import'}`;
   const file_name = body.file_name ?? null;
   if (file_name !== null && (typeof file_name !== 'string' || file_name.length > 255)) return 'Invalid file name';
   if (typeof body.text !== 'string' || body.text.length === 0 || body.text.length > MAX_FILE_CHARS) return 'Send the file’s text';
   if (!isDay(body.today)) return 'Send today, YYYY-MM-DD';
+  if (action === 'review') return { action, account_id, file_name, text: body.text, today: body.today };
   const take = body.take;
   if (!Array.isArray(take) || take.length === 0) return 'Choose at least one account';
   if (take.length > MAX_ACCOUNTS_PER_IMPORT) return `At most ${MAX_ACCOUNTS_PER_IMPORT} accounts take one import`;
@@ -388,3 +407,42 @@ export function parseImportsChange(body: unknown): ImportsChange | string {
 export const dayBefore = (d: string): string => dayOf(dayNumber(d) - 1);
 /** Days from `a` to `b`. */
 export const daysApart = (a: string, b: string): number => dayNumber(b) - dayNumber(a);
+
+// ---- After an undo ---------------------------------------------------------
+
+/** A stretch of days and what decides it: an import, or Plaid (`by` null). */
+export type DecidedBy = { from: string; to: string; by: string | null };
+
+/**
+ * What decides an import's days once it is undone, by the same rule:
+ * `decided` is what it decides now (the activity's `imported_days` for it),
+ * `others` the account's other imports. Each day goes to the first of them in
+ * line that covers it, else back to Plaid. One that stops reaching Nya's
+ * activity once this one goes (it touched only this one's days) is taken as
+ * still reaching it: that is rare, and only the words are off then.
+ */
+export function afterUndo(decided: readonly { from: string; to: string }[], others: readonly (Ranked & { covers: { from: string; to: string } })[]): DecidedBy[] {
+  const out: { days: Days; by: string | null }[] = [];
+  const line = [...others].sort(byDeciding);
+  for (const d of decided) {
+    let left: Days[] = [[dayNumber(d.from), dayNumber(d.to)]];
+    for (const o of line) {
+      const [a, b] = spanOf(o);
+      for (const [x, y] of left) {
+        const from = Math.max(a, x);
+        const to = Math.min(b, y);
+        if (from <= to) out.push({ days: [from, to], by: o.import_id });
+      }
+      left = left.flatMap((span) => less(span, [[a, b]]));
+    }
+    for (const days of left) out.push({ days, by: null });
+  }
+  out.sort((a, b) => a.days[0] - b.days[0]);
+  const merged: { days: [number, number]; by: string | null }[] = [];
+  for (const o of out) {
+    const last = merged[merged.length - 1];
+    if (last && last.by === o.by && o.days[0] <= last.days[1] + 1) last.days[1] = Math.max(last.days[1], o.days[1]);
+    else merged.push({ days: [o.days[0], o.days[1]], by: o.by });
+  }
+  return merged.map((m) => ({ from: dayOf(m.days[0]), to: dayOf(m.days[1]), by: m.by }));
+}

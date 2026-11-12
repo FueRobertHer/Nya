@@ -136,12 +136,12 @@ export function unusedWords(
 /** The account's imports, history and activity, for the sheet. `points` and
  *  `activity` stay null while they load or when they can't be loaded: the
  *  sheet then says less, never more. */
-export function usePerformanceData(account: { account_id: string; item_id: string | null } | null, load: (id: string, item: string) => Promise<MonthsActivity>) {
+export function usePerformanceData<A extends MonthsActivity = MonthsActivity>(account: { account_id: string; item_id: string | null } | null, load: (id: string, item: string) => Promise<A>) {
   const [imports, setImports] = useState<InvestmentMonths | null>(null);
   const [importsError, setImportsError] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [points, setPoints] = useState<BalancePoint[] | null>(null);
-  const [activity, setActivity] = useState<MonthsActivity | null>(null);
+  const [activity, setActivity] = useState<A | null>(null);
   // The account shown now: an answer for one the sheet has left is dropped.
   const current = useRef<string | null>(null);
 
@@ -189,7 +189,19 @@ export function usePerformanceData(account: { account_id: string; item_id: strin
     };
   }, [id, item, reload, load]);
 
-  return { imports, setImports, importsError, loaded, points, activity, reload };
+  // The activity again, after an import of the account's transactions
+  // changed it (its copy was dropped: components/InvestmentActivity.tsx
+  // investmentImportsChanged). Null until it answers, so nothing reads the
+  // old one as the new imports' standing; and still null if it fails.
+  const refreshActivity = useCallback(() => {
+    if (!id || !item) return;
+    setActivity(null);
+    load(id, item)
+      .then((a) => current.current === id && setActivity(a))
+      .catch(() => {});
+  }, [id, item, load]);
+
+  return { imports, setImports, importsError, loaded, points, activity, reload, refreshActivity };
 }
 
 /** What counts now and where, or why it isn't used (the sheet's top, once

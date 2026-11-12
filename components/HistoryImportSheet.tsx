@@ -30,7 +30,11 @@
 // id) the picker also takes Vanguard's Performance page as a PDF, read on
 // this device into the account's months (components/PerformanceImport.tsx):
 // a step of its own, 'months', with its review and its Import in the
-// footer, and its imports listed with the transaction files'.
+// footer, and its imports listed with the transaction files'. It also takes
+// Vanguard's transactions download (a CSV), known by its layout and reviewed
+// on the server (components/TransactionsImport.tsx): a step of its own,
+// 'txns', whose one Import takes every account checked; on an account at
+// another firm that file is refused rather than read as some other CSV.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
@@ -47,7 +51,22 @@ import type { DecimalMark } from '@/lib/import/amounts';
 import { LevelWord, Notice } from './TotalCaveats';
 import { StripSkeleton } from './FiguresStrip';
 import { Why } from './Why';
-import { loadInvestmentActivity, investmentMonthsSaved } from './InvestmentActivity';
+import { loadInvestmentActivity, investmentImportsChanged, investmentMonthsSaved } from './InvestmentActivity';
+import { isVanguardTransactions } from '@/lib/import/vanguard-transactions';
+import type { ImportsReview } from '@/lib/investment-imports-review';
+import type { ListedImport } from '@/lib/investment-imports-store';
+import {
+  checkedFirst,
+  noneOfYours,
+  rowsTaken,
+  takeOf,
+  TransactionImports,
+  TransactionsNow,
+  TransactionsReview,
+  TXN_SOURCE,
+  useTransactionImports,
+} from './TransactionsImport';
+import { MAX_IMPORTS_PER_ACCOUNT } from '@/lib/investment-imports';
 import {
   isPdf,
   notVanguardWords,
@@ -190,7 +209,7 @@ type Done = {
    *  imported rows), or after the backfill runs again (`backfill`). */
   history: { drawn: boolean; from: string | null; reach?: string | null; backfill?: boolean };
 };
-type Step = 'pick' | 'statement' | 'mapping' | 'order' | 'review' | 'done' | 'months';
+type Step = 'pick' | 'statement' | 'mapping' | 'order' | 'review' | 'done' | 'months' | 'txns';
 
 const NONE = <T,>(): ChoiceSet<T> => ({ each: {} });
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
@@ -279,8 +298,9 @@ export default function HistoryImportSheet({
   target: HistoryImportTarget | null;
   onClose: () => void;
   /** After an import or an undo changed the account's rows, and so its
-   *  estimated history. */
-  onImported: () => void;
+   *  estimated history; `investments` when it was Vanguard's transactions
+   *  download, which changes what the Plan's inputs count. */
+  onImported: (what?: { investments?: boolean }) => void;
   /** Reads a Performance page's PDF; pdf.js in the browser. */
   readPdf?: PdfReader;
 }) {
@@ -308,11 +328,20 @@ export default function HistoryImportSheet({
   // last import or undo of one said.
   const [pdf, setPdf] = useState<{ name: string; read: Read | null } | null>(null);
   const [monthsError, setMonthsError] = useState<{ level: 'critical' | 'caution'; text: string; again?: boolean } | null>(null);
+  // Vanguard's transactions download being reviewed (`review` null while the
+  // server checks it), the accounts checked, and what the last import, undo
+  // or check of one said.
+  const [txn, setTxn] = useState<{ name: string; text: string; today: string; review: ImportsReview | null } | null>(null);
+  const [txnChecked, setTxnChecked] = useState<string[]>([]);
+  const [txnError, setTxnError] = useState<{ level: 'critical' | 'caution'; text: string; again?: boolean } | null>(null);
   const thisYear = new Date().getFullYear();
   const account = shown;
   const name = account?.name ?? 'the account';
   const vanguard = !!account?.vanguard;
   const perf = usePerformanceData(vanguard && account ? { account_id: account.account_id, item_id: account.item_id ?? null } : null, loadMonthsActivity);
+  const txns = useTransactionImports(vanguard && account ? account.account_id : null);
+  const txnList = txns.list && txns.list.imports.length > 0 ? txns.list : null;
+  const imported = !!perf.imports || !!txnList;
   const reviewCtx = useMemo(
     () => ({
       account_id: account?.account_id ?? '',
@@ -377,6 +406,9 @@ export default function HistoryImportSheet({
     setPast(null);
     setPdf(null);
     setMonthsError(null);
+    setTxn(null);
+    setTxnChecked([]);
+    setTxnError(null);
     void loadPast(target.account_id);
   }, [target, loadPast]);
 
@@ -451,6 +483,7 @@ export default function HistoryImportSheet({
     setNotice('');
     setDone(null);
     setMonthsError(null);
+    setTxnError(null);
     if (!f || !account) return;
     const head = new Uint8Array(await f.slice(0, 8).arrayBuffer().catch(() => new ArrayBuffer(0)));
     if (isPdf(f.name, head)) {
@@ -472,6 +505,18 @@ export default function HistoryImportSheet({
     setBusy(true);
     try {
       const { text, encoding } = decodeFile(new Uint8Array(await f.arrayBuffer()));
+      // Vanguard's transactions download: its own review, on a Vanguard
+      // account only.
+      if (isVanguardTransactions(text)) {
+        if (!account.vanguard)
+          setError(
+            /vanguard/i.test(account.institution_name)
+              ? `This is ${TXN_SOURCE}, which Nya imports only into the Vanguard investment accounts it’s connected to, and ${name} isn’t one. Import it from one of those.`
+              : `This is ${TXN_SOURCE}, and ${name} is at ${account.institution_name}. Import it from one of your Vanguard accounts.`
+          );
+        else await reviewTxns(f.name, text);
+        return;
+      }
       const picked: Picked = { name: f.name, blob: f, text, encoding, format: detectFormat(text) };
       setFile(picked);
       setChoices(NONE);
@@ -698,9 +743,140 @@ export default function HistoryImportSheet({
     }
   }
 
+  /** Vanguard's transactions download, checked on the server against the
+   *  accounts as they are. Checked again (`keep`: the accounts checked
+   *  before), the person's choices stay where they still can be taken. */
+  async function reviewTxns(fileName: string, text: string, keep?: string[]) {
+    if (!account) return;
+    setBusy(true);
+    setTxnError(null);
+    // The import sends the same day, so its rows are the ones reviewed.
+    const today = localDate();
+    setTxn({ name: fileName, text, today, review: null });
+    setStep('txns');
+    try {
+      const res = await fetch('/api/investment-imports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'review', account_id: account.account_id, file_name: fileName, text, today }),
+      });
+      const data = await res.json().catch(() => null);
+      const review: ImportsReview | null = res.ok && data?.review ? data.review : null;
+      const none = review ? noneOfYours(review, name) : null;
+      if (!review || none) {
+        setTxn(null);
+        setStep('pick');
+        setError(none ?? (typeof data?.error === 'string' ? data.error : 'The file couldn’t be checked. Please try again.'));
+        return;
+      }
+      setTxn({ name: fileName, text, today, review });
+      setTxnChecked(keep ? checkedFirst(review).filter((k) => keep.includes(k)) : checkedFirst(review));
+    } catch {
+      setTxn(null);
+      setStep('pick');
+      setError('Could not reach the server.');
+    } finally {
+      setBusy(false);
+      setInputKey((k) => k + 1);
+    }
+  }
+
+  /** After an import or an undo of the download: each account it touched
+   *  loads its activity again, this sheet's too, and so do the Plan's inputs. */
+  function txnsChanged(accounts: { account_id: string; item_id: string }[]) {
+    investmentImportsChanged(accounts);
+    perf.refreshActivity();
+    onImported({ investments: true });
+  }
+
+  async function importTxns() {
+    const review = txn?.review;
+    if (!account || !txn || !review || busy) return;
+    const take = takeOf(review, txnChecked);
+    if (take.length === 0) return;
+    const touched = review.accounts.flatMap((a) => (a.account && take.some((t) => t.account_id === a.account!.account_id) ? [{ account_id: a.account.account_id, item_id: a.account.item_id }] : []));
+    setBusy(true);
+    setTxnError(null);
+    try {
+      const res = await fetch('/api/investment-imports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'import', account_id: account.account_id, file_name: txn.name, text: txn.text, today: txn.today, take, counting: review.fingerprint }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        txns.set(data);
+        const rows = rowsTaken(review, txnChecked);
+        setNotice(`${plural(rows, 'transaction')} imported into ${plural(take.length, 'account')} from ${txn.name}.`);
+        setTxn(null);
+        setStep('pick');
+        txnsChanged(touched);
+        return;
+      }
+      if (res.status === 409 && data?.needs === 'review') {
+        setTxnError({ level: 'caution', text: typeof data?.error === 'string' ? data.error : 'The imports changed on another device.', again: true });
+        return;
+      }
+      if (res.status === 409 && data?.needs === 'undo') {
+        const full = review.accounts.find((a) => a.account?.account_id === data?.account_id)?.account?.name ?? 'An account in this file';
+        setTxnError({ level: 'caution', text: `${full} has ${MAX_IMPORTS_PER_ACCOUNT} imports of ${TXN_SOURCE}, the most Nya keeps. Undo an old one to import this file.` });
+        return;
+      }
+      setTxnError({ level: 'critical', text: typeof data?.error === 'string' ? data.error : 'The transactions couldn’t be imported. Please try again.' });
+    } catch {
+      setTxn(null);
+      setStep('pick');
+      setTxnError({
+        level: 'critical',
+        text: 'Could not reach the server, so the transactions may not have been imported. The imports below show whether they were; if not, import the file again.',
+      });
+      void txns.reload(account.account_id);
+      // It may have landed: what it would have changed loads again.
+      txnsChanged(touched);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function undoTxns(i: ListedImport): Promise<boolean> {
+    if (!account || busy) return false;
+    setBusy(true);
+    setTxnError(null);
+    setNotice('');
+    const names = txns.list?.names ?? {};
+    const touched = [...i.accounts.flatMap((id) => (names[id] ? [{ account_id: id, item_id: names[id].item_id }] : [])), { account_id: account.account_id, item_id: account.item_id ?? '' }];
+    try {
+      const res = await fetch('/api/investment-imports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'undo', account_id: account.account_id, import_id: i.import_id }),
+      });
+      const data = await res.json().catch(() => null);
+      if (res.ok) {
+        txns.set(data);
+        const n = i.accounts.length;
+        setNotice(`Undone: the import of ${i.file_name ?? TXN_SOURCE} from ${formatInstantDay(i.imported_at, { sentence: true }) ?? i.imported_at.slice(0, 10)}${n > 1 ? `, from ${plural(n, 'account')}` : ''}.`);
+        txnsChanged(touched);
+        return true;
+      }
+      setTxnError({ level: 'critical', text: typeof data?.error === 'string' ? data.error : 'The import couldn’t be undone. Please try again.' });
+      if (res.status === 404) void txns.reload(account.account_id);
+      return false;
+    } catch {
+      setTxnError({ level: 'critical', text: 'Could not reach the server, so it may not have been undone. The imports below show whether it was.' });
+      void txns.reload(account.account_id);
+      txnsChanged(touched);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function chooseAgain() {
     setPdf(null);
     setMonthsError(null);
+    setTxn(null);
+    setTxnError(null);
     setFile(null);
     setInputKey((k) => k + 1);
     setOptions({});
@@ -717,7 +893,7 @@ export default function HistoryImportSheet({
 
   if (!shown) return null;
   const back =
-    step === 'statement' || step === 'mapping' || step === 'order' || step === 'months'
+    step === 'statement' || step === 'mapping' || step === 'order' || step === 'months' || step === 'txns'
       ? chooseAgain
       : step === 'review'
         ? () => (file?.format === 'csv' ? setStep('mapping') : chooseAgain())
@@ -739,17 +915,29 @@ export default function HistoryImportSheet({
               {pdf?.read && monthsReview.count > 0 ? `Import ${monthsReview.count.toLocaleString()} ${monthsReview.count === 1 ? 'month' : 'months'}` : 'Import'}
             </button>
           </>
+        ) : step === 'txns' ? (
+          <>
+            <button type="button" className="btn secondary" onClick={chooseAgain} disabled={busy}>
+              Cancel
+            </button>
+            <button type="button" className="btn" onClick={() => void importTxns()} disabled={busy || !txn?.review || takeOf(txn.review, txnChecked).length === 0 || !!txnError?.again}>
+              {txn?.review && takeOf(txn.review, txnChecked).length > 0
+                ? `Import ${plural(rowsTaken(txn.review, txnChecked), 'transaction')} into ${plural(takeOf(txn.review, txnChecked).length, 'account')}`
+                : 'Import'}
+            </button>
+          </>
         ) : undefined
       }
     >
       {step === 'pick' && vanguard && (
         <div className="stack">
-          {perf.imports ? (
+          {imported ? (
             <>
-              <PerformanceNow name={name} imports={perf.imports} points={perf.points} activity={perf.activity} currency={shown.currency} />
+              <TransactionsNow name={name} activity={perf.activity} />
+              {perf.imports && <PerformanceNow name={name} imports={perf.imports} points={perf.points} activity={perf.activity} currency={shown.currency} />}
               <p>
-                Bring in more of {name}’s history from files {shown.institution_name} lets you download: a newer Performance page as a PDF, or transactions as OFX or QFX,
-                CSV or QIF.
+                Bring in more of {name}’s history from files {shown.institution_name} lets you download: a newer Performance page as a PDF, or transactions as a CSV,
+                OFX, QFX or QIF file.
               </p>
             </>
           ) : (
@@ -764,13 +952,17 @@ export default function HistoryImportSheet({
                 </p>
               </div>
               <div className="stack tight">
-                <h3 className="section-label">Transactions: OFX or QFX, CSV or QIF</h3>
+                <h3 className="section-label">{TXN_SOURCE}, as a CSV</h3>
                 <p className="helper">
-                  Up to {MAX_FILE_BYTES / (1024 * 1024)} MB and {MAX_IMPORT_ROWS.toLocaleString()} transactions a file. Those {shown.institution_name} already gave Nya are
-                  shown beside the file’s for you to confirm. They show as the account’s activity and don’t change its balance history: a market’s moves aren’t
-                  transactions.
+                  Up to 18 months of transactions for every account in your Vanguard login, in Vanguard’s own words, so a conversion or a transfer of shares counts as
+                  what it was. For the days the file covers, its transactions take the place of the ones Vanguard gave Nya.
                 </p>
               </div>
+              <p className="helper">
+                An OFX, QFX or QIF file, or a CSV laid out another way, is imported as before: up to {MAX_FILE_BYTES / (1024 * 1024)} MB and{' '}
+                {MAX_IMPORT_ROWS.toLocaleString()} transactions, shown beside what {shown.institution_name} gave Nya for you to confirm. Those show as the account’s
+                activity and don’t change its balance history: a market’s moves aren’t transactions.
+              </p>
             </>
           )}
           {past?.history_pending && <HistoryPendingNote bank={shown.institution_name} />}
@@ -791,7 +983,17 @@ export default function HistoryImportSheet({
                 disabled={busy}
               />
             </label>
-            {perf.imports && <p className="helper">The newest Performance page counts, whole. Older ones are kept so you can go back to them.</p>}
+            {imported && (
+              <p className="helper">
+                {[
+                  perf.imports ? 'The newest Performance page counts, whole.' : '',
+                  txnList ? 'For each day, the newest transactions download that covers it decides.' : '',
+                  'Older imports are kept so you can go back to them.',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+              </p>
+            )}
           </div>
           {busy && <p className="helper">Reading the file…</p>}
           {error && (
@@ -804,6 +1006,11 @@ export default function HistoryImportSheet({
               {monthsError.text}
             </Notice>
           )}
+          {txnError && (
+            <Notice level={txnError.level} role={txnError.level === 'critical' ? 'alert' : 'status'}>
+              {txnError.text}
+            </Notice>
+          )}
           {notice && (
             <div className="notice done" role="status">
               {CHECK}
@@ -814,18 +1021,22 @@ export default function HistoryImportSheet({
             </div>
           )}
           {perf.importsError && <p className="helper">{perf.importsError}</p>}
-          {perf.imports && (
+          {txns.error && <p className="helper">{txns.error}</p>}
+          {imported && (
             <div className="stack tight">
               <h3 className="section-label">Past imports into {name}</h3>
-              <PerformanceImports
-                name={name}
-                imports={perf.imports}
-                points={perf.points}
-                activity={perf.activity}
-                currency={shown.currency}
-                busy={busy}
-                onUndo={undoMonths}
-              />
+              {txnList && <TransactionImports name={name} list={txnList} activity={perf.activity} busy={busy} onUndo={undoTxns} />}
+              {perf.imports && (
+                <PerformanceImports
+                  name={name}
+                  imports={perf.imports}
+                  points={perf.points}
+                  activity={perf.activity}
+                  currency={shown.currency}
+                  busy={busy}
+                  onUndo={undoMonths}
+                />
+              )}
             </div>
           )}
           <PastHistoryImports
@@ -836,7 +1047,7 @@ export default function HistoryImportSheet({
             busy={busy}
             undoing={undoing}
             plan={undoPlan}
-            headed={!perf.imports}
+            headed={!imported}
             onUndo={(i) => void askUndo(i)}
             onKeep={() => {
               setUndoing(null);
@@ -844,12 +1055,13 @@ export default function HistoryImportSheet({
             }}
             onConfirm={(i) => void undo(i)}
           />
-          {perf.imports && (
+          {imported && (
             <Why>
-              Each import is kept on its own, as it was read, and nothing else in Nya is changed by it: not Nya’s activity, not its recorded balances, not your deposits
-              and withdrawals, not another import. What counts is worked out from what’s here each time you look, so undoing an import takes out only that import, and
-              the account is as it was before it. Only the newest Performance page counts, so two files’ months are never mixed. To correct a month Vanguard has since
-              changed, import its page again.
+              Each import is kept on its own, as it was read, and nothing else in Nya is changed by it: not what Vanguard gave Nya, not its recorded balances, not your
+              deposits and withdrawals, not another import. What counts is worked out from what’s here each time you look, so undoing an import takes out only that
+              import, and the account is as it was before it. Only the newest Performance page counts, so two files’ months are never mixed; to correct a month Vanguard
+              has since changed, import its page again. For each day, the newest transactions download that covers it decides, so undoing one hands its days to the one before
+              it, or back to what Vanguard gave Nya. A download imported into several accounts is undone from all of them.
             </Why>
           )}
         </div>
@@ -884,6 +1096,49 @@ export default function HistoryImportSheet({
                 </div>
               )}
               <PerformanceReview state={monthsReview} ctx={reviewCtx} fileName={pdf.name} onAgain={chooseAgain} />
+            </>
+          )}
+        </div>
+      )}
+
+      {step === 'txns' && txn && (
+        <div className="stack">
+          {!txn.review ? (
+            <>
+              <p role="status">Reading {txn.name}…</p>
+              <StripSkeleton />
+            </>
+          ) : (
+            <>
+              {txnError && (
+                <div className="stack tight">
+                  <Notice level={txnError.level} role={txnError.level === 'critical' ? 'alert' : 'status'}>
+                    {txnError.text}
+                  </Notice>
+                  {txnError.again && (
+                    <div>
+                      <button type="button" className="btn secondary" disabled={busy} onClick={() => void reviewTxns(txn.name, txn.text, txnChecked)}>
+                        Check the file again
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <TransactionsReview
+                fileName={txn.name}
+                review={txn.review}
+                sheet={{ account_id: shown.account_id, name }}
+                checked={txnChecked}
+                onChecked={setTxnChecked}
+                disabled={busy}
+              />
+              <Why>
+                Vanguard’s download says what happened in its own words: a conversion as a conversion, with the shares it moved and what they were worth, and a sweep as
+                a move inside the account. Nya reads it only as Vanguard lays it out, and a kind of transaction it doesn’t know stops that account’s import, never guessed
+                at. The file has every account in your Vanguard login, matched to yours in Nya by their last four digits. It doesn’t say which days it covers, so Nya
+                takes its first to its last transaction, never later than yesterday. For those days the file decides. What Vanguard gave Nya isn’t changed, only not
+                counted, so undoing the import brings it back. Each import is kept on its own and listed in this sheet with its Undo.
+              </Why>
             </>
           )}
         </div>
