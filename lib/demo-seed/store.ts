@@ -10,7 +10,7 @@ import { defineCounterStore, defineValueStore } from '../repo';
 
 /** Raised when what the seed writes changes shape or meaning, so an older
  *  deployment refuses to reset over a newer one's. */
-export const SEED_VERSION = 3;
+export const SEED_VERSION = 4;
 
 /** How often one demo account may be reset. */
 export const RESET_WINDOW_SECONDS = 10 * 60;

@@ -79,6 +79,7 @@ import { parseSavedDraft } from '../fire/saved-plan';
 import { createCopy, optIn, saveMain, saveTaxFacts } from '../plan-writes';
 import type { RowRef, SeedExtras, SeedRule } from './extras';
 import { checkPastMonths } from './past-months';
+import { checkTransactionImports } from './imports';
 import { historyMonths, type DemoProfile, type SeedAccount, type SeedInstitution, type SeedManual } from './profiles';
 
 /** An institution as linked: the profile's, and the Item made of it. */
@@ -325,6 +326,7 @@ export function checkProfile(profile: DemoProfile, today: string): void {
   for (const r of x.runway ?? []) runwayOf(r);
   if (x.allocation) allocationOf(x.allocation.target);
   checkPastMonths(profile, today);
+  checkTransactionImports(profile, today);
   const plans = plansOf(profile, (mask) => `seed-${mask}`);
   if (x.plan?.savedMonthsBack !== undefined) {
     const draft = parseSavedDraft({ plan: plans.main, savings: 0, currency: USD, inflation: 0.03 });
