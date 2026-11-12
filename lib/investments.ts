@@ -46,6 +46,12 @@ const EXTERNAL_FLOW_SUBTYPES = new Set([
   // unrecognised subtype falls through to 0, so a $60k arrival would be
   // invisible to the balance walk and to the activity panel.
   'rollover',
+  // Not a subtype Plaid emits either: rows read from Vanguard's own download
+  // (lib/import/vanguard-transactions.ts) give a conversion (a Traditional
+  // IRA's money moving to a Roth, say) this subtype. It is money in or out of
+  // this account, but never a contribution: it isn't in CONTRIBUTION_SUBTYPES,
+  // so a conversion is never counted as new savings.
+  'conversion',
 ]);
 
 // Corporate actions. Plaid files these under type 'transfer', but they are not
@@ -134,6 +140,9 @@ const ROLLOVER_EVENT = /\broll(?:ed|s|ing)?\s?overs?\b/;
 export function isRollover(t: InvestmentTxn): boolean {
   const subtype = (t.subtype || '').toLowerCase();
   if (subtype === 'rollover') return true;
+  // A conversion is its own event, whatever its description says: one out of
+  // a "Rollover IRA" names the account, not a rollover.
+  if (subtype === 'conversion') return false;
   if (!EXTERNAL_FLOW_SUBTYPES.has(subtype)) return false;
 
   const name = normalizeName(t.name);
