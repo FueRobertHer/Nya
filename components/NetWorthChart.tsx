@@ -885,15 +885,11 @@ export default function NetWorthChart({
           </span>
           {readNote ? (
             <span className="chart-readout-date chart-readout-noted">
-              <span className="chart-readout-day">
-                <Masked>{readDate}</Masked>
-              </span>
+              <span className="chart-readout-day">{readDate}</span>
               <span className="chart-readout-note">{`\u00a0·\u00a0${readNote}`}</span>
             </span>
           ) : (
-            <span className="chart-readout-date">
-              <Masked>{readDate}</Masked>
-            </span>
+            <span className="chart-readout-date">{readDate}</span>
           )}
           <button
             type="button"
