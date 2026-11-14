@@ -335,22 +335,44 @@ describe('the screen', () => {
     }
   });
 
-  test('All, every total set: all time, from $0.00, with no rate', async () => {
+  // The returns on every deposit since each account opened: $93,500.00 on
+  // $80,000.00 + $20,000.00 + $30,000.00. No rate: the totals say how much
+  // went in, never when.
+  test('All, every total set: all time, from $0.00, with a total return and no rate', async () => {
     const { host, root, range } = setup({ answers: ROTH_SET });
     try {
       await pass(50);
       range('All');
-      expect(heroLine(host)).toBe('All time, since each account opened');
+      expect(heroLine(host)).toBe('▲ +71.9% total return on $130,000.00 deposited');
+      expect(byClass(host, 'hero-delta')[0].getAttribute('class')).toBe('hero-delta up');
+      // What was deposited is an amount, hidden with the rest; the share shows,
+      // as a rate does.
+      act(() => setHideAmounts(true, null));
+      expect(heroLine(host)).toStartWith('▲ +71.9% total return on ');
+      expect(heroLine(host)).not.toContain('130,000');
+      act(() => setHideAmounts(false, null));
       expect(figure(host)).toBe('+$93,500.00');
       expect(card(host)).toContain(
         'All time Beginning balance $0.00 Deposits & withdrawals +$128,000.00 Investment returns +$93,500.00 Ending balance $221,500.00 Since each account opened, from the deposits and withdrawals you set for it.'
       );
-      expect(rows(host)).toEqual(['Individual ••4421 Vanguard +$40,000.00 returns', 'Roth IRA ••3302 Vanguard +$25,500.00 returns', '401(k) ••8810 Fidelity +$28,000.00 returns']);
+      // Each row its own, the same kind of figure as the hero's.
+      expect(rows(host)).toEqual([
+        'Individual ••4421 Vanguard +$40,000.00 returns · +50.0% total',
+        'Roth IRA ••3302 Vanguard +$25,500.00 returns · +127.5% total',
+        '401(k) ••8810 Fidelity +$28,000.00 returns · +93.3% total',
+      ]);
       expect(words(host)).not.toContain('Set deposits and withdrawals');
       // For all time each account counts from when it opened: no late start said.
       expect(hero(host)).not.toContain('counts from');
-      // The rate's absence, said in the chart's info.
-      expect(words(host)).toContain('There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.');
+      // What it is, and that it isn't a year's, in the chart's info and Why.
+      expect(hero(host)).toContain(
+        'Total return: your investment returns as a share of everything deposited since each account opened, with withdrawals not taken off. It isn’t a yearly rate: Nya doesn’t know when the money before its records went in.'
+      );
+      expect(card(host)).toContain(
+        'The total return is your investment returns as a share of everything deposited since each account opened, with withdrawals not taken off, so money moved between the accounts you chose counts as deposited in the one it went to. It isn’t a yearly rate: Nya doesn’t know when the money before its records went in.'
+      );
+      expect(words(host)).not.toMatch(/\ba year\b/);
+      expect(words(host)).not.toContain('There’s no rate of return');
     } finally {
       act(() => root.unmount());
     }
@@ -956,16 +978,18 @@ describe('imported months', () => {
     }
   });
 
-  test('the same months with totals set: all time from the totals, with no rate', async () => {
+  test('the same months with totals set: all time from the totals, with a total return and no rate', async () => {
     const { host, root, range } = setup({ only: ['ind'], months: { ind: opening } });
     try {
       await pass(50);
       range('All');
       await pass(10);
-      expect(heroLine(host)).toBe('All time, since each account opened');
+      expect(heroLine(host)).toBe('▲ +50.0% total return on $80,000.00 deposited');
       expect(hero(host)).toContain('Grey line: your deposits less withdrawals since it opened, from the totals you set, by each day from Jan 1, 2023.');
       expect(card(host)).toContain('Deposits & withdrawals +$80,000.00 Investment returns +$40,000.00 Ending balance $120,000.00 Since each account opened, from the deposits and withdrawals you set for it.');
-      expect(words(host)).toContain('There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.');
+      expect(hero(host)).toContain('Total return: your investment returns as a share of everything deposited since it opened, with withdrawals not taken off. It isn’t a yearly rate: Nya doesn’t know when the money before its records went in.');
+      expect(card(host)).toContain('The total return is your investment returns as a share of everything deposited since the account opened, with withdrawals not taken off. It isn’t a yearly rate');
+      expect(words(host)).not.toContain('There’s no rate of return');
     } finally {
       act(() => root.unmount());
     }
@@ -984,20 +1008,26 @@ describe('imported months', () => {
     }
   });
 
-  test('two accounts, one opening from months and one with totals: all time, no rate for the two, each said', async () => {
+  // Individual's deposits from its months, $63,000.00, and Roth IRA's
+  // totals, $20,000.00: $82,500.00 of returns on $83,000.00.
+  test('two accounts, one opening from months and one with totals: all time, a total return for the two, each said', async () => {
     const { host, root, range } = setup({ only: ['ind', 'roth'], months: { ind: opening }, answers: { ind: { totals: null }, ...ROTH_SET } });
     try {
       await pass(50);
       range('All');
       await pass(10);
-      expect(heroLine(host)).toBe('All time, since each account opened');
+      expect(heroLine(host)).toBe('▲ +99.4% total return on $83,000.00 deposited');
       expect(hero(host)).toContain('Grey line: your deposits less withdrawals since each account opened, from the totals you set and the months you imported, by each day');
-      expect(hero(host)).toContain('There’s no rate of return for all time across these accounts: Nya doesn’t know when the money before its records went in for Roth IRA ••3302.');
+      expect(hero(host)).toContain(
+        'Total return: your investment returns as a share of everything deposited since each account opened, with withdrawals not taken off. It isn’t a yearly rate: Nya doesn’t know when the money before its records went in for Roth IRA ••3302.'
+      );
+      expect(card(host)).toContain('Vanguard gives one figure a month, so for Individual ••4421 a month with money both in and out counts only what was left as deposited.');
       expect(card(host)).toContain(
         'Since each account opened: Individual ••4421’s from Vanguard’s months until Jun 1, 2025, then Nya’s activity; Roth IRA ••3302’s from the deposits and withdrawals you set.'
       );
-      // Individual's own months say when its money went in.
-      expect(rows(host)[0]).toMatch(/^Individual ••4421 Vanguard \+\$[\d,.]+ returns · \+[\d.]+% a year$/);
+      // The rows follow the hero: Individual's total return, not the yearly
+      // rate its months alone would give it.
+      expect(rows(host)).toEqual(['Individual ••4421 Vanguard +$57,000.00 returns · +90.5% total', 'Roth IRA ••3302 Vanguard +$25,500.00 returns · +127.5% total']);
     } finally {
       act(() => root.unmount());
     }

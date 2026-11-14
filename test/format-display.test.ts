@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { asciiMinus, compactMoney, formatDay, formatMoney, hiddenMoney, MASK, MINUS, signedMoney, spoken, trueMinus } from '@/lib/format';
+import { asciiMinus, compactMoney, formatDay, formatMoney, hiddenMoney, MASK, MINUS, signedMoney, signedPercent, spoken, trueMinus } from '@/lib/format';
 import { wholeMoney } from '@/components/plan-text';
 
 // Numbers, money and dates as the design system writes them on the screen
@@ -19,6 +19,14 @@ describe('the minus sign', () => {
     expect(compactMoney(-1234, 'USD')).toBe('−$1.2K');
     expect(wholeMoney(-1240.6, 'USD')).toBe('−$1,241');
     for (const s of [formatMoney(-1, 'EUR'), signedMoney(-1, 'GBP'), compactMoney(-5_000_000), wholeMoney(-3, null)]) expect(s).not.toContain('-');
+  });
+
+  test('a share is signed the same way, with none once it rounds to nothing', () => {
+    expect(signedPercent(0.092)).toBe('+9.2%');
+    expect(signedPercent(-0.014)).toBe('−1.4%');
+    expect(signedPercent(1.275)).toBe('+127.5%');
+    expect(signedPercent(0.0004)).toBe('0.0%');
+    expect(signedPercent(-0.0004)).toBe('0.0%');
   });
 
   test('hidden, the sign stays and is the true minus too', () => {

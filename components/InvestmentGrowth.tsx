@@ -14,8 +14,9 @@
 // All is all time once every chosen account has deposits and withdrawals
 // Nya can carry, or months from its brokerage that start when it opened:
 // from $0.00, when each opened, with a rate only where every account's
-// months say when its money went in. Until then, All counts from the first
-// recorded day, and the card says what to set.
+// months say when its money went in, and otherwise a total return on what
+// was deposited, each row's too, never read as a year's. Until then, All
+// counts from the first recorded day, and the card says what to set.
 //
 // It loads every account's balance history in one read (app/api/
 // account-history `ids`), and each account's activity through the cache its
@@ -33,7 +34,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNod
 import { nameAndMask, withMask } from '@/lib/account-names';
 import { accountBucket, type TaxBucket } from '@/lib/allocation/buckets';
 import { overridesOf } from '@/lib/allocation/settings';
-import { currencyPlural, formatDay, formatMoney, MINUS, roundsToNothing, signedMoney } from '@/lib/format';
+import { currencyPlural, formatDay, formatMoney, roundsToNothing, signedMoney, signedPercent } from '@/lib/format';
 import { isInvestmentType } from '@/lib/balance';
 import { RANGE_TEXT, type RangeKey } from '@/lib/chart-range';
 import { connectorLabel } from '@/lib/connectors/types';
@@ -41,7 +42,6 @@ import { summarizeGrowth, type ActivityState, type CurrencyGroup, type Figures, 
 import { joinNames } from '@/lib/month-coverage';
 import type { BalancePoint } from '@/lib/growth';
 import { monthText, previousMonth, withPastMonths, type PastMonthsResult } from '@/lib/investment-months';
-import type { Rate } from '@/lib/returns-rate';
 import AccountsChooser, { presetOf, type ChooserPreset } from './AccountsChooser';
 import type { Institution } from './accounts-format';
 import { Hero } from './Hero';
@@ -96,11 +96,18 @@ function isRetirement(subtype: string | null, chosen: TaxBucket | undefined): bo
   return s === 'retirement' || s === 'non-taxable brokerage account';
 }
 
-/** "+9.2%", "−1.4%", "0.0%" */
-function ratePct(r: Rate): string {
-  const text = `${Math.abs(r.value * 100).toFixed(1)}%`;
-  if (text === '0.0%') return text;
-  return `${r.value > 0 ? '+' : MINUS}${text}`;
+/** Which way a rate or a total return went, for its arrow and color: flat
+ *  once it rounds to nothing, never in a gain's color. */
+type Dir = 'up' | 'down' | 'flat';
+const dirOf = (value: number): Dir => (signedPercent(value) === '0.0%' ? 'flat' : value > 0 ? 'up' : 'down');
+const ARROW: Record<Dir, string> = { up: '▲ ', down: '▼ ', flat: '' };
+
+/** That it isn't a year's rate, and why: the totals typed for `typed` don't
+ *  say when the money went in (for some of the accounts, named, when the
+ *  others' months do). */
+function notYearly(typed: readonly GrowthRow<Shown>[], counted: number): string {
+  const which = typed.length === counted ? '' : ` for ${joinNames(typed.map((r) => r.account.title))}`;
+  return `It isn’t a yearly rate: Nya doesn’t know when the money before its records went in${which}.`;
 }
 
 export default function InvestmentGrowth({
@@ -466,12 +473,15 @@ function heroInfo(g: CurrencyGroup<Shown>, one: boolean): string[] {
     const startsLater = !!first && !!g.chart && g.chart.points[0].date < first;
     const from = first ? ` from ${day(first)}${startsLater ? `, the first day Nya has ${one ? 'its' : 'every account’s'} activity` : ''}` : '';
     const typed = g.rows.filter((r) => r.figures && r.totals === 'set');
-    const source = typed.length === 0 ? '' : typed.length === g.rows.filter((r) => r.figures).length ? ', from the totals you set' : ', from the totals you set and the months you imported';
+    const counted = g.rows.filter((r) => r.figures).length;
+    const source = typed.length === 0 ? '' : typed.length === counted ? ', from the totals you set' : ', from the totals you set and the months you imported';
     return [
       `${gold} Grey line: your deposits less withdrawals since ${one ? 'it' : 'each account'} opened${source}, by each day${from}. The gap between them is your investment returns so far.`,
       g.rate
         ? `The rate of return weighs each deposit and withdrawal by how long it was invested.${middles} Past a year it is given a year.`
-        : typed.length === g.rows.filter((r) => r.figures).length
+        : g.total
+          ? `Total return: your investment returns as a share of everything deposited since ${one ? 'it' : 'each account'} opened, with withdrawals not taken off. ${notYearly(typed, counted)}`
+          : typed.length === counted
           ? 'There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.'
           : typed.length > 0
             ? `There’s no rate of return for all time across these accounts: Nya doesn’t know when the money before its records went in for ${joinNames(typed.map((r) => r.account.title))}.`
@@ -581,20 +591,34 @@ function InvestmentsHero({
 
   let delta: ReactNode = null;
   if (f && g) {
-    // All time has a rate only from months that say when the money went in.
-    if (all && !g.rate) delta = <div className="hero-delta">All time, since each account opened</div>;
-    else {
+    // All time has a rate only from months that say when the money went in;
+    // short of that, its total return on what was deposited, never a year's.
+    if (all && !g.rate) {
+      const t = g.total;
+      if (!t) delta = <div className="hero-delta">All time, since each account opened</div>;
+      else {
+        const dir = dirOf(t.value);
+        delta = (
+          <div className={`hero-delta ${dir}`}>
+            <b>
+              {ARROW[dir]}
+              {signedPercent(t.value)}
+            </b>{' '}
+            <Masked>{`total return on ${formatMoney(t.deposited, currency)} deposited`}</Masked>
+          </div>
+        );
+      }
+    } else {
       const span = all && g.span ? `since ${monthText(g.span.from.slice(0, 7))}` : `${rangeWords.charAt(0).toLowerCase()}${rangeWords.slice(1)}`;
       const r = g.rate;
       if (!r) delta = <div className="hero-delta">{rangeWords}</div>;
       else {
-        const pct = ratePct(r);
-        const dir = pct === '0.0%' ? 'flat' : r.value > 0 ? 'up' : 'down';
+        const dir = dirOf(r.value);
         delta = (
           <div className={`hero-delta ${dir}`}>
             <b>
-              {dir === 'up' ? '▲ ' : dir === 'down' ? '▼ ' : ''}
-              {pct}
+              {ARROW[dir]}
+              {signedPercent(r.value)}
               {r.annual ? ' a year' : ''}
             </b>{' '}
             rate of return · {span}
@@ -692,7 +716,16 @@ function allTimeWhy(g: CurrencyGroup<Shown>): string {
   const middles = monthsIn(g)
     .map((m) => ` Before ${day(m.day)}, when Nya’s activity for ${counted.length === 1 ? 'this account' : m.title} starts, each month’s figures are Vanguard’s.`)
     .join('');
-  const rate = g.rate || typed.length === 0 ? '' : ' There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.';
+  let rate = '';
+  if (g.total) {
+    // Months give one net a month: for those accounts, a month with money
+    // both in and out counts only what was left as deposited.
+    const months = counted.filter((r) => r.totals !== 'set');
+    const each = counted.length === 1 ? 'the account' : 'each account';
+    const moved = counted.length > 1 ? ', so money moved between the accounts you chose counts as deposited in the one it went to' : '';
+    const netted = months.length > 0 ? ` Vanguard gives one figure a month, so for ${joinNames(months.map((r) => r.account.title))} a month with money both in and out counts only what was left as deposited.` : '';
+    rate = ` The total return is your investment returns as a share of everything deposited since ${each} opened, with withdrawals not taken off${moved}.${netted} ${notYearly(typed, counted.length)}`;
+  } else if (!g.rate && typed.length > 0) rate = ' There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.';
   return `${from}${middles} ${WHY_DW}${rate}`;
 }
 
@@ -863,7 +896,9 @@ function Row({
       {r.figures ? (
         <span className="list-row-value money growth-value">
           <Masked>{signedMoney(r.figures.returns, currency)}</Masked>
-          <span className="growth-value-label">{r.rate ? `returns · ${ratePct(r.rate)}${r.rate.annual ? ' a year' : ''}` : 'returns'}</span>
+          <span className="growth-value-label">
+            {r.rate ? `returns · ${signedPercent(r.rate.value)}${r.rate.annual ? ' a year' : ''}` : r.total ? `returns · ${signedPercent(r.total.value)} total` : 'returns'}
+          </span>
         </span>
       ) : (
         waiting && (

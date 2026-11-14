@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { returnsRate, type RateLeg } from '@/lib/returns-rate';
+import { returnsRate, totalReturn, type RateLeg } from '@/lib/returns-rate';
 
 // The rate of return Accounts > Investments gives (lib/returns-rate.ts):
 // money-weighted over a range, each account a leg from its own first day,
@@ -69,5 +69,24 @@ describe('no rate', () => {
     expect(returnsRate([leg('2026-01-01', '2026-04-11', 0, 0)])).toBeNull();
     // Everything out on the first day.
     expect(returnsRate([leg('2026-01-01', '2026-01-11', 100, 0, [{ date: '2025-12-31', amount: -100 }])])).toBeNull();
+  });
+});
+
+// For all time from typed totals, which say how much went in but not when.
+describe('the total return', () => {
+  test('the returns as a share of what was deposited, withdrawals not taken off', () => {
+    expect(totalReturn(42_520.4, 154_000)).toEqual({ value: 42_520.4 / 154_000, deposited: 154_000 });
+    // More came out than went in: still a share of what went in.
+    expect(totalReturn(40_000, 50_000)?.value).toBe(0.8);
+    expect(totalReturn(-500, 10_000)?.value).toBe(-0.05);
+    // To the cent.
+    expect(totalReturn(1, 1000.004)?.deposited).toBe(1000);
+  });
+
+  test('none with nothing deposited, a cent as good as nothing', () => {
+    expect(totalReturn(100, 0)).toBeNull();
+    expect(totalReturn(100, 0.005)).toBeNull();
+    expect(totalReturn(100, -20)).toBeNull();
+    expect(totalReturn(1, 0.01)).toEqual({ value: 100, deposited: 0.01 });
   });
 });

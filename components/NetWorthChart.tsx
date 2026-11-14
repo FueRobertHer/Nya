@@ -83,11 +83,14 @@
 // it opened, so All is all time: the readout
 // reads from $0.00 when the account opened to the last recorded day the
 // line reaches, its split line the deposits and withdrawals and the returns
-// there, and a scrubbed day all time to that day. Every other range counts
-// from its start.
+// there, and a scrubbed day all time to that day. From the totals, the
+// readout's day also gives the total return on what was deposited
+// (lib/returns-rate.ts totalReturn): the totals don't say when the money went
+// in, so it is never a year's. Every other range counts from its start.
 
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { formatDay, formatMoney, MINUS, onDay, roundsToNothing, spoken } from '@/lib/format';
+import { formatDay, formatMoney, MINUS, onDay, roundsToNothing, signedPercent, spoken } from '@/lib/format';
+import { totalReturn } from '@/lib/returns-rate';
 import { Masked } from './HideAmounts';
 import { Segmented } from './Segmented';
 import { MIN_LABEL_GAP as LABEL_GAP, labelWidth, useDrawnWidth } from './drawn-width';
@@ -539,6 +542,9 @@ export default function NetWorthChart({
     range === 'ALL' && allTime && (baselineFrom || opensAtZero) && lastBase !== null && !points[lastReal].estimated
       ? { net: lastBase, returns: vals[lastReal] - lastBase, to: lastReal < last ? points[lastReal].date : null }
       : null;
+  // From the totals: the returns on every deposit since the account opened,
+  // the line's money in there (see the header). Not from months alone.
+  const wholeTotal = whole && baselineFrom ? totalReturn(whole.returns, baseIn[lastReal] ?? 0) : null;
   const rangeChange = change(0, last);
 
   /** All time to a point: the grey line there is the net deposits and
@@ -609,8 +615,13 @@ export default function NetWorthChart({
     }
     if (outside) {
       // The hero's lines say it.
-    } else if (baselineFrom && whole)
+    } else if (baselineFrom && whole) {
       info.push(`All time starts at ${formatMoney(0, currency)}, when the account opened, and counts from your totals for ${fmtDay(baselineFrom, true)}.`);
+      if (wholeTotal)
+        info.push(
+          'Total return: your investment returns as a share of everything deposited since the account opened, with withdrawals not taken off. It isn’t a yearly rate: Nya doesn’t know when the money before its records went in.'
+        );
+    }
     else if (baselineFrom && baseStart > 0)
       info.push(`Deposits, withdrawals and returns for the range count from ${dayIn(baseStart)}${firstRecorded ? ', the first recorded day' : ''}.`);
   }
@@ -845,6 +856,9 @@ export default function NetWorthChart({
     // From $0.00 when the account opened: its balance, measured.
     readValue = signed(whole.net + whole.returns, currency);
     readDate = whole.to ? `All time, to ${fmtDay(whole.to, true)}` : 'All time';
+    // The percentage alone, so the line fits a phone and keeps its height as a
+    // day is scrubbed; the info says what it divides by.
+    if (wholeTotal) readDate += ` · ${signedPercent(wholeTotal.value)} total return`;
   } else {
     readValue = rangeChange.text;
     // Said once here when the line is solid for being all an estimate.

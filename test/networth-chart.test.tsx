@@ -221,9 +221,16 @@ describe('NetWorthChart all time', () => {
   test('the readout is the balance from $0.00, its split the net and the returns', () => {
     const html = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={() => net} baselineFrom="2026-08-15" allTime />);
     expect(html).toContain('<span class="chart-readout-value">+$152,650.00</span>');
-    expect(html).toContain('<span class="chart-readout-date">All time</span>');
+    // The returns on everything deposited, withdrawals not taken off:
+    // $12,150.00 on $146,500.00 (on the net, $140,500.00, it would read
+    // +8.6%). The percentage alone, so the line fits a phone.
+    expect(html).toContain('<span class="chart-readout-date">All time · +8.3% total return</span>');
     expect(html).toContain('All time: +$140,500.00 deposits &amp; withdrawals · +$12,150.00 returns');
     expect(html).toContain('All time starts at $0.00, when the account opened, and counts from your totals for Aug 15.');
+    expect(html).toContain(
+      'Total return: your investment returns as a share of everything deposited since the account opened, with withdrawals not taken off. It isn’t a yearly rate: Nya doesn’t know when the money before its records went in.'
+    );
+    expect(html).not.toMatch(/\ba year\b/);
     expect(html).not.toContain('count from Sep 1');
   });
 
@@ -231,8 +238,20 @@ describe('NetWorthChart all time', () => {
   test('to the last recorded day the line reaches', () => {
     const early = () => net.slice(0, 2);
     const html = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={early} baselineFrom="2026-08-15" allTime />);
-    expect(html).toContain('<span class="chart-readout-date">All time, to Sep 2</span>');
+    expect(html).toContain('<span class="chart-readout-date">All time, to Sep 2 · +8.3% total return</span>');
     expect(html).toContain('All time: +$140,500.00 deposits &amp; withdrawals · +$12,100.00 returns');
+  });
+
+  test('the total return: below zero with a minus, and none with nothing deposited', () => {
+    const lost = [{ date: '2026-09-01', value: 150_000 }, { date: '2026-09-03', value: 130_000 }];
+    const down = renderToStaticMarkup(<NetWorthChart points={lost} baselineFor={() => [net[0], net[2]]} baselineFrom="2026-08-15" allTime />);
+    // −$10,500.00 on $146,500.00 (on the net, −7.5%).
+    expect(down).toContain('<span class="chart-readout-date">All time · −7.2% total return</span>');
+    // Only withdrawals typed (or a net typed as one): nothing to divide by.
+    const out = net.map((b) => ({ ...b, value: -6000, in: 0 }));
+    const none = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={() => out} baselineFrom="2026-08-15" allTime />);
+    expect(none).toContain('<span class="chart-readout-date">All time</span>');
+    expect(none).not.toContain('total return');
   });
 
   test('only on All, and only with totals carried', () => {
@@ -726,6 +745,8 @@ describe('months from a brokerage’s record', () => {
     expect(html).toContain('All time: +$4,000.00 deposits &amp; withdrawals · +$11,166.00 returns');
     expect(words(html)).toContain('Grey line: your deposits less withdrawals by each day, from $0.00 when the account opened. The gap above it is your returns so far.');
     expect(words(html)).not.toContain('counts from your totals');
+    // Months give one net a month, so no total return on the sheet from them.
+    expect(words(html)).not.toContain('total return');
   });
 
   test('not from months that start on a balance, nor without all time asked for', () => {
