@@ -36,6 +36,16 @@
 // totals don't say when the money before Nya's records went in, and can
 // differ from the months' own sum.
 //
+// THE TOTAL RETURN stands in for all time's rate short of that (lib/returns-
+// rate.ts totalReturn): the returns on every deposit since each account
+// opened, the group's and each row's, so the rows give the same kind of
+// figure as the group, never a rate beside it. An account's deposits are its
+// line's money in on its last day: the totals carried, or from months each
+// month's net when it is above zero (they give one net a month, so a month
+// with money both in and out counts only what was left) and Nya's activity
+// after. They add up across the accounts, so money moved between two of them
+// counts as deposited in the one it went to.
+//
 // THE CHART (the hero's): the counted accounts' balances added up by day,
 // from the first day every one of them has a balance, to the last day one is
 // counted, and the grey line under them. Before an account is counted its
@@ -55,7 +65,7 @@ import { LATE_START_DAYS, availableRanges, initialRange, rangeLabel, rangeStart,
 import { contributionBaseline, rangeSplit, usableTotals, type BalancePoint, type BaselinePoint, type Flow, type Move, type RangeSplit } from './growth';
 import type { MoneyInOut } from './money-in-out';
 import type { InvestmentMonths } from './investment-months';
-import { returnsRate, type Rate, type RateLeg } from './returns-rate';
+import { returnsRate, totalReturn, type Rate, type RateLeg, type TotalReturn } from './returns-rate';
 
 /** The note the activity carries while another request is making the
  *  account's first download (lib/investment-activity.ts): nothing is saved
@@ -135,9 +145,13 @@ export type GrowthRow<A extends GrowthAccount = GrowthAccount> = {
   totals: TotalsState | null;
   /** Its figures on the group's basis; null when it has none. */
   figures: Figures | null;
-  /** Its rate of return over the range (for all time only when it opens
-   *  with no totals carried, see the header). */
+  /** Its rate of return over the range (for all time only when it, and every
+   *  other account in its group, opens with no totals carried, see the
+   *  header). */
   rate: Rate | null;
+  /** Its total return for all time, when its group has one (see the
+   *  header); null with nothing deposited. */
+  total: TotalReturn | null;
 };
 
 /** The hero's chart: the balances added up by day, and the grey line, which
@@ -155,6 +169,9 @@ export type CurrencyGroup<A extends GrowthAccount = GrowthAccount> = {
    *  count. */
   figures: Figures | null;
   rate: Rate | null;
+  /** For all time without a rate, the total return (see the header); null
+   *  with nothing deposited. */
+  total: TotalReturn | null;
   /** The days the figures count, from the earliest account's first to the
    *  latest one's last. */
   span: { from: string; to: string } | null;
@@ -266,7 +283,7 @@ export function summarizeGrowth<A extends GrowthAccount>(
 
   const rows: GrowthRow<A>[] = accounts.map((account) => {
     const status = statusOf(account.activity);
-    const row: GrowthRow<A> = { account, status, split: null, from: null, to: null, totals: null, figures: null, rate: null };
+    const row: GrowthRow<A> = { account, status, split: null, from: null, to: null, totals: null, figures: null, rate: null, total: null };
     if (status !== 'counted' || account.activity.state !== 'ready') return row;
     const a = account.activity.data;
     row.totals = totalsOf(a);
@@ -353,6 +370,11 @@ export function summarizeGrowth<A extends GrowthAccount>(
     const basis: Basis = whole ? 'all' : 'range';
     // Its rate for all time: from the months alone, with no totals carried.
     const timed = (r: GrowthRow<A>) => opens(r) && r.totals !== 'set';
+    // All time has a rate only when every account is timed; short of that, a
+    // total return instead, for the group and each row alike.
+    const yearly = !whole || lined.every(timed);
+    // Each row's deposits since it opened, for the total return.
+    const deposited = new Map<GrowthRow<A>, number>();
 
     const legs: RateLeg[] = [];
     if (!loading) {
@@ -363,7 +385,11 @@ export function summarizeGrowth<A extends GrowthAccount>(
         const end = t[t.length - 1];
         if (whole) {
           r.figures = { begin: 0, dw: end.line, returns: cents(end.balance - end.line), end: end.balance };
-          if (!timed(r)) continue;
+          if (!yearly) {
+            deposited.set(r, end.in);
+            r.total = totalReturn(r.figures.returns, end.in);
+          }
+          if (!timed(r) || !yearly) continue;
         } else r.figures = { begin: first.balance, dw: cents(r.split.in - r.split.out), returns: r.split.growth, end: end.balance };
         const split = r.split;
         const all = r.account.activity.state === 'ready' ? (r.account.activity.data.flows ?? []) : [];
@@ -377,13 +403,16 @@ export function summarizeGrowth<A extends GrowthAccount>(
     const tos = shown.map((r) => r.split!.to).sort();
     // Recorded by Nya: not estimated, and not a month from a file.
     const recorded = list.flatMap((r) => (r.account.points ?? []).flatMap((p) => (p.estimated || p.entered ? [] : [p.date]))).sort();
+    const figures = shown.length > 0 ? add(shown.map((r) => r.figures!)) : null;
+    const allIn = cents(shown.reduce((t, r) => t + (deposited.get(r) ?? 0), 0));
     return {
       currency,
       rows: list,
       loading,
       basis,
-      figures: shown.length > 0 ? add(shown.map((r) => r.figures!)) : null,
-      rate: whole && !lined.every(timed) ? null : returnsRate(legs),
+      figures,
+      rate: yearly ? returnsRate(legs) : null,
+      total: !yearly && figures ? totalReturn(figures.returns, allIn) : null,
       span: shown.length > 0 ? { from: froms[0], to: tos[tos.length - 1] } : null,
       firstRecorded: recorded[0] ?? null,
       chart: shown.length > 0 ? chartOf(shown, tracks, basis, start) : null,

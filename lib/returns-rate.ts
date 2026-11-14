@@ -22,6 +22,12 @@
 // Dietz assumes simple interest, which over years reads low (a steady 7% a
 // year with monthly deposits reads about 6.9% over five).
 //
+// For all time from the deposits and withdrawals a person typed there is no
+// rate: the totals say how much went in, never when. The total return stands
+// instead (totalReturn): the returns as a share of every deposit since the
+// account opened, withdrawals not taken off, so an account that has had more
+// taken out than put in still has one. It is never a year's.
+//
 // Pure, and imports only types: the view runs it in the browser.
 
 import type { Flow } from './growth';
@@ -33,6 +39,20 @@ export type RateLeg = { from: string; to: string; begin: number; end: number; fl
 
 /** The rate as a fraction (0.092 for 9.2%), and whether it is a year's. */
 export type Rate = { value: number; annual: boolean };
+
+/** The returns as a fraction of what was deposited (0.276 for 27.6%), and
+ *  what was deposited, to the cent. */
+export type TotalReturn = { value: number; deposited: number };
+
+/**
+ * The total return of `returns` on everything `deposited` (see the header),
+ * or null with nothing deposited: a cent's worth is as good as nothing, and
+ * would make any return a huge share.
+ */
+export function totalReturn(returns: number, deposited: number): TotalReturn | null {
+  if (!(deposited > 0.005)) return null;
+  return { value: returns / deposited, deposited: Math.round(deposited * 100) / 100 };
+}
 
 const DAY_MS = 86_400_000;
 const parse = (d: string) => Date.parse(`${d}T00:00:00Z`);
