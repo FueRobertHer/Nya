@@ -155,8 +155,39 @@ describe('all time', () => {
     expect(g.rows.map((r) => r.rate)).toEqual([null, null]);
   });
 
+  // The Roth IRA's $10,000 in, though $7,000 came out; the brokerage's
+  // $1,000 and the $7,000 moved in to it on Apr 3, carried from its totals.
+  test('the total return: the returns on every deposit since each opened, withdrawals not taken off', () => {
+    const g = sum([roth, brokerage], 'ALL').groups[0];
+    expect(g.rows.map((r) => r.total)).toEqual([
+      { value: 100 / 10_000, deposited: 10_000 },
+      { value: 50 / 8_000, deposited: 8_000 },
+    ]);
+    // Added up: the $7,000 moved between them counts as deposited in the one
+    // it went to.
+    expect(g.total).toEqual({ value: 150 / 18_000, deposited: 18_000 });
+  });
+
+  test('no total return with nothing deposited', () => {
+    // Only withdrawals typed: more came out than ever went in.
+    const out = account('out', { activity: ready({ money_in_out: totals(0, '2026-03-31', 500) }) });
+    const g = sum([out], 'ALL').groups[0];
+    expect(g.basis).toBe('all');
+    expect(g.figures).toEqual({ begin: 0, dw: -500, returns: 610, end: 110 });
+    expect(g.total).toBeNull();
+    expect(g.rows[0].total).toBeNull();
+    // Beside one that has deposits, the group's counts every deposit.
+    const both = sum([roth, out], 'ALL').groups[0];
+    expect(both.total).toEqual({ value: 710 / 10_000, deposited: 10_000 });
+    expect(both.rows.map((r) => r.total?.deposited ?? null)).toEqual([10_000, null]);
+  });
+
   test('only on All: every other range counts from its start', () => {
-    expect(sum([roth, brokerage], 'YTD').groups[0].basis).toBe('range');
+    const g = sum([roth, brokerage], 'YTD').groups[0];
+    expect(g.basis).toBe('range');
+    // A range has its rate, never a total return.
+    expect(g.total).toBeNull();
+    expect(g.rows.map((r) => r.total)).toEqual([null, null]);
   });
 
   test('one total missing: All counts from the first recorded day, and names it', () => {
@@ -167,6 +198,7 @@ describe('all time', () => {
     expect(g.figures).toEqual({ begin: 11_500, dw: 0, returns: 170, end: 11_670 });
     expect(g.firstRecorded).toBe('2025-12-01');
     expect(g.rate).not.toBeNull();
+    expect(g.total).toBeNull();
   });
 
   test('totals set for a day before the activity Nya has: missing too, as outdated', () => {

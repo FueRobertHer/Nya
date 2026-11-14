@@ -313,17 +313,25 @@ describe('all time from months that start when the account opened', () => {
     expect(group.rate!.annual).toBe(true);
     expect(group.rate!.value).toBeGreaterThan(0);
     expect(group.rows[0].rate).toEqual(group.rate);
+    // The months say when: a rate, never a total return beside it.
+    expect(group.total).toBeNull();
+    expect(group.rows[0].total).toBeNull();
     expect(group.missing).toEqual([]);
     expect(group.chart!.points[0]).toMatchObject({ date: '2023-01-01', value: 0, entered: true });
   });
 
-  test('typed totals stand instead: all time from them, with no rate', () => {
+  test('typed totals stand instead: all time from them, with a total return and no rate', () => {
     const group = summarizeGrowth([account('vg', opened, { money_in_out: totals('2025-06-30', 3000) })], 'ALL', 'USD', false).groups[0];
     expect(group.basis).toBe('all');
     expect(group.rows[0].totals).toBe('set');
     expect(group.figures!.begin).toBe(0);
     expect(group.rate).toBeNull();
     expect(group.rows[0].rate).toBeNull();
+    // Nothing came out, so what was deposited is the net: $3,000 by Jun 30,
+    // 2025, and Nya's $100 a month since.
+    expect(group.total).toEqual({ value: group.figures!.returns / 4600, deposited: 4600 });
+    expect(group.figures!.dw).toBe(4600);
+    expect(group.rows[0].total).toEqual(group.total);
   });
 
   test('totals that can’t be read: All counts from the first day, as a range does', () => {
@@ -351,9 +359,15 @@ describe('all time from months that start when the account opened', () => {
     const typed = summarizeGrowth([account('a', opened), account('b', later, { money_in_out: totals('2025-06-30', 2000) })], 'ALL', 'USD', false).groups[0];
     expect(typed.basis).toBe('all');
     expect(typed.rate).toBeNull();
-    // Its own months still say when its money went in.
-    expect(typed.rows[0].rate).not.toBeNull();
+    // The rows follow the group: a total return each, so the one from months
+    // gives no yearly rate beside the other's total.
+    expect(typed.rows.map((r) => r.rate)).toEqual([null, null]);
+    expect(typed.total).not.toBeNull();
+    expect(typed.rows.map((r) => r.total?.deposited)).toEqual([4600, typed.total!.deposited - 4600]);
     expect(typed.missing).toEqual([]);
+    // Every account from its months: the rate, and no total return.
+    expect(both.total).toBeNull();
+    expect(both.rows.map((r) => r.total)).toEqual([null, null]);
 
     // One from a balance: All counts from each first day, and only it is
     // short of totals.
@@ -361,5 +375,19 @@ describe('all time from months that start when the account opened', () => {
     expect(short.basis).toBe('range');
     expect(short.missing.map((r) => r.account.account_id)).toEqual(['b']);
     expect(short.rows[1].from).toEqual({ day: '2025-01-01', cause: 'months' });
+  });
+
+  // Vanguard gives one net a month: Jun 2023 with $100 in and $150 out reads
+  // as −$50, so it counts nothing as deposited and $50 as withdrawn.
+  test('beside typed totals, an account’s deposits from its months are each month’s net when above zero', () => {
+    const netted = opened.months.map((m) => ({ ...m }));
+    netted[5].net = -50;
+    for (let k = 5; k < netted.length; k++) netted[k].end = Math.round((netted[k - 1].end + netted[k].net + netted[k].returns) * 100) / 100;
+    const typed = account('t', opened, { money_in_out: totals('2025-06-30', 2000) });
+    const before = summarizeGrowth([account('a', opened), typed], 'ALL', 'USD', false).groups[0];
+    const after = summarizeGrowth([account('a', record({ ...opened, months: netted })), typed], 'ALL', 'USD', false).groups[0];
+    expect(after.rows[0].figures!.dw).toBe(before.rows[0].figures!.dw - 150);
+    expect(after.rows[0].total!.deposited).toBe(before.rows[0].total!.deposited - 100);
+    expect(after.total!.deposited).toBe(before.total!.deposited - 100);
   });
 });
