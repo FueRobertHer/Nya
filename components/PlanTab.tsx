@@ -1818,7 +1818,8 @@ export default function PlanTab({
   // Make this your plan: the copy becomes yours, and yours a copy. Its answer
   // goes into the shared copy of the Plan's inputs at once, so Home's line
   // moves with it, and your plan and the list are read again; the copy
-  // closes, since it is your plan now, and the status line says so.
+  // closes, since it is your plan now, and the status line says so. Use's
+  // line and Undo go, as with another plan shown.
   const makeMain = async (id: string): Promise<true | string> => {
     const row = plansState.list.find((r) => r.id === id);
     if (!row || row.updated_at === null) return 'That plan changed since this opened, so it wasn’t made your plan: open it again.';
@@ -1827,6 +1828,7 @@ export default function PlanTab({
     if ('error' in r) return r.error;
     planInputs.adopt(r.ok.body);
     void store.load();
+    clearUse();
     if (openId === id) {
       setNotice(null);
       setOpenId(null);
