@@ -6,7 +6,7 @@
 // components/plan-conversions.ts; the rows in lib/fire/compare-conversions.ts.
 
 import { CopyTag } from './CopyTag';
-import { useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { useDeferredValue, useEffect, useId, useMemo, useState } from 'react';
 import type { CompareRow } from '@/lib/fire/compare-conversions';
 import type { Drawdown } from '@/lib/fire/drawdown';
 import { MAX_YEARLY_CONVERSION, type TaxChoices } from '@/lib/fire/tax-choices';
@@ -39,6 +39,7 @@ import {
 } from './plan-conversions';
 import { pct } from './plan-text';
 import { movedLine, TUNE_HOLDS, TUNE_NEEDS_CONSTANT, TUNE_ROW_SUB, TUNE_TITLE } from './plan-tune';
+import { SheetFooter } from './Sheet';
 import { Notice } from './TotalCaveats';
 import { Why } from './Why';
 
@@ -410,6 +411,7 @@ export function CompareCard({
   const [sort, setSort] = useState<ColumnSort | null>(null);
   const endAge = rows.length > 0 ? endAgeOf(rows[0].drawn) : null;
   const onAca = rows.some((r) => r.drawn.aca.on > 0);
+  const spends = !tunable && spendDifferently(rows.map((r) => r.drawn));
   return (
     <section className={working ? 'card plan-answer-pending' : 'card'} aria-labelledby="plan-compare-rules" aria-busy={working || undefined}>
       <CopyTag name={copyName} />
@@ -458,8 +460,12 @@ export function CompareCard({
           </tbody>
         </table>
       </div>
-      <p className="helper">{tunable ? TUNE_HOLDS : spendDifferently(rows.map((r) => r.drawn)) ? COMPARE_SPENDS : COMPARE_HOLDS}</p>
+      {/* Where the rules spend alike, what each keeps where it is goes behind Why, with
+          why they differ: where they don't, the table can't be read like with like, so
+          that stays in view. */}
+      {spends && <p className="helper">{COMPARE_SPENDS}</p>}
       <Why label={RULES_DIFFER_LABEL}>
+        {!spends && <p>{tunable ? TUNE_HOLDS : COMPARE_HOLDS}</p>}
         <p>{rulesDifferText({ onAca, acaLaw })}</p>
       </Why>
       <p className="plan-definition">{`Hypothetical, ${lawYear} tax law, steady growth, health costs ${healthPace(healthGrowth)}. Not tax advice.`}</p>
@@ -566,8 +572,18 @@ export function RuleLevel({
   // Until it is worked out, and where it can't be, the row's run: what is drawn meanwhile
   // is a stand-in at another stop, neither the row nor the rule as used.
   const shown = ready ?? row.drawn;
+  const ids = useId();
+  const makesId = `${ids}-makes`;
+  const waitId = `${ids}-wait`;
+  // Its own Try is why no copy can be made meanwhile, and that needs no words.
+  const wait = !saving && whyNot;
   return (
     <div className="stack loose">
+      {differs && (
+        <Notice level="info" role="status">
+          <Masked>{movedLine({ stop, start, copyOpen }, money)}</Masked>
+        </Notice>
+      )}
       <div className={answer.working ? 'stack loose plan-answer-pending' : 'stack loose'} aria-busy={answer.working || undefined}>
         {answer.working && (
           <p className="plan-working-line" role="status">
@@ -584,28 +600,30 @@ export function RuleLevel({
           </button>
         </div>
       )}
-      {differs && (
-        <p className="helper">
-          <Masked>{movedLine({ stop, start, copyOpen }, money)}</Masked>
-        </p>
-      )}
       <p className="plan-definition">{lawLabel(lawYear)}</p>
-      {row.mine ? (
-        <p className="helper">{copyOpen ? 'This copy has this rule.' : 'Your plan has this rule.'}</p>
-      ) : answer.failed ? null : (
-        <div className="stack tight">
-          <p className="helper">{`Makes a copy of ${copyOpen ? 'this copy' : 'your plan'} with this rule and opens it. ${copyOpen ? 'This copy stays' : 'Your plan stays'} as it is.`}</p>
-          {/* Its own Try is why no copy can be made meanwhile, and that needs no words. */}
-          {!saving && whyNot && <p className="helper plan-paused">{whyNot}</p>}
-          {error && (
-            <Notice level="critical" role="alert">
-              {error}
-            </Notice>
-          )}
-          <div>
+      {/* Beside the button: what it does, what it waits on, and what came of it. */}
+      <SheetFooter>
+        {row.mine ? (
+          <p className="helper sheet-footer-note">{copyOpen ? 'This copy has this rule.' : 'Your plan has this rule.'}</p>
+        ) : answer.failed ? null : (
+          <>
+            <p className="helper sheet-footer-note" id={makesId}>{`Makes a copy of ${copyOpen ? 'this copy' : 'your plan'} with this rule and opens it. ${copyOpen ? 'This copy stays' : 'Your plan stays'} as it is.`}</p>
+            {wait && (
+              <p className="helper plan-paused sheet-footer-note" id={waitId}>
+                {wait}
+              </p>
+            )}
+            {error && (
+              <div className="sheet-footer-note">
+                <Notice level="critical" role="alert">
+                  {error}
+                </Notice>
+              </div>
+            )}
             <button
               type="button"
-              className="btn ghost"
+              className="btn secondary"
+              aria-describedby={wait ? `${makesId} ${waitId}` : makesId}
               disabled={saving || whyNot !== null || ready === null}
               onClick={async () => {
                 setSaving(true);
@@ -617,9 +635,9 @@ export function RuleLevel({
             >
               {saving ? 'Saving…' : 'Try it in a copy'}
             </button>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </SheetFooter>
     </div>
   );
 }

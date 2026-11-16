@@ -105,7 +105,7 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 | Choosing any of a few things a save also does | `CheckRows` (`.check-rows`, `.check-row`) | a list of bare checkboxes in labels |
 | A form in a sheet | `.sheet-form` | |
 | A sheet's buttons, kept in view | `Sheet`'s `footer` (`.sheet-footer`); from a level inside a sheet it shares, `SheetFooter` | a `.button-pair` at the end of the body |
-| What a sheet's buttons wait on or will do, beside them | `.sheet-footer-note` on a `.helper`, first in the footer, the buttons `aria-describedby` it | a helper at the end of the body, out of view |
+| What a sheet's buttons wait on or will do, beside them | `.sheet-footer-note` on a `.helper`, first in the footer, the buttons `aria-describedby` it; an error from them as a `Notice` in a `div.sheet-footer-note` | a helper at the end of the body, out of view |
 | An object's rare actions (⋯) | `Menu` (`.menu` of `.menu-item`) | an Options button that opens an action sheet |
 | An object's actions in its sheet | `ActionRows` (`.card.list-rows` of `.list-row` buttons) | a `.btn-row` of secondaries in the body |
 | Deleting an object, from its actions | `ActionRows`' last row with `neg` (`.list-row.neg`), opening a level that asks, whose `.btn.danger` acts | a `.btn.danger` among its actions |
