@@ -22,8 +22,8 @@ const { forgetEpochs } = await import('@/lib/sessions');
 const { rememberAccounts } = await import('@/lib/last-known');
 const { linkAccounts, recordDirectory, forgetEarlierAccount } = await import('@/lib/links');
 const { writeAccountCache } = await import('@/lib/cache');
-const { MAX_IMPORTS, isInvestmentMonths, parseMonthsChange } = await import('@/lib/investment-months');
-const { investmentMonthsStore, readInvestmentMonths } = await import('@/lib/investment-months-store');
+const { MAX_IMPORTS, countingImport, isInvestmentMonths, parseMonthsChange } = await import('@/lib/investment-months');
+const { addMonthsImport, investmentMonthsStore, readInvestmentMonths } = await import('@/lib/investment-months-store');
 const route = await import('@/app/api/investment-months/route');
 const activity = await import('@/app/api/investment-activity/route');
 
@@ -200,6 +200,46 @@ describe('undoing, without loss', () => {
     const res = await post({ action: 'undo', account_id: 'inv', import_id: 'not-there-1' });
     expect(res).toEqual({ status: 404, body: { error: 'That import isn’t there any more: the list shows what is.' } });
     expect(await snapshot()).toEqual(before);
+  });
+});
+
+describe('a new import is the newest', () => {
+  const AT = '2026-11-05T12:00:00.000Z';
+  const record = (id: string, imported_at: string) => ({
+    id,
+    source: 'vanguard-performance' as const,
+    file_name: 'Performance.pdf',
+    imported_at,
+    start: { month: '2019-01', balance: 0 },
+    months: months('2019-01', 24),
+    currency: 'USD',
+  });
+
+  test('in the same millisecond as the last, or with a clock behind it, it counts and sorts last', async () => {
+    await connect('i1', [{ account_id: 'inv', type: 'investment' }]);
+    // Ids that would put the new one first, were a tie left to them.
+    await addMonthsImport(ctx, 'inv', record('zz-first', AT), null);
+    const same = await addMonthsImport(ctx, 'inv', record('aa-second', AT), 'zz-first');
+    expect(same.imports.map((i) => i.id)).toEqual(['zz-first', 'aa-second']);
+    expect(countingImport(same)?.id).toBe('aa-second');
+    const behind = await addMonthsImport(ctx, 'inv', record('aa-third', '2026-11-05T11:00:00.000Z'), 'aa-second');
+    expect(behind.imports.map((i) => i.id)).toEqual(['zz-first', 'aa-second', 'aa-third']);
+    expect(countingImport(behind)?.id).toBe('aa-third');
+    // Only the new one's time moves: the others stay as stored.
+    expect(behind.imports[0]).toEqual(record('zz-first', AT));
+    expect(behind.imports[1]).toEqual(same.imports[1]);
+    // One whose own time is later keeps it.
+    const later = await addMonthsImport(ctx, 'inv', record('aa-fourth', '2026-11-06T09:00:00.000Z'), 'aa-third');
+    expect(later.imports.at(-1)).toEqual(record('aa-fourth', '2026-11-06T09:00:00.000Z'));
+  });
+
+  test('the same after one held under an earlier id of the account', async () => {
+    await connect('i2', [{ account_id: 'new', type: 'investment' }]);
+    await investmentMonthsStore.set(ctx, 'inv', { imports: [record('zz-first', AT)] });
+    await linkAccounts(ctx, 'inv', 'new', {});
+    const now = await addMonthsImport(ctx, 'new', record('aa-second', AT), 'zz-first');
+    expect(now.imports.map((i) => i.id)).toEqual(['zz-first', 'aa-second']);
+    expect(countingImport(now)?.id).toBe('aa-second');
   });
 });
 
