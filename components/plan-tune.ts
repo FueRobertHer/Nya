@@ -26,6 +26,8 @@ export const TUNE_GONE = 'These can’t be tuned right now.';
 export const TUNE_SORT = 'Sort by your goal';
 export const TUNE_SORTED = 'Sorted by your goal because you asked. Nothing here is called best.';
 export const TUNE_HOLDS = 'Each rule here keeps your stop, your start and what’s timed on them where they are now, so the rules compare like with like. A rule’s own sheet shows what it comes to once used.';
+/** The Why that holds TUNE_HOLDS, under the tap line: named for what it answers. */
+export const TUNE_HOLDS_LABEL = 'How are the rules compared?';
 export const TUNE_ONLY_ORDER = 'Required withdrawals have started, so the order is all there is to tune.';
 export const TUNE_IRMAA_UNKNOWN = 'Medicare’s first years here have no income from two years before to read, so no surcharge is counted in them.';
 
@@ -98,7 +100,7 @@ export const tunedFor = (lawYear: number, healthGrowth: number) => `Tuned for th
 
 export const tapLine = (copyOpen: boolean) => `Tap a rule for ${copyOpen ? 'Use in this copy' : 'Use in your plan'} or Try it in a copy.`;
 
-/** What the plan has now, under the table, on the goal's figure. */
+/** What the plan has now, on the goal's figure: under the heading, above the table. */
 export function ownLine(a: { goal: TuneGoal; own: Strategy; until: number; left: number; cost: number; short: number | null; copyOpen: boolean }, money: Money): string {
   const none = a.own.conversions.kind === 'none';
   const age = a.own.convertUntil ?? a.until;

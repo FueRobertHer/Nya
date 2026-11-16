@@ -677,6 +677,16 @@ describe('the sheet’s other states, drawn alone', () => {
     expect(html).not.toContain('>Try it in a copy<');
     // Nothing to ask again where it would come out the same.
     expect(html).not.toContain('>Try again<');
+    // No buttons, so no footer: why not is said in the body.
+    expect(html).not.toContain('sheet-footer');
+  });
+
+  test('one that can’t be worked out once used and crosses a limit says so in the body, and draws no footer', () => {
+    const html = renderToStaticMarkup(
+      <TuneLevel {...shared} row={row({ crossing: [{ limit: 'irmaa', years: 5 }] })} ask={{ goal: 'left', limits: ['irmaa'] }} used={() => ({ ...NO_ANSWER, failed: true })} />
+    );
+    expect(html).toContain('<p class="helper">Pays IRMAA’s surcharge in 5 years.</p>');
+    expect(html).not.toContain('sheet-footer');
   });
 
   test('saving paused: its words above the buttons, and Use off', () => {
@@ -684,6 +694,9 @@ describe('the sheet’s other states, drawn alone', () => {
     expect(html.match(/Your plan is out of date\./g)?.length).toBe(1);
     expect(html).toMatch(/<button[^>]*disabled[^>]*>Use in your plan</);
     expect(html).toMatch(/<button[^>]*disabled[^>]*>Try it in a copy</);
+    // Both wait on it, so both are described by it.
+    expect(html).toMatch(/<button[^>]*aria-describedby="[^"]*-wait"[^>]*>Use in your plan</);
+    expect(html).toMatch(/<button[^>]*aria-describedby="[^"]*-wait"[^>]*>Try it in a copy</);
   });
 
   test('why no copy can be made is said, with Try off', () => {
@@ -691,6 +704,9 @@ describe('the sheet’s other states, drawn alone', () => {
     expect(html).toContain('A copy can’t be made just yet.');
     expect(html).toMatch(/<button[^>]*disabled[^>]*>Try it in a copy</);
     expect(html).not.toMatch(/<button[^>]*disabled[^>]*>Use in your plan</);
+    // It holds Try alone, so it describes Try alone.
+    expect(html).toMatch(/<button[^>]*aria-describedby="[^"]*-wait"[^>]*>Try it in a copy</);
+    expect(html).not.toMatch(/<button[^>]*-wait[^>]*>Use in your plan</);
   });
 
   test('what a level says it crosses is of the figures on show, not the row’s', () => {

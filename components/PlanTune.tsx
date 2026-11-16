@@ -36,6 +36,7 @@ import {
   TUNE_GONE,
   TUNE_HELPER,
   TUNE_HOLDS,
+  TUNE_HOLDS_LABEL,
   TUNE_IRMAA_UNKNOWN,
   TUNE_LIMITS_LEGEND,
   TUNE_ONLY_ORDER,
@@ -309,7 +310,7 @@ export function TunedAnswer({
       </div>
       {(rows.length === 1 || (first !== null && first > until)) && <p className="helper">{TUNE_ONLY_ORDER}</p>}
       <p className="helper">{tapLine(copyOpen)}</p>
-      <Why>
+      <Why label={TUNE_HOLDS_LABEL}>
         <p>{TUNE_HOLDS}</p>
       </Why>
       <p className="plan-definition">{tunedFor(lawYear, healthGrowth)}</p>
@@ -346,7 +347,13 @@ export function TuneLevel({ row, ask, money, lawYear, healthGrowth, copyOpen, wh
   const waitId = `${ids}-wait`;
   // Why the buttons wait: saving paused, else why no copy can be made, while nothing saves.
   const wait = save.paused || (!busy && whyNot) || null;
-  const describedBy = [crosses ? crossesId : null, wait ? waitId : null].filter(Boolean).join(' ') || undefined;
+  const describe = (waits: boolean) => [crosses ? crossesId : null, wait && waits ? waitId : null].filter(Boolean).join(' ') || undefined;
+  // Why no copy can be made holds Try alone, so it describes Try alone.
+  const tryDescribedBy = describe(true);
+  const useDescribedBy = describe(!!save.paused);
+  // A level that couldn't be worked out offers no buttons and says why beside its
+  // Try again, so it draws no footer: what the row crosses stays in the body.
+  const footed = !answer.failed || row.mine || same;
   return (
     <div className="stack loose">
       {differs && !same && (
@@ -379,6 +386,7 @@ export function TuneLevel({ row, ask, money, lawYear, healthGrowth, copyOpen, wh
           </dl>
         )}
       </div>
+      {!footed && crosses !== '' && <p className="helper">{crosses}</p>}
       {strategy.order !== own.order && <p className="helper">{orderLine(strategy.order, own.order, copyOpen)}</p>}
       {noneSaid && <p className="helper">{noBetterLine(ask.goal)}</p>}
       {answer.failed && <p className="helper">{usedFailed(copyOpen)}</p>}
@@ -393,7 +401,7 @@ export function TuneLevel({ row, ask, money, lawYear, healthGrowth, copyOpen, wh
       {/* Beside the buttons: what the rule crosses, what they wait on, and what came of
           them. Where there are none, why not. */}
       <SheetFooter>
-        {crosses !== '' && (
+        {footed && crosses !== '' && (
           <p className="helper sheet-footer-note" id={crossesId}>
             {crosses}
           </p>
@@ -427,7 +435,7 @@ export function TuneLevel({ row, ask, money, lawYear, healthGrowth, copyOpen, wh
               <button
                 type="button"
                 className="btn secondary"
-                aria-describedby={describedBy}
+                aria-describedby={tryDescribedBy}
                 disabled={busy || !ready || whyNot !== null}
                 onClick={async () => {
                   setTrying(true);
@@ -439,7 +447,7 @@ export function TuneLevel({ row, ask, money, lawYear, healthGrowth, copyOpen, wh
               >
                 {trying ? 'Saving…' : 'Try it in a copy'}
               </button>
-              <button type="button" className="btn" aria-describedby={describedBy} disabled={busy || !ready || s.disabled} onClick={() => s.save(build)}>
+              <button type="button" className="btn" aria-describedby={useDescribedBy} disabled={busy || !ready || s.disabled} onClick={() => s.save(build)}>
                 {s.saving ? 'Saving…' : useLabel(copyOpen)}
               </button>
             </>

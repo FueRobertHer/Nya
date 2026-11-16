@@ -54,6 +54,12 @@ describe('on a withdrawal rule that spends with the balance', () => {
     const tab = await detailed({ ...PLAN, rule: 'vpw' });
     const card = compareCard(tab).textContent ?? '';
     expect(card).toContain(SPENDS);
+    // On show, not behind Why: it changes what the figures mean.
+    const spends = compareCard(tab).findAll((e) => e.tagName === 'P' && (e.textContent ?? '').includes(SPENDS))[0];
+    expect(spends).toBeDefined();
+    const inside: string[] = [];
+    for (let n = spends.parentNode as typeof spends | null; n; n = n.parentNode as typeof spends | null) inside.push(n.tagName);
+    expect(inside).not.toContain('DETAILS');
     expect(card).toContain('Each rule here keeps your stop, your start and what’s timed on them where they are now, but ');
     expect(card).toContain('A rule’s own sheet shows what it comes to once used.');
     // Never beside its opposite.
@@ -182,6 +188,11 @@ describe('on a plan that moves when a rule is used', () => {
     const sheet = tab.dialog()!;
     expect(sheet.textContent).toMatch(MOVED);
     expect(sheet.textContent).toContain('so this differs from the table.');
+    // Said first, as a note, before the figures it explains.
+    const moved = sheet.findAll((e) => classOf(e).includes('notice') && (e.textContent ?? '').includes('differs from the table'))[0];
+    expect(classOf(moved)).toContain('info');
+    const stack = sheet.findAll((e) => classOf(e).includes('sheet-body'))[0].findAll((e) => classOf(e).includes('stack'))[0];
+    expect(stack.childNodes[0]).toBe(moved);
     // Its figures are the plan's as used, not the row's.
     expect(sheet.textContent).not.toContain(said);
     expect(disabled(button(sheet, 'Try it in a copy'))).toBe(false);
