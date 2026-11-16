@@ -230,6 +230,14 @@ describe('the sheet', () => {
     expect(v.text()).toContain('Individual, Jan 2026');
     expect(v.text()).toContain('Traditional IRA, Mar 2026');
     expect(v.text()).toContain('Individual ••4421: Vanguard gave Nya a buy of $2,000.00 on Nov 4 that the file lists on Nov 2, so it counts once, as the file’s.');
+    // Those details are behind Why, with how Nya reads the file, said once.
+    const why = v.host.findAll((e) => e.tagName === 'DETAILS' && e.textContent.startsWith('Why'))[0];
+    expect(why.textContent).toContain('The file’s 2 transactions from today are left out');
+    expect(why.textContent).toContain('so it counts once, as the file’s.');
+    expect(why.textContent).toContain('Since a conversion is a move between your accounts, your Plan’s savings stay as they are.');
+    expect(why.textContent).toContain('Vanguard’s download says what happened in its own words');
+    expect(v.text().split('Vanguard’s download says what happened in its own words')).toHaveLength(2);
+    expect(v.text()).toContain('take the place of the ones Vanguard gave Nya for these days, and nothing changes before or after them.');
     expect(v.button('Import 94 transactions into 2 accounts')).not.toBeNull();
 
     // Unchecked, it isn't taken, and its months go from the table.
@@ -281,11 +289,17 @@ describe('the sheet', () => {
     await v.press('Import 61 transactions into 1 account');
     expect(v.text()).toContain('The imports changed on another device');
     expect(v.button('Import 61 transactions into 1 account')!.getAttribute('disabled')).not.toBeNull();
+    // The footer says what Import waits on now: no check gives it.
+    expect(v.note()!.textContent).toBe('To import, check the file again.');
+    v.toggle('Individual ••4421', false);
+    expect(v.note()!.textContent).toBe('To import, check the file again.');
+    v.toggle('Individual ••4421', true);
     await v.press('Check the file again');
     expect(v.sent.map((s) => s.body.action)).toEqual(['review', 'import', 'review']);
     // Checked again, what the person unchecked stays unchecked.
     expect(v.box('Traditional IRA ••5519').checked).toBe(false);
     expect(v.button('Import 61 transactions into 1 account')!.getAttribute('disabled')).toBeNull();
+    expect(v.note()).toBeNull();
     v.unmount();
   });
 
@@ -387,6 +401,8 @@ describe('the download as QFX', () => {
     // The footer says what Import waits on, and Import is described by it.
     expect(v.note()!.textContent).toBe('To import, check Use this file anyway.');
     expect(v.note()!.parentNode).toBe(importing().parentNode);
+    // First in the footer, above its buttons.
+    expect((v.note()!.parentNode as FakeElement).childNodes[0]).toBe(v.note());
     expect(importing().getAttribute('aria-describedby')).toBe(v.note()!.getAttribute('id'));
     v.toggle('Use this file anyway', true);
     expect(importing().getAttribute('disabled')).toBeNull();

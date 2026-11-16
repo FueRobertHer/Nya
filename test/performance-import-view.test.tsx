@@ -185,7 +185,7 @@ describe('the review', () => {
     expect(r.html).toContain('notice caution');
     expect(r.text).toContain('Nya can’t tell whether this file is Individual’s: it has no balance of the account’s on a day the file has. The chart and your returns');
     // The yes comes last, after Why, just above the footer that says Import waits on it.
-    expect(r.text).toMatch(/never guessed at\. It’s Individual’s Import it for this account anyway\.$/);
+    expect(r.text).toMatch(/puts the account back as it was before\. It’s Individual’s Import it for this account anyway\.$/);
     expect(r.state.body).toBeNull();
     // With a balance now, a newer file is how to have it checked.
     const old = review(readOf(MONTHS), ctx({ points: null, today: '2026-12-20' }));
@@ -277,10 +277,12 @@ describe('the review', () => {
     expect(waits(readOf(MONTHS), ctx({ points: null, balance: null, imports: { imports: [counted('2020-01-01')] } }))).toBe(
       'To import, check It’s Individual’s and Use this file’s months only.'
     );
-    // What no check gives is said in the review, not here.
-    expect(waits(readOf(MONTHS), ctx({ points: null, balance: LAST * 0.3, vanguard: [LAST * 0.3, LAST * 0.7] }))).toBeNull();
-    const bad = MONTHS.find((m) => m.month === '2025-03')!;
-    expect(waits(readOf(MONTHS, { figures: { '2025-03': { end: bad.end + 9_000 } }, failed: { '2025-03': ['adds-up'] } }), ctx())).toBeNull();
+    // A file of every account together can't be imported, whatever is checked: said in
+    // the review, not here, though months would stop counting, and no yes is asked of it.
+    const together = ctx({ points: null, balance: LAST * 0.3, vanguard: [LAST * 0.3, LAST * 0.7], imports: { imports: [counted('2020-01-01')] } });
+    expect(review(readOf(MONTHS), together).state.check?.kind).toBe('all-accounts');
+    expect(waits(readOf(MONTHS), together)).toBeNull();
+    expect(review(readOf(MONTHS), together).text).not.toContain('Use this file’s months only');
   });
 
   test('months that end before Nya’s activity starts: imported, but said not to be used', () => {
@@ -573,6 +575,9 @@ describe('the sheet', () => {
     expect(v.button('Import 34 months')!.getAttribute('aria-describedby')).toBeNull();
     await v.press('Import 34 months');
     expect(v.text()).toContain('The imports changed on another device.');
+    // Until the file is checked again, no check would let Import go, and the footer says so.
+    expect(v.button('Import 34 months')!.getAttribute('disabled')).not.toBeNull();
+    expect(note()!.textContent).toBe('To import, check the file again.');
     await v.press('Check the file again');
     // The yes was to what counted then, and the footer says so again.
     expect(v.ticked('Use this file’s months only')).toBe(false);
@@ -580,6 +585,25 @@ describe('the sheet', () => {
     expect(note()!.textContent).toContain('To import, check Use this file’s months only');
     await v.press('Cancel');
     expect(v.text()).not.toContain('changed on another device');
+    v.unmount();
+  });
+
+  test('a file that may be another account’s: the footer says so, and its yes lets Import go', async () => {
+    const half = POINTS.map((p) => ({ ...p, value: p.value / 2 }));
+    const wrap = (inner: typeof fetch) =>
+      (async (url: string, init?: RequestInit) => (url.startsWith('/api/account-history') ? Response.json({ points: half }) : inner(url, init))) as unknown as typeof fetch;
+    const v = await mount({ ...TARGET, account_id: 'acc_vg8', balance: LAST / 2, vanguard_balances: [LAST / 2, LAST / 5] }, async () => readOf(MONTHS), { wrap });
+    await v.choose('Performance.pdf');
+    expect(v.text()).toContain('This file may be for another account');
+    const note = () => v.host.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes('sheet-footer-note'))[0] ?? null;
+    expect(note()!.textContent).toBe('To import, check It’s Individual’s.');
+    expect(v.button('Import 34 months')!.getAttribute('disabled')).not.toBeNull();
+    expect(v.button('Import 34 months')!.getAttribute('aria-describedby')).toBe(note()!.getAttribute('id'));
+    v.tick('It’s Individual’s');
+    expect(v.button('Import 34 months')!.getAttribute('disabled')).toBeNull();
+    expect(note()).toBeNull();
+    await v.press('Import 34 months');
+    expect(v.sent[0].body).toMatchObject({ action: 'import', account_id: 'acc_vg8' });
     v.unmount();
   });
 

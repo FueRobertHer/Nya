@@ -313,7 +313,7 @@ export function TransactionsReview({
       <p className="helper">{`${fileName} · ${TXN_SOURCE}${qfx ? `, as ${/\.ofx$/i.test(fileName) ? 'OFX' : 'QFX'}` : ''}`}</p>
       <div className="stack tight">
         <h3 className="section-label">{`${plural(lines, 'transaction')} in ${plural(accounts.length, 'account')}, ${spanText(review.covers.from, review.covers.to)}`}</h3>
-        <p className="helper">In each account you import it into, the file’s transactions take the place of Vanguard’s for these days.</p>
+        <p className="helper">In each account you import it into, the file’s transactions take the place of the ones Vanguard gave Nya for these days, and nothing changes before or after them.</p>
       </div>
       {cautions.map((c) => (
         <Notice key={c} level="caution" role="status">
@@ -436,7 +436,10 @@ export function TransactionsReview({
             <p>{`The file’s ${plural(review.after_today, 'transaction')} from today ${review.after_today === 1 ? 'is' : 'are'} left out: today may not be complete yet.`}</p>
           )}
           {changes.length > 0 && (
-            <p>Vanguard’s file says what each one was: it values the shares a conversion moves, and a sweep inside an account is no money in or out. So your Plan’s savings stay as they are.</p>
+            <p>
+              Vanguard’s file says what each one was: it values the shares a conversion moves, and a sweep inside an account is no money in or out. Since a conversion is a move between your
+              accounts, your Plan’s savings stay as they are.
+            </p>
           )}
           {twins.slice(0, 3).map(({ a, t }) => {
             const kind = (displayName(t.subtype) || t.type).toLowerCase();

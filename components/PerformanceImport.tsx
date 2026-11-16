@@ -753,32 +753,32 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
             {`In ${months(future.differs.length)} Nya has activity for, Vanguard’s deposits and withdrawals aren’t Nya’s. Nya keeps its own for those months, so importing doesn’t change them.`}
           </Notice>
           <div className="report-scroll">
-          <table className="report-table">
-            <thead>
-              <tr>
-                <th scope="col">Month</th>
-                <th scope="col" className="num">
-                  Vanguard
-                </th>
-                <th scope="col" className="num">
-                  Nya
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...future.differs].reverse().map((d) => (
-                <tr key={d.month}>
-                  <td className="report-nowrap">{monthText(d.month)}</td>
-                  <td className="num">
-                    <Masked>{signedMoney(d.theirs, ctx.currency, { always: true })}</Masked>
-                  </td>
-                  <td className="num">
-                    <Masked>{signedMoney(d.nyas, ctx.currency, { always: true })}</Masked>
-                  </td>
+            <table className="report-table">
+              <thead>
+                <tr>
+                  <th scope="col">Month</th>
+                  <th scope="col" className="num">
+                    Vanguard
+                  </th>
+                  <th scope="col" className="num">
+                    Nya
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {[...future.differs].reverse().map((d) => (
+                  <tr key={d.month}>
+                    <td className="report-nowrap">{monthText(d.month)}</td>
+                    <td className="num">
+                      <Masked>{signedMoney(d.theirs, ctx.currency, { always: true })}</Masked>
+                    </td>
+                    <td className="num">
+                      <Masked>{signedMoney(d.nyas, ctx.currency, { always: true })}</Masked>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
           <p className="helper">A move inside the account, such as a sweep or a conversion, can read as money in or out.</p>
         </div>
@@ -799,7 +799,7 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
       )}
 
       <Why>
-        {`${firstRecorded && activityFrom ? `Nya has this account’s balances from ${day(firstRecorded)} and its activity from ${day(activityFrom)}, and uses` : 'Nya uses'} the months only where it has nothing of its own. Each month has to add up (beginning balance, plus deposits and withdrawals, plus returns, is its ending balance, and the next month begins there), and the page’s total has to match its months, so a figure read wrong can’t slip through. Vanguard gives one deposits and withdrawals figure a month, so Nya counts it at the middle of the month. Nya reads this one page only, from Vanguard only: a PDF laid out any other way isn’t read, never guessed at.`}
+        {`${firstRecorded && activityFrom ? `Nya has this account’s balances from ${day(firstRecorded)} and its activity from ${day(activityFrom)}, and uses` : 'Nya uses'} the months only where it has nothing of its own. Each month has to add up (beginning balance, plus deposits and withdrawals, plus returns, is its ending balance, and the next month begins there), and the page’s total has to match its months, so a figure read wrong can’t slip through. Vanguard gives one deposits and withdrawals figure a month, so Nya counts it at the middle of the month. Nya reads this one page only, from Vanguard only: a PDF laid out any other way isn’t read, never guessed at. Each import is kept on its own, listed in this sheet with its Undo, and undoing it puts the account back as it was before.`}
       </Why>
 
       {/* The yeses Import waits on, last, just above the footer that says so. */}
@@ -812,7 +812,8 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
           </span>
         </label>
       )}
-      {later && counting && (
+      {/* A file of every account together can't be imported at all, so no yes is asked of it. */}
+      {later && counting && !allAcc && (
         <label className="check-row">
           <input type="checkbox" checked={state.yesDropped} onChange={(e) => state.setYesDropped(e.target.checked)} />
           <span className="check-row-text">

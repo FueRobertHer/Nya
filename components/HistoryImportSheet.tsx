@@ -376,8 +376,11 @@ export default function HistoryImportSheet({
   // What Import waits on, said beside it in the footer (the review's checks
   // that give it sit at the end of the body).
   const waitId = useId();
-  const monthsWait = step === 'months' ? monthsWaitsOn(monthsReview, name) : null;
-  const txnWait = step === 'txns' && txn?.review ? txnWaitsOn(txn.review, txnChecked, txnYes) : null;
+  // Once the imports changed on another device, Import waits on the file being
+  // checked again before any check counts, so that is what the note says.
+  const AGAIN = 'To import, check the file again.';
+  const monthsWait = step === 'months' ? (monthsError?.again ? AGAIN : monthsWaitsOn(monthsReview, name)) : null;
+  const txnWait = step === 'txns' && txn?.review ? (txnError?.again ? AGAIN : txnWaitsOn(txn.review, txnChecked, txnYes)) : null;
 
   const loadPast = useCallback(async (id: string) => {
     setPastError('');
