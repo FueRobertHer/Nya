@@ -7,7 +7,9 @@
 // alone: nothing shared reads it.
 //
 // EACH VALUE IS THE ACCOUNT'S IMPORTS under that id, oldest first, each one
-// as it was read, never changed. An import adds its record; an undo takes
+// as it was read, never changed. An import adds its record as the newest
+// (stamped a millisecond after the newest the account holds where its own
+// time isn't later: two in one millisecond, or a clock behind); an undo takes
 // one record out; nothing else is ever written here. Each is one compare-
 // and-set on the id's value (MapStore.update), so two devices importing at
 // once can't lose each other's. Undoing an id's last import deletes its
@@ -68,9 +70,12 @@ export class MonthsRefused extends Error {
 }
 
 /**
- * Adds an import under the account's current id. `counting` is the id of the
- * import that counted when the file was reviewed (null for none): refused
- * when that has changed since. Answers the account's imports now.
+ * Adds an import under the account's current id, as the newest, so it
+ * counts: where its time isn't after every import across the account's ids
+ * (two in one millisecond, or a clock behind), it is stamped a millisecond
+ * after the newest. `counting` is the id of the import that counted when the
+ * file was reviewed (null for none): refused when that has changed since.
+ * Answers the account's imports now.
  */
 export async function addMonthsImport(ctx: Ctx, account_id: string, record: MonthsImport, counting: string | null): Promise<InvestmentMonths> {
   const ids = await accountIds(ctx, account_id);
@@ -81,7 +86,9 @@ export async function addMonthsImport(ctx: Ctx, account_id: string, record: Mont
     const all = [...(current?.imports ?? []), ...elsewhere];
     if ((countingImport({ imports: all })?.id ?? null) !== counting) throw new MonthsRefused('changed');
     if (all.length >= MAX_IMPORTS) throw new MonthsRefused('full');
-    return { imports: [...(current?.imports ?? []), record].sort(byImported) };
+    const newest = Math.max(...all.map((i) => Date.parse(i.imported_at)));
+    const imported_at = Date.parse(record.imported_at) > newest ? record.imported_at : new Date(newest + 1).toISOString();
+    return { imports: [...(current?.imports ?? []), { ...record, imported_at }].sort(byImported) };
   });
   return (await readInvestmentMonths(ctx, account_id)) ?? { imports: [] };
 }
