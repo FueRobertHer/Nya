@@ -369,8 +369,18 @@ describe('the screen', () => {
         'Total return: your investment returns as a share of everything deposited since each account opened, with withdrawals not taken off. It isn’t a yearly rate: Nya doesn’t know when the money before its records went in.'
       );
       expect(card(host)).toContain(
-        'The total return is your investment returns as a share of everything deposited since each account opened, with withdrawals not taken off, so money moved between the accounts you chose counts as deposited in the one it went to. It isn’t a yearly rate: Nya doesn’t know when the money before its records went in.'
+        'The total return is your investment returns as a share of everything deposited since each account opened, with withdrawals not taken off, so money moved between the accounts you chose counts as deposited in the one it went to, and as withdrawn from the one it left. It isn’t a yearly rate: Nya doesn’t know when the money before its records went in.'
       );
+      // The card names the total return's base, and what makes up the
+      // deposits and withdrawals, money having come out too.
+      expect(card(host)).toContain(
+        'Deposits & withdrawals is $130,000.00 deposited less $2,000.00 withdrawn. The total return, +71.9%, is the returns over the $130,000.00 deposited, not a yearly rate.'
+      );
+      act(() => setHideAmounts(true, null));
+      expect(card(host)).toContain('The total return, +71.9%, is the returns over the ');
+      expect(card(host)).not.toContain('130,000');
+      expect(card(host)).not.toContain('2,000.00');
+      act(() => setHideAmounts(false, null));
       expect(words(host)).not.toMatch(/\ba year\b/);
       expect(words(host)).not.toContain('There’s no rate of return');
     } finally {
@@ -424,8 +434,12 @@ describe('the screen', () => {
     const { host, root } = setup({ manual: true });
     try {
       await pass(50);
+      // Gathered with the other note on the figures: one line that opens to
+      // each in full.
       expect(byClass(host, 'notice').filter((n) => (n.getAttribute('class') ?? '').includes('info')).map(words)).toEqual([
+        'Note: 2 notes: 2 accounts not counted and 401(k) ••8810 from Jul 12',
         'Note: Not counted: Robinhood ••1290 (manual) and Wealthfront ••7781 (through SimpleFIN). Nya has no investment activity for them.',
+        'Note: 401(k) ••8810 counts from Jul 12, its first recorded day.',
       ]);
       expect(rows(host)).toHaveLength(3);
     } finally {
@@ -926,7 +940,7 @@ describe('imported months', () => {
       await pass(50);
       range('3Y');
       await pass(10);
-      expect(hero(host)).toContain('Before Dec 1, 2025, the first recorded day, it is each month’s end from Vanguard’s Performance page.');
+      expect(hero(host)).toContain('Before Dec 1, 2025, the first recorded day, the balance is each month’s end from Vanguard’s Performance page.');
       expect(hero(host)).toContain('Until Jun 1, 2025, Vanguard gives one figure a month, so each counts from the middle of its month.');
       expect(card(host)).toContain('Before Jun 1, 2025, when Nya’s activity for this account starts, each month’s figures are Vanguard’s, from the Performance page you imported.');
       // The range starts between two of the months' ends.
@@ -943,7 +957,7 @@ describe('imported months', () => {
       await pass(50);
       range('3Y');
       await pass(10);
-      expect(hero(host)).toContain('Until Sep 1, 2025, it is each month’s end from Vanguard’s Performance page.');
+      expect(hero(host)).toContain('Until Sep 1, 2025, the balance is each month’s end from Vanguard’s Performance page.');
       expect(hero(host)).not.toContain('the first recorded day, it is');
     } finally {
       act(() => root.unmount());
@@ -961,7 +975,7 @@ describe('imported months', () => {
       range('All');
       await pass(10);
       expect(heroLine(host)).toMatch(/^▲ \+[\d.]+% a year rate of return · since Jan 2023$/);
-      expect(hero(host)).toContain('Grey line: your deposits less withdrawals since it opened, by each day from Jan 1, 2023. The gap between them is your investment returns so far.');
+      expect(hero(host)).toContain('Deposits & withdrawals is your deposits less withdrawals since it opened, by each day from Jan 1, 2023. The gap between it and Balance is your investment returns so far.');
       expect(hero(host)).toContain(
         'The rate of return weighs each deposit and withdrawal by how long it was invested. Until Jun 1, 2025, Vanguard gives one figure a month, so each counts from the middle of its month. Past a year it is given a year.'
       );
@@ -985,7 +999,7 @@ describe('imported months', () => {
       range('All');
       await pass(10);
       expect(heroLine(host)).toBe('▲ +50.0% total return on $80,000.00 deposited');
-      expect(hero(host)).toContain('Grey line: your deposits less withdrawals since it opened, from the totals you set, by each day from Jan 1, 2023.');
+      expect(hero(host)).toContain('Deposits & withdrawals is your deposits less withdrawals since it opened, from the totals you set, by each day from Jan 1, 2023.');
       expect(card(host)).toContain('Deposits & withdrawals +$80,000.00 Investment returns +$40,000.00 Ending balance $120,000.00 Since each account opened, from the deposits and withdrawals you set for it.');
       expect(hero(host)).toContain('Total return: your investment returns as a share of everything deposited since it opened, with withdrawals not taken off. It isn’t a yearly rate: Nya doesn’t know when the money before its records went in.');
       expect(card(host)).toContain('The total return is your investment returns as a share of everything deposited since the account opened, with withdrawals not taken off. It isn’t a yearly rate');
@@ -1017,11 +1031,13 @@ describe('imported months', () => {
       range('All');
       await pass(10);
       expect(heroLine(host)).toBe('▲ +99.4% total return on $83,000.00 deposited');
-      expect(hero(host)).toContain('Grey line: your deposits less withdrawals since each account opened, from the totals you set and the months you imported, by each day');
+      expect(hero(host)).toContain('Deposits & withdrawals is your deposits less withdrawals since each account opened, from the totals you set and the months you imported, by each day');
       expect(hero(host)).toContain(
         'Total return: your investment returns as a share of everything deposited since each account opened, with withdrawals not taken off. It isn’t a yearly rate: Nya doesn’t know when the money before its records went in for Roth IRA ••3302.'
       );
-      expect(card(host)).toContain('Vanguard gives one figure a month, so for Individual ••4421 a month with money both in and out counts only what was left as deposited.');
+      expect(card(host)).toContain('Vanguard gives one figure a month, so for Individual ••4421 a month with money both in and out counts only what was left, as deposited or as withdrawn.');
+      // Nothing came out, so the deposits and withdrawals are what was deposited.
+      expect(card(host)).not.toContain('deposited less');
       expect(card(host)).toContain(
         'Since each account opened: Individual ••4421’s from Vanguard’s months until Jun 1, 2025, then Nya’s activity; Roth IRA ••3302’s from the deposits and withdrawals you set.'
       );
@@ -1042,5 +1058,119 @@ describe('imported months', () => {
     } finally {
       act(() => root.unmount());
     }
+  });
+});
+
+// The chart names its lines at their ends, and what they are opens under the
+// figure: the chart writes the hero's lines and its own into the hero's node
+// (HeroInfo).
+describe('the chart’s lines and its info', () => {
+  const names = (host: FakeElement) => byClass(host, 'chart-rule-label').map(words);
+
+  test('each line named by what it is: Without returns over a range, Deposits & withdrawals for all time', async () => {
+    const { host, root, range } = setup({ answers: ROTH_SET });
+    try {
+      await pass(50);
+      expect(names(host)).toEqual(['Without returns', 'Balance']);
+      range('All');
+      expect(names(host)).toEqual(['Deposits & withdrawals', 'Balance']);
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  test('the info opens under the figure, before the notes and the chart, with the chart’s own lines', async () => {
+    const { host, root } = setup({ manual: true });
+    try {
+      await pass(50);
+      const button = host.findAll((e) => e.getAttribute('aria-label') === 'About this chart')[0];
+      const info = byClass(host, 'chart-info')[0];
+      expect(byClass(host, 'chart-info')).toHaveLength(1);
+      expect(info.getAttribute('id')).toBe(button.getAttribute('aria-controls'));
+      expect(info.hasAttribute('hidden')).toBe(true);
+      act(() => click(button));
+      expect(info.hasAttribute('hidden')).toBe(false);
+      expect(words(info)).toStartWith('Without returns is what they would be worth with no returns: the beginning balance plus deposits and withdrawals so far.');
+      expect(words(info)).toContain('Touch with two fingers, or drag with a mouse, to compare two days.');
+      expect(words(info)).not.toMatch(/Gold line|Grey line/);
+      const section = byClass(host, 'investments-hero')[0];
+      const kids = section.childNodes.filter((c): c is FakeElement => c instanceof FakeElement);
+      const place = (el: FakeElement) => kids.findIndex((k) => k === el || k.contains(el));
+      const plot = host.findAll((e) => e.getAttribute('role') === 'slider')[0];
+      expect(place(info)).toBe(1);
+      expect(place(byClass(host, 'notice-summary')[0])).toBe(2);
+      expect(place(plot)).toBeGreaterThan(2);
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  test('a grey name with no room is left out, and the info names the line', async () => {
+    const { default: NetWorthChart } = await import('@/components/NetWorthChart');
+    const { HeroInfo } = await import('@/components/hero-scrub');
+    // The hero's node for the info.
+    const node = dom.document.createElement('div');
+    dom.document.body.appendChild(node);
+    const lines = () => node.childNodes.filter((c): c is FakeElement => c instanceof FakeElement).map(words);
+    // The grey line runs along the top and the gold one just under it: over
+    // the grey line is out of the plot, and under it the gold line runs
+    // through.
+    const points = [
+      { date: '2026-10-01', value: 100 },
+      { date: '2026-10-10', value: 920 },
+      { date: '2026-10-25', value: 920 },
+      { date: '2026-11-05', value: 920 },
+    ];
+    const base = points.map((p) => ({ date: p.date, value: 1000, in: 1000, out: 0 }));
+    const baselineFor = () => base;
+    const host = dom.document.createElement('div');
+    dom.document.body.appendChild(host);
+    const root = createRoot(host as unknown as HTMLElement);
+    act(() =>
+      root.render(
+        <HeroInfo.Provider value={node as unknown as HTMLElement}>
+          <NetWorthChart
+            points={points}
+            baselineFor={baselineFor}
+            hero
+            outside={{ info: ['The hero’s own line.'] }}
+            lineNames={{ balance: 'Balance', grey: 'Deposits & withdrawals' }}
+            rangeSet="investment"
+            ranges={['ALL']}
+            range="ALL"
+            onRange={() => {}}
+          />
+        </HeroInfo.Provider>
+      )
+    );
+    expect(names(host)).toEqual(['Balance']);
+    expect(lines().slice(0, 2)).toEqual(['The grey line is Deposits & withdrawals.', 'The hero’s own line.']);
+    expect(byClass(host, 'chart-info')).toEqual([]);
+    // The balance on a plateau at its high, the grey line just under it: no
+    // room for Balance, so neither is named on the plot, and the info names both.
+    const weeks = Array.from({ length: 12 }, (_, i) => new Date(Date.UTC(2026, 0, 5 + 7 * i)).toISOString().slice(0, 10));
+    const plateau = weeks.map((date, i) => ({ date, value: [1e3, 5e3, 9e3][i] ?? 10e3 }));
+    const under = weeks.map((date) => ({ date, value: 9.4e3, in: 9.4e3, out: 0 }));
+    act(() =>
+      root.render(
+        <HeroInfo.Provider value={node as unknown as HTMLElement}>
+          <NetWorthChart
+            points={plateau}
+            baselineFor={() => under}
+            hero
+            outside={{ info: ['The hero’s own line.'] }}
+            lineNames={{ balance: 'Balance', grey: 'Deposits & withdrawals' }}
+            rangeSet="investment"
+            ranges={['ALL']}
+            range="ALL"
+            onRange={() => {}}
+          />
+        </HeroInfo.Provider>
+      )
+    );
+    expect(names(host)).toEqual([]);
+    expect(lines()[0]).toBe('The gold line is Balance, and the grey line is Deposits & withdrawals.');
+    act(() => root.unmount());
+    expect(lines()).toEqual([]);
   });
 });
