@@ -46,6 +46,7 @@ Also:
 - A token at an alpha is `color-mix(in srgb, var(--token) N%, transparent)`, never the token's color restated as `rgba()`.
 - **Meaning, not decoration.** The accent acts, `--data` measures. `--accent` (brass in dark, navy in light) is for actions and the current selection. `--data` (gold in both themes) is for what Nya measures: chart lines and fills, meters, category bars; it is drawn only, never text, and the wash under a line is the solid `--data-tint`, never `--data` at an alpha. Green and red are for money in and out and for gain and loss (and green for the Accounts tab's "All synced"). Orange (`--warn`) is only for something that needs the person. Red is for a number that is wrong or short. The accent is close to body text in lightness, and gold to orange and coral, so neither carries a meaning alone: underline a link inside a sentence, and tell two chart lines apart by dash as well as color.
 - **Never color alone**: a state shown in color also has a word or an icon.
+- **Name a chart's lines by meaning, at their ends**: label each line directly where it ends, with the word for what it is (Balance, Deposits & withdrawals), not "the grey line" in a note.
 
 ## Type
 

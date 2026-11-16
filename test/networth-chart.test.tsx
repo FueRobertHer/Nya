@@ -757,3 +757,130 @@ describe('months from a brokerage’s record', () => {
     expect(chart([...opened, ...recorded], { baselineFor, allTime: true, initialRange: '1M' })).not.toContain('All time');
   });
 });
+
+// Accounts > Investments names its two lines at their ends, inside the plot
+// (components/NetWorthChart.tsx `lineNames`); Home's hero and a card's chart
+// name none.
+describe('NetWorthChart line names', () => {
+  const points = [
+    { date: '2026-09-01', value: 1000 },
+    { date: '2026-09-15', value: 1400 },
+    { date: '2026-09-30', value: 1800 },
+  ];
+  const base = [
+    { date: '2026-09-01', value: 1000, in: 0, out: 0 },
+    { date: '2026-09-15', value: 1100, in: 100, out: 0 },
+    { date: '2026-09-30', value: 1200, in: 200, out: 0 },
+  ];
+  const baselineFor = () => base;
+  const NAMES = { balance: 'Balance', grey: 'Deposits & withdrawals' };
+  const at = (width: number, node: React.ReactNode) => renderToStaticMarkup(<DrawnWidth.Provider value={width}>{node}</DrawnWidth.Provider>);
+  const named = (html: string) =>
+    [...html.matchAll(/<text class="chart-rule-label" x="([\d.]+)" y="([\d.]+)" text-anchor="end">([^<]+)<\/text>/g)].map((m) => ({ name: m[3].replace('&amp;', '&'), x: Number(m[1]), y: Number(m[2]) }));
+  const investments = (b: (() => typeof base) | (() => null)) => (
+    <NetWorthChart points={points} baselineFor={b} hero outside={{ info: [] }} lineNames={NAMES} rangeSet="investment" ranges={['ALL']} range="ALL" onRange={() => {}} />
+  );
+
+  // The drawn lines, as their runs from each path's d (M and L only): a
+  // grey line below zero ends at zero and starts again there.
+  const drawn = (html: string) =>
+    [...html.matchAll(/<path (class="chart-baseline" )?d="([^"]+)" fill="none"/g)].flatMap((m) =>
+      m[2]
+        .split('M')
+        .filter(Boolean)
+        .map((run) => [...run.matchAll(/([\d.]+),([\d.]+)/g)].map((q) => [Number(q[1]), Number(q[2])] as const))
+    );
+  // Whether a line runs through a box, sampled every half pixel across it.
+  const through = (line: readonly (readonly [number, number])[], box: { l: number; r: number; t: number; b: number }) =>
+    line.slice(1).some(([x1, y1], i) => {
+      const [x0, y0] = line[i];
+      for (let x = Math.max(x0, box.l); x <= Math.min(x1, box.r); x += 0.5) {
+        const yy = x1 === x0 ? y1 : y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
+        if (yy >= box.t && yy <= box.b) return true;
+      }
+      return false;
+    });
+  // Rising to a dot at the top (the board), and falling under a rising grey line.
+  const months = Array.from({ length: 11 }, (_, i) => `2025-${String(i + 1).padStart(2, '0')}-01`);
+  const series = (vals: number[], greys: number[]) => ({
+    points: months.map((date, i) => ({ date, value: vals[i] })),
+    base: months.map((date, i) => ({ date, value: greys[i], in: greys[i], out: 0 })),
+  });
+  const SHAPES = [
+    { points, base },
+    series([0, 40e3, 90e3, 150e3, 200e3, 260e3, 310e3, 360e3, 410e3, 460e3, 506e3], [0, 38e3, 80e3, 130e3, 170e3, 215e3, 250e3, 290e3, 320e3, 355e3, 381e3]),
+    series([500e3, 498e3, 490e3, 485e3, 470e3, 460e3, 455e3, 450e3, 452e3, 455e3, 458e3], [500e3, 501e3, 502e3, 503e3, 504e3, 505e3, 506e3, 507e3, 508e3, 509e3, 510e3]),
+  ];
+
+  test('each at its end, inside the plot, clear of the other and of both lines, at a phone’s widths', () => {
+    for (const shape of SHAPES) {
+      for (const w of [320, 375, 390]) {
+        const html = at(
+          w,
+          <NetWorthChart points={shape.points} baselineFor={() => shape.base} hero outside={{ info: [] }} lineNames={NAMES} rangeSet="investment" ranges={['ALL']} range="ALL" onRange={() => {}} />
+        );
+        const names = named(html);
+        expect(names.map((n) => n.name)).toEqual(['Deposits & withdrawals', 'Balance']);
+        // A 12px line's box by its width, as the chart places it.
+        const [g, b] = names.map((n) => ({ l: n.x - labelWidth(n.name), r: n.x, t: n.y - 11, b: n.y + 3 }));
+        expect(g.r + 4 <= b.l || b.r + 4 <= g.l || g.b + 2 <= b.t || b.b + 2 <= g.t).toBe(true);
+        const lines = drawn(html);
+        expect(lines.length).toBeGreaterThanOrEqual(2);
+        for (const box of [g, b]) {
+          expect(box.t).toBeGreaterThanOrEqual(0);
+          // Above the months (the hero's plot ends 20px over its foot).
+          expect(box.b).toBeLessThanOrEqual(120);
+          expect(box.l).toBeGreaterThanOrEqual(2);
+          // Clear of the end dot and its ring.
+          expect(box.r).toBeLessThanOrEqual(w - 8 - 6);
+          for (const line of lines) expect(through(line, box)).toBe(false);
+        }
+      }
+    }
+  });
+
+  test('a grey line that dips below zero, or one just under a balance at its high: no name across either line', () => {
+    const weeks = Array.from({ length: 12 }, (_, i) => new Date(Date.UTC(2026, 0, 5 + 7 * i)).toISOString().slice(0, 10));
+    const shape = (gold: number[], grey: number[]) => ({
+      points: weeks.map((date, i) => ({ date, value: gold[i] })),
+      base: weeks.map((date, i) => ({ date, value: grey[i], in: Math.max(0, grey[i]), out: 0 })),
+    });
+    // Below zero for two weeks: drawn to zero and from it again.
+    const dip = shape([10e3, 10e3, 10e3, 10e3, 10e3, 10e3, 10e3, 10e3, 2e3, 2e3, 12e3, 12.5e3], [10e3, 10e3, 10e3, 10e3, 10e3, 10e3, 10e3, 10e3, -5e3, -5e3, 12e3, 12e3]);
+    // The balance on a plateau at the top, the grey line a few pixels under
+    // it: no room for Balance, so neither is drawn (the info says both).
+    const plateau = shape([1e3, 5e3, 9e3, 10e3, 10e3, 10e3, 10e3, 10e3, 10e3, 10e3, 10e3, 10e3], Array(12).fill(9.4e3));
+    for (const w of [320, 375, 390]) {
+      for (const [shown, s, want] of [
+        ['dip', dip, ['Deposits & withdrawals', 'Balance']],
+        ['plateau', plateau, []],
+      ] as const) {
+        const html = at(
+          w,
+          <NetWorthChart points={s.points} baselineFor={() => s.base} hero outside={{ info: [] }} lineNames={NAMES} rangeSet="investment" ranges={['ALL']} range="ALL" onRange={() => {}} />
+        );
+        const names = named(html);
+        expect([shown, names.map((n) => n.name)]).toEqual([shown, [...want]]);
+        const lines = drawn(html);
+        if (shown === 'dip') expect(lines.length).toBe(3);
+        for (const n of names) {
+          const box = { l: n.x - labelWidth(n.name), r: n.x, t: n.y - 11, b: n.y + 3 };
+          for (const line of lines) expect(through(line, box)).toBe(false);
+        }
+      }
+    }
+  });
+
+  test('the grey one only while its line is drawn, and said in the plot’s name', () => {
+    const html = at(390, investments(baselineFor));
+    expect(html).toContain('A second line is Deposits &amp; withdrawals.');
+    const alone = at(390, investments(() => null));
+    expect(named(alone).map((n) => n.name)).toEqual(['Balance']);
+    expect(alone).not.toContain('A second line');
+  });
+
+  test('none on Home’s hero or a card’s chart', () => {
+    expect(named(at(390, <NetWorthChart points={points} baselineFor={baselineFor} hero />))).toEqual([]);
+    expect(named(at(340, <NetWorthChart points={points} baselineFor={baselineFor} />))).toEqual([]);
+  });
+});
