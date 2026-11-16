@@ -4,9 +4,9 @@
 // age you'd like to stop, growing a steady amount after inflation, with the
 // FI number as a flat dashed line, a marker where the line reaches it (on a
 // plan that answers with the earliest stop that lasts, D9, that stop, on the
-// line at its age), and the stop age. No band (Drawdown keeps it) and no event pins. Its points
-// are lib/fire/path.ts planPath's, the same figures as the FI card's rows, so
-// the point at the stop age is the At age row's.
+// line at its age), and the stop age. No band (Drawdown keeps it) and no
+// event pins. Its points are lib/fire/path.ts planPath's, the same figures as
+// the FI card's rows, so the point at the stop age is the At age row's.
 //
 // Whole path (the tax plan's P, D13): the same line on past the stop to the
 // plan's end, drawing the plan's spending at the same steady return
@@ -127,9 +127,10 @@ function keepsTo(lines: readonly (readonly PathPoint[])[], x: (age: number) => n
   return true;
 }
 
-/** The line's height at an age: a point's, at the top of its step where
- *  money comes in that year (what a stop then draws from, as Whole path's
- *  first year has it), or straight between two points. Null off the line. */
+/** The line's height at an age: a point's, at the end of its step where
+ *  money comes in that year (what is in hand then, which a stop draws from,
+ *  as Whole path's first year has it), or straight between two points. Null
+ *  off the line. */
 function balanceAt(points: readonly PathPoint[], age: number): number | null {
   for (let i = 0; i < points.length; i++) {
     const q = points[i];
@@ -143,19 +144,24 @@ function balanceAt(points: readonly PathPoint[], age: number): number | null {
   return null;
 }
 
-/** The age the line first reaches the value `v`, worked out between its
- *  points: its start where it is there already, a step's age where money
- *  coming in takes it there. Null where it never does. */
+/** The age the line reaches the value `v` and stays there to its end, as
+ *  the walk's FI date does (a cost that takes it back under starts it again),
+ *  worked out between its points: its start where it is there already, a
+ *  step's age where money coming in takes it there. Null where it ends under. */
 function crossingAge(points: readonly PathPoint[], v: number): number | null {
+  let at: number | null = null;
   for (let i = 0; i < points.length; i++) {
     const q = points[i];
-    if (q.balance >= v || (q.inHand ?? 0) >= v) return q.age;
+    // The line comes to its point, then steps to what is in hand there.
+    for (const b of [q.balance, q.inHand ?? q.balance]) {
+      if (b < v) at = null;
+      else if (at === null) at = q.age;
+    }
     const next = points[i + 1];
-    if (!next) break;
     const from = q.inHand ?? q.balance;
-    if (next.balance >= v) return q.age + ((v - from) / (next.balance - from)) * (next.age - q.age);
+    if (next && from < v && next.balance >= v) at = q.age + ((v - from) / (next.balance - from)) * (next.age - q.age);
   }
-  return null;
+  return at;
 }
 
 /** Where everything goes, in viewBox units (CSS pixels at its width): plain

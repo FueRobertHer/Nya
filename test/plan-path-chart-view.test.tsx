@@ -225,7 +225,7 @@ describe('the earliest stop that lasts', () => {
     expect(label(html)).toEndWith(' A stop now lasts.');
   });
 
-  test('a stop the year money comes in: the marker at the top of its step, what that stop draws from', () => {
+  test('a stop the year money comes in: the marker at the end of its step, what that stop draws from', () => {
     const gift: LifeEvent = { id: 'w', kind: 'windfall', label: 'Gift', atAge: 42, amount: 400_000 };
     const f = figuresOf({ ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, assets: 500_000, savings: 50_000 }, { spending: null, savings: null, assets: null }, [gift]) as PlanFigures;
     const p = planPath(f)!;
@@ -234,6 +234,37 @@ describe('the earliest stop that lasts', () => {
     const step = [...d.matchAll(/[ML]([\d.]+),([\d.]+)/g)].map((m) => ({ x: +m[1], y: +m[2] })).filter((q) => Math.abs(q.x - dot(html).x) < 0.06);
     expect(step).toHaveLength(2);
     near(dot(html), step[1]);
+  });
+
+  // A cost that takes the line back under the number: it reaches it where it
+  // stays over it, as the walk's FI date does, or not at all.
+  const dips = (balances: number[]) => balances.map((balance, i) => ({ age: 40 + i, balance }));
+  test('a line that goes over the number and back under: the name over its line, and no reaching said', () => {
+    const points = dips([900_000, 995_000, 1_090_000, 1_200_000, 784_000, 874_000]);
+    for (const fiAge of [45, 44]) {
+      const html = at(fiAge, { points, stopAge: 45 });
+      near(dot(html), onLine(html, fiAge));
+      expect(nameY(html)).toBe(fiY(html) - 5);
+      expect(label(html)).not.toContain('reach the');
+      expect(label(html)).toEndWith(` The earliest stop that lasts is around ${fiAge}.`);
+    }
+  });
+
+  test('over, back under, then over for good: it reaches the number where it stays', () => {
+    const html = at(42, { points: dips([900_000, 1_050_000, 800_000, 950_000, 1_100_000, 1_200_000]), stopAge: 45 });
+    expect(label(html)).toContain(`reach the ${c(1_000_000)} FI number around 43,`);
+    expect(nameY(html)).toBe(fiY(html) + 14);
+  });
+
+  test('a windfall that takes the line over the number: reached on its step', () => {
+    const gift: LifeEvent = { id: 'w', kind: 'windfall', label: 'Gift', atAge: 42, amount: 400_000 };
+    const f = figuresOf({ ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, assets: 500_000, savings: 50_000 }, { spending: null, savings: null, assets: null }, [gift]) as PlanFigures;
+    const html = draw(props({ points: planPath(f)!.points, stopAge: 55, fiNumber: f.view.fiNumber, fiAge: 44, lasting: true, withEvents: true }));
+    expect(label(html)).toContain(`reach the ${wholeMoney(f.view.fiNumber!, 'USD')} FI number around 42,`);
+  });
+
+  test('the stop found is the stop typed: nothing said of after it', () => {
+    expect(label(at(65))).toEndWith(' The earliest stop that lasts is around 65.');
   });
 
   test('past the stop the chart ends at: no marker, and the summary says where it is', () => {
