@@ -78,8 +78,10 @@
 // `ranges`, `onRange`). Its lines are named at their ends (`lineNames`), each
 // over or under its own line all along the name, placed from the plot's own
 // geometry so no line runs through a name and neither meets the other, the
-// dot or the months; a grey name with no room is left out, and the info
-// names the line.
+// dot or the months. A grey name with no room is left out, and with no
+// room for Balance neither is drawn; the info names what the plot doesn't.
+// The grey line is named where it ends at zero or above, by the runs it is
+// drawn in (it stops at zero and starts again there).
 //
 // ALL TIME. On an investment account's sheet with deposits and withdrawals
 // that can be carried (`allTime`, with `baselineFrom`), or months from its
