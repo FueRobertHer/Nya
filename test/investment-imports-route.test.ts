@@ -484,6 +484,8 @@ describe('both readers of the activity', () => {
     const joined = await readActivity();
     expect(joined.flows.map((f: { amount: number }) => f.amount)).toEqual([1000, 444, 1000, 1000]);
     expect((await list()).body.imports.map((i: { import_id: string }) => i.import_id)).toEqual(['import-early-1']);
+    // Listed as the account's own by its id now, so its row names no other.
+    expect((await list()).body.imports[0].accounts).toEqual(['ind']);
   });
 });
 

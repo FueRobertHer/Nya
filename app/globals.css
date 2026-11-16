@@ -926,7 +926,7 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
    line token is a fill) and a ghost raises to --elevated, as rows and icon
    buttons do. */
 @media (hover: hover) {
-  .btn.secondary:hover:not(:disabled):not([aria-disabled="true"]) {
+  .btn.secondary:hover:not(:disabled):not([aria-disabled="true"]):not(:has(> input:disabled)) {
     background: var(--border-strong);
     opacity: 1;
   }

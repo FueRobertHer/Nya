@@ -273,7 +273,7 @@ describe('the imports', () => {
     expect(text).toContain(
       'In use where Nya has nothing of its own: balances before Jul 1, and deposits and withdrawals before Jul 1 · Jan 2024 to Oct 2026 · 34 months · imported today'
     );
-    expect(text).toContain('Not in use: the newer Performance page is used in its place · Jan 2024 to Oct 2026 · 34 months · imported Nov 1');
+    expect(text).toContain('Not in use: Nya reads only the newest Performance page · Jan 2024 to Oct 2026 · 34 months · imported Nov 1');
     expect(text).not.toMatch(/Counts/);
     // The status is said first, in bold.
     expect(v.host.findAll((e) => e.tagName === 'B').map((b) => b.textContent)).toEqual(['In use where Nya has nothing of its own:', 'Not in use:']);
@@ -288,7 +288,7 @@ describe('the imports', () => {
     expect(dom.document.activeElement).toBe(v.button('Undo the import from today'));
     act(() => click(v.button('Undo the import from Nov 1')));
     expect(v.host.textContent).toContain(
-      'Undo the import from Nov 1? Nothing you see changes: the newer Performance page is used in its place. It leaves this list, and you can import the file again later.'
+      'Undo the import from Nov 1? Nothing you see changes: Nya reads only the newest Performance page. It leaves this list, and you can import the file again later.'
     );
     await act(async () => click(v.button('Undo import')));
     expect(v.undone).toEqual(['imp-0']);
@@ -306,7 +306,7 @@ describe('the imports', () => {
     const lines = loading.host.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes('import-status')).map((e) => e.textContent);
     expect(lines).toEqual([
       'Jan 2024 to Oct 2026 · 34 months · imported today',
-      'Not in use: the newer Performance page is used in its place · Jan 2024 to Oct 2026 · 34 months · imported Nov 1',
+      'Not in use: Nya reads only the newest Performance page · Jan 2024 to Oct 2026 · 34 months · imported Nov 1',
     ]);
     loading.unmount();
   });

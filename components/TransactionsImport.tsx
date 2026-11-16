@@ -531,7 +531,7 @@ export function undoText(i: ListedImport, list: TxnImports, activity: Investment
   // A CSV undone can hand its days to a QFX, which was never checked
   // against them: said, so the person knows what they'd count.
   let qfxNote = '';
-  if (now.days.length === 0) back = 'nothing you see changes, as it doesn’t count now';
+  if (now.days.length === 0) back = 'nothing you see changes, as it isn’t in use now';
   else {
     const others = list.imports.filter((o) => o.import_id !== i.import_id);
     const parts: DecidedBy[] = afterUndo(now.days, others);

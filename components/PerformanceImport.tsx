@@ -346,7 +346,7 @@ export function PerformanceImports({
   const askText = (i: MonthsImport) => {
     const d = importedDay(i);
     if (i !== counting)
-      return `Undo the import from ${d}? Nothing you see changes: the newer Performance page is used in its place. It leaves this list, and you can import the file again later.`;
+      return `Undo the import from ${d}? Nothing you see changes: Nya reads only the newest Performance page. It leaves this list, and you can import the file again later.`;
     const next = list[1];
     const totals = activity?.money_in_out;
     const unreadable = !!activity?.money_in_out_unreadable;
@@ -366,10 +366,11 @@ export function PerformanceImports({
     }. Nothing else changes, and you can import the file again later.`;
   };
 
-  // In use or not, and how: an older import never is; the newest by what its
-  // months are used for now, nothing while that loads.
+  // In use or not, and how: an older import never is, whether or not the
+  // newest is used; the newest by what its months are used for now, nothing
+  // while that loads.
   const status = (i: MonthsImport): { label: string; why: string } | null => {
-    if (i !== counting) return { label: 'Not in use:', why: ' the newer Performance page is used in its place' };
+    if (i !== counting) return { label: 'Not in use:', why: ' Nya reads only the newest Performance page' };
     if (past?.unused) return { label: 'Not in use:', why: ` ${unusedShort(past.unused, { name, counting, currency })}` };
     if (applied) return { label: 'In use where Nya has nothing of its own:', why: ` ${appliedText(applied)}` };
     return null;

@@ -302,7 +302,7 @@ describe('the sheet', () => {
     expect((input.parentNode as FakeElement).textContent).toBe('Choose a file');
     // No critical notice: nothing in Nya is wrong.
     expect(v.host.findAll((e) => (e.getAttribute('class') ?? '').includes('notice critical'))).toEqual([]);
-    // How to get the files opens, the field has focus again, and choosing again clears the error.
+    // How to get the files opens, and the field has focus again.
     expect(v.how().hasAttribute('open')).toBe(true);
     expect(dom.document.activeElement).toBe(input);
     // Closed by the person, it opens again on the next file Nya can't take.
