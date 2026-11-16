@@ -1118,8 +1118,9 @@ export default function PlanTab({
   useEffect(() => {
     setSheet(null);
   }, [shownFor]);
-  // Use's done line and Undo are of the plan or copy shown, with the household it had.
-  const useOn = entry?.id ?? 'plan';
+  // Use's done line and Undo are of the plan or copy shown, by its id (so another plan
+  // made yours, here or on another device, ends them), with the household it had.
+  const useOn = entry?.id ?? plansState.main;
   const factsKey = JSON.stringify(shared.taxFacts);
   useEffect(() => clearUse(), [useOn, factsKey]); // eslint-disable-line react-hooks/exhaustive-deps
   // Closed: the sheet gives focus back to what was focused when it opened as
@@ -1555,8 +1556,9 @@ export default function PlanTab({
       setUndone(u);
       focusUse.current = 'undone';
     } else {
-      // Refused, the plan isn't what Use left: the offer goes, and why stays in its place.
-      setUsed(null);
+      // Refused: why, under the offer, which stays while the plan still has Use's rule,
+      // so trying again is Undo again. A copy's refusal is said here, not on its card too.
+      if (entry) setNotice(null);
       setUndoError({ on: u.on, text: typeof r === 'string' ? r : 'It wasn’t undone. Try again in a moment.' });
       focusUse.current = 'error';
     }

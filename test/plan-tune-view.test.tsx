@@ -763,24 +763,72 @@ describe('Undo after Use', () => {
     await tab.unmount();
   }, 90_000);
 
-  test('a refused Undo says why in the line’s place, focused, and offers no other', async () => {
+  test('a refused Undo says why under it, focused, and Undo again does it', async () => {
     const tab = await detailed();
+    const before = await kept();
     await useRow(tab);
     const was = await kept();
     answers['PUT /api/fire-plan'] = () => Response.json({ error: 'Not now, says the server.' }, { status: 500 });
     await press(button(tab.container, 'Undo'));
     await settle(300);
-    // Said where Undo was, as the store says its own refusal at the top of the tab.
+    // Said under the offer, as the store says its own refusal at the top of the tab.
     const refused = line(tab, 'Critical: It wasn’t undone. Try again in a moment.')!;
     expect(refused).not.toBeNull();
     expect(dom.document.activeElement).toBe(refused);
-    expect(line(tab, 'Done: ')).toBeNull();
+    expect(line(tab, 'Done: ')).not.toBeNull();
     expect(line(tab, 'Undone: ')).toBeNull();
-    expect(button(tab.container, 'Undo')).toBeNull();
     delete answers['PUT /api/fire-plan'];
     expect(await kept()).toEqual(was);
+    // The plan still has Use's rule, so Undo is still there, and works.
+    await press(button(tab.container, 'Undo'));
+    await settle(300);
+    expect(await kept()).toEqual(before);
+    expect(line(tab, 'Critical: ')).toBeNull();
+    expect(dom.document.activeElement).toBe(line(tab, 'Undone: '));
     await tab.unmount();
   }, 60_000);
+
+  test('in a copy, a refusal’s own words are said under Undo, and not again on the copy', async () => {
+    const tab = await detailed();
+    await useRow(tab, otherRow, 'Try it in a copy');
+    await useRow(tab, (t) => named(t, 'No conversions'), 'Use in this copy');
+    const was = await kept();
+    answers['PUT /api/plans'] = () => Response.json({ error: 'Plans can’t be saved right now.' }, { status: 503 });
+    await press(button(tab.container, 'Undo'));
+    await settle(300);
+    delete answers['PUT /api/plans'];
+    const refused = line(tab, 'Critical: Plans can’t be saved right now.')!;
+    expect(refused).not.toBeNull();
+    expect(dom.document.activeElement).toBe(refused);
+    expect(tab.container.findAll((e) => (e.textContent ?? '').startsWith('Plans can’t be saved right now.'))).toHaveLength(0);
+    expect(button(tab.container, 'Undo')).not.toBeNull();
+    expect(await kept()).toEqual(was);
+    await tab.unmount();
+  }, 90_000);
+
+  test('another plan made yours ends the line: Undo never saves into a plan Use didn’t touch', async () => {
+    const tab = await detailed();
+    // A copy with the rule, then the same rule Used in your plan.
+    await useRow(tab, otherRow, 'Try it in a copy');
+    await press(tab.container.findAll((e) => e.getAttribute('aria-label') === 'Back to your plan')[0]);
+    await settle(300);
+    await pick(tab.container, 'Drawdown');
+    await useRow(tab);
+    expect(line(tab, 'Done: ')).not.toBeNull();
+    const { main, byName } = await stored();
+    const copy = Object.keys(byName).find((n) => byName[n].id !== main)!;
+    await press(tab.plans());
+    await press(tab.sheetRow(copy));
+    await press(tab.sheetRow('Make this your plan'));
+    await settle(400);
+    if (tab.dialog()) await press(closeOf(tab.dialog()!));
+    await settle(400);
+    await pick(tab.container, 'Drawdown');
+    expect((await stored()).main).toBe(byName[copy].id);
+    expect(line(tab, 'Done: ')).toBeNull();
+    expect(button(tab.container, 'Undo')).toBeNull();
+    await tab.unmount();
+  }, 120_000);
 
   test('its amounts are hidden with the rest', async () => {
     const tab = await detailed();
@@ -793,6 +841,12 @@ describe('Undo after Use', () => {
     await useRow(tab, (t) => named(t, 'No conversions'));
     try {
       await act(async () => void setHideAmounts(true, null));
+      // Re-drawn as Dashboard does on the switch, by a change of its own.
+      await pick(tab.container, 'Your path');
+      await pick(tab.container, 'Drawdown');
+      const done = line(tab, 'Done: ')!.textContent ?? '';
+      expect(done).toStartWith('Done: Your plan now makes no conversions');
+      expect(done).not.toMatch(/\$\d/);
       await press(button(tab.container, 'Undo'));
       await settle(300);
       const undone = line(tab, 'Undone: ')!.textContent ?? '';
