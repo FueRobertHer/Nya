@@ -140,6 +140,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
 .app .notice.crit { background: var(--neg-tint); color: var(--neg); border-color: currentColor; }
 .app .notice.warn { background: var(--warn-tint); color: var(--warn); }
 .app .notice.info { background: var(--caveat-surface); color: var(--text-2); }
+.app .notice.done { background: var(--pos-tint); color: var(--pos); }
 .app .notice .act { margin-left: auto; font-weight: 600; white-space: nowrap; text-decoration: underline; text-underline-offset: 2px; }
 .app .notice ul { margin: 4px 0 0; padding-left: 16px; display: grid; gap: 2px; }
 .app .btn { font: 600 14px var(--f-app); border-radius: 12px; padding: 9px 14px; min-height: 40px; border: 1px solid transparent; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
@@ -271,6 +272,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
     <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 21h20L12 3Z"/><path d="M12 10v5M12 18h.01"/></symbol>
     <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></symbol>
     <symbol id="i-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
   </defs>
 </svg>
@@ -983,6 +985,36 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
           <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
         </div></div>
         <figcaption><b>DRAWDOWN, WORKED OUT</b>T3 to T5 of the tax plan. How you draw and Compare conversions come after Year by year: rows here, a table on the page, nothing marked best. In the flat model one row, Work out tax from your accounts, sits in Year by year's place. Worked out, the hero says each year’s tax is in it, with one label for its history and its tax law; Year by year is the balances by tax bucket with marks at 59½, 65, Social Security and the RMD age, the stages as rows opening their years, and what is left at the end. Your figures gains Health coverage and Tax after you stop, and your FI number comes from these years.</figcaption>
+      </figure>
+      <figure class="shot">
+        <div class="phone"><div class="app screen" data-app>
+          <div class="scroll">
+            <div class="sticky">
+              <div class="monthbar"><span>Your plan</span><span class="btn ghost sm">Plans (3)</span></div>
+              <div class="seg"><span>Your path</span><span class="on">Drawdown</span><span>Portfolio</span></div>
+            </div>
+            <div class="hero-page">
+              <div class="hero-label">Will it last?</div>
+              <div class="hero money">84%</div>
+              <div class="small muted">of 1,290 historical starts (Jan 1871 to Jun 1978) lasted 45 years, from 50</div>
+              <div class="small muted">With each year’s tax.</div>
+              <div class="xs t3">Hypothetical, from US history and 2026 tax law: not a prediction, and not investment or tax advice.</div>
+            </div>
+            <div class="notice done"><svg><use href="#i-check"/></svg><span>Your plan now converts up to the ACA limit, then the 12% bracket, until 64, and starts from <span class="money">$1,912,400</span>, not <span class="money">$1,950,000</span>.</span></div>
+            <div><span class="btn secondary">Undo</span></div>
+            <div class="card flush">
+              <div class="card-header"><h2>Year by year, at a steady 5% after inflation</h2></div>
+              <div class="row"><div class="main"><span class="title">Before 59½</span><span class="sub">From taxable</span></div><span class="money small">$2,600 a year</span><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+            <div class="card flush">
+              <div class="card-header"><h2>How you draw</h2></div>
+              <div class="row"><div class="main"><span class="title">Order</span><span class="sub">Taxable, then tax-deferred, then Roth</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+              <div class="row"><div class="main"><span class="title">Roth conversions</span><span class="sub">ACA limit, then the 12% bracket, until 64</span></div><svg class="chev"><use href="#i-chev"/></svg></div>
+            </div>
+          </div>
+          <nav class="tabbar"><span class="tab"><svg><use href="#i-home"/></svg>Home</span><span class="tab"><svg><use href="#i-acct"/></svg>Accounts</span><span class="tab"><svg><use href="#i-act"/></svg>Activity</span><span class="tab"><svg><use href="#i-bud"/></svg>Budgets</span><span class="tab on"><svg><use href="#i-plan"/></svg>Plan</span></nav>
+        </div></div>
+        <figcaption><b>DRAWDOWN, AFTER USE</b>Use in your plan, from a rule's own sheet in Tune to a goal, closes the drawer and says what it did on Drawdown, under the answer and above the cards, so it stays when tax can't be worked out once used: a done notice naming the rule your plan now has, its order where that changed, and what moved (the stop, the start), with focus on it. Undo, under it, saves the rule that was there before and says so in a status line ("Undone: your plan makes no conversions, as before."), with focus moving to it; refused, it says why in the notice's place and offers no other. A copy says "This copy"; a copy that takes your plan's tax settings gets the notice without Undo, as a save can't give that back. Any other save, another plan shown or a change to the household takes the notice away. Amounts in it are hidden with the rest.</figcaption>
       </figure>
       <figure class="shot">
         <div class="phone"><div class="app screen" data-app>
