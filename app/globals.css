@@ -2222,7 +2222,9 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
 
 /* What the figure is, beside it on its line, on an investment account's
    chart: "change in balance", or "balance" on a day, so it isn't taken for
-   the returns. Short, so the line never wraps. */
+   the returns. Short enough to share the figure's line on a phone, but for
+   the longest figures (an estimated seven-figure amount in a currency with a
+   prefix, as "≈ −CA$1,234,567.89"), where the line wraps. */
 .chart-readout-what {
   color: var(--text-2);
   font-size: var(--fs-1);
