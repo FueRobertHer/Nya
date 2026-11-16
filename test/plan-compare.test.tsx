@@ -272,6 +272,13 @@ describe('what the cells say (review: retiring before the FI date)', () => {
     expect(fiDateText(off, TODAY)).toBe('none: a year takes out more than there is (below)');
   });
 
+  test('at FI already, or a stop now that lasts (D9): there, or could stop now', () => {
+    const rich = figuresOf(plan({ age: 40, targetAge: 55 }), { ...measured, assets: 5_000_000 }, []) as PlanFigures;
+    expect(rich.view.yearsToFi).toBe(0);
+    expect(fiDateText(rich, TODAY)).toBe('You’re there');
+    expect(fiDateText({ ...rich, resolution: { ...rich.resolution, searched: 'lasts' } }, TODAY)).toBe('You could stop now');
+  });
+
   test('the FI date is the same for both, said in years, age and year', () => {
     expect(row('fi').cells[0].value).toBe('about 11.8 years, around age 52 (around 2038)');
     expect(row('fi').cells[1].diff).toBe('the same');

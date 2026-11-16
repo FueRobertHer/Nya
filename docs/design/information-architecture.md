@@ -377,7 +377,7 @@ One word for one thing, everywhere. As a button, **Close** only dismisses a shee
 | **Connect** / **Reconnect** | Bring an institution in through a provider / fix its login | Link |
 | **Financial independence** (FI) | Enough invested that work is optional: the Plan tab's subject and its label | Retire early |
 | **Stop age** | The age you plan to stop working, which the Plan's answer is measured against | Retirement age |
-| **You could stop now** | The answer on a plan whose FI date is the earliest stop that lasts (D9) when that stop is today, always said with the share of starts it lasts in | You're at FI (the FI number reached) |
+| **You could stop now** | The answer on a plan whose FI date is the earliest stop that lasts (D9) when that stop is today; where there is room (the Plan's answer, Home's FI line), with the share of starts it lasts in | You're at FI (the FI number reached) |
 | **Timeline** | The Plan's card of everything a plan holds, on the points in time that place it (not Home's timeline notes) | Life events, What if |
 | **Item** | One thing on a Timeline, of any kind: a cost, income, a child, a change in pay | Life event, event, one-off (a cost is one kind) |
 | **Change in balance** | An account's balance at the end of a range less at its start, with the money that went in and came out; said beside the figure on an investment account's chart, whose returns are the line under it | Returns, gain, growth |

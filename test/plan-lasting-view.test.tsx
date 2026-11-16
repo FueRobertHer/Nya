@@ -93,18 +93,20 @@ describe('the answer, with lastsIn and without', () => {
     expect(await home()).toBe('FI and your stop around 51');
   }, 40_000);
 
-  // $2,000,000 invested on $40,000 a year: a stop now lasts.
-  test('a stop now that lasts: could stop now, in how many starts, on the Plan and on Home', async () => {
-    await seedPlan({ ...PLAN, assets: 2_000_000, lastsIn: 0.9 });
+  // At 60, $900,000 of the $1,000,000 FI number invested: short of it, but a
+  // stop now lasts to 95 in at least 80% of historical starts.
+  test('a stop now that lasts, short of the FI number: could stop now, in how many starts, on the Plan and on Home', async () => {
+    await seedPlan({ ...PLAN, age: 60, targetAge: 65, assets: 900_000, lastsIn: 0.8 });
     const tab = await render();
     await settle(400);
     const answer = answerOf(tab);
     expect(answer).toContain('You could stop now');
-    expect(answer).toContain('A stop now lasts to 95 in at least 90% of historical starts.');
+    expect(answer).toContain('A stop now lasts to 95 in at least 80% of historical starts.');
+    expect(answer).toContain('$900,000 of $1,000,000 invested · 90% of the way');
     expect(answer).not.toContain('You’re at FI');
     await tab.unmount();
     expect(await home()).toBe('You could stop now');
-    expect(await home([], 'list-row-sub')).toStartWith('A stop now lasts to 95 in at least 90% of historical starts · ');
+    expect(await home([], 'list-row-sub')).toBe('A stop now lasts to 95 in at least 80% of historical starts · $900,000 of $1,000,000 invested (90%)');
   }, 40_000);
 
   test('a copy with it says its own answer while your plan keeps decision 25’s', async () => {

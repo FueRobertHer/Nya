@@ -185,9 +185,14 @@ describe('a stop now that lasts', () => {
     expect(lifeChoiceText(fiWhen(now), fiWhen(now))).toBe('You’re at FI, as in your plan');
   });
 
-  test('the Timeline’s today says it too', () => {
+  test('the Timeline’s today says it too, but not beside a stop that is today already', () => {
     expect(timelinePoints(rich, lasts, money).points[0].label).toBe('Today, 40 · you could stop now');
     expect(timelinePoints(rich, now, money).points[0].label).toBe('Today, 40 · you’re at FI');
+    const atFi = figures({ assets: 5_000_000, stopAtFi: true });
+    expect(atFi.resolution.stop).toBe(40);
+    const atFiLasts: PlanFigures = { ...atFi, resolution: { ...atFi.resolution, searched: 'lasts' } };
+    expect(timelinePoints({ ...rich, stopAtFi: true }, atFiLasts, money).points[0].label).toBe('Today, 40 · you stop at 40');
+    expect(timelinePoints({ ...rich, stopAtFi: true }, atFi, money).points[0].label).toBe('Today, 40 · you stop at 40 · you’re at FI');
   });
 });
 

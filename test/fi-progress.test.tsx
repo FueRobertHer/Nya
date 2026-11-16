@@ -466,17 +466,22 @@ describe('the FI line’s title, for every case (rollout phase 4c)', () => {
     const now = { age: 40, to: 95, share: 0.9 };
     const draw = (p: FirePlan) => {
       const f = fiFigures(p, inputs(), 'USD');
-      return renderToStaticMarkup(<FiProgressView figures={{ ...f, view: { ...f.view, yearsToFi: 0, progress: 0.8, fiAge: 40 } }} plan={p} saved repaired={false} inputs={hookInputs(inputs())} onOpenPlan={noop} lasting={now} />);
+      return renderToStaticMarkup(<FiProgressView figures={{ ...f, view: { ...f.view, yearsToFi: 0, fiAge: 40 } }} plan={p} saved repaired={false} inputs={hookInputs(inputs())} onOpenPlan={noop} lasting={now} />);
     };
     const html = draw(plan({ age: 40 }));
     expect(part(html, 'list-row-title')).toBe('You could stop now');
-    expect(part(html, 'list-row-sub')).toBe('A stop now lasts to 95 in at least 90% of historical starts · $250,000 of $1,000,000 invested (80%) · 43% savings rate, last 12 months');
+    expect(part(html, 'list-row-sub')).toBe('A stop now lasts to 95 in at least 90% of historical starts · $250,000 of $1,000,000 invested (25%) · 43% savings rate, last 12 months');
     expect(part(draw(plan({ age: 40, method: 'monte-carlo' })), 'list-row-sub')).toStartWith('A stop now lasts to 95 in at least 90% of Monte Carlo runs · ');
     // With savings that run it out: said as for FI.
     const p = plan({ age: 40, targetAge: 75, assets: 1_100_000, savings: -70_000 });
     const f = fiFigures(p, inputs(), 'USD');
     const out = renderToStaticMarkup(<FiProgressView figures={f} plan={p} saved repaired={false} inputs={hookInputs(inputs())} onOpenPlan={noop} lasting={now} />);
     expect(part(out, 'list-row-title')).toBe('You could stop now, but at these savings it runs out at 71');
+    // A stop found at an age keeps its own words, with nothing of a stop now.
+    const later = fiFigures(plan({ age: 40, targetAge: 55 }), inputs(), 'USD');
+    const at53 = renderToStaticMarkup(<FiProgressView figures={{ ...later, view: { ...later.view, yearsToFi: 13, fiAge: 53 } }} plan={plan({ age: 40, targetAge: 55 })} saved repaired={false} inputs={hookInputs(inputs())} onOpenPlan={noop} lasting={{ age: 53, to: 95, share: 0.9 }} />);
+    expect(part(at53, 'list-row-title')).toBe('FI around age 53, 2 years before you stop at 55');
+    expect(part(at53, 'list-row-sub')).not.toContain('lasts');
   });
 
   test('there already, with savings that run the steady projection out before the stop age: said, as the Plan says it', () => {
