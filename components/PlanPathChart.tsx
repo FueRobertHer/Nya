@@ -132,11 +132,13 @@ function keepsTo(lines: readonly (readonly PathPoint[])[], x: (age: number) => n
 }
 
 /** Whether a name's box (x0 to x1 across, y0 to y1 down) keeps
- *  MARKER_CLEAR from the marker's center. */
+ *  MARKER_CLEAR from the marker's center. A place set MARKER_CLEAR from it
+ *  can come out a rounding short (28.33 + 7 - 28.33 is 6.9999999999999964),
+ *  so a millionth of a pixel short still counts. */
 function clearOf(marker: { x: number; y: number }, x0: number, x1: number, y0: number, y1: number): boolean {
   const nx = Math.min(Math.max(marker.x, x0), x1);
   const ny = Math.min(Math.max(marker.y, y0), y1);
-  return Math.hypot(marker.x - nx, marker.y - ny) >= MARKER_CLEAR;
+  return Math.hypot(marker.x - nx, marker.y - ny) >= MARKER_CLEAR - 1e-6;
 }
 
 /** The line's height at an age: a point's, at the end of its step where

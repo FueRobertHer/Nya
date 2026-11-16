@@ -43,7 +43,8 @@ const markers = (html: string) => (html.match(/<circle /g) ?? []).length;
 // How far the FI number's name is from the marker's center: its box, 55 wide
 // and 12 tall over its baseline, from x at its left, or to x at its right
 // when it is anchored at its line's end. 7 clears the 4px dot, its 2px ring
-// and a gap. Infinity with no marker or no name.
+// and a gap. Infinity with no marker or no name. To a millionth of a pixel,
+// as a place set 7 from the dot can come out a rounding short of it.
 const offTheDot = (html: string) => {
   const dot = /<circle cx="([\d.]+)" cy="([\d.]+)"/.exec(html);
   const name = /<text class="chart-rule-label" x="([\d.]+)" y="([\d.]+)">FI number</.exec(html) ?? /<text class="chart-xlabel" x="([\d.]+)" y="([\d.]+)" text-anchor="end">FI number</.exec(html);
@@ -51,7 +52,7 @@ const offTheDot = (html: string) => {
   const [mx, my] = [Number(dot[1]), Number(dot[2])];
   const [nx, ny] = [Number(name[1]), Number(name[2])];
   const x0 = name[0].includes('chart-rule-label') ? nx : nx - 55;
-  return Math.hypot(mx - Math.min(Math.max(mx, x0), x0 + 55), my - Math.min(Math.max(my, ny - 12), ny));
+  return Math.round(Math.hypot(mx - Math.min(Math.max(mx, x0), x0 + 55), my - Math.min(Math.max(my, ny - 12), ny)) * 1e6) / 1e6;
 };
 const dotOf = (html: string) => /<circle cx="([\d.]+)" cy="([\d.]+)"/.exec(html)!.slice(1).map(Number);
 
@@ -510,21 +511,24 @@ describe('Whole path', () => {
     let drawn = 0;
     // Each plan worked out once, then drawn each way.
     for (const age of [41, 60])
-      for (const gap of [1, 3, 8, 12])
+      for (const gap of [1, 3, 5, 8, 12])
         for (const assets of [300_000, 900_000, 1_050_000, 1_600_000, 2_000_000])
           for (const savings of [0, 50_000]) {
             const { chart } = chartOf({ ...base, age, targetAge: age + gap, assets, savings });
             for (const width of [320, 600])
-              for (const lasting of [false, true])
+              // D9's answer, in whole years from today, as its search gives
+              // them (now, a year on, at the stop); null for a plan without it.
+              for (const years of [null, 0, 1, gap])
                 for (const range of ['whole', 'stop'] as const) {
-                  const html = draw({ ...chart, range, lasting, fiAge: lasting ? age : chart.fiAge }, width);
+                  const lasting = years !== null;
+                  const html = draw({ ...chart, range, lasting, fiAge: lasting ? age + years : chart.fiAge }, width);
                   if (!html.includes('<circle')) continue;
                   drawn++;
                   expect(offTheDot(html)).toBeGreaterThanOrEqual(7);
                 }
           }
-    expect(drawn).toBeGreaterThan(200);
-  });
+    expect(drawn).toBeGreaterThan(500);
+  }, 30_000);
 
   test('with Progress’s lines before today, they stay, and today joins the ages', () => {
     const recorded = {
