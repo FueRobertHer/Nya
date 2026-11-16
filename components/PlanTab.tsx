@@ -2926,6 +2926,7 @@ export function FiCard({
           stopAge={view.stopAge}
           fiNumber={view.fiNumber}
           fiAge={view.fiAge}
+          lasting={lasting !== null}
           realReturn={plan.realReturn}
           currency={currency}
           withEvents={path.fromWalk}

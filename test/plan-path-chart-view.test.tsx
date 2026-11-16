@@ -165,6 +165,84 @@ describe('the path chart', () => {
   });
 });
 
+// D9: a plan that answers with the earliest stop that lasts. The fixture's
+// line reaches the FI number at 52.9; the stop found is a whole age, after
+// that (as in 95% of starts), before it (80%), today, or past the line.
+describe('the earliest stop that lasts', () => {
+  const at = (fiAge: number, over: Partial<PathChartProps> = {}) => draw(props({ fiAge, lasting: true, ...over }));
+  /** The line's point at an age (a year a point from 40, no windfall). */
+  const onLine = (html: string, age: number) => {
+    const d = /<path d="([^"]*)" fill="none" stroke="var\(--data\)"/.exec(html)![1];
+    const m = [...d.matchAll(/[ML]([\d.]+),([\d.]+)/g)][age - 40];
+    return { x: +m[1], y: +m[2] };
+  };
+  const dot = (html: string) => {
+    const m = /<circle cx="([\d.]+)" cy="([\d.]+)"/.exec(html)!;
+    return { x: +m[1], y: +m[2] };
+  };
+  const fiY = (html: string) => +/y1="([\d.]+)" y2="[\d.]+" stroke="var\(--text-3\)" stroke-width="1" stroke-dasharray="4 4"/.exec(html)![1];
+  const nameY = (html: string) => +/<text class="chart-xlabel" x="[\d.]+" y="([\d.]+)" text-anchor="end">FI number<\/text>/.exec(html)![1];
+  const near = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+    expect(Math.abs(a.x - b.x)).toBeLessThan(0.1);
+    expect(Math.abs(a.y - b.y)).toBeLessThan(0.1);
+  };
+
+  test('after the line reaches the FI number: the marker on the line at that age, over the number, and both ages said', () => {
+    const html = at(54);
+    expect(markers(html)).toBe(1);
+    near(dot(html), onLine(html, 54));
+    expect(dot(html).y).toBeLessThan(fiY(html));
+    expect(ages(html)).toEqual(['FI number', '40', '54', 'stop 65']);
+    // The path is over the number by then: its name under its line.
+    expect(nameY(html)).toBe(fiY(html) + 14);
+    expect(label(html)).toContain(`reach the ${c(1_000_000)} FI number around 53, and are about`);
+    expect(label(html)).toEndWith('a year after inflation. The earliest stop that lasts is around 54.');
+  });
+
+  test('before the line reaches it: on the line, under the number, never on it', () => {
+    const html = at(51);
+    near(dot(html), onLine(html, 51));
+    expect(dot(html).y).toBeGreaterThan(fiY(html));
+    expect(ages(html)).toEqual(['FI number', '40', '51', 'stop 65']);
+    expect(nameY(html)).toBe(fiY(html) + 14);
+    expect(label(html)).toContain(`reach the ${c(1_000_000)} FI number around 53`);
+    expect(label(html)).toEndWith(' The earliest stop that lasts is around 51.');
+  });
+
+  test('a line that never reaches the number: the name over its line, clear of the path', () => {
+    const html = at(48, { points: steady(250_000, 30_000, 40, 50), stopAge: 50 });
+    near(dot(html), onLine(html, 48));
+    expect(nameY(html)).toBe(fiY(html) - 5);
+    expect(label(html)).toContain(`stay under the ${c(1_000_000)} FI number`);
+    expect(label(html)).toEndWith(' The earliest stop that lasts is around 48.');
+  });
+
+  test('today: the marker where the line starts, and a stop now lasts', () => {
+    const html = at(40);
+    near(dot(html), onLine(html, 40));
+    expect(ages(html)).toEqual(['FI number', '40', 'stop 65']);
+    expect(label(html)).toContain(`reach the ${c(1_000_000)} FI number around 53`);
+    expect(label(html)).toEndWith(' A stop now lasts.');
+  });
+
+  test('a stop the year money comes in: the marker at the top of its step, what that stop draws from', () => {
+    const gift: LifeEvent = { id: 'w', kind: 'windfall', label: 'Gift', atAge: 42, amount: 400_000 };
+    const f = figuresOf({ ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, assets: 500_000, savings: 50_000 }, { spending: null, savings: null, assets: null }, [gift]) as PlanFigures;
+    const p = planPath(f)!;
+    const html = draw(props({ points: p.points, stopAge: 55, fiNumber: f.view.fiNumber, fiAge: 42, lasting: true, withEvents: true }));
+    const d = /<path d="(M[^"]+)" fill="none"/.exec(html)![1];
+    const step = [...d.matchAll(/[ML]([\d.]+),([\d.]+)/g)].map((m) => ({ x: +m[1], y: +m[2] })).filter((q) => Math.abs(q.x - dot(html).x) < 0.06);
+    expect(step).toHaveLength(2);
+    near(dot(html), step[1]);
+  });
+
+  test('past the stop the chart ends at: no marker, and the summary says where it is', () => {
+    const html = at(70);
+    expect(markers(html)).toBe(0);
+    expect(label(html)).toEndWith(' The earliest stop that lasts is around 70, after your stop at 65.');
+  });
+});
+
 describe('the answer over the chart', () => {
   const card = (f: PlanFigures) =>
     renderToStaticMarkup(
