@@ -9,7 +9,7 @@
 // The table holds the plan's stop and start where they are, so its rows compare like with
 // like. A row's own sheet runs the plan as it would be with that rule, and says what moved.
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from 'react';
 import type { Strategy } from '@/lib/fire/tax/rules';
 import type { TuneJob } from '@/lib/fire/tune-job';
 import { crossesOf, crossingOf, tunedRows, tuneUntil, type TuneAsk, type TunedRow, type TuneGoal, type TuneLimit } from '@/lib/fire/tune';
@@ -21,10 +21,12 @@ import { useDetailSave, type DetailForm, type SaveProps } from './PlanForms';
 import { planTune } from './plan-search';
 import {
   comesToTheSame,
+  crossesLine,
   goalName,
   hasThisRule,
   LIMIT_NAMES,
   movedLine,
+  noBetterLine,
   orderLine,
   ownLine,
   tapLine,
@@ -34,6 +36,7 @@ import {
   TUNE_GONE,
   TUNE_HELPER,
   TUNE_HOLDS,
+  TUNE_HOLDS_LABEL,
   TUNE_IRMAA_UNKNOWN,
   TUNE_LIMITS_LEGEND,
   TUNE_ONLY_ORDER,
@@ -47,7 +50,9 @@ import {
   usedFailed,
 } from './plan-tune';
 import RadioRows from './RadioRows';
+import { SheetFooter } from './Sheet';
 import { Notice } from './TotalCaveats';
+import { Why } from './Why';
 
 type Money = (n: number) => string;
 
@@ -240,11 +245,18 @@ export function TunedAnswer({
   const first = now?.drawn.years[0]?.age ?? null;
   const goalDir = ask.goal === 'left' ? 'descending' : 'ascending';
   const sortedByGoal = sort !== null && sort.column === ask.goal && sort.dir === goalDir;
+  const heading = tunedHeading(ask.goal, endAge, ask.limits);
   return (
     <section className="stack" ref={sectionRef} tabIndex={-1} aria-labelledby="plan-tune-answer">
       <h3 className="section-label" id="plan-tune-answer">
-        {tunedHeading(ask.goal, endAge)}
+        {heading}
       </h3>
+      {/* What your plan has now first, so each row reads against it. */}
+      {now && (
+        <p className="helper">
+          <Masked>{ownLine({ goal: ask.goal, own, until, left: now.drawn.leftAtEnd, cost: now.drawn.taxAndHealth, short: now.drawn.runsOutAt, copyOpen }, money)}</Masked>
+        </p>
+      )}
       {sortedByGoal ? (
         <p className="helper">{TUNE_SORTED}</p>
       ) : (
@@ -264,7 +276,7 @@ export function TunedAnswer({
       )}
       <div className="plan-table-scroll">
         <table className="plan-compare-table plan-rules-table">
-          <caption className="visually-hidden">{tunedHeading(ask.goal, endAge)}</caption>
+          <caption className="visually-hidden">{heading}</caption>
           <thead>
             <tr>
               <th scope="col">Rule</th>
@@ -297,13 +309,10 @@ export function TunedAnswer({
         </table>
       </div>
       {(rows.length === 1 || (first !== null && first > until)) && <p className="helper">{TUNE_ONLY_ORDER}</p>}
-      {now && (
-        <p className="helper">
-          <Masked>{ownLine({ goal: ask.goal, own, until, left: now.drawn.leftAtEnd, cost: now.drawn.taxAndHealth, short: now.drawn.runsOutAt, copyOpen }, money)}</Masked>
-        </p>
-      )}
       <p className="helper">{tapLine(copyOpen)}</p>
-      <p className="helper">{TUNE_HOLDS}</p>
+      <Why label={TUNE_HOLDS_LABEL}>
+        <p>{TUNE_HOLDS}</p>
+      </Why>
       <p className="plan-definition">{tunedFor(lawYear, healthGrowth)}</p>
     </section>
   );
@@ -322,18 +331,36 @@ export function TuneLevel({ row, ask, money, lawYear, healthGrowth, copyOpen, wh
   const { ready, stop: stopMoved, start: startMoved, differs } = onceUsed(row.run, now, answer);
   const own = detail.choices.strategy;
   const same = ready !== null && !row.mine && now !== null && Math.abs(ready.leftAtEnd - now.drawn.leftAtEnd) < 1 && Math.abs(ready.taxAndHealth - now.drawn.taxAndHealth) < 1 && ready.runsOutAt === now.drawn.runsOutAt;
-  // What it crosses is of the figures on show, which a move leaves out of the row's. How
-  // it stands to None is the table's, so it is said only where these are the row's. Its
-  // order has a line of its own here.
+  // What it crosses is of the figures on show, which a move leaves out of the row's, and is
+  // said beside the buttons. How it stands to None is the table's, so it is said only where
+  // these are the row's. Its order has a line of its own here.
   const rowShown = drawn === null || answer.failed;
-  const note = tunedNote({ run: row.run, crossing: rowShown ? row.crossing : crossingOf(crossesOf(drawn), ask.limits), beatsNone: rowShown || (ready !== null && !differs) ? row.beatsNone : null }, strategy, ask.goal);
+  const crosses = crossesLine(rowShown ? row.crossing : crossingOf(crossesOf(drawn), ask.limits));
+  const noneSaid = (rowShown || (ready !== null && !differs)) && row.beatsNone === false;
   const busy = s.saving || trying;
   const build = () => {
     more.current = { tax: { ...detail.choices, strategy } };
     return plan;
   };
+  const ids = useId();
+  const crossesId = `${ids}-crosses`;
+  const waitId = `${ids}-wait`;
+  // Why the buttons wait: saving paused, else why no copy can be made, while nothing saves.
+  const wait = save.paused || (!busy && whyNot) || null;
+  const describe = (waits: boolean) => [crosses ? crossesId : null, wait && waits ? waitId : null].filter(Boolean).join(' ') || undefined;
+  // Why no copy can be made holds Try alone, so it describes Try alone.
+  const tryDescribedBy = describe(true);
+  const useDescribedBy = describe(!!save.paused);
+  // A level that couldn't be worked out offers no buttons and says why beside its
+  // Try again, so it draws no footer: what the row crosses stays in the body.
+  const footed = !answer.failed || row.mine || same;
   return (
     <div className="stack loose">
+      {differs && !same && (
+        <Notice level="info" role="status">
+          <Masked>{movedLine({ stop: stopMoved, start: startMoved, copyOpen }, money)}</Masked>
+        </Notice>
+      )}
       <div className={answer.working ? 'stack loose plan-answer-pending' : 'stack loose'} aria-busy={answer.working || undefined}>
         {answer.working && (
           <p className="plan-working-line" role="status">
@@ -359,8 +386,9 @@ export function TuneLevel({ row, ask, money, lawYear, healthGrowth, copyOpen, wh
           </dl>
         )}
       </div>
+      {!footed && crosses !== '' && <p className="helper">{crosses}</p>}
       {strategy.order !== own.order && <p className="helper">{orderLine(strategy.order, own.order, copyOpen)}</p>}
-      {note && <p className="helper">{note}</p>}
+      {noneSaid && <p className="helper">{noBetterLine(ask.goal)}</p>}
       {answer.failed && <p className="helper">{usedFailed(copyOpen)}</p>}
       {answer.failed && answer.retry && (
         <div>
@@ -369,35 +397,45 @@ export function TuneLevel({ row, ask, money, lawYear, healthGrowth, copyOpen, wh
           </button>
         </div>
       )}
-      {differs && !same && (
-        <p className="helper">
-          <Masked>{movedLine({ stop: stopMoved, start: startMoved, copyOpen }, money)}</Masked>
-        </p>
-      )}
       <p className="plan-definition">{tunedFor(lawYear, healthGrowth)}</p>
-      {row.mine ? (
-        <p className="helper">{hasThisRule(copyOpen)}</p>
-      ) : same ? (
-        <p className="helper">{comesToTheSame(copyOpen)}</p>
-      ) : (
-        !answer.failed && (
-          <div className="stack tight">
-            {save.paused && <p className="helper plan-paused">{save.paused}</p>}
-            {!save.paused && !busy && whyNot && <p className="helper plan-paused">{whyNot}</p>}
-            {s.error && (
-              <Notice level="critical" role="alert">
-                {s.error}
-              </Notice>
-            )}
-            {tryError && (
-              <Notice level="critical" role="alert">
-                {tryError}
-              </Notice>
-            )}
-            <div className="btn-row">
+      {/* Beside the buttons: what the rule crosses, what they wait on, and what came of
+          them. Where there are none, why not. */}
+      <SheetFooter>
+        {footed && crosses !== '' && (
+          <p className="helper sheet-footer-note" id={crossesId}>
+            {crosses}
+          </p>
+        )}
+        {row.mine ? (
+          <p className="helper sheet-footer-note">{hasThisRule(copyOpen)}</p>
+        ) : same ? (
+          <p className="helper sheet-footer-note">{comesToTheSame(copyOpen)}</p>
+        ) : (
+          !answer.failed && (
+            <>
+              {wait && (
+                <p className="helper plan-paused sheet-footer-note" id={waitId}>
+                  {wait}
+                </p>
+              )}
+              {s.error && (
+                <div className="sheet-footer-note">
+                  <Notice level="critical" role="alert">
+                    {s.error}
+                  </Notice>
+                </div>
+              )}
+              {tryError && (
+                <div className="sheet-footer-note">
+                  <Notice level="critical" role="alert">
+                    {tryError}
+                  </Notice>
+                </div>
+              )}
               <button
                 type="button"
                 className="btn secondary"
+                aria-describedby={tryDescribedBy}
                 disabled={busy || !ready || whyNot !== null}
                 onClick={async () => {
                   setTrying(true);
@@ -409,13 +447,13 @@ export function TuneLevel({ row, ask, money, lawYear, healthGrowth, copyOpen, wh
               >
                 {trying ? 'Saving…' : 'Try it in a copy'}
               </button>
-              <button type="button" className="btn" disabled={busy || !ready || s.disabled} onClick={() => s.save(build)}>
+              <button type="button" className="btn" aria-describedby={useDescribedBy} disabled={busy || !ready || s.disabled} onClick={() => s.save(build)}>
                 {s.saving ? 'Saving…' : useLabel(copyOpen)}
               </button>
-            </div>
-          </div>
-        )
-      )}
+            </>
+          )
+        )}
+      </SheetFooter>
     </div>
   );
 }

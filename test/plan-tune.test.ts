@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { goalName, LIMIT_NAMES, movedLine, ownLine, tapLine, TUNE_BUSY, TUNE_FAILED, TUNE_GONE, TUNE_HELPER, TUNE_HOLDS, TUNE_IRMAA_UNKNOWN, TUNE_NEEDS_CONSTANT, TUNE_ONLY_ORDER, TUNE_ROW_SUB, TUNE_SORT, TUNE_SORTED, tunedFor, tunedHeading, tunedName, tunedNote, comesToTheSame, hasThisRule, orderLine, usedFailed, useLabel } from '@/components/plan-tune';
+import { crossesLine, goalName, noBetterLine, LIMIT_NAMES, movedLine, ownLine, tapLine, TUNE_BUSY, TUNE_FAILED, TUNE_GONE, TUNE_HELPER, TUNE_HOLDS, TUNE_IRMAA_UNKNOWN, TUNE_NEEDS_CONSTANT, TUNE_ONLY_ORDER, TUNE_ROW_SUB, TUNE_SORT, TUNE_SORTED, tunedFor, tunedHeading, tunedName, tunedNote, comesToTheSame, hasThisRule, orderLine, usedFailed, useLabel } from '@/components/plan-tune';
 import { ABOUT_DETAIL } from '@/components/plan-drawdown';
 import type { BucketsToday } from '@/lib/fire/buckets-today';
 import { conversionRun } from '@/lib/fire/compare-conversions';
@@ -472,6 +472,21 @@ describe('the words', () => {
     expect(tunedNote({ ...row, crossing: [], beatsNone: null }, noneOf(), 'left')).toBe('Roth before tax-deferred');
   });
 
+  test('the heading: the goal, then any limits, in the order they are offered', () => {
+    expect(tunedHeading('left', 95, [])).toBe('Tuned for the most left at 95');
+    expect(tunedHeading('left', null, [])).toBe('Tuned for the most left at the end');
+    expect(tunedHeading('left', 95, ['aca'])).toBe('Tuned for the most left at 95, keeping under the ACA limit where it can');
+    expect(tunedHeading('cost', 95, ['bracket-22', 'irmaa'])).toBe('Tuned for the least tax and health costs, keeping out of Medicare’s income surcharges and within the 22% bracket where it can');
+    expect(tunedHeading('left', 95, ['bracket-22', 'aca', 'irmaa'])).toBe('Tuned for the most left at 95, keeping under the ACA limit, out of Medicare’s income surcharges and within the 22% bracket where it can');
+  });
+
+  test('a rule’s own sheet: what it crosses, a sentence each, and how it stands to None', () => {
+    expect(crossesLine(row.crossing)).toBe('Crosses the ACA limit in 2 years. Pays IRMAA’s surcharge in 1 year. Goes past the 22% bracket in 3 years.');
+    expect(crossesLine([])).toBe('');
+    expect(noBetterLine('left')).toBe('Leaves no more than with no conversions.');
+    expect(noBetterLine('cost')).toBe('Costs no less than with no conversions.');
+  });
+
   test('what your plan has now, on the goal’s figure', () => {
     const a = { goal: 'left' as const, own: fill(0.12), until: 74, left: 3_660_060, cost: 497_310, short: null, copyOpen: false };
     expect(ownLine(a, money)).toBe('Your plan’s rule, until 74, leaves $3,660,060.');
@@ -496,8 +511,8 @@ describe('the words', () => {
     const every = [
       TUNE_HELPER, TUNE_ROW_SUB, TUNE_NEEDS_CONSTANT, TUNE_BUSY, TUNE_FAILED, TUNE_GONE, TUNE_SORT, TUNE_HOLDS, TUNE_ONLY_ORDER, TUNE_IRMAA_UNKNOWN, about,
       ...Object.values(LIMIT_NAMES),
-      goalName('left', 95), goalName('cost', 95), tunedHeading('left', 95), tunedHeading('cost', 95),
-      tunedNote(row, noneOf(), 'left'), tunedNote(row, noneOf(), 'cost'),
+      goalName('left', 95), goalName('cost', 95), tunedHeading('left', 95, []), tunedHeading('cost', 95, ['aca', 'irmaa', 'bracket-22']),
+      tunedNote(row, noneOf(), 'left'), tunedNote(row, noneOf(), 'cost'), crossesLine(row.crossing), noBetterLine('left'), noBetterLine('cost'),
       tunedFor(2026, 0.021), tapLine(false), tapLine(true), orderLine('standard', 'roth-before-deferred', false),
       useLabel(false), useLabel(true), hasThisRule(false), hasThisRule(true), comesToTheSame(false), comesToTheSame(true), usedFailed(false), usedFailed(true),
       movedLine({ stop: [54, 57], start: [1, 2], copyOpen: false }, money), movedLine({ stop: null, start: null, copyOpen: true }, money),

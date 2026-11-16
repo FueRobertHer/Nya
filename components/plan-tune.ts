@@ -9,6 +9,7 @@ import type { Strategy } from '@/lib/fire/tax/rules';
 import type { TunedRow, TuneGoal, TuneLimit } from '@/lib/fire/tune';
 import { healthPace } from './plan-drawdown';
 import { endWords, movedWords, ORDER_WORDS, ruleName } from './plan-conversions';
+import { joinNames } from '@/lib/month-coverage';
 
 type Money = (n: number) => string;
 
@@ -25,6 +26,8 @@ export const TUNE_GONE = 'These can’t be tuned right now.';
 export const TUNE_SORT = 'Sort by your goal';
 export const TUNE_SORTED = 'Sorted by your goal because you asked. Nothing here is called best.';
 export const TUNE_HOLDS = 'Each rule here keeps your stop, your start and what’s timed on them where they are now, so the rules compare like with like. A rule’s own sheet shows what it comes to once used.';
+/** The Why that holds TUNE_HOLDS, under the tap line: named for what it answers. */
+export const TUNE_HOLDS_LABEL = 'How are the rules compared?';
 export const TUNE_ONLY_ORDER = 'Required withdrawals have started, so the order is all there is to tune.';
 export const TUNE_IRMAA_UNKNOWN = 'Medicare’s first years here have no income from two years before to read, so no surcharge is counted in them.';
 
@@ -32,7 +35,20 @@ const ageWords = (endAge: number | null) => (endAge === null ? 'at the end' : `a
 
 export const goalName = (goal: TuneGoal, endAge: number | null) => (goal === 'left' ? `Most left ${ageWords(endAge)}, after tax` : 'Least tax and health costs');
 
-export const tunedHeading = (goal: TuneGoal, endAge: number | null) => (goal === 'left' ? `Tuned for the most left ${ageWords(endAge)}` : 'Tuned for the least tax and health costs');
+/** Each limit, as the heading keeps to it, in the order they are offered. */
+const LIMITS_KEPT: Record<TuneLimit, string> = {
+  aca: 'under the ACA limit',
+  irmaa: 'out of Medicare’s income surcharges',
+  'bracket-22': 'within the 22% bracket',
+};
+
+/** The answer's heading: the goal, and any limits asked of it. A rule that can't keep to
+ *  one says so on its row, so the heading says "where it can". */
+export function tunedHeading(goal: TuneGoal, endAge: number | null, limits: readonly TuneLimit[]): string {
+  const base = goal === 'left' ? `Tuned for the most left ${ageWords(endAge)}` : 'Tuned for the least tax and health costs';
+  const kept = (Object.keys(LIMITS_KEPT) as TuneLimit[]).filter((l) => limits.includes(l)).map((l) => LIMITS_KEPT[l]);
+  return kept.length === 0 ? base : `${base}, keeping ${joinNames(kept)} where it can`;
+}
 
 export const LIMIT_NAMES: Record<TuneLimit, string> = {
   aca: 'Stay under the ACA limit',
@@ -61,24 +77,30 @@ export function tunedName(s: Strategy, first: number | null, money: Money): stri
   return ruleName(s.conversions, money, s.convertUntil);
 }
 
+const crossingParts = (crossing: TunedRow['crossing']) => crossing.map((c) => LIMIT_NOTES[c.limit](yearsWords(c.years)));
+const noBetter = (goal: TuneGoal) => (goal === 'left' ? 'leaves no more than with no conversions' : 'costs no less than with no conversions');
+const capital = (line: string) => line.charAt(0).toUpperCase() + line.slice(1);
+
 /** What a row says under its name: its order where it isn't the plan's, what it crosses,
  *  and where it comes to no better than no conversions. Empty where there is nothing to add. */
 export function tunedNote(row: Pick<TunedRow, 'run' | 'crossing' | 'beatsNone'>, own: Strategy, goal: TuneGoal): string {
-  const parts = [
-    ...(row.run.strategy.order !== own.order ? [ORDER_SHORT[row.run.strategy.order]] : []),
-    ...row.crossing.map((c) => LIMIT_NOTES[c.limit](yearsWords(c.years))),
-    ...(row.beatsNone === false ? [goal === 'left' ? 'leaves no more than with no conversions' : 'costs no less than with no conversions'] : []),
-  ];
-  const line = parts.join(' · ');
-  return line.charAt(0).toUpperCase() + line.slice(1);
+  const parts = [...(row.run.strategy.order !== own.order ? [ORDER_SHORT[row.run.strategy.order]] : []), ...crossingParts(row.crossing), ...(row.beatsNone === false ? [noBetter(goal)] : [])];
+  return capital(parts.join(' · '));
 }
+
+/** A rule's own sheet, beside its buttons: each limit it crosses, a sentence each. Empty
+ *  where it crosses none. */
+export const crossesLine = (crossing: TunedRow['crossing']) => crossingParts(crossing).map((p) => `${p}.`).join(' ');
+
+/** A rule's own sheet, where it comes to no better than no conversions. */
+export const noBetterLine = (goal: TuneGoal) => `${capital(noBetter(goal))}.`;
 
 /** Said on a tuned figure, on the table and on a row's own sheet. */
 export const tunedFor = (lawYear: number, healthGrowth: number) => `Tuned for the goal you set, under these assumptions. Hypothetical, ${lawYear} tax law, steady growth, health costs ${healthPace(healthGrowth)}. Not tax advice.`;
 
 export const tapLine = (copyOpen: boolean) => `Tap a rule for ${copyOpen ? 'Use in this copy' : 'Use in your plan'} or Try it in a copy.`;
 
-/** What the plan has now, under the table, on the goal's figure. */
+/** What the plan has now, on the goal's figure: under the heading, above the table. */
 export function ownLine(a: { goal: TuneGoal; own: Strategy; until: number; left: number; cost: number; short: number | null; copyOpen: boolean }, money: Money): string {
   const none = a.own.conversions.kind === 'none';
   const age = a.own.convertUntil ?? a.until;
