@@ -270,7 +270,7 @@ export function ConversionsForm(
         onChange={(v) => setKind(v as Rule['kind'])}
         disabled={s.saving}
         options={[
-          { value: 'none', name: 'None', note: 'Move nothing.' },
+          { value: 'none', name: 'No conversions', note: 'Move nothing.' },
           { value: 'bracket', name: 'Fill a bracket', note: 'Each year it converts up to the top of a tax bracket. What you draw from tax-deferred to spend counts toward that top.', detail: fieldsWith(bracketSelect('Up to the top of', BRACKETS, top, setTop)) },
           ...(props.onAca || rule.kind === 'aca-then-bracket'
             ? [{ value: 'aca-then-bracket', name: 'Up to the ACA limit, then a bracket', note: `While ${either} on the ACA, it keeps income under 400% of the poverty line if it can, then fills a bracket. What you draw from tax-deferred and gains you sell count toward the limit.${acaLaw === 'enhanced' ? ' With the enhanced credits there’s no cliff at that limit, but this rule still stops there.' : ' The credit stops above 400%.'}`, detail: fieldsWith(bracketSelect('After 65, up to the top of', ACA_BRACKETS, acaTop, setAcaTop)) }]
@@ -296,7 +296,7 @@ export function ConversionsForm(
           <h3 className="section-label" id="plan-conversion-preview">
             What it comes to
           </h3>
-          <BesideTable caption="This rule beside no conversions" heads={['This rule', 'None']} rows={saying} />
+          <BesideTable caption="This rule beside no conversions" heads={['This rule', 'No conversions']} rows={saying} />
           {spends && <p className="helper">{PREVIEW_SPENDS}</p>}
           <p className="plan-definition">{lawLabel(props.lawYear)}</p>
         </section>
