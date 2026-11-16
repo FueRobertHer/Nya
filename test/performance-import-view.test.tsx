@@ -426,7 +426,7 @@ describe('the sheet', () => {
         if (body.action === 'import')
           stored = [...stored, { id: `imp-${++n}`, source: 'vanguard-performance', file_name: body.file_name, imported_at: '2026-11-06T12:00:00.000Z', start: body.start, months: body.months, currency: body.currency }];
         else stored = stored.filter((i) => i.id !== body.import_id);
-        return Response.json({ investment_months: stored.length ? { imports: stored } : null });
+        return Response.json({ investment_months: stored.length ? { imports: stored } : null, ...(body.action === 'import' ? { import_id: `imp-${n}` } : {}) });
       }
       if (url.startsWith('/api/investment-months')) return Response.json({ investment_months: stored.length ? { imports: stored } : null });
       if (url.startsWith('/api/account-history')) return Response.json({ points: POINTS });
@@ -439,7 +439,8 @@ describe('the sheet', () => {
     dom.document.body.appendChild(host);
     const root = createRoot(host as unknown as HTMLElement);
     let imported = 0;
-    act(() => root.render(<HistoryImportSheet target={target} onClose={() => {}} onImported={() => imported++} readPdf={readPdf} />));
+    const draw = (t: Target) => act(() => root.render(<HistoryImportSheet target={t} onClose={() => {}} onImported={() => imported++} readPdf={readPdf} />));
+    draw(target);
     await pass(20);
     const checkRow = (title: string) => host.findAll((e) => e.tagName === 'LABEL' && e.getAttribute('class') === 'check-row' && e.textContent.startsWith(title))[0];
     const button = (label: string) => host.findAll((e) => e.tagName === 'BUTTON' && (e.getAttribute('aria-label') ?? e.textContent.trim()) === label)[0] ?? null;
@@ -447,6 +448,13 @@ describe('the sheet', () => {
       host,
       sent,
       imported: () => imported,
+      /** What the server keeps now. */
+      stored: () => stored,
+      /** The sheet opened again on the account, as from its menu. */
+      reopen: async () => {
+        draw({ ...target });
+        await pass(20);
+      },
       button,
       text: () => words(host.textContent),
       /** A file chosen in the file field. */
@@ -497,7 +505,20 @@ describe('the sheet', () => {
     expect(v.sent[0].body).toMatchObject({ action: 'import', account_id: 'acc_vg', file_name: 'Performance.pdf', start: { month: '2024-01', balance: 0 }, currency: 'USD', typed: [], counting: null });
     expect((v.sent[0].body.months as unknown[]).length).toBe(34);
     expect(v.imported()).toBe(1);
-    expect(v.text()).toContain('Done: 34 months imported from Performance.pdf.');
+    // A level of its own: what was imported, focused, and what its months are used for.
+    expect(v.text()).toStartWith('Imported');
+    const done = v.host.findAll((e) => e.getAttribute('role') === 'status' && e.textContent.startsWith('Done: '))[0];
+    expect(done.textContent).toBe('Done: Imported 34 months from Performance.pdf into Individual.');
+    expect(dom.document.activeElement).toBe(done);
+    expect(v.text()).toContain('Individual uses its months where Nya has nothing of its own');
+    expect(v.text()).toContain('BalancesBefore Jul 1');
+    expect(v.text()).toContain('Deposits & withdrawalsBefore Jul 1');
+    expect(v.text()).toContain('It’s kept under Past imports in this sheet, where you can undo it later.');
+    expect(v.button('Undo import')).not.toBeNull();
+    expect(v.button('Done')).not.toBeNull();
+
+    // Opened again, it is listed.
+    await v.reopen();
     expect(v.text()).toContain('Jan 2024 to Oct 2026, from Vanguard’s Performance page');
     expect(v.text()).toContain('Past imports into Individual');
     expect(v.text()).toContain('In use where Nya has nothing of its own: balances before Jul 1, and deposits and withdrawals before Jul 1');
@@ -512,6 +533,33 @@ describe('the sheet', () => {
     // The row is gone, so focus goes to what was said.
     expect((dom.document.activeElement as unknown as FakeElement).textContent).toContain('Undone: the import of Vanguard’s Performance page from today.');
     expect(v.text()).not.toContain('Past imports into Individual');
+    v.unmount();
+  });
+
+  test('Undo import on its last level: asked there, kept, then undone back to the file, as it was', async () => {
+    const v = await mount({ ...TARGET, account_id: 'acc_vg6' }, async () => readOf(MONTHS));
+    await v.choose('Performance.pdf');
+    await v.press('Import 34 months');
+    await v.press('Undo import');
+    // What it would do is said at the top, focused, and the footer asks.
+    const ask = v.host.findAll((e) => e.tagName === 'P' && e.getAttribute('role') === 'status')[0];
+    // Its months start at $0.00, so all time came from them.
+    expect(ask.textContent).toBe('Individual goes back to how it was before any import: before Jul 1 its chart is Nya’s estimate again, and all time needs your deposits and withdrawals. Nothing else changes, and you can import the file again later.');
+    expect(dom.document.activeElement).toBe(ask);
+    const note = v.host.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes('sheet-footer-note'))[0];
+    expect(note.textContent).toBe('Undo this import?');
+    expect(v.button('Undo import')!.getAttribute('aria-describedby')).toBe(`${note.getAttribute('id')} ${ask.getAttribute('id')}`);
+    await v.press('Keep it');
+    expect(dom.document.activeElement).toBe(v.button('Undo import'));
+    expect(v.sent).toHaveLength(1);
+    await v.press('Undo import');
+    await v.press('Undo import');
+    expect(v.sent[1].body).toEqual({ action: 'undo', account_id: 'acc_vg6', import_id: 'imp-1' });
+    expect(v.stored()).toEqual([]);
+    expect(v.text()).toStartWith('Import Individual’s history');
+    expect(v.text()).toContain('Undone: the import of Vanguard’s Performance page from today.');
+    expect((dom.document.activeElement as unknown as FakeElement).textContent).toContain('Undone: the import of Vanguard’s Performance page from today.');
+    expect(v.text()).not.toContain('Past imports into');
     v.unmount();
   });
 

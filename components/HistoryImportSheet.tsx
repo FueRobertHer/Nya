@@ -36,6 +36,10 @@
 // a step of its own, 'txns', whose one Import takes every account checked,
 // and waits for a yes when a QFX differs from what counts now; on an account
 // at another firm that file is refused rather than read as some other file.
+// Either import ends on a done level of its own, 'imported' (titled
+// Imported, as the bank file's 'done' is): what was imported and into which
+// accounts, what changed, and Undo import, asked in place, which goes back to
+// the file with what it undid.
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
@@ -67,13 +71,21 @@ import {
   TransactionImports,
   TransactionsNow,
   TransactionsReview,
+  TxnImported,
+  txnMade,
+  txnMadeText,
   txnWaitsOn,
   TXN_SOURCE,
+  undoText as txnUndoText,
   useTransactionImports,
+  type TxnMade,
 } from './TransactionsImport';
 import { MAX_IMPORTS_PER_ACCOUNT } from '@/lib/investment-imports';
 import {
   isPdf,
+  MonthsImported,
+  monthsMadeText,
+  monthsUndoText,
   monthsWaitsOn,
   notVanguardWords,
   pdfProblem,
@@ -215,7 +227,7 @@ type Done = {
    *  imported rows), or after the backfill runs again (`backfill`). */
   history: { drawn: boolean; from: string | null; reach?: string | null; backfill?: boolean };
 };
-type Step = 'pick' | 'statement' | 'mapping' | 'order' | 'review' | 'done' | 'months' | 'txns';
+type Step = 'pick' | 'statement' | 'mapping' | 'order' | 'review' | 'done' | 'months' | 'txns' | 'imported';
 
 const NONE = <T,>(): ChoiceSet<T> => ({ each: {} });
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
@@ -342,6 +354,23 @@ export default function HistoryImportSheet({
   // The person's yes to a QFX that differs from what counts now.
   const [txnYes, setTxnYes] = useState(false);
   const [txnError, setTxnError] = useState<{ level: 'critical' | 'caution'; text: string; again?: boolean } | null>(null);
+  // What Vanguard's last import made, on its done level ('imported'): the
+  // download as reviewed, or the page's import by its id; and its Undo, asked
+  // in place. Focus goes to its line on arrival, to the ask when it opens,
+  // and back to Undo import when it is kept.
+  const [made, setMade] = useState<{ kind: 'txns'; txns: TxnMade } | { kind: 'months'; id: string } | null>(null);
+  const [undoAsk, setUndoAsk] = useState(false);
+  const madeLine = useRef<HTMLDivElement>(null);
+  const askLine = useRef<HTMLParagraphElement>(null);
+  const undoMadeButton = useRef<HTMLButtonElement>(null);
+  const [madeFocus, setMadeFocus] = useState<'line' | 'ask' | 'undo' | null>(null);
+  const askNoteId = useId();
+  const askTextId = useId();
+  useEffect(() => {
+    if (!madeFocus) return;
+    (madeFocus === 'line' ? madeLine : madeFocus === 'ask' ? askLine : undoMadeButton).current?.focus();
+    setMadeFocus(null);
+  }, [madeFocus]);
   const thisYear = new Date().getFullYear();
   const account = shown;
   const name = account?.name ?? 'the account';
@@ -435,6 +464,8 @@ export default function HistoryImportSheet({
     setTxnChecked([]);
     setTxnYes(false);
     setTxnError(null);
+    setMade(null);
+    setUndoAsk(false);
     void loadPast(target.account_id);
   }, [target, loadPast]);
 
@@ -717,9 +748,16 @@ export default function HistoryImportSheet({
       if (res.ok) {
         perf.setImports(data?.investment_months ?? null);
         investmentMonthsSaved(account.account_id, account.item_id ?? '', data?.investment_months ?? null);
-        setNotice(`${body.months.length.toLocaleString()} months imported from ${pdf?.name ?? SOURCE}.`);
         setPdf(null);
-        setStep('pick');
+        if (typeof data?.import_id === 'string') {
+          setMade({ kind: 'months', id: data.import_id });
+          setUndoAsk(false);
+          setStep('imported');
+          setMadeFocus('line');
+        } else {
+          setNotice(`${body.months.length.toLocaleString()} months imported from ${pdf?.name ?? SOURCE}.`);
+          setStep('pick');
+        }
         onImported();
         return;
       }
@@ -847,10 +885,18 @@ export default function HistoryImportSheet({
       const data = await res.json().catch(() => null);
       if (res.ok) {
         txns.set(data);
-        const rows = rowsTaken(review, txnChecked);
-        setNotice(`${plural(rows, 'transaction')} imported into ${plural(take.length, 'account')} from ${txn.name}.`);
+        if (typeof data?.import_id === 'string') {
+          const names = data?.names && typeof data.names === 'object' ? data.names : {};
+          const imported_at = typeof data?.imported_at === 'string' ? data.imported_at : new Date().toISOString();
+          setMade({ kind: 'txns', txns: txnMade(review, txnChecked, { import_id: data.import_id, imported_at, file_name: txn.name, names }) });
+          setUndoAsk(false);
+          setStep('imported');
+          setMadeFocus('line');
+        } else {
+          setNotice(`${plural(rowsTaken(review, txnChecked), 'transaction')} imported into ${plural(take.length, 'account')} from ${txn.name}.`);
+          setStep('pick');
+        }
         setTxn(null);
-        setStep('pick');
         txnsChanged(touched);
         return;
       }
@@ -879,13 +925,16 @@ export default function HistoryImportSheet({
     }
   }
 
-  async function undoTxns(i: ListedImport): Promise<boolean> {
+  /** Undoes the download's import `i` from every account it went into
+   *  (`accounts`, where the done level knows them all; else those the list
+   *  names), and the sheet's account loads its activity again too. */
+  async function undoTxns(i: ListedImport, accounts?: { account_id: string; item_id: string }[]): Promise<boolean> {
     if (!account || busy) return false;
     setBusy(true);
     setTxnError(null);
     setNotice('');
     const names = txns.list?.names ?? {};
-    const touched = [...i.accounts.flatMap((id) => (names[id] ? [{ account_id: id, item_id: names[id].item_id }] : [])), { account_id: account.account_id, item_id: account.item_id ?? '' }];
+    const touched = [...(accounts ?? i.accounts.flatMap((id) => (names[id] ? [{ account_id: id, item_id: names[id].item_id }] : []))), { account_id: account.account_id, item_id: account.item_id ?? '' }];
     try {
       const res = await fetch('/api/investment-imports', {
         method: 'POST',
@@ -914,7 +963,29 @@ export default function HistoryImportSheet({
     }
   }
 
+  /** Undo import, from the done level: back to the file either way, with what
+   *  it undid (focused), or why not above the list it points to. */
+  async function undoMade() {
+    if (!account || !made || busy) return;
+    if (made.kind === 'txns') await undoTxns(made.txns.import, made.txns.accounts.map(({ account_id, item_id }) => ({ account_id, item_id })));
+    else {
+      const i = perf.imports?.imports.find((x) => x.id === made.id);
+      if (i) await undoMonths(i);
+      else {
+        setMonthsError({ level: 'critical', text: 'That import isn’t there any more: the list shows what is.' });
+        void perf.reload(account.account_id);
+      }
+    }
+    setMade(null);
+    setUndoAsk(false);
+    setStep('pick');
+    // Its result line is on the file's level: focus goes to it once that is drawn.
+    setUndone((n) => n + 1);
+  }
+
   function chooseAgain() {
+    setMade(null);
+    setUndoAsk(false);
     setPdf(null);
     setMonthsError(null);
     setTxn(null);
@@ -936,6 +1007,21 @@ export default function HistoryImportSheet({
   }
 
   if (!shown) return null;
+  // The done level's words: what was imported, and what Undo would do, its
+  // question asked in the footer. A download's days in the sheet's account are
+  // its review's, as its activity may not have them yet; none where the sheet's
+  // account didn't take it.
+  const madeMonths = made?.kind === 'months' ? (perf.imports?.imports.find((x) => x.id === made.id) ?? null) : null;
+  const madeText = made?.kind === 'txns' ? txnMadeText(made.txns) : madeMonths ? monthsMadeText(madeMonths, name) : '';
+  const madeAsk =
+    made?.kind === 'txns'
+      ? txnUndoText(made.txns.import, { imports: txns.list?.imports ?? [], fingerprint: txns.list?.fingerprint ?? '', names: made.txns.names }, perf.activity, name, {
+          decided: made.txns.accounts.find((a) => a.account_id === shown.account_id)?.days ?? null,
+          question: false,
+        })
+      : madeMonths && perf.imports
+        ? monthsUndoText(madeMonths, { name, imports: perf.imports, points: perf.points, activity: perf.activity, currency: shown.currency, question: false })
+        : '';
   const back =
     step === 'statement' || step === 'mapping' || step === 'order' || step === 'months' || step === 'txns'
       ? chooseAgain
@@ -946,7 +1032,7 @@ export default function HistoryImportSheet({
   return (
     <Sheet
       open={!!target}
-      title={step === 'done' ? 'Imported' : `Import ${name}’s history`}
+      title={step === 'done' || step === 'imported' ? 'Imported' : `Import ${name}’s history`}
       onClose={() => !busy && onClose()}
       onBack={busy ? undefined : back}
       footer={
@@ -992,6 +1078,46 @@ export default function HistoryImportSheet({
                 : 'Import'}
             </button>
           </>
+        ) : step === 'imported' && made ? (
+          undoAsk ? (
+            <>
+              <p className="helper sheet-footer-note" id={askNoteId}>
+                Undo this import?
+              </p>
+              <button
+                type="button"
+                className="btn secondary"
+                disabled={busy}
+                onClick={() => {
+                  setUndoAsk(false);
+                  setMadeFocus('undo');
+                }}
+              >
+                Keep it
+              </button>
+              <button type="button" className="btn danger" disabled={busy} aria-describedby={`${askNoteId} ${askTextId}`} onClick={() => void undoMade()}>
+                {busy ? 'Undoing…' : 'Undo import'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn secondary"
+                ref={undoMadeButton}
+                disabled={busy}
+                onClick={() => {
+                  setUndoAsk(true);
+                  setMadeFocus('ask');
+                }}
+              >
+                Undo import
+              </button>
+              <button type="button" className="btn" disabled={busy} onClick={onClose}>
+                Done
+              </button>
+            </>
+          )
         ) : undefined
       }
     >
@@ -1323,6 +1449,25 @@ export default function HistoryImportSheet({
           onImport={() => void importNow()}
           onBack={() => (file.format === 'csv' ? setStep('mapping') : chooseAgain())}
         />
+      )}
+
+      {step === 'imported' && made && (
+        <div className="stack">
+          {undoAsk && (
+            <p className="helper" role="status" id={askTextId} ref={askLine} tabIndex={-1}>
+              {madeAsk}
+            </p>
+          )}
+          <Notice level="done" role="status" ref={madeLine} tabIndex={-1}>
+            {madeText}
+          </Notice>
+          {made.kind === 'txns' ? (
+            <TxnImported made={made.txns} />
+          ) : (
+            perf.imports && <MonthsImported name={name} imports={perf.imports} points={perf.points} activity={perf.activity} currency={shown.currency} />
+          )}
+          <p className="helper">It’s kept under Past imports in this sheet, where you can undo it later.</p>
+        </div>
       )}
 
       {step === 'done' && done && (

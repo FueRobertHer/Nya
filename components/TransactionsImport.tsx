@@ -23,10 +23,13 @@
 //     of its days, and that its money in or out never counts as new savings;
 //     where its deposits & withdrawals aren't what counts now, a caution,
 //     and Import waits for a yes (qfxDiffers).
-//   - Once imported: which days come from a download (TransactionsNow), and
-//     every import of the account listed (TransactionImports), each saying
-//     whether it counts, with Undo, confirmed in place with what comes back
-//     and every account it is undone from.
+//   - Once imported: what the import did, on the sheet's done level
+//     (TxnImported: every account it went into, with its deposits &
+//     withdrawals over the days it decides and what counted there before);
+//     which days come from a download (TransactionsNow), and every import of
+//     the account listed (TransactionImports), each saying whether it
+//     counts, with Undo, confirmed in place with what comes back and every
+//     account it is undone from.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import CheckRows, { type CheckRow } from './CheckRows';
@@ -550,14 +553,26 @@ const NUMBER_WORDS = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven',
 
 /** What undoing it would do, for its confirm. What comes back is worked out
  *  for the sheet's account (`name`), from its activity and imports; for the
- *  others it took, said by the rule alone, since their imports aren't here. */
-export function undoText(i: ListedImport, list: TxnImports, activity: InvestmentActivityPayload | null, name: string): string {
+ *  others it took, said by the rule alone, since their imports aren't here.
+ *  The done level, right after the import (`decided`), gives the days it
+ *  decides in the sheet's account from its review, as the activity may not
+ *  have them yet, or null where the sheet's account didn't take it, and asks
+ *  its question in the footer (`question` false). */
+export function undoText(
+  i: ListedImport,
+  list: TxnImports,
+  activity: InvestmentActivityPayload | null,
+  name: string,
+  o: { decided?: readonly { from: string; to: string }[] | null; question?: boolean } = {}
+): string {
+  const ask = o.question === false ? '' : `Undo the import from ${importedDay(i)}? `;
   const n = i.accounts.length;
   const names = i.accounts.map((id) => (list.names[id] ? withMask(list.names[id].name, list.names[id].mask) : 'an account Nya no longer lists'));
-  const went = n > 1 ? `It went into ${listed(names)}, and is undone from ${n === 2 ? 'both' : `all ${NUMBER_WORDS[n] ?? plainNumber(n)}`}` : '';
+  const sheetIn = o.decided !== null;
+  const went = n > 1 ? `It went into ${listed(names)}, and is undone from ${n === 2 ? 'both' : `all ${NUMBER_WORDS[n] ?? plainNumber(n)}`}` : sheetIn ? '' : `It went into ${names[0]}`;
   const rule = 'its days will come from another import that covers them, or from what Vanguard gave Nya, again';
-  const now = standing(i, list, activity);
-  if (!now) return `Undo the import from ${importedDay(i)}? ${went ? `${went}: in each, ${rule}` : capital(rule)}. Nothing else changes, and you can import the file again later.`;
+  const now = o.decided === undefined ? standing(i, list, activity) : o.decided === null ? null : { days: [...o.decided] };
+  if (!now) return `${ask}${went ? `${went}: ${n > 1 ? 'in each, ' : ''}${rule}` : capital(rule)}. Nothing else changes, and you can import the file again later.`;
   let back: string;
   // A CSV undone can hand its days to a QFX, which was never checked
   // against them: said, so the person knows what they'd count.
@@ -578,7 +593,64 @@ export function undoText(i: ListedImport, list: TxnImports, activity: Investment
   }
   const rest = n - 1;
   const theirs = went ? `. In ${name}, ${back}; in the other${rest > 1 ? ` ${NUMBER_WORDS[rest] ?? plainNumber(rest)}` : ''}, ${rule}` : '';
-  return `Undo the import from ${importedDay(i)}? ${went ? `${went}${theirs}` : capital(back)}.${qfxNote} Nothing else changes, and you can import the file again later.`;
+  return `${ask}${went ? `${went}${theirs}` : capital(back)}.${qfxNote} Nothing else changes, and you can import the file again later.`;
+}
+
+/** What an import did, kept for the sheet's done level as it was reviewed:
+ *  the import as the list would show it, the names of every account it went
+ *  into, and for each its deposits & withdrawals over the days it decides,
+ *  and what counted there before (null where nothing did). */
+export type TxnMade = {
+  import: ListedImport;
+  names: TxnImports['names'];
+  accounts: { account_id: string; item_id: string; label: string; days: { from: string; to: string }[]; flows: { file: number; now: number | null } }[];
+};
+
+export function txnMade(r: ImportsReview, checked: readonly string[], at: { import_id: string; imported_at: string; file_name: string; names: TxnImports['names'] }): TxnMade {
+  const taken = r.accounts.filter((a) => takeable(a) && checked.includes(a.mask));
+  const names = { ...at.names };
+  for (const a of taken) names[a.account!.account_id] ??= { name: a.account!.name, mask: a.mask, item_id: a.account!.item_id };
+  return {
+    import: { import_id: at.import_id, imported_at: at.imported_at, file_name: at.file_name, source: r.source, covers: r.covers, currency: CURRENCY, rows: rowsTaken(r, checked), accounts: taken.map((a) => a.account!.account_id) },
+    names,
+    accounts: taken.map((a) => ({ account_id: a.account!.account_id, item_id: a.account!.item_id, label: nameIn(a), days: a.effect!.days, flows: a.effect!.flows })),
+  };
+}
+
+/** The done level's line: what was imported, from which file, into which accounts. */
+export const txnMadeText = (m: TxnMade) => `Imported ${plural(m.import.rows, 'transaction')} from ${m.import.file_name ?? TXN_SOURCE} into ${listed(m.accounts.map((a) => a.label))}.`;
+
+/** The done level's body under its line: each account's deposits & withdrawals
+ *  over the days the file decides there, "was" only where something counted
+ *  before. One span in the heading where every account's are the same. */
+export function TxnImported({ made }: { made: TxnMade }) {
+  const spans = made.accounts.map((a) => runsText(a.days));
+  const same = spans.every((t) => t === spans[0]) && spans[0] !== '';
+  return (
+    <div className="stack tight">
+      <h3 className="section-label">{same ? `Deposits & withdrawals, ${spans[0]}` : 'Deposits & withdrawals over the days it decides'}</h3>
+      <dl className="txn-detail txn-detail-wide">
+        {made.accounts.map((a, k) => (
+          <div className="txn-detail-row" key={a.account_id}>
+            <dt>
+              {a.label}
+              {!same && spans[k] && <span className="list-row-sub">{capital(spans[k])}</span>}
+            </dt>
+            <dd>
+              {a.days.length === 0 ? (
+                'None of it counts now'
+              ) : (
+                <>
+                  {money(a.flows.file)}
+                  {a.flows.now !== null && <>, was {money(a.flows.now)}</>}
+                </>
+              )}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
 }
 
 export function TransactionImports({
