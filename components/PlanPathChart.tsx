@@ -53,6 +53,10 @@ const FI_NAME = 'FI number';
 // forecast's, components/ForecastChart.tsx).
 const RULE_LABEL_GAP = 4;
 const RULE_LABEL_HEIGHT = 12;
+// The marker's dot; a name keeps this far from its center (its 2px ring in
+// the card's color, then a gap), so no word sits on it.
+const MARKER_R = 4;
+const MARKER_CLEAR = MARKER_R + 3;
 // "stop 50" this far from its rule on Whole path.
 const STOP_GAP = 4;
 // A mark's tick, up from the axis.
@@ -125,6 +129,16 @@ function keepsTo(lines: readonly (readonly PathPoint[])[], x: (age: number) => n
     }
   }
   return true;
+}
+
+/** Whether a name's box (x0 to x1 across, y0 to y1 down) keeps
+ *  MARKER_CLEAR from the marker's center. A place set MARKER_CLEAR from it
+ *  can come out a rounding short (28.33 + 7 - 28.33 is 6.9999999999999964),
+ *  so a millionth of a pixel short still counts. */
+function clearOf(marker: { x: number; y: number }, x0: number, x1: number, y0: number, y1: number): boolean {
+  const nx = Math.min(Math.max(marker.x, x0), x1);
+  const ny = Math.min(Math.max(marker.y, y0), y1);
+  return Math.hypot(marker.x - nx, marker.y - ny) >= MARKER_CLEAR - 1e-6;
 }
 
 /** The line's height at an age: a point's, at the end of its step where
@@ -269,8 +283,46 @@ function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNu
     const under = over && fiY + 14 <= baseY - 4;
     const nameW = labelWidth(FI_NAME);
     const lines = recorded ? [points, recorded.recorded, recorded.planned] : [points];
-    if (fiX2 - PAD_X >= nameW && (!after || keepsTo(lines, x, fiX2 - nameW, fiX2, fiNumber, under))) fiName = { x: fiX2, y: under ? fiY + 14 : fiY - 5, rule: false };
-    else fiName = { x: PAD_X, y: fiY - RULE_LABEL_GAP - RULE_LABEL_HEIGHT >= 0 ? fiY - RULE_LABEL_GAP : fiY + RULE_LABEL_GAP + RULE_LABEL_HEIGHT, rule: true };
+    // Off the marker: the name keeps its own place where that is clear of
+    // the dot. Else the first of these that fits the plot and is clear: its
+    // side of the line moved off the dot (never more than two gaps from the
+    // line), the other side (moved too), then each again past the dot,
+    // toward the line's other end. A place at the line's end other than its
+    // own keeps off the lines too, as its own does on Whole path. Where none
+    // is clear at the line's end, the name goes to the line's left end, and
+    // where none is clear there either, it keeps its own place.
+    // `at` anchors the name: its left edge, or its right with `end`.
+    const place = (ats: number[], end: boolean, pref: boolean, baseline: (under: boolean) => number, offLines: (x0: number, under: boolean) => boolean) => {
+      const box = (at: number) => (end ? at - nameW : at);
+      const clear = (at: number, y: number) => !marker || clearOf(marker, box(at), box(at) + nameW, y - RULE_LABEL_HEIGHT, y);
+      const own = { at: ats[0], y: baseline(pref) };
+      if (!marker || clear(own.at, own.y)) return own;
+      for (const at of ats)
+        for (const u of [pref, !pref]) {
+          const y0 = baseline(u);
+          const moved = u ? Math.max(y0, marker.y + MARKER_CLEAR + RULE_LABEL_HEIGHT) : Math.min(y0, marker.y - MARKER_CLEAR);
+          const fromLine = u ? moved - RULE_LABEL_HEIGHT - fiY : fiY - moved;
+          for (const y of moved !== y0 && fromLine <= 2 * RULE_LABEL_GAP ? [y0, moved] : [y0]) {
+            const x0 = box(at);
+            const inPlot = x0 >= PAD_X && x0 + nameW <= W - PAD_X && y - RULE_LABEL_HEIGHT >= 0 && y <= baseY - 4;
+            if (inPlot && clear(at, y) && offLines(x0, u)) return { at, y };
+          }
+        }
+      return null;
+    };
+    const endBaseline = (u: boolean) => (u ? fiY + 14 : fiY - 5);
+    const atEnd = fiX2 - PAD_X >= nameW && (!after || keepsTo(lines, x, fiX2 - nameW, fiX2, fiNumber, under));
+    const end = atEnd ? place(marker ? [fiX2, Math.min(fiX2, marker.x - MARKER_CLEAR)] : [fiX2], true, under, endBaseline, (x0, u) => keepsTo(lines, x, x0, x0 + nameW, fiNumber, u)) : null;
+    if (end) fiName = { x: end.at, y: end.y, rule: false };
+    else {
+      // Over the lines, haloed, so only the dot is kept clear of.
+      const above = fiY - RULE_LABEL_GAP - RULE_LABEL_HEIGHT >= 0;
+      const ruleBaseline = (u: boolean) => (u ? fiY + RULE_LABEL_GAP + RULE_LABEL_HEIGHT : fiY - RULE_LABEL_GAP);
+      const left = place(marker ? [PAD_X, Math.max(PAD_X, marker.x + MARKER_CLEAR)] : [PAD_X], false, !above, ruleBaseline, () => true);
+      if (left) fiName = { x: left.at, y: left.y, rule: true };
+      // Clear of the dot nowhere: its own place.
+      else fiName = atEnd ? { x: fiX2, y: endBaseline(under), rule: false } : { x: PAD_X, y: ruleBaseline(!above), rule: true };
+    }
   }
   // A mark whose age had no room: all of them are named under the chart, so none goes unsaid.
   const unnamed = after ? tickXs.some((t) => !labels.some((l) => l.label === t.short)) : false;
@@ -356,7 +408,7 @@ export default function PlanPathChart(props: PathChartProps) {
         {geo.todayX !== null && <line x1={geo.todayX} x2={geo.todayX} y1={PAD_TOP} y2={geo.baseY} stroke="var(--border-subtle)" strokeWidth={1} />}
         {geo.plannedLine && <path d={geo.plannedLine} fill="none" stroke="var(--text-2)" strokeWidth={2} strokeDasharray="2 4" strokeLinecap="round" />}
         {geo.recordedLine && <path d={geo.recordedLine} fill="none" stroke="var(--text-1)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />}
-        {geo.marker && <circle cx={geo.marker.x} cy={geo.marker.y} r={4} fill="var(--pos)" stroke="var(--surface)" strokeWidth={2} />}
+        {geo.marker && <circle cx={geo.marker.x} cy={geo.marker.y} r={MARKER_R} fill="var(--pos)" stroke="var(--surface)" strokeWidth={2} />}
         {/* A short line's name, at its left end: over everything, haloed in
             the card's color, so no line crossing it hides the word. */}
         {geo.fiName?.rule && (
