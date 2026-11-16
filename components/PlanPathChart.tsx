@@ -2,10 +2,11 @@
 
 // Your path's chart (rollout phase 8b): invested assets from today to the
 // age you'd like to stop, growing a steady amount after inflation, with the
-// FI number as a flat dashed line, a marker where the line reaches it, and
-// the stop age. No band (Drawdown keeps it) and no event pins. Its points
-// are lib/fire/path.ts planPath's, the same figures as the FI card's rows, so
-// the point at the stop age is the At age row's.
+// FI number as a flat dashed line, a marker where the line reaches it (on a
+// plan that answers with the earliest stop that lasts, D9, that stop, on the
+// line at its age), and the stop age. No band (Drawdown keeps it) and no
+// event pins. Its points are lib/fire/path.ts planPath's, the same figures as
+// the FI card's rows, so the point at the stop age is the At age row's.
 //
 // Whole path (the tax plan's P, D13): the same line on past the stop to the
 // plan's end, drawing the plan's spending at the same steady return
@@ -67,8 +68,13 @@ export type PathChartProps = {
   today: number;
   stopAge: number;
   fiNumber: number | null;
-  /** The age FI is reached at, as worked out (not rounded). */
+  /** The age FI is reached at, as worked out (not rounded); with `lasting`,
+   *  the earliest stop that lasts. */
   fiAge: number | null;
+  /** The plan answers with the earliest stop that lasts (D9, a plan's
+   *  `lastsIn`): the marker is that stop, on the line at its age, and where
+   *  the line crosses the FI number is worked out from the points. */
+  lasting?: boolean;
   realReturn: number;
   currency: string | null;
   /** The points are the walk's, with the plan's life events. */
@@ -121,11 +127,48 @@ function keepsTo(lines: readonly (readonly PathPoint[])[], x: (age: number) => n
   return true;
 }
 
+/** The line's height at an age: a point's, at the end of its step where
+ *  money comes in that year (what is in hand then, which a stop draws from,
+ *  as Whole path's first year has it), or straight between two points. Null
+ *  off the line. */
+function balanceAt(points: readonly PathPoint[], age: number): number | null {
+  for (let i = 0; i < points.length; i++) {
+    const q = points[i];
+    if (q.age === age) return q.inHand ?? q.balance;
+    const next = points[i + 1];
+    if (next && q.age < age && next.age > age) {
+      const from = q.inHand ?? q.balance;
+      return from + ((next.balance - from) * (age - q.age)) / (next.age - q.age);
+    }
+  }
+  return null;
+}
+
+/** The age the line reaches the value `v` and stays there to its end, as
+ *  the walk's FI date does (a cost that takes it back under starts it again),
+ *  worked out between its points: its start where it is there already, a
+ *  step's age where money coming in takes it there. Null where it ends under. */
+function crossingAge(points: readonly PathPoint[], v: number): number | null {
+  let at: number | null = null;
+  for (let i = 0; i < points.length; i++) {
+    const q = points[i];
+    // The line comes to its point, then steps to what is in hand there.
+    for (const b of [q.balance, q.inHand ?? q.balance]) {
+      if (b < v) at = null;
+      else if (at === null) at = q.age;
+    }
+    const next = points[i + 1];
+    const from = q.inHand ?? q.balance;
+    if (next && from < v && next.balance >= v) at = q.age + ((v - from) / (next.balance - from)) * (next.age - q.age);
+  }
+  return at;
+}
+
 /** Where everything goes, in viewBox units (CSS pixels at its width): plain
  *  numbers only, so it can be kept between renders. `after` only on Whole
  *  path. */
-function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNumber' | 'fiAge' | 'recorded' | 'ticks'> & { after: PathAfter | null }, W: number, H: number) {
-  const { points, today, stopAge, fiAge, recorded = null, after } = p;
+function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNumber' | 'fiAge' | 'lasting' | 'recorded' | 'ticks'> & { after: PathAfter | null }, W: number, H: number) {
+  const { points, today, stopAge, fiAge, lasting = false, recorded = null, after } = p;
   // No saving years (the stop has come): no FI number to reach.
   const saving = points.length >= 2;
   const fiNumber = after && !saving ? null : p.fiNumber;
@@ -153,9 +196,14 @@ function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNu
   const end = points[points.length - 1];
   const area = saving || !after ? `${lineOf(points)}L${x(end.age).toFixed(1)},${baseY}L${x(points[0].age).toFixed(1)},${baseY}Z` : null;
   // The marker: where the line reaches the FI number, on the line, by the
-  // stop; today's balance when it is there already.
+  // stop; today's balance when it is there already. On a plan that answers
+  // with the earliest stop that lasts, that stop, on the line at its age: it
+  // needn't be where the line meets the FI number. Past the line's end, none.
   let marker: { x: number; y: number } | null = null;
-  if (fiNumber !== null && fiAge !== null && fiAge >= points[0].age && fiAge <= end.age) {
+  if (lasting && fiNumber !== null && fiAge !== null && fiAge >= points[0].age && fiAge <= end.age) {
+    const at = balanceAt(points, fiAge);
+    if (at !== null) marker = { x: x(fiAge), y: y(at) };
+  } else if (fiNumber !== null && fiAge !== null && fiAge >= points[0].age && fiAge <= end.age) {
     // Today's balance below the FI number with money in today: on its step.
     marker = fiAge <= points[0].age && points[0].balance >= fiNumber ? { x: x(points[0].age), y: y(points[0].balance) } : { x: x(Math.max(fiAge, points[0].age)), y: y(fiNumber) };
   }
@@ -214,7 +262,11 @@ function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNu
   const fiX2 = after ? x(stopAge) : W - PAD_X;
   let fiName: { x: number; y: number; rule: boolean } | null = null;
   if (fiY !== null && fiNumber !== null) {
-    const under = marker !== null && fiY + 14 <= baseY - 4;
+    // Under its line once the path has gone over it, where the name is out
+    // of the path's way. The marker says so, but not the earliest stop that
+    // lasts, which can come before the path reaches the number.
+    const over = lasting ? crossingAge(points, fiNumber) !== null : marker !== null;
+    const under = over && fiY + 14 <= baseY - 4;
     const nameW = labelWidth(FI_NAME);
     const lines = recorded ? [points, recorded.recorded, recorded.planned] : [points];
     if (fiX2 - PAD_X >= nameW && (!after || keepsTo(lines, x, fiX2 - nameW, fiX2, fiNumber, under))) fiName = { x: fiX2, y: under ? fiY + 14 : fiY - 5, rule: false };
@@ -229,13 +281,20 @@ function geometry(p: Pick<PathChartProps, 'points' | 'today' | 'stopAge' | 'fiNu
 /** What the chart shows, in words, for a screen reader: built when drawn,
  *  never kept, so hide amounts says "hidden" for every figure in it. */
 function summary(p: PathChartProps, stopped: boolean, after: PathAfter | null): string {
-  const { points, stopAge, fiNumber, fiAge, currency } = p;
+  const { points, stopAge, fiNumber, currency, lasting = false } = p;
+  // Where the line reaches the FI number: the answer, or with the earliest
+  // stop that lasts as the answer, worked out from the line.
+  const fiAge = lasting ? (fiNumber === null ? null : crossingAge(points, fiNumber)) : p.fiAge;
   const start = points[0];
   const end = points[points.length - 1];
   const events = p.walkWords ? ` with ${p.walkWords}` : p.withEvents || after?.withEvents ? ' with this plan’s items' : '';
   const marks = after ? (p.ticks ?? []).filter((t) => t.age > start.age && t.age < after.endAge && t.age !== stopAge).map((t) => t.spelled ?? t.label) : [];
   const marked = marks.length > 0 ? ` Marks at ${marks.slice(0, -1).join(', ')}${marks.length > 1 ? ' and ' : ''}${marks[marks.length - 1]}.` : '';
-  const wrap = (path: string) => `${p.recorded ? `${recordedWords(p.recorded, currency)} ` : ''}${path}${marked}`;
+  // The earliest stop that lasts, said on its own: it isn't where the line
+  // meets the FI number.
+  const stop = p.fiAge === null ? null : Math.round(p.fiAge);
+  const lasts = !lasting || stop === null ? '' : stop <= start.age ? ' A stop now lasts.' : ` The earliest stop that lasts is around ${stop}${stop > stopAge ? `, after your stop at ${stopAge}` : ''}.`;
+  const wrap = (path: string) => `${p.recorded ? `${recordedWords(p.recorded, currency)} ` : ''}${path}${lasts}${marked}`;
   const last = after ? after.points[after.points.length - 1] : null;
   const tail = after ? (after.runsOutAt !== null ? `run out at ${after.runsOutAt}` : `about ${wholeMoney((last as PathPoint).balance, currency)} at ${after.endAge}`) : '';
   if (after && points.length < 2) {
@@ -261,13 +320,13 @@ function recordedWords(r: ProgressOverlay, currency: string | null): string {
 }
 
 export default function PlanPathChart(props: PathChartProps) {
-  const { points, today, stopAge, fiNumber, fiAge, realReturn, currency, withEvents = false, walkWords = null, recorded = null, range, onRange } = props;
+  const { points, today, stopAge, fiNumber, fiAge, lasting = false, realReturn, currency, withEvents = false, walkWords = null, recorded = null, range, onRange } = props;
   const whole = wholeShown(points, props.after, range);
   const after = whole ? (props.after as PathAfter) : null;
   const [drawnRef, W] = useDrawnWidth<SVGSVGElement>();
   const H = Math.round(W * ASPECT);
   const ticks = props.ticks ?? null;
-  const geo = useMemo(() => geometry({ points, today, stopAge, fiNumber, fiAge, recorded, after, ticks }, W, H), [points, today, stopAge, fiNumber, fiAge, recorded, after, ticks, W, H]);
+  const geo = useMemo(() => geometry({ points, today, stopAge, fiNumber, fiAge, lasting, recorded, after, ticks }, W, H), [points, today, stopAge, fiNumber, fiAge, lasting, recorded, after, ticks, W, H]);
   const stopped = points[points.length - 1].age < stopAge;
   const rows = after ? [...points, ...after.points.slice(1)] : points;
   const switchable = onRange !== undefined && points.length >= 2 && wholeShown(points, props.after, 'whole');
