@@ -39,7 +39,10 @@ import type { Ctx } from '@/lib/containers';
 // Answers { imports, fingerprint, names }: the account's imports now, newest
 // first, each with every account it took, the fingerprint an import names to
 // say what it was reviewed against, and the name and last four digits of
-// each account they took, for the sheet's words.
+// each account they took, for the sheet's words. An import answers too the
+// new import's `import_id` and `imported_at`, so the sheet can undo it from
+// its done level even when the sheet's own account didn't take it (and so
+// isn't in the list).
 //
 // THE REVIEW answers { review: { fingerprint, source, covers, stated_end,
 // after_today, sheet_in, csv, accounts } }: for each account in the file, in its order, its last four
@@ -274,8 +277,9 @@ export async function POST(req: Request) {
       if (rows.length === 0) return bad(`The file has nothing before today for the account ending in ${t.mask}, so there’s nothing to import for it`);
       entries.push({ account_id: t.account_id, value: { source: read.source, file_name: change.file_name, imported_at, covers, currency: 'USD', rows } });
     }
-    await addImport(ctx, crypto.randomUUID(), entries, change.counting);
-    return NextResponse.json(await listed(ctx, change.account_id));
+    const import_id = crypto.randomUUID();
+    await addImport(ctx, import_id, entries, change.counting);
+    return NextResponse.json({ ...(await listed(ctx, change.account_id)), import_id, imported_at });
   } catch (err) {
     if (err instanceof ImportsRefused) {
       if (err.why === 'missing') return NextResponse.json({ error: 'That import isn’t there any more: the list shows what is.' }, { status: 404 });
