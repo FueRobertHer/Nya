@@ -116,8 +116,15 @@ async function mount(target: Target, opts: { review?: ImportsReview; refuse?: { 
   let stored: ListedImport[] = [];
   let refuse = opts.refuse ?? null;
   const names = { ind: { name: 'Individual', mask: '4421', item_id: 'item_vg' }, trad: { name: 'Traditional IRA', mask: '5519', item_id: 'item_vg' } };
-  // `ownOnly`: as the route lists them, the sheet's account's imports only.
-  const listed = () => ({ imports: opts.ownOnly ? stored.filter((i) => i.accounts.includes(target.account_id)) : stored, fingerprint: stored.length ? 'fp-2' : 'fp-1', names });
+  // `ownOnly`: as the route lists them, the sheet's account's imports only,
+  // naming only the accounts those went into.
+  const listed = () => {
+    const imports = opts.ownOnly ? stored.filter((i) => i.accounts.includes(target.account_id)) : stored;
+    const named = opts.ownOnly ? Object.fromEntries(Object.entries(names).filter(([id]) => imports.some((i) => i.accounts.includes(id)))) : names;
+    return { imports, fingerprint: stored.length ? 'fp-2' : 'fp-1', names: named };
+  };
+  // The next undo's answer, once, in place of the store's.
+  let undoFails: (() => Response) | null = null;
   // While held, the account's activity doesn't answer, as on a slow load.
   let holdActivity = false;
   const listing = () => Response.json(listed());
@@ -145,6 +152,11 @@ async function mount(target: Target, opts: { review?: ImportsReview; refuse?: { 
           },
         ];
         return Response.json({ ...listed(), import_id: 'imp-1', imported_at: HELD_DAY.toISOString() });
+      }
+      if (undoFails) {
+        const fail = undoFails;
+        undoFails = null;
+        return fail();
       }
       stored = stored.filter((i) => i.import_id !== body.import_id);
       return listing();
@@ -186,6 +198,7 @@ async function mount(target: Target, opts: { review?: ImportsReview; refuse?: { 
     /** What the server keeps now. */
     stored: () => stored,
     holdActivity: () => void (holdActivity = true),
+    failUndo: (f: () => Response) => void (undoFails = f),
     /** The sheet opened again on the account, as from its menu. */
     reopen: async () => {
       draw({ ...target });
@@ -346,6 +359,55 @@ describe('the sheet', () => {
     expect(v.sent.at(-1)!.body).toEqual({ action: 'undo', account_id: 'ind', import_id: 'imp-1' });
     expect(v.stored()).toEqual([]);
     expect(v.text()).toContain('Undone: the import of OfxDownload.csv from today.');
+    v.unmount();
+  });
+
+  test('Undo import that fails, where the sheet’s list doesn’t hold it: said on its level, focused, and Undo import again does it', async () => {
+    const v = await mount(TARGET, { ownOnly: true });
+    await v.choose('OfxDownload.csv');
+    v.toggle('Individual ••4421', false);
+    const label = v.host.findAll((e) => e.tagName === 'BUTTON' && e.textContent.startsWith('Import ') && e.textContent.endsWith('into 1 account'))[0].textContent.trim();
+    await v.press(label);
+    // The server can't.
+    v.failUndo(() => Response.json({ error: 'Imports can’t be changed right now.' }, { status: 503 }));
+    await v.press('Undo import');
+    await v.press('Undo import');
+    expect(v.text()).toStartWith('Imported');
+    expect(v.said('Critical: ')!.textContent).toBe('Critical: Imports can’t be changed right now.');
+    expect(dom.document.activeElement).toBe(v.said('Critical: '));
+    expect(v.stored()).toHaveLength(1);
+    // The server not reached.
+    v.failUndo(() => {
+      throw new TypeError('offline');
+    });
+    await v.press('Undo import');
+    await v.press('Undo import');
+    expect(v.said('Critical: ')!.textContent).toBe('Critical: Could not reach the server, so it may not have been undone. Undo import again: if it was undone, Nya says so.');
+    expect(dom.document.activeElement).toBe(v.said('Critical: '));
+    expect(v.text()).toContain('It’s kept under Past imports in this sheet');
+    // Again, and it is undone.
+    await v.press('Undo import');
+    await v.press('Undo import');
+    expect(v.stored()).toEqual([]);
+    expect(v.text()).toContain('Undone: the import of OfxDownload.csv from today.');
+    expect((dom.document.activeElement as unknown as FakeElement).textContent).toContain('Undone: the import of OfxDownload.csv from today.');
+    v.unmount();
+  });
+
+  test('Undo import of an import gone meanwhile: says so, and offers Done alone', async () => {
+    const v = await mount({ ...TARGET, account_id: 'ind' });
+    await v.choose('OfxDownload.csv');
+    await v.press('Import 94 transactions into 2 accounts');
+    v.failUndo(() => Response.json({ error: 'That import isn’t there any more: the list shows what is.' }, { status: 404 }));
+    await v.press('Undo import');
+    await v.press('Undo import');
+    expect(v.said('Critical: ')!.textContent).toBe('Critical: That import isn’t there any more, so there’s nothing to undo: it was undone on another device, or just now.');
+    expect(dom.document.activeElement).toBe(v.said('Critical: '));
+    expect(v.said('Done: ')!.textContent).toBe('Done: Imported 94 transactions from OfxDownload.csv into Individual ••4421 and Traditional IRA ••5519.');
+    expect(v.button('Undo import')).toBeNull();
+    expect(v.button('Done')).not.toBeNull();
+    expect(v.text()).not.toContain('Deposits & withdrawals');
+    expect(v.text()).not.toContain('Past imports in this sheet');
     v.unmount();
   });
 

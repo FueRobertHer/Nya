@@ -563,6 +563,36 @@ describe('the sheet', () => {
     v.unmount();
   });
 
+  test('Undo import that fails: said on its level, focused, with Undo import again', async () => {
+    let fail = false;
+    const v = await mount({ ...TARGET, account_id: 'acc_vg7' }, async () => readOf(MONTHS), {
+      wrap: (inner) =>
+        (async (url: string, init?: RequestInit) => {
+          if (fail && url === '/api/investment-months' && init?.method === 'POST' && String(init.body).includes('"undo"')) {
+            fail = false;
+            return Response.json({ error: 'Imports can’t be changed right now.' }, { status: 503 });
+          }
+          return inner(url, init);
+        }) as typeof fetch,
+    });
+    await v.choose('Performance.pdf');
+    await v.press('Import 34 months');
+    fail = true;
+    await v.press('Undo import');
+    await v.press('Undo import');
+    const why = v.host.findAll((e) => e.getAttribute('role') === 'alert' && e.textContent.startsWith('Critical: '))[0];
+    expect(why.textContent).toBe('Critical: Imports can’t be changed right now.');
+    expect(dom.document.activeElement).toBe(why);
+    expect(v.text()).toStartWith('Imported');
+    expect(v.text()).toContain('Done: Imported 34 months from Performance.pdf into Individual.');
+    expect(v.stored()).toHaveLength(1);
+    await v.press('Undo import');
+    await v.press('Undo import');
+    expect(v.stored()).toEqual([]);
+    expect(v.text()).toContain('Undone: the import of Vanguard’s Performance page from today.');
+    v.unmount();
+  });
+
   test('a month read wrong: typed from Vanguard’s page, then imported with it marked as typed', async () => {
     const bad = MONTHS.find((m) => m.month === '2025-03')!;
     const read = readOf(MONTHS, { figures: { '2025-03': { end: bad.end + 9_000 } }, failed: { '2025-03': ['adds-up'], '2025-04': ['begins-at-last-end'] } });

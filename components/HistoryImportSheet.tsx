@@ -229,6 +229,12 @@ type Done = {
 };
 type Step = 'pick' | 'statement' | 'mapping' | 'order' | 'review' | 'done' | 'months' | 'txns' | 'imported';
 
+/** Where an Undo that failed is said in place of the sheet's list (the done
+ *  level): why, and whether the import is gone. */
+type UndoFailed = (e: { text: string; gone: boolean }) => void;
+const GONE = { text: 'That import isn’t there any more, so there’s nothing to undo: it was undone on another device, or just now.', gone: true };
+const UNREACHED = { text: 'Could not reach the server, so it may not have been undone. Undo import again: if it was undone, Nya says so.', gone: false };
+
 const NONE = <T,>(): ChoiceSet<T> => ({ each: {} });
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 const fmtDay = (day: string) => formatDay(day);
@@ -355,20 +361,25 @@ export default function HistoryImportSheet({
   const [txnYes, setTxnYes] = useState(false);
   const [txnError, setTxnError] = useState<{ level: 'critical' | 'caution'; text: string; again?: boolean } | null>(null);
   // What Vanguard's last import made, on its done level ('imported'): the
-  // download as reviewed, or the page's import by its id; and its Undo, asked
-  // in place. Focus goes to its line on arrival, to the ask when it opens,
-  // and back to Undo import when it is kept.
-  const [made, setMade] = useState<{ kind: 'txns'; txns: TxnMade } | { kind: 'months'; id: string } | null>(null);
+  // download as reviewed, or the page's import by its id with its line as it
+  // arrived; and its Undo, asked in place. Focus goes to its line on arrival,
+  // to the ask when it opens, back to Undo import when it is kept, and to why
+  // when Undo import fails, said there (with Undo import again, unless the
+  // import is gone), as the file's list may not hold an import that went only
+  // into other accounts.
+  const [made, setMade] = useState<{ kind: 'txns'; txns: TxnMade } | { kind: 'months'; id: string; text: string } | null>(null);
   const [undoAsk, setUndoAsk] = useState(false);
+  const [madeError, setMadeError] = useState<{ text: string; gone: boolean } | null>(null);
   const madeLine = useRef<HTMLDivElement>(null);
   const askLine = useRef<HTMLParagraphElement>(null);
   const undoMadeButton = useRef<HTMLButtonElement>(null);
-  const [madeFocus, setMadeFocus] = useState<'line' | 'ask' | 'undo' | null>(null);
+  const madeErrorLine = useRef<HTMLDivElement>(null);
+  const [madeFocus, setMadeFocus] = useState<'line' | 'ask' | 'undo' | 'error' | null>(null);
   const askNoteId = useId();
   const askTextId = useId();
   useEffect(() => {
     if (!madeFocus) return;
-    (madeFocus === 'line' ? madeLine : madeFocus === 'ask' ? askLine : undoMadeButton).current?.focus();
+    (madeFocus === 'line' ? madeLine : madeFocus === 'ask' ? askLine : madeFocus === 'error' ? madeErrorLine : undoMadeButton).current?.focus();
     setMadeFocus(null);
   }, [madeFocus]);
   const thisYear = new Date().getFullYear();
@@ -466,6 +477,7 @@ export default function HistoryImportSheet({
     setTxnError(null);
     setMade(null);
     setUndoAsk(false);
+    setMadeError(null);
     void loadPast(target.account_id);
   }, [target, loadPast]);
 
@@ -750,7 +762,9 @@ export default function HistoryImportSheet({
         investmentMonthsSaved(account.account_id, account.item_id ?? '', data?.investment_months ?? null);
         setPdf(null);
         if (typeof data?.import_id === 'string') {
-          setMade({ kind: 'months', id: data.import_id });
+          const record = (data?.investment_months?.imports as MonthsImport[] | undefined)?.find((x) => x.id === data.import_id);
+          setMade({ kind: 'months', id: data.import_id, text: record ? monthsMadeText(record, name) : '' });
+          setMadeError(null);
           setUndoAsk(false);
           setStep('imported');
           setMadeFocus('line');
@@ -787,7 +801,7 @@ export default function HistoryImportSheet({
     }
   }
 
-  async function undoMonths(i: MonthsImport): Promise<boolean> {
+  async function undoMonths(i: MonthsImport, here?: UndoFailed): Promise<boolean> {
     if (!account || busy) return false;
     setBusy(true);
     setMonthsError(null);
@@ -807,11 +821,14 @@ export default function HistoryImportSheet({
         onImported();
         return true;
       }
-      setMonthsError({ level: 'critical', text: typeof data?.error === 'string' ? data.error : 'The import couldn’t be undone. Please try again.' });
+      const text = typeof data?.error === 'string' ? data.error : 'The import couldn’t be undone. Please try again.';
+      if (here) here(res.status === 404 ? GONE : { text, gone: false });
+      else setMonthsError({ level: 'critical', text });
       if (res.status === 404) void perf.reload(account.account_id);
       return false;
     } catch {
-      setMonthsError({ level: 'critical', text: 'Could not reach the server, so it may not have been undone. The imports below show whether it was.' });
+      if (here) here(UNREACHED);
+      else setMonthsError({ level: 'critical', text: 'Could not reach the server, so it may not have been undone. The imports below show whether it was.' });
       void perf.reload(account.account_id);
       return false;
     } finally {
@@ -889,6 +906,7 @@ export default function HistoryImportSheet({
           const names = data?.names && typeof data.names === 'object' ? data.names : {};
           const imported_at = typeof data?.imported_at === 'string' ? data.imported_at : new Date().toISOString();
           setMade({ kind: 'txns', txns: txnMade(review, txnChecked, { import_id: data.import_id, imported_at, file_name: txn.name, names }) });
+          setMadeError(null);
           setUndoAsk(false);
           setStep('imported');
           setMadeFocus('line');
@@ -928,7 +946,7 @@ export default function HistoryImportSheet({
   /** Undoes the download's import `i` from every account it went into
    *  (`accounts`, where the done level knows them all; else those the list
    *  names), and the sheet's account loads its activity again too. */
-  async function undoTxns(i: ListedImport, accounts?: { account_id: string; item_id: string }[]): Promise<boolean> {
+  async function undoTxns(i: ListedImport, accounts?: { account_id: string; item_id: string }[], here?: UndoFailed): Promise<boolean> {
     if (!account || busy) return false;
     setBusy(true);
     setTxnError(null);
@@ -950,11 +968,14 @@ export default function HistoryImportSheet({
         txnsChanged(touched);
         return true;
       }
-      setTxnError({ level: 'critical', text: typeof data?.error === 'string' ? data.error : 'The import couldn’t be undone. Please try again.' });
+      const text = typeof data?.error === 'string' ? data.error : 'The import couldn’t be undone. Please try again.';
+      if (here) here(res.status === 404 ? GONE : { text, gone: false });
+      else setTxnError({ level: 'critical', text });
       if (res.status === 404) void txns.reload(account.account_id);
       return false;
     } catch {
-      setTxnError({ level: 'critical', text: 'Could not reach the server, so it may not have been undone. The imports below show whether it was.' });
+      if (here) here(UNREACHED);
+      else setTxnError({ level: 'critical', text: 'Could not reach the server, so it may not have been undone. The imports below show whether it was.' });
       void txns.reload(account.account_id);
       txnsChanged(touched);
       return false;
@@ -963,21 +984,30 @@ export default function HistoryImportSheet({
     }
   }
 
-  /** Undo import, from the done level: back to the file either way, with what
-   *  it undid (focused), or why not above the list it points to. */
+  /** Undo import, from the done level: undone, back to the file with what it
+   *  undid (focused); not, why on this level (focused), where Undo import
+   *  still is unless the import is gone. */
   async function undoMade() {
     if (!account || !made || busy) return;
-    if (made.kind === 'txns') await undoTxns(made.txns.import, made.txns.accounts.map(({ account_id, item_id }) => ({ account_id, item_id })));
+    setMadeError(null);
+    const here: UndoFailed = (e) => setMadeError(e);
+    let ok = false;
+    if (made.kind === 'txns') ok = await undoTxns(made.txns.import, made.txns.accounts.map(({ account_id, item_id }) => ({ account_id, item_id })), here);
     else {
       const i = perf.imports?.imports.find((x) => x.id === made.id);
-      if (i) await undoMonths(i);
+      if (i) ok = await undoMonths(i, here);
       else {
-        setMonthsError({ level: 'critical', text: 'That import isn’t there any more: the list shows what is.' });
+        // The list held may be older than the import: read again, for Undo import again.
+        here({ text: 'Nya is reading this account’s imports again, so it wasn’t undone yet. Undo import again in a moment.', gone: false });
         void perf.reload(account.account_id);
       }
     }
-    setMade(null);
     setUndoAsk(false);
+    if (!ok) {
+      setMadeFocus('error');
+      return;
+    }
+    setMade(null);
     setStep('pick');
     // Its result line is on the file's level: focus goes to it once that is drawn.
     setUndone((n) => n + 1);
@@ -986,6 +1016,7 @@ export default function HistoryImportSheet({
   function chooseAgain() {
     setMade(null);
     setUndoAsk(false);
+    setMadeError(null);
     setPdf(null);
     setMonthsError(null);
     setTxn(null);
@@ -1012,7 +1043,7 @@ export default function HistoryImportSheet({
   // its review's, as its activity may not have them yet; none where the sheet's
   // account didn't take it.
   const madeMonths = made?.kind === 'months' ? (perf.imports?.imports.find((x) => x.id === made.id) ?? null) : null;
-  const madeText = made?.kind === 'txns' ? txnMadeText(made.txns) : madeMonths ? monthsMadeText(madeMonths, name) : '';
+  const madeText = made?.kind === 'txns' ? txnMadeText(made.txns) : made?.text || (madeMonths ? monthsMadeText(madeMonths, name) : '');
   const madeAsk =
     made?.kind === 'txns'
       ? txnUndoText(made.txns.import, { imports: txns.list?.imports ?? [], fingerprint: txns.list?.fingerprint ?? '', names: made.txns.names }, perf.activity, name, {
@@ -1079,7 +1110,11 @@ export default function HistoryImportSheet({
             </button>
           </>
         ) : step === 'imported' && made ? (
-          undoAsk ? (
+          madeError?.gone ? (
+            <button type="button" className="btn" onClick={onClose}>
+              Done
+            </button>
+          ) : undoAsk ? (
             <>
               <p className="helper sheet-footer-note" id={askNoteId}>
                 Undo this import?
@@ -1458,15 +1493,24 @@ export default function HistoryImportSheet({
               {madeAsk}
             </p>
           )}
+          {madeError && (
+            <Notice level="critical" role="alert" ref={madeErrorLine} tabIndex={-1}>
+              {madeError.text}
+            </Notice>
+          )}
           <Notice level="done" role="status" ref={madeLine} tabIndex={-1}>
             {madeText}
           </Notice>
-          {made.kind === 'txns' ? (
-            <TxnImported made={made.txns} />
-          ) : (
-            perf.imports && <MonthsImported name={name} imports={perf.imports} points={perf.points} activity={perf.activity} currency={shown.currency} />
+          {madeError?.gone ? null : (
+            <>
+              {made.kind === 'txns' ? (
+                <TxnImported made={made.txns} />
+              ) : (
+                perf.imports && <MonthsImported name={name} imports={perf.imports} points={perf.points} activity={perf.activity} currency={shown.currency} />
+              )}
+              <p className="helper">It’s kept under Past imports in this sheet, where you can undo it later.</p>
+            </>
           )}
-          <p className="helper">It’s kept under Past imports in this sheet, where you can undo it later.</p>
         </div>
       )}
 
