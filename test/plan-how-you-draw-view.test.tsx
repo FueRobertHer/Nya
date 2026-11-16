@@ -287,6 +287,13 @@ describe('Compare conversions', () => {
     expect(sheet.textContent).toContain('Tax and health costs, in all');
     expect(sheet.textContent).toContain('Stage by stage');
     expect(sheet.textContent).toContain('2026 tax law. Not tax advice.');
+    // Try is the sheet's, in its footer, described by what it does.
+    const footer = sheet.findAll((e) => classOf(e).includes('sheet-footer'))[0];
+    const tryIt = button(footer, 'Try it in a copy')!;
+    expect(classOf(tryIt)).toEqual(['btn', 'secondary']);
+    const makes = footer.findAll((e) => e.getAttribute('id') === tryIt.getAttribute('aria-describedby'))[0];
+    expect(makes.textContent).toBe('Makes a copy of your plan with this rule and opens it. Your plan stays as it is.');
+    expect(classOf(makes)).toContain('sheet-footer-note');
     await press(button(sheet, 'Try it in a copy'));
     await settle(300);
     expect(tab.dialog()).toBeNull();
@@ -333,6 +340,11 @@ describe('Compare conversions', () => {
     const html = renderToStaticMarkup(<RuleLevel row={row} money={(n) => wholeMoney(n, 'USD')} lawYear={2026} copyOpen={false} whyNot="A copy can’t be made just yet. Try again in a moment." onTry={async () => true} now={null} used={() => ({ drawn, stop: null, start: null, working: false, failed: false, retry: null })} />);
     expect(html).toContain('A copy can’t be made just yet. Try again in a moment.');
     expect(html).toMatch(/<button[^>]*disabled[^>]*>Try it in a copy</);
+    // Beside the button, which both lines describe.
+    const ids = [...html.matchAll(/<p class="helper[^"]*sheet-footer-note" id="([^"]+)">/g)].map((m) => m[1]);
+    expect(ids.length).toBe(2);
+    expect(html).toMatch(new RegExp(`<button[^>]*aria-describedby="${ids.join(' ')}"[^>]*>Try it in a copy<`));
+    expect(html.indexOf('<div class="sheet-footer">')).toBeLessThan(html.indexOf('A copy can’t be made'));
   });
 
   test('Try it takes a number where another plan has its name, in any case', async () => {

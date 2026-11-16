@@ -89,6 +89,10 @@ describe('on a withdrawal rule that spends with the balance', () => {
     const card = compareCard(tab).textContent ?? '';
     expect(card).toContain(HOLDS);
     expect(card).not.toContain('spends differently');
+    // Behind Why, with why the rules differ, not on screen.
+    const why = compareCard(tab).findAll((e) => e.tagName === 'DETAILS')[0];
+    expect(why.textContent).toContain(HOLDS);
+    expect(why.textContent).toContain('Why do the rules differ?');
     await press(tab.row('Roth conversions'));
     await pick(tab.dialog()!, 'Fill a bracket');
     expect(tab.dialog()!.textContent).toContain('What it comes to');

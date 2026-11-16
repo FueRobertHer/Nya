@@ -272,6 +272,37 @@ describe('the sheet', () => {
     await tab.unmount();
   }, 30_000);
 
+  test('in order: the heading with its limits, your plan’s line, the sort, the table, how to use a row, then why they hold', async () => {
+    const tab = await detailed();
+    await tuned(tab, LEFT, ['No higher than the 22% bracket']);
+    const section = tab.dialog()!.findAll((e) => e.tagName === 'SECTION' && e.getAttribute('aria-labelledby') === 'plan-tune-answer')[0];
+    const kids = section.childNodes.filter((n) => (n as { tagName?: string }).tagName) as Node[];
+    const part = (e: Node) =>
+      e.tagName === 'H3'
+        ? 'heading'
+        : e.tagName === 'DETAILS'
+          ? 'why'
+          : classOf(e).includes('plan-table-scroll')
+            ? 'table'
+            : classOf(e).includes('plan-definition')
+              ? 'definition'
+              : button(e, 'Sort by your goal')
+                ? 'sort'
+                : (e.textContent ?? '').startsWith('With no conversions, your plan')
+                  ? 'own'
+                  : (e.textContent ?? '').startsWith('Tap a rule')
+                    ? 'tap'
+                    : (e.textContent ?? '');
+    expect(kids.map(part)).toEqual(['heading', 'own', 'sort', 'table', 'tap', 'why', 'definition']);
+    expect(kids[0].textContent).toMatch(/^Tuned for the most left at \d+, keeping within the 22% bracket where it can$/);
+    const caption = section.findAll((e) => e.tagName === 'CAPTION')[0];
+    expect(caption.textContent).toBe(kids[0].textContent);
+    // What every row holds is behind Why, and nowhere else.
+    expect(kids[5].textContent).toContain('Each rule here keeps your stop, your start and what’s timed on them where they are now');
+    expect(section.findAll((e) => classOf(e).includes('helper') && (e.textContent ?? '').includes('Each rule here keeps'))).toEqual([]);
+    await tab.unmount();
+  }, 30_000);
+
   test('it sorts by the goal when you ask, and says you asked', async () => {
     const tab = await detailed();
     const table = await tuned(tab);
@@ -397,7 +428,15 @@ describe('a row’s own sheet', () => {
     expect(tableOf(tab)).toBeNull();
     expect(button(level, 'Try it in a copy')).not.toBeNull();
     expect(button(level, 'Use in your plan')).not.toBeNull();
+    // Its buttons are the sheet's, in its footer, out of the scrolling body.
+    const footer = level.findAll((e) => classOf(e).includes('sheet-footer'))[0];
+    const body = level.findAll((e) => classOf(e).includes('sheet-body'))[0];
+    expect(button(footer, 'Try it in a copy')).not.toBeNull();
+    expect(button(footer, 'Use in your plan')).not.toBeNull();
+    expect(button(body, 'Use in your plan')).toBeNull();
     await press(backOf(level));
+    // Back on the table, the sheet has no footer.
+    expect(tab.dialog()!.findAll((e) => classOf(e).includes('sheet-footer'))).toEqual([]);
     expect(ruleNames(tableOf(tab)!)).toContain(name);
     expect(tab.dialog()!.textContent).toContain('Sorted by your goal because you asked.');
     expect(table).toBeTruthy();
@@ -668,6 +707,26 @@ describe('the sheet’s other states, drawn alone', () => {
     expect(level({ crossing: [{ limit: 'irmaa', years: 5 }] }, irmaa, { ...NO_ANSWER, failed: true })).toContain('Pays IRMAA’s surcharge in 5 years');
   });
 
+  test('what a level crosses is said beside its buttons, which it describes, and not in its body', () => {
+    const year = (irmaaTier: number) => ({ age: 60, conversion: 0, care: { overLimit: false, people: [{ irmaaTier }] }, law: { topRate: 0.12 } });
+    const html = renderToStaticMarkup(<TuneLevel {...shared} row={row()} ask={{ goal: 'left', limits: ['irmaa'] }} used={() => drew({ years: [year(1), year(1), year(0)] })} />);
+    const note = /<p class="helper sheet-footer-note" id="([^"]+)">Pays IRMAA’s surcharge in 2 years\.<\/p>/.exec(html);
+    expect(note).not.toBeNull();
+    expect(html.match(/Pays IRMAA’s surcharge/g)?.length).toBe(1);
+    expect(html.indexOf('<div class="sheet-footer">')).toBeLessThan(html.indexOf('Pays IRMAA'));
+    for (const words of ['Try it in a copy', 'Use in your plan']) expect(html).toMatch(new RegExp(`<button[^>]*aria-describedby="${note![1]}"[^>]*>${words}<`));
+  });
+
+  test('why its buttons wait is said beside them too, and they are described by it', () => {
+    const html = renderToStaticMarkup(<TuneLevel {...shared} whyNot="A copy can’t be made just yet." row={row()} ask={ASK_LEFT} used={() => READY} />);
+    const wait = /<p class="helper plan-paused sheet-footer-note" id="([^"]+)">A copy can’t be made just yet\.<\/p>/.exec(html);
+    expect(wait).not.toBeNull();
+    expect(html.indexOf('<div class="sheet-footer">')).toBeLessThan(wait!.index);
+    expect(html).toMatch(new RegExp(`<button[^>]*aria-describedby="${wait![1]}"[^>]*>Try it in a copy<`));
+    // Crossing nothing, nothing else describes them.
+    expect(html).not.toContain('Crosses');
+  });
+
   test('how a level stands to None is said only where its figures are the row’s', () => {
     const level = (answer: object) => renderToStaticMarkup(<TuneLevel {...shared} row={row({ beatsNone: false })} ask={ASK_LEFT} used={() => answer as never} />);
     const WORDS = 'Leaves no more than with no conversions';
@@ -713,6 +772,11 @@ describe('a plan that moves when a rule is used', () => {
     const level = tab.dialog()!;
     expect(level.textContent).toMatch(/Once used, your plan (stops at \d+, not \d+|starts from \$[\d,]+, not \$[\d,]+|more of your plan moves)/);
     expect(level.textContent).toContain('so this differs from the table.');
+    // Said first, as a note, before the figures it explains.
+    const moved = level.findAll((e) => classOf(e).includes('notice') && (e.textContent ?? '').includes('differs from the table'))[0];
+    expect(classOf(moved)).toContain('info');
+    const stack = level.findAll((e) => classOf(e).includes('sheet-body'))[0].findAll((e) => classOf(e).includes('stack'))[0];
+    expect(stack.childNodes[0]).toBe(moved);
     expect(level.textContent).not.toContain(said);
     expect(level.textContent).not.toContain('than with no conversions');
     expect(disabled(button(level, 'Use in your plan'))).toBe(false);
