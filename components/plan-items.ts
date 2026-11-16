@@ -340,7 +340,7 @@ export function timelinePoints(plan: FirePlanV2, f: PlanFigures | null, money: M
   const points: TimelinePoint[] = [];
   const todayParts = [`Today, ${today}`];
   if (stop !== null && stop <= today) todayParts.push(stop < today ? `you stopped at ${stop}` : `you stop at ${stop}`);
-  if (fi.now || (fi.age !== null && fi.age <= today)) todayParts.push('you’re at FI');
+  if (fi.now || (fi.age !== null && fi.age <= today)) todayParts.push(fi.when.kind === 'now' && fi.when.lasting ? 'you could stop now' : 'you’re at FI');
   if (todayItems.length > 0 || todayParts.length > 1) points.push({ key: 'today', label: todayParts.join(' · '), items: todayItems });
 
   for (const age of [...byYear.keys()].sort((p, q) => p - q)) {

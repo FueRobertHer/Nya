@@ -27,7 +27,7 @@ import {
   whenWords,
   whereItCountsText,
 } from '@/components/plan-items';
-import { fiWhen } from '@/components/plan-fi-when';
+import { fiWhen, lifeChoiceText } from '@/components/plan-fi-when';
 import { wholeMoney } from '@/components/plan-text';
 import { OFF, ON } from './plan-gen';
 
@@ -163,6 +163,31 @@ describe('an item in words', () => {
     expect(itemSentence(mk('h', 'home', at(45), { once: 100_000, yearly: -6_000 }), plan, money)).toBe('$100,000 from your investments, then spending $6,000 a year less, at 45, for good');
     expect(itemSentence(mk('car', 'car', on('fi', -1), { once: 40_000, every: 8, times: 3 }), plan, money)).toBe('$40,000 each, 1 year before FI, every 8 years, 3 times');
     expect(itemSentence(mk('roof', 'one-off', on('stop', 2), { once: 30_000 }), plan, money)).toBe('$30,000, 2 years after you stop');
+  });
+});
+
+// D9 with today as the stop found: worked out on the plan's own runs, so here
+// a plan at FI already, its answer marked as the earliest stop that lasts.
+describe('a stop now that lasts', () => {
+  const rich = { ...base, assets: 5_000_000 };
+  const now = figures({ assets: 5_000_000 });
+  const lasts: PlanFigures = { ...now, resolution: { ...now.resolution, searched: 'lasts' } };
+
+  test('it is now either way, and says which', () => {
+    expect(fiWhen(now)).toEqual({ kind: 'now', lasting: false });
+    expect(fiWhen(lasts)).toEqual({ kind: 'now', lasting: true });
+  });
+
+  test('against your plan: a stop, never at FI, and “as in your plan” only where both say the same', () => {
+    expect(lifeChoiceText(fiWhen(lasts), fiWhen(lasts))).toBe('You could stop now, as in your plan');
+    expect(lifeChoiceText(fiWhen(lasts), fiWhen(now))).toBe('You could stop now');
+    expect(lifeChoiceText(fiWhen(now), fiWhen(lasts))).toBe('You’re at FI');
+    expect(lifeChoiceText(fiWhen(now), fiWhen(now))).toBe('You’re at FI, as in your plan');
+  });
+
+  test('the Timeline’s today says it too', () => {
+    expect(timelinePoints(rich, lasts, money).points[0].label).toBe('Today, 40 · you could stop now');
+    expect(timelinePoints(rich, now, money).points[0].label).toBe('Today, 40 · you’re at FI');
   });
 });
 

@@ -162,7 +162,9 @@ export function fiHeadline(
   const y = view.yearsToFi;
   if (o.noDate) return { ...base, kind: 'no-date', headline: 'No FI date' };
   if (y === null) return { ...base, kind: 'unknown', headline: o.need ?? '--' };
-  if (y === 0) return { ...base, kind: 'there', headline: 'You’re at FI', against: o.runsOutAt != null ? `At these savings it runs out at ${o.runsOutAt}` : null };
+  // At FI already; with D9 the stop found is today, which says a stop now
+  // lasts in a share of starts, not that the FI number is reached.
+  if (y === 0) return { ...base, kind: 'there', headline: ages.lasting ? 'You could stop now' : 'You’re at FI', against: o.runsOutAt != null ? `At these savings it runs out at ${o.runsOutAt}` : null };
   if (y === Infinity) return { ...base, kind: 'never', headline: ages.stopAtFi || ages.lasting ? `Not by ${Math.max(PLAN_TO_AGE, ages.age ?? 0)}` : 'Not reached at this savings rate' };
   const runsOut = o.runsOutAt != null ? `At these savings it runs out at ${o.runsOutAt}` : null;
   if (view.fiAge === null) {

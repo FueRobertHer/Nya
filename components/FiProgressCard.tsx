@@ -51,7 +51,8 @@ import type { Txn } from './MonthBreakdown';
 import { leftOutOf } from '@/lib/fire/child-accounts';
 import { planAccountsOf, planId, usePlanInputs, useSharedPlanInputs, workplacePlansOf, type PlanInputs } from './plan-inputs';
 import { createPlanInputsStore, type PlanInputsCopy, type PlanInputsStore } from '@/lib/plan-inputs-store';
-import { PAYROLL_NOTE, asksLasting, dayName, fiHeadline, pct, progressText, savingsRateText, wholeMoney } from './plan-text';
+import { PAYROLL_NOTE, asksLasting, dayName, fiHeadline, lastingText, pct, progressText, savingsRateText, wholeMoney } from './plan-text';
+import type { LastingFound } from './plan-lasting';
 import { projectFrom, type PlanCore } from '@/lib/fire/plan';
 import { basePlanOf, isStoredPlan, type StoredPlan } from '@/lib/fire/plan-v2';
 import { planFigures } from '@/lib/fire/plan-figures';
@@ -218,7 +219,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
       walk={planned ? { short: planned.short && shortText(planned.short, plan.age, (n) => wholeMoney(n, figures.currency)), runsOutAt: planned.runsOutAt } : { short: null, runsOutAt: null, refused: true }}
       working={deeper?.working ?? false}
       failed={deeper?.failed ?? false}
-      lasting={!('refused' in shown) && shown.resolution.searched === 'lasts'}
+      lasting={!('refused' in shown) && shown.resolution.searched === 'lasts' ? (lasting?.lasting ?? null) : null}
       taxAfterStop={'refused' in shown ? null : (shown.shares?.t ?? null)}
     />
   );
@@ -252,7 +253,7 @@ export function FiProgressView({
   walk = null,
   working = false,
   failed = false,
-  lasting = false,
+  lasting = null,
   taxAfterStop = null,
 }: {
   figures: FiFigures;
@@ -278,8 +279,9 @@ export function FiProgressView({
   working?: boolean;
   /** It couldn't be: the Plan tab can try again. */
   failed?: boolean;
-  /** The answer is the earliest stop that lasts (D9). */
-  lasting?: boolean;
+  /** The answer is the earliest stop that lasts (D9): the stop found, with
+   *  the share of starts it lasts in. */
+  lasting?: LastingFound | null;
 }) {
   const { view, savingsRate, currency, currencyNote, convertedNote } = figures;
   // Without a home currency, a figure that would rest on a part of what it
@@ -380,7 +382,7 @@ export function FiProgressView({
   const from = walk ? null : projectFrom(plan, view);
   const runsOut = view.yearsToFi === 0 && from !== null && plan.age !== null ? projectionShort(from.assets, from.savings, plan.realReturn, from.years) : null;
   const runsOutAt = walk ? walk.runsOutAt : runsOut && plan.age !== null ? plan.age + runsOut.year : null;
-  const head = fiHeadline(view, { age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi, lasting }, { noDate: !!walk?.short, runsOutAt, saving: (view.savings.value ?? 0) > 0 });
+  const head = fiHeadline(view, { age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi, lasting: lasting !== null }, { noDate: !!walk?.short, runsOutAt, saving: (view.savings.value ?? 0) > 0 });
   const there = view.progress !== null ? progressText(view.progress) : null;
   const rate = savingsRate !== null ? `${savingsRateText(savingsRate)} savings rate, ${inputs.flows?.scaled ? `since ${dayName(inputs.flows.from)}` : 'last 12 months'}` : null;
   const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
@@ -390,7 +392,7 @@ export function FiProgressView({
   else if (head.kind === 'age') title = `FI around age ${head.age}${head.against ? `, ${lower(head.against)}` : ''}`;
   else if (head.kind === 'no-date') title = 'No FI date';
   else if (head.kind === 'years' || head.kind === 'later') title = `FI ${lower(head.headline)}`;
-  else if (head.kind === 'there') title = head.against ? `You’re at FI, but ${lower(head.against)}` : 'You’re at FI';
+  else if (head.kind === 'there') title = head.against ? `${head.headline}, but ${lower(head.against)}` : head.headline;
   else if (head.kind === 'never') title = `FI ${lower(head.headline)}`;
   else if (there) title = `${there} of the way to FI`;
   else {
@@ -408,7 +410,10 @@ export function FiProgressView({
       : (view.progress ?? 0) >= 1
         ? `${money(view.assets.value ?? 0)} invested · ${there} of the FI number ${money(view.fiNumber)}`
         : `${money(view.assets.value ?? 0)} of ${money(view.fiNumber)} invested${title.startsWith(there) ? '' : ` (${there})`}`;
-  const sub = [saved ? null : 'Plan defaults', invested, rate].filter((s): s is string => !!s).join(' · ');
+  // A stop now, from D9: in how many starts it lasts, as the Plan says it,
+  // first, so "You could stop now" is never read as at the FI number.
+  const lasts = head.kind === 'there' && lasting ? lastingText(lasting, plan.method, plan.age).replace(/\.$/, '') : null;
+  const sub = [saved ? null : 'Plan defaults', lasts, invested, rate].filter((s): s is string => !!s).join(' · ');
   return <FiRow what={title} detail={sub || undefined} working={working} onOpenPlan={onOpenPlan} notes={notes} />;
 }
 
