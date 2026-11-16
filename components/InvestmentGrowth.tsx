@@ -613,13 +613,14 @@ function InvestmentsHero({
     if (reading.base == null || (reading.from && reading.from.base == null)) {
       uncounted = true;
       const first = g.chart?.baseline[0]?.date;
-      dayLine = `${reading.from ? `${reading.from.day} to ` : ''}${reading.day}${estimated ? ' · estimated' : ''}${first ? ` · returns count from ${day(first)}` : ''} · ${balance}`;
+      const to = reading.from && reading.date ? day(reading.date) : reading.day;
+      dayLine = `${reading.from ? `${reading.from.day} to ` : ''}${to}${estimated ? ' · estimated' : ''}${first ? ` · returns count from ${day(first)}` : ''} · ${balance}`;
     } else {
       // To the cent, so a measure across a flat stretch is $0.00, never −$0.00.
       shown = Math.round((reading.value - reading.base - (reading.from ? reading.from.value - reading.from.base! : 0)) * 100) / 100 || 0;
       const before = !reading.from && counts !== null && !!reading.date && reading.date < counts;
       const from = reading.from ? reading.from.day : before ? null : counts !== null ? day(counts) : null;
-      // After "to", in a sentence's case ("Jun 1 to yesterday").
+      // After "to", in a sentence's case ("Jun 1 to yesterday"), as above.
       const to = from && reading.date ? day(reading.date) : reading.day;
       dayLine = `${from ? `${from} to ` : ''}${to}${estimated ? ' · estimated' : ''}${before ? ` · returns count from ${day(counts!)}` : ''} · ${balance}`;
     }

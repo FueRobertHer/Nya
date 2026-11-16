@@ -931,6 +931,11 @@ describe('the hero, under a finger', () => {
       // Not the range's +$40,000.00 beside Dec 1.
       expect(figure(host)).toBe('Not counted yet');
       expect(words(byClass(host, 'hero-figure-words')[0])).toBe('Not counted yet');
+      // At the figure's size, over a blank screen readers skip, so the hero
+      // keeps its height.
+      const value = byClass(host, 'total-value')[0];
+      expect((value.getAttribute('class') ?? '').split(' ')).not.toContain('plan-answer');
+      expect((value.childNodes[0] as FakeElement).getAttribute('aria-hidden')).toBe('true');
       expect(words(byClass(host, 'hero-day')[0])).toBe('Dec 1, 2025 · returns count from Jun 1 · balance $95,000.00');
       key(host, 'ArrowRight');
       expect(figure(host)).toBe('Not counted yet');
@@ -953,6 +958,21 @@ describe('the hero, under a finger', () => {
     }
   });
 
+  // The Roth IRA has no Jan 1 or Jun 1 of its own, so those days are estimated.
+  test('a day with returns to it says what qualifies it before its balance too', async () => {
+    const { host, root } = setup({ only: ['ind', 'roth'] });
+    try {
+      await pass(50);
+      key(host, 'Home');
+      key(host, 'ArrowRight');
+      key(host, 'ArrowRight');
+      expect(figure(host)).toBe('+$5,000.00');
+      expect(words(byClass(host, 'hero-day')[0])).toBe('Jan 1 to Jun 1 · estimated · balance $151,000.00');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
   test('two days measured across where all time starts counting: words too', async () => {
     const { host, root, range } = setup(LATE);
     try {
@@ -962,7 +982,7 @@ describe('the hero, under a finger', () => {
       finger(host, 'pointermove', 1, 2);
       finger(host, 'pointerdown', 2, LAID_OUT - 8);
       expect(figure(host)).toBe('Not counted yet');
-      expect(words(byClass(host, 'hero-day')[0])).toBe('Dec 1, 2025 to Yesterday · returns count from Jun 1 · balance $120,000.00');
+      expect(words(byClass(host, 'hero-day')[0])).toBe('Dec 1, 2025 to yesterday · returns count from Jun 1 · balance $120,000.00');
     } finally {
       act(() => root.unmount());
     }
