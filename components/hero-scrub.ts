@@ -28,3 +28,9 @@ export type HeroReading = {
 
 /** The hero's setter, for the chart under it; null anywhere else. */
 export const HeroScrub = createContext<((reading: HeroReading | null) => void) | null>(null);
+
+/** Where Accounts > Investments' hero opens the chart's info, under its
+ *  figure: the chart under it draws its info's lines into this node, so it
+ *  masks their amounts as it writes them. Null anywhere else, or until the
+ *  hero has drawn the node. */
+export const HeroInfo = createContext<HTMLElement | null>(null);
