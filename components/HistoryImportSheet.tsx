@@ -37,8 +37,9 @@
 // and waits for a yes when a QFX differs from what counts now; on an account
 // at another firm that file is refused rather than read as some other file.
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
+import FilePick from './FilePick';
 import { CsvMapping, DateOrderQuestion, kindsText, shownReason, type Picked } from './ImportSheet';
 import { Masked } from './HideAmounts';
 import { formatDay, formatInstantDay, formatMoney, onDay, signedMoney } from '@/lib/format';
@@ -317,6 +318,13 @@ export default function HistoryImportSheet({
   const [review, setReview] = useState<Review | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // What is wrong with the file chosen, under its button (FilePick), and how
+  // many files were refused, so How to get these files opens again on each.
+  const [fileError, setFileError] = useState('');
+  const [refusals, setRefusals] = useState(0);
+  // The line an undo's result is said on, for focus once it is undone.
+  const resultLine = useRef<HTMLDivElement>(null);
+  const [undone, setUndone] = useState(0);
   const [done, setDone] = useState<Done | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
   const [choices, setChoices] = useState<ChoiceSet<Choice>>(NONE);
@@ -347,6 +355,14 @@ export default function HistoryImportSheet({
   const txns = useTransactionImports(vanguard && account ? account.account_id : null);
   const txnList = txns.list && txns.list.imports.length > 0 ? txns.list : null;
   const imported = !!perf.imports || !!txnList;
+  // How to get these files opens on a first visit, once both lists say there
+  // is nothing yet, and after a file Nya can't read.
+  const known = perf.loaded && (txns.list !== null || !!txns.error);
+  const howOpen = (known && !imported) || !!fileError;
+  // Once an undo's result is said, focus goes to it: the row it came from is gone.
+  useEffect(() => {
+    if (undone > 0) resultLine.current?.focus();
+  }, [undone]);
   const reviewCtx = useMemo(
     () => ({
       account_id: account?.account_id ?? '',
@@ -398,6 +414,7 @@ export default function HistoryImportSheet({
     setReview(null);
     setBusy(false);
     setError('');
+    setFileError('');
     setDone(null);
     setAcknowledged(false);
     setChoices(NONE);
@@ -431,6 +448,8 @@ export default function HistoryImportSheet({
   /** Asks the server for the review, with these answers, choices and period. */
   async function requestReview(next: ImportOptions, picked: Picked | null = file, chosen = choices, conflictChoices = conflicts, period = covers) {
     if (!picked || !account) return;
+    // Straight from the file chosen, a refusal of it is said under its button.
+    const atPick = step === 'pick';
     setBusy(true);
     setError('');
     try {
@@ -458,7 +477,9 @@ export default function HistoryImportSheet({
         setStep(data.needs === 'statement' ? 'statement' : data.needs === 'date_order' && picked.format === 'qif' ? 'order' : 'mapping');
         return;
       }
-      setError(data?.error ?? 'The file couldn’t be checked. Please try again.');
+      const text = data?.error ?? 'The file couldn’t be checked. Please try again.';
+      if (atPick && [400, 413, 422].includes(res.status)) refuse(text);
+      else setError(text);
     } catch {
       setError('Could not reach the server.');
     } finally {
@@ -470,7 +491,7 @@ export default function HistoryImportSheet({
     setOptions(next);
     const r = readImport(picked.text, { format: picked.format, options: next, thisYear, ...(picked.format === 'csv' ? { limit: LIVE_ROWS } : {}) });
     if (r.status === 'error') {
-      setError(r.error);
+      refuse(r.error);
       setStep('pick');
       return;
     }
@@ -484,8 +505,15 @@ export default function HistoryImportSheet({
     void requestReview(next, picked, NONE(), NONE(), null);
   }
 
+  /** A file Nya won't take: said under the button, with how to get one open. */
+  function refuse(text: string) {
+    setFileError(text);
+    setRefusals((n) => n + 1);
+  }
+
   async function pick(f: File | null) {
     setError('');
+    setFileError('');
     setNotice('');
     setDone(null);
     setMonthsError(null);
@@ -494,18 +522,18 @@ export default function HistoryImportSheet({
     const head = new Uint8Array(await f.slice(0, 8).arrayBuffer().catch(() => new ArrayBuffer(0)));
     if (isPdf(f.name, head)) {
       if (!account.vanguard) {
-        setError(notVanguardWords(name, account.institution_name));
+        refuse(notVanguardWords(name, account.institution_name));
         return;
       }
       void readMonths(f);
       return;
     }
     if (f.size > MAX_FILE_BYTES) {
-      setError(`This file is larger than ${MAX_FILE_BYTES / (1024 * 1024)} MB, more than one import takes. Export a shorter period and import it in parts.`);
+      refuse(`This file is larger than ${MAX_FILE_BYTES / (1024 * 1024)} MB, more than one import takes. Export a shorter period and import it in parts.`);
       return;
     }
     if (f.size === 0) {
-      setError('This file is empty.');
+      refuse('This file is empty.');
       return;
     }
     setBusy(true);
@@ -515,7 +543,7 @@ export default function HistoryImportSheet({
       // account only.
       if (isVanguardTransactions(text) || isVanguardQfx(text)) {
         if (!account.vanguard)
-          setError(
+          refuse(
             /vanguard/i.test(account.institution_name)
               ? `This is ${TXN_SOURCE}, which Nya imports only into the Vanguard investment accounts it’s connected to, and ${name} isn’t one. Import it from one of those.`
               : `This is ${TXN_SOURCE}, and ${name} is at ${account.institution_name}. Import it from one of your Vanguard accounts.`
@@ -558,7 +586,7 @@ export default function HistoryImportSheet({
       }
       proceed(next, picked, remembered);
     } catch {
-      setError('This file couldn’t be read.');
+      refuse('This file couldn’t be read.');
     } finally {
       setBusy(false);
     }
@@ -650,7 +678,7 @@ export default function HistoryImportSheet({
   /** A Performance page, read here into its months for the review. */
   async function readMonths(f: File) {
     if (f.size > MAX_PDF_BYTES) {
-      setError(pdfProblem({ kind: 'error', error: 'too-large' }));
+      refuse(pdfProblem({ kind: 'error', error: 'too-large' }));
       return;
     }
     setBusy(true);
@@ -661,14 +689,14 @@ export default function HistoryImportSheet({
       if (outcome.kind !== 'read') {
         setPdf(null);
         setStep('pick');
-        setError(pdfProblem(outcome));
+        refuse(pdfProblem(outcome));
         return;
       }
       setPdf({ name: f.name, read: outcome });
     } catch {
       setPdf(null);
       setStep('pick');
-      setError(pdfProblem({ kind: 'error', error: 'unreadable' }));
+      refuse(pdfProblem({ kind: 'error', error: 'unreadable' }));
     } finally {
       setBusy(false);
       setInputKey((k) => k + 1);
@@ -734,6 +762,7 @@ export default function HistoryImportSheet({
         perf.setImports(data?.investment_months ?? null);
         investmentMonthsSaved(account.account_id, account.item_id ?? '', data?.investment_months ?? null);
         setNotice(`Undone: the import of ${SOURCE} from ${formatInstantDay(i.imported_at, { sentence: true }) ?? i.imported_at.slice(0, 10)}.`);
+        setUndone((n) => n + 1);
         onImported();
         return true;
       }
@@ -773,7 +802,9 @@ export default function HistoryImportSheet({
       if (!review || none) {
         setTxn(null);
         setStep('pick');
-        setError(none ?? (typeof data?.error === 'string' ? data.error : 'The file couldn’t be checked. Please try again.'));
+        if (none) refuse(none);
+        else if (res.status === 400 && typeof data?.error === 'string') refuse(data.error);
+        else setError(typeof data?.error === 'string' ? data.error : 'The file couldn’t be checked. Please try again.');
         return;
       }
       setTxn({ name: fileName, text, today, review });
@@ -863,6 +894,7 @@ export default function HistoryImportSheet({
         txns.set(data);
         const n = i.accounts.length;
         setNotice(`Undone: the import of ${i.file_name ?? TXN_SOURCE} from ${formatInstantDay(i.imported_at, { sentence: true }) ?? i.imported_at.slice(0, 10)}${n > 1 ? `, from ${plural(n, 'account')}` : ''}.`);
+        setUndone((n) => n + 1);
         txnsChanged(touched);
         return true;
       }
@@ -891,6 +923,7 @@ export default function HistoryImportSheet({
     setReview(null);
     setDone(null);
     setError('');
+    setFileError('');
     setChoices(NONE);
     setSentChoices(NONE);
     setConflicts(NONE);
@@ -942,41 +975,45 @@ export default function HistoryImportSheet({
     >
       {step === 'pick' && vanguard && (
         <div className="stack">
-          {imported ? (
+          {imported && (
             <>
               <TransactionsNow name={name} activity={perf.activity} />
               {perf.imports && <PerformanceNow name={name} imports={perf.imports} points={perf.points} activity={perf.activity} currency={shown.currency} />}
-              <p>
-                Bring in more of {name}’s history from files {shown.institution_name} lets you download: a newer Performance page as a PDF, or transactions as a CSV,
-                QFX, OFX or QIF file.
-              </p>
-            </>
-          ) : (
-            <>
-              <p>Bring in years of {name}’s history from files {shown.institution_name} lets you download, to see further back than it shares with Nya.</p>
-              <div className="stack tight">
-                <h3 className="section-label">{SOURCE}, as a PDF</h3>
-                <p className="helper">
-                  Every month since the account opened (its balance, deposits and withdrawals, and returns), so its chart and your all-time returns reach back. On the
-                  Performance page, choose this account alone and a range from when it opened, then print the page to a PDF. Nya reads it on this device and keeps only
-                  the months: the file isn’t uploaded.
-                </p>
-              </div>
-              <div className="stack tight">
-                <h3 className="section-label">{TXN_SOURCE}: CSV, OFX or QFX</h3>
-                <p className="helper">
-                  Up to 18 months of transactions for every account in your Vanguard login, in Vanguard’s own words, so a conversion or a transfer of shares counts as
-                  what it was. For the days a file covers, its transactions take the place of the ones Vanguard gave Nya. Choose CSV if you can: an OFX or QFX file
-                  leaves out conversions and shares moved in kind.
-                </p>
-              </div>
-              <p className="helper">
-                A QIF file, or a CSV laid out another way, is imported as before: up to {MAX_FILE_BYTES / (1024 * 1024)} MB and{' '}
-                {MAX_IMPORT_ROWS.toLocaleString()} transactions, shown beside what {shown.institution_name} gave Nya for you to confirm. Those show as the account’s
-                activity and don’t change its balance history: a market’s moves aren’t transactions.
-              </p>
             </>
           )}
+          <div className="stack tight">
+            <p className="helper">
+              See further back than {shown.institution_name} shares with Nya, from a file {shown.institution_name} lets you download.
+            </p>
+            <FilePick
+              accept=".pdf,.ofx,.qfx,.csv,.tsv,.txt,.qif,application/pdf,text/csv,application/x-ofx,application/vnd.intu.qfx,application/qif"
+              inputKey={inputKey}
+              disabled={busy}
+              error={fileError}
+              onPick={(f) => void pick(f)}
+            />
+          </div>
+          {/* Open on a first visit, with nothing below it yet, and after a file
+              Nya can't read; otherwise one tap away. */}
+          <details key={refusals} className="why" open={howOpen}>
+            <summary>How to get these files</summary>
+            <div className="why-body">
+              <div className="stack tight">
+                <p>
+                  <b>Every month since it opened.</b> On {SOURCE}, choose this account alone and a range from when it opened, then print the page to a PDF. Nya reads
+                  it on this device and keeps only the months: the file isn’t uploaded.
+                </p>
+                <p>
+                  <b>Up to 18 months of transactions.</b> Download them from Vanguard as CSV, OFX or QFX. Choose CSV if you can: OFX and QFX leave out conversions and
+                  shares moved in kind. One file holds every account in your Vanguard login, and you pick which to import it into.
+                </p>
+                <p>
+                  A QIF file, or a CSV laid out another way, is imported as before: shown beside what {shown.institution_name} gave Nya for you to confirm, up to{' '}
+                  {MAX_FILE_BYTES / (1024 * 1024)} MB and {MAX_IMPORT_ROWS.toLocaleString()} transactions a file.
+                </p>
+              </div>
+            </div>
+          </details>
           {past?.history_pending && <HistoryPendingNote bank={shown.institution_name} />}
           {past?.bank_from && (
             <p className="helper">
@@ -984,29 +1021,6 @@ export default function HistoryImportSheet({
               past it, so no days fall between the two.
             </p>
           )}
-          <div className="stack tight">
-            <label className="field">
-              File to import into {name}
-              <input
-                key={inputKey}
-                type="file"
-                accept=".pdf,.ofx,.qfx,.csv,.tsv,.txt,.qif,application/pdf,text/csv,application/x-ofx,application/vnd.intu.qfx,application/qif"
-                onChange={(e) => void pick(e.target.files?.[0] ?? null)}
-                disabled={busy}
-              />
-            </label>
-            {imported && (
-              <p className="helper">
-                {[
-                  perf.imports ? 'The newest Performance page counts, whole.' : '',
-                  txnList ? 'For each day, the newest transactions download that covers it decides, a CSV before a QFX.' : '',
-                  'Older imports are kept so you can go back to them.',
-                ]
-                  .filter(Boolean)
-                  .join(' ')}
-              </p>
-            )}
-          </div>
           {busy && <p className="helper">Reading the file…</p>}
           {error && (
             <Notice level="critical" role="alert">
@@ -1024,7 +1038,7 @@ export default function HistoryImportSheet({
             </Notice>
           )}
           {notice && (
-            <div className="notice done" role="status">
+            <div className="notice done" role="status" ref={resultLine} tabIndex={-1}>
               {CHECK}
               <div>
                 <LevelWord level="done" />
@@ -1037,7 +1051,7 @@ export default function HistoryImportSheet({
           {imported && (
             <div className="stack tight">
               <h3 className="section-label">Past imports into {name}</h3>
-              {txnList && <TransactionImports name={name} list={txnList} activity={perf.activity} busy={busy} onUndo={undoTxns} />}
+              {txnList && <TransactionImports name={name} accountId={shown.account_id} list={txnList} activity={perf.activity} busy={busy} onUndo={undoTxns} />}
               {perf.imports && (
                 <PerformanceImports
                   name={name}
@@ -1070,11 +1084,10 @@ export default function HistoryImportSheet({
           {imported && (
             <Why>
               Each import is kept on its own, as it was read, and nothing else in Nya is changed by it: not what Vanguard gave Nya, not its recorded balances, not your
-              deposits and withdrawals, not another import. What counts is worked out from what’s here each time you look, so undoing an import takes out only that
-              import, and the account is as it was before it. Only the newest Performance page counts, so two files’ months are never mixed; to correct a month Vanguard
-              has since changed, import its page again. For each day, the newest transactions download that covers it decides, a CSV before a QFX (which leaves out
-              conversions and shares moved in kind), so undoing one hands its days to the next that covers them, or back to what Vanguard gave Nya. A download imported
-              into several accounts is undone from all of them.
+              deposits and withdrawals, not another import. What is in use is worked out from what’s here each time you look. Only the newest Performance page is used,
+              so two files’ months are never mixed; to correct a month Vanguard has since changed, import its page again. For each day, the newest transactions
+              download that covers it decides, a CSV before an OFX or QFX, since those leave out conversions and shares moved in kind. So undoing an import hands its
+              days to the one before it, or back to what Vanguard gave Nya. A download imported into several accounts is undone from all of them.
             </Why>
           )}
         </div>
@@ -1198,18 +1211,13 @@ export default function HistoryImportSheet({
             </p>
           )}
           {past?.reach?.reach && <p className="panel-note">The estimated history reaches back to {inDay(past.reach.reach)} through what you imported.</p>}
-          <div className="sheet-form">
-            <label className="field">
-              File to import into {name}
-              <input
-                key={inputKey}
-                type="file"
-                accept=".ofx,.qfx,.csv,.tsv,.txt,.qif,text/csv,application/x-ofx,application/vnd.intu.qfx,application/qif"
-                onChange={(e) => void pick(e.target.files?.[0] ?? null)}
-                disabled={busy}
-              />
-            </label>
-          </div>
+          <FilePick
+            accept=".ofx,.qfx,.csv,.tsv,.txt,.qif,text/csv,application/x-ofx,application/vnd.intu.qfx,application/qif"
+            inputKey={inputKey}
+            disabled={busy}
+            error={fileError}
+            onPick={(f) => void pick(f)}
+          />
           {busy && <p className="panel-note">Reading the file…</p>}
           {error && (
             <Notice level="critical" role="alert">

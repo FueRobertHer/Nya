@@ -98,6 +98,8 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 | Key and value details | `.txn-detail` with `.txn-detail-row` | |
 | Labelled figures in a row (In, Out, Net; totals by kind) | `.stat-strip` of `.stat`, each a `.stat-label` over a `.stat-value` | `.summary-row` with `.summary-value` |
 | A form field | `.field` around a plain `<input>` or `<select>` | |
+| Choosing a file | `FilePick`: a `.btn.secondary` label over a `.visually-hidden` file input, a file Nya won't take said in its `FieldError` under it | the browser's file field in a `.field` |
+| An import's row in a list of past imports | `.import-status` on its `.list-row-sub`, leading with what it does now in `<b>`: In use, In use for a span, or Not in use and why | a `.badge` (Counts, Doesn't count) |
 | Choosing one of a few options, each with a note, and the picked one's fields under it | `RadioRows` (`.radio-rows`, `.radio-row`, `.radio-row-detail`) | `.lifecycle-choice`, `.download-format` |
 | Choosing any of a few things a save also does | `CheckRows` (`.check-rows`, `.check-row`) | a list of bare checkboxes in labels |
 | A form in a sheet | `.sheet-form` | |

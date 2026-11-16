@@ -1828,6 +1828,23 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
   cursor: not-allowed;
 }
 
+/* A file chosen through a button (components/FilePick.tsx): the input is
+   visually hidden inside the label, so the button shows its focus ring and
+   its dimming, and points as a button does. */
+.btn:has(> input[type='file']) {
+  cursor: pointer;
+}
+
+.btn:has(> input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.btn:has(> input:disabled) {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .spinner {
   width: 28px;
   height: 28px;
@@ -5805,6 +5822,14 @@ button.import-choice {
 
 .import-confirm {
   margin-top: 4px;
+}
+
+/* An import's row in History leads with what it does now: In use, In use
+   for a span, or Not in use and why, in the line's own color with the
+   status in bold (components/TransactionsImport.tsx, PerformanceImport.tsx). */
+.import-status b {
+  color: var(--text-1);
+  font-weight: var(--fw-semibold);
 }
 
 /* A row whose bank id is already used here: the file's version over the

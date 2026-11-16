@@ -460,26 +460,59 @@ export function TransactionsNow({ name, activity }: { name: string; activity: In
   );
 }
 
-/** Whether an import counts now, by what the activity says each one
- *  decides: null until it has loaded. One that doesn't says why: its days
- *  don't reach Nya's activity, or other imports decide them (for a QFX, a
- *  CSV when one decides any of them, as a CSV always comes first). */
-function standing(i: ListedImport, list: TxnImports, activity: InvestmentActivityPayload | null): { badge: string; sub: string; days: { from: string; to: string }[] } | null {
+/** Whether an import is in use now, by what the activity says each one
+ *  decides: null until it has loaded. In use for part of its days says what
+ *  has the rest; not in use says why: its days don't reach Nya's activity,
+ *  or other downloads decide them (for a QFX, a CSV when one decides any of
+ *  them, as a CSV always comes first). `label` is said in bold, `why` after
+ *  it as it reads. */
+function standing(i: ListedImport, list: TxnImports, activity: InvestmentActivityPayload | null): { label: string; why: string; days: { from: string; to: string }[] } | null {
   if (!activity?.imported_days) return null;
   const days = activity.imported_days.filter((d) => d.import_id === i.import_id).map(({ from, to }) => ({ from, to }));
   const has = days.reduce((n, d) => n + daysApart(d.from, d.to) + 1, 0);
   const all = daysApart(i.covers.from, i.covers.to) + 1;
-  if (has >= all) return { badge: 'Counts', sub: '', days };
-  if (has > 0) return { badge: 'Counts in part', sub: ` · counts ${listed(days.map((d) => spanText(d.from, d.to)))}`, days };
-  if (activity.imports_unused?.includes(i.import_id)) return { badge: 'Doesn’t count', sub: ' · its days don’t reach Nya’s activity', days };
-  // The imports that decide its days instead, by their kind.
-  const deciders = new Set(activity.imported_days.filter((d) => d.from <= i.covers.to && d.to >= i.covers.from).map((d) => d.import_id));
+  if (has >= all) return { label: 'In use', why: '', days };
+  // The downloads that decide its other days instead, by their kind.
+  const deciders = new Set(activity.imported_days.filter((d) => d.import_id !== i.import_id && d.from <= i.covers.to && d.to >= i.covers.from).map((d) => d.import_id));
   const kinds = new Set(list.imports.filter((o) => deciders.has(o.import_id)).map((o) => o.source));
+  const its = has > 0 ? 'its other days' : 'these days';
+  const one = deciders.size === 1;
   const why =
-    i.source !== 'vanguard-qfx' ? 'newer imports decide its days'
-    : kinds.size === 1 && kinds.has('vanguard-csv') ? (deciders.size === 1 ? 'a CSV import decides its days' : 'CSV imports decide its days')
-    : 'other imports decide its days';
-  return { badge: 'Doesn’t count', sub: ` · ${why}`, days };
+    deciders.size === 0 ? `${its === 'these days' ? 'its days don’t' : 'its other days don’t'} reach Nya’s activity`
+    : i.source !== 'vanguard-qfx' ? `${one ? 'a newer download is' : 'newer downloads are'} used for ${its}`
+    : kinds.size === 1 && kinds.has('vanguard-csv') ? `${one ? 'a CSV download is' : 'CSV downloads are'} used for ${its}`
+    : `${one ? 'another download is' : 'other downloads are'} used for ${its}`;
+  if (has > 0) return { label: `In use for ${listed(days.map((d) => spanText(d.from, d.to)))}`, why: ` · ${why}`, days };
+  if (activity.imports_unused?.includes(i.import_id)) return { label: 'Not in use:', why: ' its days don’t reach Nya’s activity', days };
+  return { label: 'Not in use:', why: ` ${why}`, days };
+}
+
+/** Focus for a list's Undo asked in place: to the ask when it opens, back to
+ *  the row's Undo when it is kept. Once undone the row is gone, and the sheet
+ *  moves focus to its result. */
+export function useAskFocus(asking: string | null) {
+  const ask = useRef<HTMLParagraphElement>(null);
+  const undos = useRef(new Map<string, HTMLButtonElement>());
+  const [back, setBack] = useState<string | null>(null);
+  useEffect(() => {
+    if (asking) ask.current?.focus();
+  }, [asking]);
+  useEffect(() => {
+    if (!back || asking) return;
+    undos.current.get(back)?.focus();
+    setBack(null);
+  }, [back, asking]);
+  return {
+    ask,
+    undo: (id: string) => (el: HTMLButtonElement | null) => {
+      if (el) undos.current.set(id, el);
+      else undos.current.delete(id);
+    },
+    keep: (close: () => void) => {
+      setBack(asking);
+      close();
+    },
+  };
 }
 
 const NUMBER_WORDS = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
@@ -519,6 +552,7 @@ export function undoText(i: ListedImport, list: TxnImports, activity: Investment
 
 export function TransactionImports({
   name,
+  accountId,
   list,
   activity,
   busy,
@@ -526,6 +560,8 @@ export function TransactionImports({
 }: {
   /** The sheet's account, with its mask. */
   name: string;
+  /** The sheet's account, so a row names only the others it went into. */
+  accountId: string;
   list: TxnImports;
   /** Its activity, or null while it is loading or out of date. */
   activity: InvestmentActivityPayload | null;
@@ -533,35 +569,48 @@ export function TransactionImports({
   onUndo: (i: ListedImport) => Promise<boolean>;
 }) {
   const [asking, setAsking] = useState<string | null>(null);
+  const focus = useAskFocus(asking);
   if (list.imports.length === 0) return null;
   return (
     <ul className="list-rows">
       {list.imports.map((i) => {
         const now = standing(i, list, activity);
-        const others = i.accounts.length - 1;
+        const others = i.accounts.filter((id) => id !== accountId).map((id) => (list.names[id] ? withMask(list.names[id].name, list.names[id].mask) : 'an account Nya no longer lists'));
         return (
           <li key={i.import_id}>
             <div className="list-row">
               <span className="list-row-text">
                 <span className="list-row-title">{i.file_name ?? TXN_SOURCE}</span>
-                <span className="list-row-sub">
-                  {`Imported ${importedDay(i)} · ${plural(i.rows, 'transaction')}${others > 0 ? `, and into ${plural(others, 'other account')}` : ''} · ${capital(spanText(i.covers.from, i.covers.to))}${now?.sub ?? ''}`}{' '}
-                  {now && <span className={`badge${now.badge === 'Doesn’t count' ? '' : ' accent'}`}>{now.badge}</span>}
+                <span className="list-row-sub import-status">
+                  {now && (
+                    <>
+                      <b>{now.label}</b>
+                      {`${now.why} · `}
+                    </>
+                  )}
+                  {`${capital(spanText(i.covers.from, i.covers.to))} · ${plural(i.rows, 'transaction')}${others.length > 0 ? `, and also into ${listed(others)}` : ''} · imported ${importedDay(i)}`}
                 </span>
               </span>
               {asking !== i.import_id && (
-                <button type="button" className="btn ghost" aria-label={`Undo the import from ${importedDay(i)}`} disabled={busy} onClick={() => setAsking(i.import_id)}>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  ref={focus.undo(i.import_id)}
+                  aria-label={`Undo the import from ${importedDay(i)}`}
+                  disabled={busy}
+                  onClick={() => setAsking(i.import_id)}
+                >
                   Undo
                 </button>
               )}
             </div>
             {asking === i.import_id && (
               <div className="import-confirm stack tight">
-                <p className="helper" role="status">
+                <p className="helper" role="status" ref={focus.ask} tabIndex={-1}>
                   {undoText(i, list, activity, name)}
                 </p>
                 <div className="btn-row">
-                  <button type="button" className="btn secondary" disabled={busy} onClick={() => setAsking(null)}>
+                  <button type="button" className="btn secondary" disabled={busy} onClick={() => focus.keep(() => setAsking(null))}>
                     Keep it
                   </button>
                   <button

@@ -266,22 +266,49 @@ describe('the imports', () => {
     return { host, undone, button, unmount: () => act(() => root.unmount()) };
   };
 
-  test('the newest counts; undoing it says what comes back, an older one that nothing changes', async () => {
+  test('the newest in use; undoing it says what comes back, an older one that nothing changes', async () => {
     const older = anImport({ id: 'imp-0', imported_at: '2026-11-01T12:00:00.000Z' });
     const v = mount([older, anImport()]);
-    expect(words(v.host.textContent)).toContain('Imported today · 34 months · covers Jan 2024 to Oct 2026 Counts');
+    const text = words(v.host.textContent);
+    expect(text).toContain(
+      'In use where Nya has nothing of its own: balances before Jul 1, and deposits and withdrawals before Jul 1 · Jan 2024 to Oct 2026 · 34 months · imported today'
+    );
+    expect(text).toContain('Not in use: the newer Performance page is used in its place · Jan 2024 to Oct 2026 · 34 months · imported Nov 1');
+    expect(text).not.toMatch(/Counts/);
+    // The status is said first, in bold.
+    expect(v.host.findAll((e) => e.tagName === 'B').map((b) => b.textContent)).toEqual(['In use where Nya has nothing of its own:', 'Not in use:']);
     act(() => click(v.button('Undo the import from today')));
     expect(v.host.textContent).toContain(
       'Undo the import from today? The months will come from the one before it again, from Nov 1: Jan 2024 to Oct 2026. Nothing else changes, and you can import the file again later.'
     );
+    // Focus goes to the ask, and back to the row's Undo when it is kept.
+    const ask = v.host.findAll((e) => e.tagName === 'P' && e.textContent.startsWith('Undo the import from today?'))[0];
+    expect(dom.document.activeElement).toBe(ask);
     act(() => click(v.button('Keep it')));
+    expect(dom.document.activeElement).toBe(v.button('Undo the import from today'));
     act(() => click(v.button('Undo the import from Nov 1')));
     expect(v.host.textContent).toContain(
-      'Undo the import from Nov 1? Nothing you see changes: the newest import counts. There’s just no going back to this one afterwards. You can import the file again later.'
+      'Undo the import from Nov 1? Nothing you see changes: the newer Performance page is used in its place. It leaves this list, and you can import the file again later.'
     );
     await act(async () => click(v.button('Undo import')));
     expect(v.undone).toEqual(['imp-0']);
     v.unmount();
+  });
+
+  test('the newest whose months aren’t used says so, never In use; while what it is used for loads, nothing is said of it', () => {
+    // Its months end before Nya's activity starts (Jul 1), so nothing joins them.
+    const early = anImport({ months: anImport().months.filter((m) => m.month <= '2025-12') });
+    const v = mount([early]);
+    expect(words(v.host.textContent)).toContain('Not in use: nothing covers the days between them and Nya’s activity · Jan 2024 to Dec 2025 · 24 months · imported today');
+    expect(v.host.textContent).not.toContain('In use');
+    v.unmount();
+    const loading = mount([anImport({ id: 'imp-0', imported_at: '2026-11-01T12:00:00.000Z' }), anImport()], null as never);
+    const lines = loading.host.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes('import-status')).map((e) => e.textContent);
+    expect(lines).toEqual([
+      'Jan 2024 to Oct 2026 · 34 months · imported today',
+      'Not in use: the newer Performance page is used in its place · Jan 2024 to Oct 2026 · 34 months · imported Nov 1',
+    ]);
+    loading.unmount();
   });
 
   test('undoing the newest when the one before gives all time otherwise: said', () => {
@@ -405,7 +432,8 @@ describe('the sheet', () => {
   test('a Vanguard account: read on the device, reviewed, imported, listed, and undone', async () => {
     let reads = 0;
     const v = await mount(TARGET, async () => (reads++, readOf(MONTHS)));
-    expect(v.text()).toContain('Vanguard’s Performance page, as a PDF');
+    expect(v.text()).toContain('See further back than Vanguard shares with Nya, from a file Vanguard lets you download.');
+    expect(v.text()).toContain('On Vanguard’s Performance page, choose this account alone and a range from when it opened, then print the page to a PDF.');
     await v.choose('Performance.pdf');
     expect(reads).toBe(1);
     expect(v.text()).toContain('34 months, Jan 2024 to Oct 2026');
@@ -418,15 +446,18 @@ describe('the sheet', () => {
     expect(v.imported()).toBe(1);
     expect(v.text()).toContain('Done: 34 months imported from Performance.pdf.');
     expect(v.text()).toContain('Jan 2024 to Oct 2026, from Vanguard’s Performance page');
-    expect(v.text()).toContain('Nya uses them where it has nothing of its own: balances before Jul 1, and deposits and withdrawals before Jul 1.');
     expect(v.text()).toContain('Past imports into Individual');
-    expect(v.text()).toContain('Counts');
+    expect(v.text()).toContain('In use where Nya has nothing of its own: balances before Jul 1, and deposits and withdrawals before Jul 1');
+    // Said once, on the import's row.
+    expect(v.text().split('nothing of its own')).toHaveLength(2);
 
     await v.press('Undo the import from today');
     await v.press('Undo import');
     expect(v.sent[1].body).toEqual({ action: 'undo', account_id: 'acc_vg', import_id: 'imp-1' });
     expect(v.imported()).toBe(2);
     expect(v.text()).toContain('Undone: the import of Vanguard’s Performance page from today.');
+    // The row is gone, so focus goes to what was said.
+    expect((dom.document.activeElement as unknown as FakeElement).textContent).toContain('Undone: the import of Vanguard’s Performance page from today.');
     expect(v.text()).not.toContain('Past imports into Individual');
     v.unmount();
   });

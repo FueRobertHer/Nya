@@ -174,11 +174,14 @@ async function mount(target: Target, opts: { review?: ImportsReview; refuse?: { 
   const box = (title: string) => checkRow(title).findAll((e) => e.tagName === 'INPUT')[0] as unknown as { checked: boolean; getAttribute: (k: string) => string | null };
   const button = (label: string) => host.findAll((e) => e.tagName === 'BUTTON' && (e.getAttribute('aria-label') ?? e.textContent.trim()) === label)[0] ?? null;
   return {
+    host,
     sent,
     imported,
     button,
     box,
     text: () => words(host.textContent),
+    /** How to get these files, open or not. */
+    how: () => host.findAll((e) => e.tagName === 'DETAILS' && e.textContent.startsWith('How to get these files'))[0],
     choose: async (name: string, text = FILE) => {
       const bytes = new TextEncoder().encode(text);
       const input = host.findAll((e) => e.tagName === 'INPUT' && e.getAttribute('type') === 'file')[0];
@@ -203,7 +206,10 @@ async function mount(target: Target, opts: { review?: ImportsReview; refuse?: { 
 describe('the sheet', () => {
   test('a Vanguard account: the download reviewed, imported into every account checked, listed, and undone from all of them', async () => {
     const v = await mount(TARGET);
-    expect(v.text()).toContain('Vanguard’s transactions download: CSV, OFX or QFX');
+    expect(v.text()).toContain('See further back than Vanguard shares with Nya, from a file Vanguard lets you download.');
+    expect(v.text()).toContain('Up to 18 months of transactions. Download them from Vanguard as CSV, OFX or QFX.');
+    // A first visit: nothing imported, so how to get the files is open.
+    expect(v.how().hasAttribute('open')).toBe(true);
     await v.choose('OfxDownload.csv');
     expect(v.sent[0].body).toEqual({ action: 'review', account_id: 'ind', file_name: 'OfxDownload.csv', text: FILE, today: '2026-11-06' });
 
@@ -247,7 +253,10 @@ describe('the sheet', () => {
     expect(v.text()).toContain('94 transactions imported into 2 accounts from OfxDownload.csv.');
     expect(v.text()).toContain('Jun 1, 2025 to yesterday, from Vanguard’s transactions download');
     expect(v.text()).toContain('Past imports into Individual ••4421');
-    expect(v.text()).toContain('Imported today · 61 transactions, and into 1 other account · Jun 1, 2025 to yesterday Counts');
+    expect(v.text()).toContain('In use · Jun 1, 2025 to yesterday · 61 transactions, and also into Traditional IRA ••5519 · imported today');
+    expect(v.text()).not.toMatch(/Counts/);
+    // With something imported, how to get the files is one tap away.
+    expect(v.how().hasAttribute('open')).toBe(false);
 
     await v.press('Undo the import from today');
     expect(v.text()).toContain(
@@ -258,6 +267,8 @@ describe('the sheet', () => {
     expect(v.imported).toEqual([{ investments: true }, { investments: true }]);
     expect(v.text()).toContain('Undone: the import of OfxDownload.csv from today, from 2 accounts.');
     expect(v.text()).not.toContain('Past imports into');
+    // The row is gone, so focus goes to what was said.
+    expect((dom.document.activeElement as unknown as FakeElement).textContent).toContain('Undone: the import of OfxDownload.csv from today, from 2 accounts.');
     v.unmount();
   });
 
@@ -280,8 +291,25 @@ describe('the sheet', () => {
     const review: ImportsReview = { ...REVIEW, accounts: [{ mask: '8802', lines: 9, rows: 9, account: null, problem: { why: 'not-in-nya' }, effect: null }, { mask: '1150', lines: 2, rows: 2, account: null, problem: { why: 'not-in-nya' }, effect: null }] };
     const v = await mount({ ...TARGET, account_id: 'ind3' }, { review });
     await v.choose('OfxDownload.csv');
-    expect(v.text()).toContain('None of this file’s accounts (••8802 and ••1150) is one of your Vanguard accounts in Nya, so nothing can be imported. Download it from the Vanguard login Individual ••4421 is in.');
-    expect(v.text()).toContain('File to import into Individual ••4421');
+    const said = 'None of this file’s accounts (••8802 and ••1150) is one of your Vanguard accounts in Nya, so nothing can be imported. Download it from the Vanguard login Individual ••4421 is in.';
+    // Under the button, said as it appears, and named by the field.
+    const error = v.host.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes('field-error'))[0];
+    expect(error.textContent).toBe(said);
+    expect(error.parentNode && (error.parentNode as FakeElement).getAttribute('role')).toBe('alert');
+    const input = v.host.findAll((e) => e.tagName === 'INPUT' && e.getAttribute('type') === 'file')[0];
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(input.getAttribute('aria-describedby')).toBe(error.getAttribute('id'));
+    expect((input.parentNode as FakeElement).textContent).toBe('Choose a file');
+    // No critical notice: nothing in Nya is wrong.
+    expect(v.host.findAll((e) => (e.getAttribute('class') ?? '').includes('notice critical'))).toEqual([]);
+    // How to get the files opens, the field has focus again, and choosing again clears the error.
+    expect(v.how().hasAttribute('open')).toBe(true);
+    expect(dom.document.activeElement).toBe(input);
+    // Closed by the person, it opens again on the next file Nya can't take.
+    v.how().removeAttribute('open');
+    await v.choose('OfxDownload.csv');
+    expect(v.text()).toContain(said);
+    expect(v.how().hasAttribute('open')).toBe(true);
     v.unmount();
   });
 
@@ -413,8 +441,9 @@ describe('the download as QFX', () => {
       names: {},
     };
     const activity = { imported_days: [{ import_id: 'csv-1', ...at.covers, file_name: 'OfxDownload.csv', imported_at: at.imported_at }], imports_unused: [] } as unknown as Parameters<typeof TransactionImports>[0]['activity'];
-    const shown = words(renderToStaticMarkup(<TransactionImports name="Individual ••4421" list={list} activity={activity} busy={false} onUndo={async () => true} />).replace(/<[^>]+>/g, ' '));
-    expect(shown).toContain('· a CSV import decides its days Doesn’t count');
+    const shown = words(renderToStaticMarkup(<TransactionImports name="Individual ••4421" accountId="ind" list={list} activity={activity} busy={false} onUndo={async () => true} />).replace(/<[^>]+>/g, ' '));
+    expect(shown).toContain('Not in use: a CSV download is used for these days · Jun 1, 2025 to Nov 4 · 10 transactions · imported');
+    expect(shown).toContain('In use · Jun 1, 2025 to Nov 4 · 10 transactions · imported');
     // Undoing the CSV hands its days to the QFX, which was never checked against them: said.
     expect(undoText(list.imports[1], list, activity, 'Individual ••4421')).toMatch(
       /^Undo the import from [^?]+\? Jun 1, 2025 to Nov 4 will come from the QFX import from [^.]+ again\. A QFX file leaves out conversions and shares moved in kind, and none of its money in counts as new savings\. Nothing else changes/
@@ -431,8 +460,25 @@ describe('the download as QFX', () => {
       ],
       imports_unused: [],
     } as unknown as Parameters<typeof TransactionImports>[0]['activity'];
-    const shownMixed = words(renderToStaticMarkup(<TransactionImports name="Individual ••4421" list={mixed} activity={split} busy={false} onUndo={async () => true} />).replace(/<[^>]+>/g, ' '));
-    expect(shownMixed).toContain('· other imports decide its days Doesn’t count');
+    const shownMixed = words(renderToStaticMarkup(<TransactionImports name="Individual ••4421" accountId="ind" list={mixed} activity={split} busy={false} onUndo={async () => true} />).replace(/<[^>]+>/g, ' '));
+    expect(shownMixed).toContain('Not in use: other downloads are used for these days');
+    // Used for part of its days: those named, and what has the rest.
+    const partly = {
+      ...list,
+      imports: [{ ...list.imports[1], import_id: 'csv-2', covers: { from: '2026-01-01', to: '2026-11-04' } }, list.imports[1]],
+    };
+    const newer = {
+      imported_days: [
+        { import_id: 'csv-1', from: '2025-06-01', to: '2025-12-31', file_name: 'OfxDownload.csv', imported_at: at.imported_at },
+        { import_id: 'csv-2', from: '2026-01-01', to: '2026-11-04', file_name: 'OfxDownload.csv', imported_at: at.imported_at },
+      ],
+      imports_unused: [],
+    } as unknown as Parameters<typeof TransactionImports>[0]['activity'];
+    const shownPartly = words(renderToStaticMarkup(<TransactionImports name="Individual ••4421" accountId="ind" list={partly} activity={newer} busy={false} onUndo={async () => true} />).replace(/<[^>]+>/g, ' '));
+    expect(shownPartly).toContain('In use for Jun 1, 2025 to Dec 31, 2025 · a newer download is used for its other days · Jun 1, 2025 to Nov 4');
+    // While the activity loads, nothing is said of whether it is in use.
+    const loading = words(renderToStaticMarkup(<TransactionImports name="Individual ••4421" accountId="ind" list={list} activity={null} busy={false} onUndo={async () => true} />).replace(/<[^>]+>/g, ' '));
+    expect(loading).not.toMatch(/In use|Not in use/);
   });
 
   test('only its new savings fall: said with the figures, and the Import waits for a yes, asked again when the accounts checked change or the file is chosen again', async () => {
