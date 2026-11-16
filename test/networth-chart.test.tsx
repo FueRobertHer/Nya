@@ -219,8 +219,8 @@ describe('NetWorthChart all time', () => {
   ];
 
   test('the readout is the balance from $0.00, its split the net and the returns', () => {
-    const html = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={() => net} baselineFrom="2026-08-15" allTime />);
-    expect(html).toContain('<span class="chart-readout-value">+$152,650.00</span>');
+    const html = renderToStaticMarkup(<NetWorthChart points={points} baselineFor={() => net} baselineFrom="2026-08-15" allTime rangeSet="investment" />);
+    expect(html).toContain('<span class="chart-readout-value">+$152,650.00</span><span class="chart-readout-what">change in balance</span>');
     // The returns on everything deposited, withdrawals not taken off:
     // $12,150.00 on $146,500.00 (on the net, $140,500.00, it would read
     // +8.6%). The percentage alone, so the line fits a phone.
@@ -422,6 +422,18 @@ describe('NetWorthChart time ranges', () => {
   test('an investment shows no percentage', () => {
     const html = renderToStaticMarkup(<NetWorthChart points={year} rangeSet="investment" />);
     expect(html).toMatch(/chart-readout-value">\+\$[\d,.]+</);
+  });
+
+  // Investments gives an account's returns; its own chart's figure has its
+  // deposits in it, so it says what it is beside it.
+  test('an investment names its figure: the change in balance', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={year} rangeSet="investment" />);
+    expect(html).toMatch(/chart-readout-value">\+\$[\d,.]+<\/span><span class="chart-readout-what">change in balance<\/span><span class="chart-readout-date">Year to date</);
+  });
+
+  test('any other account’s figure is left unnamed', () => {
+    expect(renderToStaticMarkup(<NetWorthChart points={year} />)).not.toContain('chart-readout-what');
+    expect(renderToStaticMarkup(<NetWorthChart points={year} owed />)).not.toContain('chart-readout-what');
   });
 
   test('opens an investment on year to date, and offers no 3Y or 5Y yet', () => {

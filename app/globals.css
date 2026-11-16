@@ -2220,6 +2220,17 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
   min-height: 16px;
 }
 
+/* What the figure is, beside it on its line, on an investment account's
+   chart: "change in balance", or "balance" on a day, so it isn't taken for
+   the returns. Short enough to share the figure's line on a phone, but for
+   the longest figures (an estimated seven-figure amount in a currency with a
+   prefix, as "≈ −CA$1,234,567.89"), where the line wraps. */
+.chart-readout-what {
+  color: var(--text-2);
+  font-size: var(--fs-1);
+  white-space: nowrap;
+}
+
 /* Money added vs growth, under the readout on an investment account's chart.
    Tabular figures so the two amounts don't jitter while scrubbing. */
 .chart-readout-split {

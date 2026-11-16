@@ -990,11 +990,16 @@ export default function NetWorthChart({
   let readValue: string;
   let readDate: string;
   let readNote: string | null = null;
+  // On an investment account's chart, what the figure is, beside it: its
+  // change in balance (deposits in it), or a day's balance, so it isn't read
+  // as the returns Investments gives it; those are in the line under it.
+  let readWhat: string | null = rangeSet === 'investment' ? 'change in balance' : null;
   if (measure) {
     readValue = change(measure[0], measure[1]).text;
     readDate = `${pointDay(points[measure[0]])} to ${pointDay(points[measure[1]])}`;
   } else if (readActive !== null) {
     readValue = formatMoney(vals[readActive], currency);
+    if (readWhat) readWhat = 'balance';
     readNote = noteOn(readActive);
     readDate = `${pointDay(points[readActive])}${points[readActive].estimated ? ' · estimated' : ''}`;
   } else if (whole) {
@@ -1034,6 +1039,7 @@ export default function NetWorthChart({
           <span className="chart-readout-value">
             <Masked>{readValue}</Masked>
           </span>
+          {readWhat && <span className="chart-readout-what">{readWhat}</span>}
           {readNote ? (
             <span className="chart-readout-date chart-readout-noted">
               <span className="chart-readout-day">{readDate}</span>
