@@ -40,6 +40,20 @@ const draw = (p: PathChartProps, width = 320) =>
 const label = (html: string) => /role="img" aria-label="([^"]*)"/.exec(html)?.[1].replace(/&#x27;/g, "'") ?? null;
 const ages = (html: string) => [...html.matchAll(/<text class="chart-xlabel"[^>]*>([^<]*)<\/text>/g)].map((m) => m[1]);
 const markers = (html: string) => (html.match(/<circle /g) ?? []).length;
+// How far the FI number's name is from the marker's center: its box, 55 wide
+// and 12 tall over its baseline, from x at its left, or to x at its right
+// when it is anchored at its line's end. 7 clears the 4px dot, its 2px ring
+// and a gap. Infinity with no marker or no name.
+const offTheDot = (html: string) => {
+  const dot = /<circle cx="([\d.]+)" cy="([\d.]+)"/.exec(html);
+  const name = /<text class="chart-rule-label" x="([\d.]+)" y="([\d.]+)">FI number</.exec(html) ?? /<text class="chart-xlabel" x="([\d.]+)" y="([\d.]+)" text-anchor="end">FI number</.exec(html);
+  if (!dot || !name) return Infinity;
+  const [mx, my] = [Number(dot[1]), Number(dot[2])];
+  const [nx, ny] = [Number(name[1]), Number(name[2])];
+  const x0 = name[0].includes('chart-rule-label') ? nx : nx - 55;
+  return Math.hypot(mx - Math.min(Math.max(mx, x0), x0 + 55), my - Math.min(Math.max(my, ny - 12), ny));
+};
+const dotOf = (html: string) => /<circle cx="([\d.]+)" cy="([\d.]+)"/.exec(html)!.slice(1).map(Number);
 
 describe('the path chart', () => {
   test('one line to the stop age, the FI number, a marker where it is reached, and the ages: today, FI and the stop', () => {
@@ -328,7 +342,7 @@ describe('the answer over the chart', () => {
 describe('Whole path', () => {
   const none = { spending: null, savings: null, assets: null };
   const base = { ...DEFAULT_PLAN, age: 41, targetAge: 50, spending: 60_000, savings: 50_000, assets: 595_000 };
-  const whole = (p: typeof base, over: Partial<PathChartProps> = {}, width = 320) => {
+  const chartOf = (p: typeof base, over: Partial<PathChartProps> = {}) => {
     const f = figuresOf(p, none) as PlanFigures;
     const path = planPath(f)!;
     const chart: PathChartProps = {
@@ -344,7 +358,11 @@ describe('Whole path', () => {
       onRange: () => {},
       ...over,
     };
-    return { f, path, chart, html: draw(chart, width) };
+    return { f, path, chart };
+  };
+  const whole = (p: typeof base, over: Partial<PathChartProps> = {}, width = 320) => {
+    const made = chartOf(p, over);
+    return { ...made, html: draw(made.chart, width) };
   };
   // Where an age is across the plot at 320px, from the first age to the last.
   const xAt = (age: number, first: number, last: number) => 2 + ((age - first) / (last - first)) * 316;
@@ -396,14 +414,23 @@ describe('Whole path', () => {
     const crossing = whole({ ...base, assets: 1_250_000, savings: 100_000, targetAge: 49 });
     expect(crossing.f.view.fiAge!).toBeLessThan(49);
     expect(markers(crossing.html)).toBe(1);
-    for (const html of [below, above, crossing.html]) {
+    // Over the line at its left end, moved off the marker where it would sit
+    // on it: past today's dot just over the line, or up off the dot where the
+    // path reaches the number under the name, still by its line.
+    const cases = [
+      { html: below, x: 2, lift: 4 },
+      { html: above, x: 2 + 7, lift: 4 },
+      { html: crossing.html, x: 2, lift: 7 },
+    ];
+    for (const { html, x: nameX, lift } of cases) {
       const [x2, fiY] = dashed(html);
       expect(x2 - 2).toBeLessThan(55);
       const name = ruleName(html)!;
-      expect(name[1]).toBe('2');
+      expect(Number(name[1])).toBe(nameX);
       // Over the line, inside the plot.
-      expect(Number(name[2])).toBe(fiY - 4);
+      expect(Number(name[2])).toBe(fiY - lift);
       expect(Number(name[2]) - 12).toBeGreaterThanOrEqual(0);
+      expect(offTheDot(html)).toBeGreaterThanOrEqual(7);
       // Never the axis label's way of naming it.
       expect(ages(html)).not.toContain('FI number');
       // Drawn after the line, the rules and the marker.
@@ -429,7 +456,13 @@ describe('Whole path', () => {
     expect(x2 - 2).toBeGreaterThanOrEqual(55);
     expect(fiY + 14).toBeGreaterThan(98 - 4);
     const name = ruleName(html)!;
-    expect([name[1], Number(name[2])]).toEqual(['2', fiY - 4]);
+    // The path reaches the number at 50.2, on the line under the name's end:
+    // the name moves up off the dot, 7 over its line.
+    const [dotX, dotY] = dotOf(html);
+    expect(dotX).toBeLessThan(2 + 55);
+    expect(dotY).toBe(fiY);
+    expect([name[1], Number(name[2])]).toEqual(['2', fiY - 7]);
+    expect(offTheDot(html)).toBeGreaterThanOrEqual(7);
     expect(ages(html)).not.toContain('FI number');
     // Under the name, the path is on the line or below it.
     const line = /<path d="(M[^"]+)" fill="none" stroke="var\(--data\)"/.exec(html)![1];
@@ -438,6 +471,59 @@ describe('Whole path', () => {
     for (const [, py] of under) expect(py).toBeGreaterThanOrEqual(fiY - 1);
     // To 65 keeps it at the line's end, as today.
     expect(ruleName(draw({ ...chart, range: 'stop' }))).toBeNull();
+  });
+
+  // The design review's Plan board (Nov 15, High 5): at 60, a stop now that
+  // lasts puts the marker at today's balance, at the line's left end, where
+  // the name went too, haloed over the dot.
+  test('the name keeps off the marker: today’s dot at the left end, a reach by the stop, and a line’s end with no room', () => {
+    // A stop now that lasts: up off today's dot, still by its line.
+    const now = whole({ ...base, age: 60, targetAge: 65, spending: 40_000, savings: 30_000, assets: 900_000 }, { lasting: true, fiAge: 60 }).html;
+    const [nowX, nowY] = dotOf(now);
+    expect(nowX).toBe(2);
+    const nowName = ruleName(now)!;
+    expect([Number(nowName[1]), Number(nowName[2])]).toEqual([2, nowY - 7]);
+    expect(nowY - 7).toBeLessThanOrEqual(dashed(now)[1]);
+    // To 63, reached at 62.6, on the line just short of its end, where the
+    // name goes under the line once the path is over it: over the line,
+    // short of the dot, where the path is still under it.
+    const stop = whole({ ...base, age: 60, targetAge: 63, assets: 1_250_000, savings: 30_000 }, { range: 'stop' });
+    expect(stop.f.view.fiAge!).toBeGreaterThan(62.5);
+    const [stopDotX, stopDotY] = dotOf(stop.html);
+    const end = /<text class="chart-xlabel" x="([\d.]+)" y="([\d.]+)" text-anchor="end">FI number</.exec(stop.html)!;
+    expect(Number(end[1])).toBe(stopDotX - 7);
+    expect(Number(end[2])).toBe(stopDotY - 5);
+    // Whole path from 55 to 67, reached at 59.9 on the line under where the
+    // name would end it, with no room under the line to move it and the path
+    // over it on the other side: at the left end instead, as a short line has
+    // it, up off the dot.
+    const blocked = whole({ ...base, age: 55, targetAge: 67, assets: 1_050_000, savings: 30_000 }).html;
+    const [x2, fiY] = dashed(blocked);
+    expect(x2 - 2).toBeGreaterThanOrEqual(55);
+    expect(ages(blocked)).not.toContain('FI number');
+    const left = ruleName(blocked)!;
+    expect([Number(left[1]), Number(left[2])]).toEqual([2, fiY - 7]);
+    for (const html of [now, stop.html, blocked]) expect(offTheDot(html)).toBeGreaterThanOrEqual(7);
+  });
+
+  test('the name never sits on the marker, across plans, widths and both ranges', () => {
+    let drawn = 0;
+    // Each plan worked out once, then drawn each way.
+    for (const age of [41, 60])
+      for (const gap of [1, 3, 8, 12])
+        for (const assets of [300_000, 900_000, 1_050_000, 1_600_000, 2_000_000])
+          for (const savings of [0, 50_000]) {
+            const { chart } = chartOf({ ...base, age, targetAge: age + gap, assets, savings });
+            for (const width of [320, 600])
+              for (const lasting of [false, true])
+                for (const range of ['whole', 'stop'] as const) {
+                  const html = draw({ ...chart, range, lasting, fiAge: lasting ? age : chart.fiAge }, width);
+                  if (!html.includes('<circle')) continue;
+                  drawn++;
+                  expect(offTheDot(html)).toBeGreaterThanOrEqual(7);
+                }
+          }
+    expect(drawn).toBeGreaterThan(200);
   });
 
   test('with Progress’s lines before today, they stay, and today joins the ages', () => {
