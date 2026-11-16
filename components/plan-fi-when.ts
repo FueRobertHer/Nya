@@ -12,7 +12,9 @@ import { fiHeadline } from './plan-text';
 /** When a plan reaches its FI number, as the card says it. */
 export type FiWhen =
   | { kind: 'age'; age: number }
-  | { kind: 'now' }
+  /** At FI already; `lasting`, D9's stop found is today ("You could stop
+   *  now"). */
+  | { kind: 'now'; lasting: boolean }
   | { kind: 'never' }
   | { kind: 'short'; figures: PlanFigures }
   /** The FI card's own headline, with no age to set against another: "In
@@ -28,12 +30,13 @@ export type FiWhen =
 export function fiWhen(f: PlanFigures | null): FiWhen {
   if (!f) return { kind: 'not-run' };
   if (f.short) return { kind: 'short', figures: f };
-  const h = fiHeadline(f.view, { age: f.plan.age, stopAge: f.view.stopAge, stopAtFi: f.plan.stopAtFi, lasting: f.resolution.searched === 'lasts' });
+  const lasting = f.resolution.searched === 'lasts';
+  const h = fiHeadline(f.view, { age: f.plan.age, stopAge: f.view.stopAge, stopAtFi: f.plan.stopAtFi, lasting });
   switch (h.kind) {
     case 'age':
       return { kind: 'age', age: h.age as number };
     case 'there':
-      return { kind: 'now' };
+      return { kind: 'now', lasting };
     case 'never':
       return { kind: 'never' };
     case 'years':
@@ -59,8 +62,11 @@ export function lifeChoiceText(when: FiWhen, plan: FiWhen): string {
   switch (when.kind) {
     case 'age':
       return `FI around ${when.age}${plan.kind === 'age' ? `, ${moveText(when.age, plan.age)}` : plan.kind === 'never' ? ', where your plan isn’t reached at this savings rate' : ''}`;
-    case 'now':
-      return plan.kind === 'now' ? 'You’re at FI, as in your plan' : 'You’re at FI';
+    case 'now': {
+      // "As in your plan" only where your plan says the same words.
+      const said = when.lasting ? 'You could stop now' : 'You’re at FI';
+      return plan.kind === 'now' && plan.lasting === when.lasting ? `${said}, as in your plan` : said;
+    }
     case 'never':
       return 'Not reached at this savings rate';
     case 'said':
