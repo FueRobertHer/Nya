@@ -88,7 +88,7 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 | Critical notice (a number is wrong or short) | `.notice.critical` | `.error` |
 | Caution notice (real but dated, needs you) | `.notice.caution` | `.stale-note` |
 | Information notice | `.notice.info` | `.info-notice` |
-| Done, saved | `.notice.done` | `.status-note` |
+| Done, saved | `Notice` with `level="done"` (`.notice.done`) | `.status-note` |
 | Badge (not clickable) | `.badge`, toned `.accent`, `.pos`, `.neg` or `.warn` | `.pill` |
 | Chip (clickable, a filter or a tag) | `.chip`; toned `.neg` or `.warn` for a status that jumps to what it counts; a row of filters in `.chip-row`; one that chooses among options is `ChipSelect` (`.chip-select`); one that chooses any set of things opens a sheet of presets and check rows (`AccountsChooser`); its words in `.chip-text` with `.chip-name`, cut short at the row's width | `.tag-chip`, a filter `<select>` in a `.text-input` |
 | Change the month | `.month-stepper`, drawn by `MonthStepper` | arrows and a name of your own; on Activity or Budgets, a month apart from the shared one |
@@ -101,7 +101,8 @@ The primitives in `app/globals.css` ([design-system.md](design-system.md#compone
 | Choosing one of a few options, each with a note, and the picked one's fields under it | `RadioRows` (`.radio-rows`, `.radio-row`, `.radio-row-detail`) | `.lifecycle-choice`, `.download-format` |
 | Choosing any of a few things a save also does | `CheckRows` (`.check-rows`, `.check-row`) | a list of bare checkboxes in labels |
 | A form in a sheet | `.sheet-form` | |
-| A sheet's buttons, kept in view | `Sheet`'s `footer` (`.sheet-footer`) | a `.button-pair` at the end of the body |
+| A sheet's buttons, kept in view | `Sheet`'s `footer` (`.sheet-footer`); from a level inside a sheet it shares, `SheetFooter` | a `.button-pair` at the end of the body |
+| What a sheet's buttons wait on or will do, beside them | `.sheet-footer-note` on a `.helper`, first in the footer, the buttons `aria-describedby` it | a helper at the end of the body, out of view |
 | An object's rare actions (⋯) | `Menu` (`.menu` of `.menu-item`) | an Options button that opens an action sheet |
 | An object's actions in its sheet | `ActionRows` (`.card.list-rows` of `.list-row` buttons) | a `.btn-row` of secondaries in the body |
 | Deleting an object, from its actions | `ActionRows`' last row with `neg` (`.list-row.neg`), opening a level that asks, whose `.btn.danger` acts | a `.btn.danger` among its actions |
@@ -132,6 +133,8 @@ Nya shows its gaps on purpose ([features.md](../features.md)). A new feature tha
 
 - Forms, confirmations and detail views open in `components/Sheet.tsx`. A sheet that needs a second level replaces its content and gets a back button, instead of opening a sheet on top of a sheet.
 - Destructive actions live in a menu or a detail sheet and are confirmed in a sheet. An irreversible one says it can't be undone; disconnecting an institution asks for its name to be typed.
+- A footer's note is one or two short lines. Anything longer stays in the body, so the footer never squeezes it in a sheet at 320px.
+- **Preview, apply, undo.** A change that can be taken back first says what it will move. Once done, a done notice (`Notice` with `done`) says what moved, and an Undo under it puts back exactly what was there before.
 - Rare actions on an object go in its ⋯; urgent ones (Reconnect) stay as visible buttons.
 - A number field keeps its value as a string while it is typed (see `ManualDraft` in `Dashboard.tsx`), so a minus sign survives.
 
