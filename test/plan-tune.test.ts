@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { crossesLine, goalName, noBetterLine, LIMIT_NAMES, movedLine, ownLine, tapLine, TUNE_BUSY, TUNE_FAILED, TUNE_GONE, TUNE_HELPER, TUNE_HOLDS, TUNE_IRMAA_UNKNOWN, TUNE_NEEDS_CONSTANT, TUNE_ONLY_ORDER, TUNE_ROW_SUB, TUNE_SORT, TUNE_SORTED, tunedFor, tunedHeading, tunedName, tunedNote, comesToTheSame, hasThisRule, orderLine, usedFailed, useLabel } from '@/components/plan-tune';
+import { crossesLine, goalName, noBetterLine, LIMIT_NAMES, movedLine, ownLine, tapLine, TUNE_BUSY, TUNE_FAILED, TUNE_GONE, TUNE_HELPER, TUNE_HOLDS, TUNE_IRMAA_UNKNOWN, TUNE_NEEDS_CONSTANT, TUNE_ONLY_ORDER, TUNE_ROW_SUB, TUNE_SORT, TUNE_SORTED, tunedFor, tunedHeading, tunedName, tunedNote, comesToTheSame, hasThisRule, orderLine, undoneLine, usedFailed, usedLine, useLabel } from '@/components/plan-tune';
 import { ABOUT_DETAIL } from '@/components/plan-drawdown';
 import type { BucketsToday } from '@/lib/fire/buckets-today';
 import { conversionRun } from '@/lib/fire/compare-conversions';
@@ -505,6 +505,24 @@ describe('the words', () => {
     expect(movedLine({ stop: null, start: null, copyOpen: false }, money)).toBe('Once used, more of your plan moves with this rule, so this differs from the table.');
   });
 
+  test('what Use did, and what Undo put back', () => {
+    const u = { was: noneOf(), now: aca(0.12, 74), stop: [57, 54] as [number, number], start: null };
+    expect(usedLine(u, false, 72, money)).toBe('Your plan now converts up to the ACA limit, then the 12% bracket, until 74, and stops at 54, not 57.');
+    expect(undoneLine(u, false, 72, money)).toBe('Undone: your plan makes no conversions, as before.');
+    expect(usedLine({ ...u, start: [2_007_610, 2_481_685] }, false, 72, money)).toBe('Your plan now converts up to the ACA limit, then the 12% bracket, until 74, and stops at 54, not 57, and starts from $2,481,685, not $2,007,610.');
+    // A rule with no age of its own runs to the plan's.
+    const f = { was: fill(0.12, 60), now: { order: 'standard' as const, conversions: { kind: 'fixed' as const, yearly: 40_000 }, convertUntil: null }, stop: null, start: null };
+    expect(usedLine(f, true, 72, money)).toBe('This copy now converts $40,000 a year, until 72.');
+    expect(undoneLine(f, true, 72, money)).toBe('Undone: this copy converts to fill the 12% bracket, until 60, as before.');
+    expect(usedLine({ ...f, now: fill(0.22) }, false, null, money)).toBe('Your plan now converts to fill the 22% bracket.');
+    // The order, alone or with the rule; an age alone is the rule's.
+    const o = { was: fill(0.12, 60), now: fill(0.12, 60, 'roth-before-deferred'), stop: null, start: null };
+    expect(usedLine(o, false, 72, money)).toBe('Your plan now draws Roth before tax-deferred.');
+    expect(undoneLine(o, false, 72, money)).toBe('Undone: your plan draws tax-deferred before Roth, as before.');
+    expect(usedLine({ ...o, now: fill(0.22, 60, 'roth-before-deferred') }, false, 72, money)).toBe('Your plan now converts to fill the 22% bracket, until 60, and draws Roth before tax-deferred.');
+    expect(usedLine({ ...o, now: fill(0.12, 65) }, false, 72, money)).toBe('Your plan now converts to fill the 12% bracket, until 65.');
+  });
+
   test('nothing is called best or better, or recommended, or what to do', () => {
     const about = ABOUT_DETAIL.standIns.find((s) => s.startsWith('Tune to a goal'))!;
     expect(about).toContain('keeps your plan’s own');
@@ -517,6 +535,8 @@ describe('the words', () => {
       useLabel(false), useLabel(true), hasThisRule(false), hasThisRule(true), comesToTheSame(false), comesToTheSame(true), usedFailed(false), usedFailed(true),
       movedLine({ stop: [54, 57], start: [1, 2], copyOpen: false }, money), movedLine({ stop: null, start: null, copyOpen: true }, money),
       ownLine({ goal: 'left', own: noneOf(), until: 74, left: 1, cost: 1, short: null, copyOpen: false }, money),
+      usedLine({ was: noneOf(), now: aca(0.12, 74, 'roth-before-deferred'), stop: [57, 54], start: [1, 2] }, false, 72, money),
+      undoneLine({ was: fill(0.12, 60), now: noneOf('roth-before-deferred'), stop: null, start: null }, true, 72, money),
     ];
     for (const words of every) {
       expect(words).not.toMatch(/\b(best|better|should|optimal|ideal|optimi[sz]e|winner|top pick)\b/i);

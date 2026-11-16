@@ -86,9 +86,10 @@ describe('the Plan tab saves through nothing else', () => {
     // savePlanIn: the store's save of your plan alone, version 2, but never a
     // first typed amount without the currency its figures are in
     // (lib/fire/plan-currency.ts). The facts it sent are the page's once
-    // saved (test/plan-inputs-view.test.tsx).
+    // saved (test/plan-inputs-view.test.tsx). Any save ends Use's done line and
+    // its Undo (test/plan-tune-view.test.tsx).
     expect(code).toMatch(
-      /const savePlanIn = async \(next: FirePlanV2, tax\?: TaxChoices\): Promise<boolean \| string> => \{\n    const wait = firstAmountWait\(next, tax\);\n    if \(wait\) return wait;\n    const saved = await store\.save\(next\);\n    if \(saved\) factsWere\.current = factsOf\(next\);\s+if \(saved === true && offerDetail && yourChoices === null && next\.taxRate === 0 && bothAges\(next\) && !bothAges\(basePlan\)\) void chooseModel\(\{ kind: 'opt-in' \}\);\n    return saved;\n  \};/,
+      /const savePlanIn = async \(next: FirePlanV2, tax\?: TaxChoices\): Promise<boolean \| string> => \{\n    const wait = firstAmountWait\(next, tax\);\n    if \(wait\) return wait;\n    const saved = await store\.save\(next\);\n    if \(saved\) factsWere\.current = factsOf\(next\);\n    if \(saved === true\) clearUse\(\);\s+if \(saved === true && offerDetail && yourChoices === null && next\.taxRate === 0 && bothAges\(next\) && !bothAges\(basePlan\)\) void chooseModel\(\{ kind: 'opt-in' \}\);\n    return saved;\n  \};/,
     );
     // saveShown: your plan alone through the store; a copy, or Also change
     // it in, through the plans' save, all together.

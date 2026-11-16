@@ -10,6 +10,7 @@ import type { TunedRow, TuneGoal, TuneLimit } from '@/lib/fire/tune';
 import { healthPace } from './plan-drawdown';
 import { endWords, movedWords, ORDER_WORDS, ruleName } from './plan-conversions';
 import { joinNames } from '@/lib/month-coverage';
+import { pct } from './plan-text';
 
 type Money = (n: number) => string;
 
@@ -123,3 +124,49 @@ export function movedLine(a: { stop: [number, number] | null; start: [number, nu
   const moved = movedWords(a, money);
   return moved ? `Once used, ${who} ${moved}, so this differs from the table.` : `Once used, more of ${who} moves with this rule, so this differs from the table.`;
 }
+
+/** What Use in your plan wrote over, and what it moved: the done line and its Undo
+ *  (components/PlanTab.tsx). The stop and start as onceUsed gives them, now's first. */
+export type TuneUse = { was: Strategy; now: Strategy; stop: [number, number] | null; start: [number, number] | null };
+
+export const sameStrategy = (a: Strategy, b: Strategy) =>
+  a.order === b.order && a.convertUntil === b.convertUntil && JSON.stringify(a.conversions) === JSON.stringify(b.conversions);
+
+const ORDER_DRAWS: Record<Strategy['order'], string> = {
+  standard: 'draws tax-deferred before Roth',
+  'roth-before-deferred': 'draws Roth before tax-deferred',
+};
+
+/** What a strategy does where it differs from `other`: its conversions, then its order. */
+function doesWords(s: Strategy, other: Strategy, defaultUntil: number | null, money: Money): string[] {
+  const out: string[] = [];
+  if (JSON.stringify(s.conversions) !== JSON.stringify(other.conversions) || s.convertUntil !== other.convertUntil) {
+    const age = s.convertUntil ?? defaultUntil;
+    const until = age === null ? '' : `, until ${age}`;
+    const c = s.conversions;
+    out.push(
+      c.kind === 'none'
+        ? 'makes no conversions'
+        : c.kind === 'bracket'
+          ? `converts to fill the ${pct(c.top)} bracket${until}`
+          : c.kind === 'aca-then-bracket'
+            ? `converts up to the ACA limit, then the ${pct(c.top)} bracket${until}`
+            : `converts ${money(c.yearly)} a year${until}`
+    );
+  }
+  if (s.order !== other.order) out.push(ORDER_DRAWS[s.order]);
+  return out;
+}
+
+const andList = (parts: string[]) => (parts.length <= 1 ? parts.join('') : `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`);
+
+/** The done line after Use: "Your plan now converts up to the ACA limit, then the 12%
+ *  bracket, until 74, and stops at 54, not 57." */
+export function usedLine(u: TuneUse, copyOpen: boolean, defaultUntil: number | null, money: Money): string {
+  const moved = movedWords(u, money);
+  return `${copyOpen ? 'This copy' : 'Your plan'} now ${andList([...doesWords(u.now, u.was, defaultUntil, money), ...(moved ? [moved] : [])])}.`;
+}
+
+/** Said once Undo has put the plan back. */
+export const undoneLine = (u: TuneUse, copyOpen: boolean, defaultUntil: number | null, money: Money) =>
+  `Undone: ${copyOpen ? 'this copy' : 'your plan'} ${andList(doesWords(u.was, u.now, defaultUntil, money))}, as before.`;

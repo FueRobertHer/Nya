@@ -155,7 +155,7 @@ import PlanHealthForm, { type PaidChoice } from './PlanHealthForm';
 import { OptInRow, OptInSheet, OPT_IN_TITLE } from './PlanOptIn';
 import { CompareCard, ConversionsForm, HowYouDrawCard, OrderForm, RuleLevel } from './PlanHowYouDraw';
 import { TuneForm } from './PlanTune';
-import { TUNE_TITLE } from './plan-tune';
+import { sameStrategy, TUNE_TITLE, undoneLine, usedLine, type TuneUse } from './plan-tune';
 import { PlanTaxSheet } from './PlanTaxSheet';
 import { choicesDiffParts, copyNameFor, ruleTitle, type NowFigures, type UsedFigures } from './plan-conversions';
 import { ABOUT_DETAIL, WITH_EACH_YEARS_TAX, gridSampleLine, assumptionsLine, assumptionsWorked, HEALTH_NOT_SET, healthSub, honestyNotes, householdLine, hypotheticalDrawdown, medicaidNote, medicaidYears, namesCoverage, stageHealthLines, stageTitle, STATE_NAMES, taxHypothetical, yearTitle, type YearContext } from './plan-drawdown';
@@ -716,6 +716,22 @@ export default function PlanTab({
   useEffect(() => {
     if (currencyMode.kind !== 'recorded') setChanging(null);
   }, [currencyMode.kind]);
+  // What Use in your plan last wrote, on the plan or copy it was used in (by id, as a
+  // copy's stamp moves with each save): its done line and Undo, then what Undo said.
+  // Any other save, another plan or copy shown, or a change to the household, ends it.
+  const [used, setUsed] = useState<(TuneUse & { on: string; undoable: boolean }) | null>(null);
+  const [undone, setUndone] = useState<(TuneUse & { on: string }) | null>(null);
+  const [undoError, setUndoError] = useState<{ on: string; text: string } | null>(null);
+  const [undoing, setUndoing] = useState(false);
+  // Where focus goes once the drawer has closed and the line is drawn.
+  const focusUse = useRef<'done' | 'undone' | 'error' | null>(null);
+  const useLines = useRef(new Map<'done' | 'undone' | 'error', HTMLElement>());
+  const clearUse = () => {
+    setUsed(null);
+    setUndone(null);
+    setUndoError(null);
+    focusUse.current = null;
+  };
   /** Why a save must wait: it gives your plan its first typed amount, with
    *  no currency yet to record it in. */
   const firstAmountWait = (p: FirePlanV2, tax: TaxChoices | null = shared.choices): string | null =>
@@ -731,6 +747,7 @@ export default function PlanTab({
     if (wait) return wait;
     const saved = await store.save(next);
     if (saved) factsWere.current = factsOf(next);
+    if (saved === true) clearUse();
     // A plan that has just been given both ages, with no rate typed, starts worked out
     // from its accounts, unless it has been worked out before and was taken back to
     // flat (opting in leaves its choices). The sheet closes on the save. A failure
@@ -1101,6 +1118,11 @@ export default function PlanTab({
   useEffect(() => {
     setSheet(null);
   }, [shownFor]);
+  // Use's done line and Undo are of the plan or copy shown, by its id (so another plan
+  // made yours, here or on another device, ends them), with the household it had.
+  const useOn = entry?.id ?? plansState.main;
+  const factsKey = JSON.stringify(shared.taxFacts);
+  useEffect(() => clearUse(), [useOn, factsKey]); // eslint-disable-line react-hooks/exhaustive-deps
   // Closed: the sheet gives focus back to what was focused when it opened as
   // its own effect ends, which runs before this one. When that wasn't the row
   // (pressed without taking focus, as in Safari), focus is lost or still in
@@ -1108,6 +1130,17 @@ export default function PlanTab({
   // Portfolio's "Use my allocation in the plan" goes once the plan takes the
   // mix: then to the heading over where it was.
   const sheetOpen = !!sheet;
+  // After Use, Undo, or Undo refused: focus to what is said, once the drawer has closed
+  // and given focus back, and the line is drawn (Use's lands as the plan is read again).
+  useEffect(() => {
+    const want = focusUse.current;
+    if (!want || sheetOpen) return;
+    const el = useLines.current.get(want);
+    if (el?.isConnected) {
+      focusUse.current = null;
+      el.focus();
+    }
+  });
   const wasOpen = useRef(sheetOpen);
   useEffect(() => {
     const closed = wasOpen.current && !sheetOpen;
@@ -1145,6 +1178,7 @@ export default function PlanTab({
       return 'Changed on another device, so nothing was saved: save again to make your change in what is there now.';
     }
     setNotice(null);
+    clearUse();
     return true;
   };
   // The currency the plan shown is saved with: a copy's own once it holds an
@@ -1505,6 +1539,30 @@ export default function PlanTab({
   const detailForm: DetailForm | null = detailShown
     ? { choices: detailChoices, facts: shared.taxFacts, factsLocked: !savers.taxFacts, stateTaxes: lawNow.stateIncomeTax, statute: lawNow.statute, calendarYear, save: moreFor(sheetFor) }
     : null;
+  // Use's done line, while what it wrote is what the plan shown has. Undo only where
+  // it puts back exactly what was there: not where the plan or copy had no choices of
+  // its own (a copy that takes your plan's), which a save can't write back.
+  const usedShown = used && used.on === useOn && sameStrategy(detailChoices.strategy, used.now) ? used : null;
+  const undoneShown = undone && undone.on === useOn ? undone : null;
+  const undoErrorShown = undoError && undoError.on === useOn ? undoError : null;
+  const undoable = entry ? entry.tax != null : yourChoices !== null;
+  const useUntil = shownUntil ?? (yearContext ? yearContext.rmdAge - 1 : null);
+  const undoUse = async (u: TuneUse & { on: string }) => {
+    setUndoing(true);
+    setUndoError(null);
+    const r = await saversRef.current.more(shownPlan, { tax: { ...detailChoices, strategy: u.was } });
+    setUndoing(false);
+    if (r === true) {
+      setUndone(u);
+      focusUse.current = 'undone';
+    } else {
+      // Refused: why, under the offer, which stays while the plan still has Use's rule,
+      // so trying again is Undo again. A copy's refusal is said here, not on its card too.
+      if (entry) setNotice(null);
+      setUndoError({ on: u.on, text: typeof r === 'string' ? r : 'It wasn’t undone. Try again in a moment.' });
+      focusUse.current = 'error';
+    }
+  };
   const sheetStage = shownSheet?.kind === 'stage' ? (drawn?.start.stages[shownSheet.at] ?? null) : null;
   const sheetYear = sheetStage && yearLevel !== null ? (drawn?.start.years[yearLevel] ?? null) : null;
   const sheetRule: CompareRow | null = shownSheet?.kind === 'rule' ? (compare.find((r) => r.key === shownSheet.key) ?? null) : null;
@@ -1760,7 +1818,8 @@ export default function PlanTab({
   // Make this your plan: the copy becomes yours, and yours a copy. Its answer
   // goes into the shared copy of the Plan's inputs at once, so Home's line
   // moves with it, and your plan and the list are read again; the copy
-  // closes, since it is your plan now, and the status line says so.
+  // closes, since it is your plan now, and the status line says so. Use's
+  // line and Undo go, as with another plan shown.
   const makeMain = async (id: string): Promise<true | string> => {
     const row = plansState.list.find((r) => r.id === id);
     if (!row || row.updated_at === null) return 'That plan changed since this opened, so it wasn’t made your plan: open it again.';
@@ -1769,6 +1828,7 @@ export default function PlanTab({
     if ('error' in r) return r.error;
     planInputs.adopt(r.ok.body);
     void store.load();
+    clearUse();
     if (openId === id) {
       setNotice(null);
       setOpenId(null);
@@ -2126,6 +2186,37 @@ export default function PlanTab({
 
           {/* A detailed plan's years at a steady growth; a flat plan's way to them. */}
           {worked && detailStuck && <Notice level="caution">Tax couldn’t be worked out for this plan, so it uses the flat rate.</Notice>}
+          {/* What Use in your plan did, and its Undo: above the cards, so it stays when
+              the plan's tax can't be worked out once used. */}
+          {worked && usedShown && (
+            <div className="stack tight">
+              <Notice level="done" role="status" tabIndex={-1} ref={(el) => void (el && useLines.current.set('done', el))}>
+                <Masked>{usedLine(usedShown, entry !== null, useUntil, money)}</Masked>
+              </Notice>
+              {usedShown.undoable && (
+                <div className="btn-row">
+                  <button
+                    type="button"
+                    className="btn secondary"
+                    disabled={undoing || !editable || !!other || copyFixing || state.saving || plansState.saving}
+                    onClick={() => void undoUse(usedShown)}
+                  >
+                    {undoing ? 'Undoing…' : 'Undo'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {worked && undoneShown && (
+            <p className="helper" role="status" tabIndex={-1} ref={(el) => void (el && useLines.current.set('undone', el))}>
+              <Masked>{undoneLine(undoneShown, entry !== null, useUntil, money)}</Masked>
+            </p>
+          )}
+          {worked && undoErrorShown && (
+            <Notice level="critical" role="alert" tabIndex={-1} ref={(el) => void (el && useLines.current.set('error', el))}>
+              {undoErrorShown.text}
+            </Notice>
+          )}
           {worked && drawn && yearContext && !shownFailed && (
             <>
               <DrawdownCard
@@ -2365,6 +2456,12 @@ export default function PlanTab({
             now={nowFigures}
             used={usedWith('tune-level')}
             onTry={(strategy) => heldBy(tryRule(strategy, strategy.convertUntil))}
+            onUsed={(u) => {
+              setUsed({ ...u, on: useOn, undoable });
+              setUndone(null);
+              setUndoError(null);
+              focusUse.current = 'done';
+            }}
           />
         )}
         {shownSheet?.kind === 'assumptions' && (
