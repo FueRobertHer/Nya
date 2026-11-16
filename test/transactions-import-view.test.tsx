@@ -111,12 +111,23 @@ const TARGET: Target = {
 
 type Sent = { body: Record<string, unknown> };
 
-async function mount(target: Target, opts: { review?: ImportsReview; refuse?: { status: number; body: unknown } } = {}) {
+async function mount(target: Target, opts: { review?: ImportsReview; refuse?: { status: number; body: unknown }; ownOnly?: boolean } = {}) {
   const sent: Sent[] = [];
   let stored: ListedImport[] = [];
   let refuse = opts.refuse ?? null;
   const names = { ind: { name: 'Individual', mask: '4421', item_id: 'item_vg' }, trad: { name: 'Traditional IRA', mask: '5519', item_id: 'item_vg' } };
-  const listing = () => Response.json({ imports: stored, fingerprint: stored.length ? 'fp-2' : 'fp-1', names });
+  // `ownOnly`: as the route lists them, the sheet's account's imports only,
+  // naming only the accounts those went into.
+  const listed = () => {
+    const imports = opts.ownOnly ? stored.filter((i) => i.accounts.includes(target.account_id)) : stored;
+    const named = opts.ownOnly ? Object.fromEntries(Object.entries(names).filter(([id]) => imports.some((i) => i.accounts.includes(id)))) : names;
+    return { imports, fingerprint: stored.length ? 'fp-2' : 'fp-1', names: named };
+  };
+  // The next undo's answer, once, in place of the store's.
+  let undoFails: (() => Response) | null = null;
+  // While held, the account's activity doesn't answer, as on a slow load.
+  let holdActivity = false;
+  const listing = () => Response.json(listed());
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     if (url === '/api/investment-imports' && init?.method === 'POST') {
       const body = JSON.parse(String(init.body));
@@ -140,7 +151,12 @@ async function mount(target: Target, opts: { review?: ImportsReview; refuse?: { 
             accounts: body.take.map((t: { account_id: string }) => t.account_id),
           },
         ];
-        return listing();
+        return Response.json({ ...listed(), import_id: 'imp-1', imported_at: HELD_DAY.toISOString() });
+      }
+      if (undoFails) {
+        const fail = undoFails;
+        undoFails = null;
+        return fail();
       }
       stored = stored.filter((i) => i.import_id !== body.import_id);
       return listing();
@@ -148,6 +164,7 @@ async function mount(target: Target, opts: { review?: ImportsReview; refuse?: { 
     if (url.startsWith('/api/investment-imports')) return listing();
     if (url.startsWith('/api/investment-months')) return Response.json({ investment_months: null });
     if (url.startsWith('/api/account-history')) return Response.json({ points: [] });
+    if (url.startsWith('/api/investment-activity') && holdActivity) return new Promise<Response>(() => {});
     if (url.startsWith('/api/investment-activity'))
       return Response.json({
         txns: [],
@@ -168,7 +185,8 @@ async function mount(target: Target, opts: { review?: ImportsReview; refuse?: { 
   dom.document.body.appendChild(host);
   const root = createRoot(host as unknown as HTMLElement);
   const imported: unknown[] = [];
-  act(() => root.render(<HistoryImportSheet target={target} onClose={() => {}} onImported={(what) => imported.push(what)} />));
+  const draw = (t: Target) => act(() => root.render(<HistoryImportSheet target={t} onClose={() => {}} onImported={(what) => imported.push(what)} />));
+  draw(target);
   await pass(20);
   const checkRow = (title: string) => host.findAll((e) => e.tagName === 'LABEL' && e.getAttribute('class') === 'check-row' && e.textContent.startsWith(title))[0];
   const box = (title: string) => checkRow(title).findAll((e) => e.tagName === 'INPUT')[0] as unknown as { checked: boolean; getAttribute: (k: string) => string | null };
@@ -177,6 +195,17 @@ async function mount(target: Target, opts: { review?: ImportsReview; refuse?: { 
     host,
     sent,
     imported,
+    /** What the server keeps now. */
+    stored: () => stored,
+    holdActivity: () => void (holdActivity = true),
+    failUndo: (f: () => Response) => void (undoFails = f),
+    /** The sheet opened again on the account, as from its menu. */
+    reopen: async () => {
+      draw({ ...target });
+      await pass(20);
+    },
+    /** The line said with a role, by the words it starts with. */
+    said: (start: string) => host.findAll((e) => !!e.getAttribute('role') && e.textContent.startsWith(start))[0] ?? null,
     button,
     box,
     /** The footer's note, saying what Import waits on. */
@@ -260,7 +289,18 @@ describe('the sheet', () => {
       counting: 'fp-1',
     });
     expect(v.imported).toEqual([{ investments: true }]);
-    expect(v.text()).toContain('94 transactions imported into 2 accounts from OfxDownload.csv.');
+    // A level of its own: what was imported where, focused, and each account's
+    // deposits & withdrawals over the days it decides, with what counted before.
+    expect(v.text()).toStartWith('Imported');
+    const done = v.said('Done: ')!;
+    expect(done.textContent).toBe('Done: Imported 94 transactions from OfxDownload.csv into Individual ••4421 and Traditional IRA ••5519.');
+    expect(dom.document.activeElement).toBe(done);
+    expect(v.text()).toContain('Deposits & withdrawals, Jun 1, 2025 to yesterday');
+    expect(v.text()).toContain('Individual ••4421+$36,000.00, was +$41,000.00Traditional IRA ••5519−$15,400.00, was $0.00');
+    expect(v.text()).toContain('It’s kept under Past imports in this sheet, where you can undo it later.');
+
+    // Opened again, it is listed.
+    await v.reopen();
     expect(v.text()).toContain('Jun 1, 2025 to yesterday, from Vanguard’s transactions download');
     expect(v.text()).toContain('Past imports into Individual ••4421');
     expect(v.text()).toContain('In use · Jun 1, 2025 to yesterday · 61 transactions, and also into Traditional IRA ••5519 · imported today');
@@ -279,6 +319,95 @@ describe('the sheet', () => {
     expect(v.text()).not.toContain('Past imports into');
     // The row is gone, so focus goes to what was said.
     expect((dom.document.activeElement as unknown as FakeElement).textContent).toContain('Undone: the import of OfxDownload.csv from today, from 2 accounts.');
+    v.unmount();
+  });
+
+  test('Undo import on its last level: said from the review, though the activity hasn’t loaded, then undone from every account', async () => {
+    const v = await mount({ ...TARGET, account_id: 'ind' });
+    await v.choose('OfxDownload.csv');
+    v.holdActivity();
+    await v.press('Import 94 transactions into 2 accounts');
+    await v.press('Undo import');
+    const ask = v.said('It went into')!;
+    expect(ask.textContent).toBe(
+      'It went into Individual ••4421 and Traditional IRA ••5519, and is undone from both. In Individual ••4421, Jun 1, 2025 to yesterday will come from what Vanguard gave Nya again; in the other, its days will come from another import that covers them, or from what Vanguard gave Nya, again. Nothing else changes, and you can import the file again later.'
+    );
+    expect(dom.document.activeElement).toBe(ask);
+    await v.press('Keep it');
+    expect(dom.document.activeElement).toBe(v.button('Undo import'));
+    await v.press('Undo import');
+    await v.press('Undo import');
+    expect(v.sent.at(-1)!.body).toEqual({ action: 'undo', account_id: 'ind', import_id: 'imp-1' });
+    expect(v.stored()).toEqual([]);
+    expect(v.text()).toContain('Undone: the import of OfxDownload.csv from today, from 2 accounts.');
+    expect((dom.document.activeElement as unknown as FakeElement).textContent).toContain('Undone: the import of OfxDownload.csv from today, from 2 accounts.');
+    v.unmount();
+  });
+
+  test('imported only into another account: its last level names it, and Undo import takes it from there', async () => {
+    const v = await mount(TARGET, { ownOnly: true });
+    await v.choose('OfxDownload.csv');
+    v.toggle('Individual ••4421', false);
+    const label = v.host.findAll((e) => e.tagName === 'BUTTON' && e.textContent.startsWith('Import ') && e.textContent.endsWith('into 1 account'))[0].textContent.trim();
+    await v.press(label);
+    expect(v.said('Done: ')!.textContent).toMatch(/^Done: Imported \d+ transactions? from OfxDownload\.csv into Traditional IRA ••5519\.$/);
+    await v.press('Undo import');
+    expect(v.said('It went into')!.textContent).toBe(
+      'It went into Traditional IRA ••5519: its days will come from another import that covers them, or from what Vanguard gave Nya, again. Nothing else changes, and you can import the file again later.'
+    );
+    await v.press('Undo import');
+    expect(v.sent.at(-1)!.body).toEqual({ action: 'undo', account_id: 'ind', import_id: 'imp-1' });
+    expect(v.stored()).toEqual([]);
+    expect(v.text()).toContain('Undone: the import of OfxDownload.csv from today.');
+    v.unmount();
+  });
+
+  test('Undo import that fails, where the sheet’s list doesn’t hold it: said on its level, focused, and Undo import again does it', async () => {
+    const v = await mount(TARGET, { ownOnly: true });
+    await v.choose('OfxDownload.csv');
+    v.toggle('Individual ••4421', false);
+    const label = v.host.findAll((e) => e.tagName === 'BUTTON' && e.textContent.startsWith('Import ') && e.textContent.endsWith('into 1 account'))[0].textContent.trim();
+    await v.press(label);
+    // The server can't.
+    v.failUndo(() => Response.json({ error: 'Imports can’t be changed right now.' }, { status: 503 }));
+    await v.press('Undo import');
+    await v.press('Undo import');
+    expect(v.text()).toStartWith('Imported');
+    expect(v.said('Critical: ')!.textContent).toBe('Critical: Imports can’t be changed right now.');
+    expect(dom.document.activeElement).toBe(v.said('Critical: '));
+    expect(v.stored()).toHaveLength(1);
+    // The server not reached.
+    v.failUndo(() => {
+      throw new TypeError('offline');
+    });
+    await v.press('Undo import');
+    await v.press('Undo import');
+    expect(v.said('Critical: ')!.textContent).toBe('Critical: Could not reach the server, so it may not have been undone. Undo import again: if it was undone, Nya says so.');
+    expect(dom.document.activeElement).toBe(v.said('Critical: '));
+    expect(v.text()).toContain('It’s kept under Past imports in this sheet');
+    // Again, and it is undone.
+    await v.press('Undo import');
+    await v.press('Undo import');
+    expect(v.stored()).toEqual([]);
+    expect(v.text()).toContain('Undone: the import of OfxDownload.csv from today.');
+    expect((dom.document.activeElement as unknown as FakeElement).textContent).toContain('Undone: the import of OfxDownload.csv from today.');
+    v.unmount();
+  });
+
+  test('Undo import of an import gone meanwhile: says so, and offers Done alone', async () => {
+    const v = await mount({ ...TARGET, account_id: 'ind' });
+    await v.choose('OfxDownload.csv');
+    await v.press('Import 94 transactions into 2 accounts');
+    v.failUndo(() => Response.json({ error: 'That import isn’t there any more: the list shows what is.' }, { status: 404 }));
+    await v.press('Undo import');
+    await v.press('Undo import');
+    expect(v.said('Critical: ')!.textContent).toBe('Critical: That import isn’t there any more, so there’s nothing to undo: it was undone on another device, or just now.');
+    expect(dom.document.activeElement).toBe(v.said('Critical: '));
+    expect(v.said('Done: ')!.textContent).toBe('Done: Imported 94 transactions from OfxDownload.csv into Individual ••4421 and Traditional IRA ••5519.');
+    expect(v.button('Undo import')).toBeNull();
+    expect(v.button('Done')).not.toBeNull();
+    expect(v.text()).not.toContain('Deposits & withdrawals');
+    expect(v.text()).not.toContain('Past imports in this sheet');
     v.unmount();
   });
 
@@ -423,7 +552,7 @@ describe('the download as QFX', () => {
     v.toggle('Use this file anyway', true);
     await v.press('Import 88 transactions into 2 accounts');
     expect(v.sent[1].body).toMatchObject({ action: 'import', file_name: 'OfxDownload.qfx', text: QFX_FILE, take: [{ account_id: 'ind', mask: '4421' }, { account_id: 'trad', mask: '5519' }] });
-    expect(v.text()).toContain('88 transactions imported into 2 accounts from OfxDownload.qfx.');
+    expect(v.said('Done: ')!.textContent).toBe('Done: Imported 88 transactions from OfxDownload.qfx into Individual ••4421 and Traditional IRA ••5519.');
     v.unmount();
   });
 

@@ -136,7 +136,9 @@ describe('importing', () => {
     expect(record).toMatchObject({ source: 'vanguard-performance', file_name: 'Performance.pdf', start: { month: '2019-01', balance: 0 }, months: months('2019-01', 24), currency: 'USD', typed: ['2019-03'] });
     expect(isInvestmentMonths(res.body.investment_months)).toBe(true);
     expect(await investmentMonthsStore.get(ctx, 'inv')).toEqual(res.body.investment_months);
-    expect(await get('inv')).toEqual({ status: 200, body: res.body });
+    // The list is what a read answers; an import names its own id beside it.
+    expect(await get('inv')).toEqual({ status: 200, body: { investment_months: res.body.investment_months } });
+    expect(res.body.import_id).toBe(record.id);
     // No typed months, no field.
     const next = await post(importBody({ counting: record.id }));
     expect(Object.hasOwn(next.body.investment_months.imports[1], 'typed')).toBe(false);
@@ -191,6 +193,15 @@ describe('undoing, without loss', () => {
     expect((await post({ action: 'undo', account_id: 'inv', import_id: a2.id })).body.investment_months.imports).toEqual([b2]);
     expect((await post({ action: 'undo', account_id: 'inv', import_id: b2.id })).body).toEqual({ investment_months: null });
     expect(await investmentMonthsStore.count(ctx)).toBe(0);
+  });
+
+  test('the import names itself, and undone by that, everything is as before', async () => {
+    await connect('i1', [{ account_id: 'inv', type: 'investment' }]);
+    const empty = await snapshot();
+    const res = (await post(importBody())).body;
+    expect(res.import_id).toBe(res.investment_months.imports[0].id);
+    expect((await post({ action: 'undo', account_id: 'inv', import_id: res.import_id })).body).toEqual({ investment_months: null });
+    expect(await snapshot()).toEqual(empty);
   });
 
   test('an import that isn’t there is a 404, and nothing changes', async () => {

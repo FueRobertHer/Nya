@@ -376,6 +376,18 @@ describe('undoing, without loss', () => {
     expect(hashes[ctxKey('investment-imports')]).toBeUndefined();
   });
 
+  test('the import names itself, even where the sheet’s account didn’t take it, and undone by that, everything is as before', async () => {
+    const before = everything();
+    const res = await post(importBody({ take: [{ account_id: 'roth', mask: '3307' }] }));
+    expect(res.status).toBe(200);
+    // Not in the sheet's account's list, so the done level has it from here.
+    expect(res.body.imports).toEqual([]);
+    const listed = (await list('roth')).body.imports;
+    expect(listed.map((i: { import_id: string; imported_at: string }) => [i.import_id, i.imported_at])).toEqual([[res.body.import_id, res.body.imported_at]]);
+    expect((await post({ action: 'undo', account_id: 'ind', import_id: res.body.import_id })).status).toBe(200);
+    expect(everything()).toEqual(before);
+  });
+
   test('an import that isn’t there is a 404, and nothing changes', async () => {
     await post(importBody());
     const before = everything();

@@ -18,10 +18,11 @@
 //     (another yes); how far back the chart reaches and where Nya's own
 //     figures win; and the months Nya's activity covers whose deposits and
 //     withdrawals aren't Vanguard's, compared and never used.
-//   - Once imported (PerformanceNow): what counts and where it is used, or
-//     why it isn't now. Every import is listed (PerformanceImports), the
-//     newest marked Counts, each with Undo, confirmed in place with what
-//     will change.
+//   - Once imported: what its months are now used for, on the sheet's done
+//     level (MonthsImported); what counts and where it is used, or why it
+//     isn't now (PerformanceNow). Every import is listed (PerformanceImports),
+//     each saying whether it is in use, with Undo, confirmed in place with
+//     what will change (monthsUndoText).
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { fieldAmount, formatDay, formatInstantDay, formatMoney, MINUS, onDay, signedMoney, zeroExample } from '@/lib/format';
@@ -309,6 +310,77 @@ function MonthsTable({ list, currency }: { list: readonly PastMonth[]; currency:
   );
 }
 
+/** What undoing an import of the page would do, for its confirm: an older
+ *  one changes nothing seen; the newest hands its months to the one before
+ *  it, or the account back to how it was before any import. The done level
+ *  asks its question in the footer (`question` false). */
+export function monthsUndoText(
+  i: MonthsImport,
+  o: { name: string; imports: InvestmentMonths; points: BalancePoint[] | null; activity: MonthsActivity | null; currency: string | null; question?: boolean }
+): string {
+  const { name, imports, points, activity, currency } = o;
+  const list = [...imports.imports].reverse();
+  const counting = list[0];
+  const past = points && activity ? withPastMonths(points, activity, imports, currency) : null;
+  const applied = past?.applied ?? null;
+  const d = importedDay(i);
+  const ask = o.question === false ? '' : `Undo the import from ${d}? `;
+  if (i !== counting) return `${ask}Nothing you see changes: Nya reads only the newest Performance page. It leaves this list, and you can import the file again later.`;
+  const next = list[1];
+  const totals = activity?.money_in_out;
+  const unreadable = !!activity?.money_in_out_unreadable;
+  if (next) {
+    const s = importSpan(next);
+    // All time from the newest's months, and from the one before's.
+    const now = allTimeFromMonths(past, totals, unreadable);
+    const then = now && points && activity ? allTimeFromMonths(withPastMonths(points, activity, { imports: imports.imports.filter((x) => x !== counting) }, currency), totals, unreadable) : now;
+    const allTime = now && then !== now ? `, and all time will ${then ? `count from ${monthText(then.slice(0, 7))}` : 'need your deposits and withdrawals'}` : '';
+    return `${ask}The months will come from the one before it again, from ${importedDay(next)}: ${spanText(s.from, s.to)}${allTime}. Nothing else changes, and you can import the file again later.`;
+  }
+  // All time came from its months when they start at $0.00 and no totals
+  // stand instead (lib/growth-summary.ts).
+  const allTime = !!allTimeFromMonths(past, totals, unreadable);
+  return `${ask}${name} goes back to how it was before any import${
+    applied ? `: before ${day(applied.first_recorded)} its chart is Nya’s estimate again${allTime ? ', and all time needs your deposits and withdrawals' : ''}` : ''
+  }. Nothing else changes, and you can import the file again later.`;
+}
+
+/** The done level's line: how many months, from which file, into the account. */
+export const monthsMadeText = (i: MonthsImport, name: string) => `Imported ${months(i.months.length)} from ${i.file_name ?? SOURCE} into ${name}.`;
+
+/** The done level's body under its line: what the account now uses the
+ *  import's months for, where Nya has nothing of its own, or why it doesn't
+ *  use them (nothing while that loads). Of the newest import only, as that
+ *  is the one in use. */
+export function MonthsImported({ name, imports, points, activity, currency }: { name: string; imports: InvestmentMonths; points: BalancePoint[] | null; activity: MonthsActivity | null; currency: string | null }) {
+  const past = useMemo(() => (points && activity ? withPastMonths(points, activity, imports, currency) : null), [points, activity, imports, currency]);
+  const counting = countingImport(imports);
+  if (!past || !counting) return null;
+  if (past.unused)
+    return (
+      <p className="helper">
+        <b>Not in use:</b> {unusedShort(past.unused, { name, counting, currency })}.
+      </p>
+    );
+  const a = past.applied;
+  if (!a) return null;
+  return (
+    <div className="stack tight">
+      <h3 className="section-label">{name} uses its months where Nya has nothing of its own</h3>
+      <dl className="txn-detail txn-detail-wide">
+        <div className="txn-detail-row">
+          <dt>Balances</dt>
+          <dd>{a.joined ? `Before ${day(a.first_recorded)}` : `Until ${day(a.entered_to)}, then its own estimates`}</dd>
+        </div>
+        <div className="txn-detail-row">
+          <dt>Deposits &amp; withdrawals</dt>
+          <dd>Before {day(a.activity_from)}</dd>
+        </div>
+      </dl>
+    </div>
+  );
+}
+
 /** How many imports the list shows before Show more. */
 const SHOWN = 5;
 
@@ -343,28 +415,7 @@ export function PerformanceImports({
   const shown = all ? list : list.slice(0, SHOWN);
   const hidden = list.length - SHOWN;
 
-  const askText = (i: MonthsImport) => {
-    const d = importedDay(i);
-    if (i !== counting)
-      return `Undo the import from ${d}? Nothing you see changes: Nya reads only the newest Performance page. It leaves this list, and you can import the file again later.`;
-    const next = list[1];
-    const totals = activity?.money_in_out;
-    const unreadable = !!activity?.money_in_out_unreadable;
-    if (next) {
-      const s = importSpan(next);
-      // All time from the newest's months, and from the one before's.
-      const now = allTimeFromMonths(past, totals, unreadable);
-      const then = now && points && activity ? allTimeFromMonths(withPastMonths(points, activity, { imports: imports.imports.filter((i) => i !== counting) }, currency), totals, unreadable) : now;
-      const allTime = now && then !== now ? `, and all time will ${then ? `count from ${monthText(then.slice(0, 7))}` : 'need your deposits and withdrawals'}` : '';
-      return `Undo the import from ${d}? The months will come from the one before it again, from ${importedDay(next)}: ${spanText(s.from, s.to)}${allTime}. Nothing else changes, and you can import the file again later.`;
-    }
-    // All time came from its months when they start at $0.00 and no totals
-    // stand instead (lib/growth-summary.ts).
-    const allTime = !!allTimeFromMonths(past, totals, unreadable);
-    return `Undo the import from ${d}? ${name} goes back to how it was before any import${
-      applied ? `: before ${day(applied.first_recorded)} its chart is Nya’s estimate again${allTime ? ', and all time needs your deposits and withdrawals' : ''}` : ''
-    }. Nothing else changes, and you can import the file again later.`;
-  };
+  const askText = (i: MonthsImport) => monthsUndoText(i, { name, imports, points, activity, currency });
 
   // In use or not, and how: an older import never is, whether or not the
   // newest is used; the newest by what its months are used for now, nothing

@@ -17,7 +17,8 @@ import { addMonthsImport, MonthsRefused, readInvestmentMonths, undoMonthsImport 
 //          typed?, counting }                             add one
 //   POST { action: 'undo', account_id, import_id }        undo one
 //
-// Answers { investment_months } with what is there now (null with none).
+// Answers { investment_months } with what is there now (null with none),
+// and an import its new `import_id` too, for the sheet's Undo on its done level.
 // The file never reaches the server: the browser reads it and sends its
 // months, which are checked here as they are stored (contiguous, each
 // adding up to the cent). Only an account a connection lists now, at
@@ -83,7 +84,7 @@ export async function POST(req: Request) {
       currency: change.currency,
       ...(change.typed.length > 0 ? { typed: change.typed } : {}),
     };
-    return NextResponse.json({ investment_months: await addMonthsImport(ctx, change.account_id, record, change.counting) });
+    return NextResponse.json({ investment_months: await addMonthsImport(ctx, change.account_id, record, change.counting), import_id: record.id });
   } catch (err) {
     if (err instanceof MonthsRefused) {
       if (err.why === 'missing') return NextResponse.json({ error: 'That import isn’t there any more: the list shows what is.' }, { status: 404 });
