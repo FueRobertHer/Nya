@@ -625,6 +625,8 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
   const activityFrom = ctx.activity?.flows_from ?? null;
   const later = dropped.before !== null || dropped.after !== null;
   const allAcc = check?.kind === 'all-accounts';
+  // How far back the chart would reach, said where these months would be used.
+  const reaches = !!imp && !later && !allAcc && !future?.unused;
 
   return (
     <div className="stack">
@@ -673,6 +675,13 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
         </Notice>
       )}
 
+      {/* What would stop counting, before the figures it is about. */}
+      {later && counting && (
+        <Notice level="caution" role="status">
+          {droppedWords(dropped, counting, imp!)}
+        </Notice>
+      )}
+
       {imp && (
         <Strip
           f={{
@@ -685,28 +694,18 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
         />
       )}
 
-      {(check?.kind === 'another' || check?.kind === 'unchecked') && (
-        <div className="stack tight">
-          {check.kind === 'another' ? (
-            <Notice level="caution" role="status">
-              {`This file may be for another account: its balance ${onDay(day(check.day))} is `}
-              <Masked>{money(check.balance)}</Masked>
-              {`, and ${ctx.name}’s is `}
-              <Masked>{money(check.account)}</Masked>.
-            </Notice>
-          ) : (
-            <Notice level="caution" role="status">
-              {`Nya can’t tell whether this file is ${ctx.name}’s: it has no balance of the account’s on a day the file has.${ctx.balance !== null ? ' A file printed up to today is checked against the balance now.' : ''}`}
-            </Notice>
-          )}
-          <label className="check-row">
-            <input type="checkbox" checked={state.yesAnother} onChange={(e) => state.setYesAnother(e.target.checked)} />
-            <span className="check-row-text">
-              <span className="check-row-title">{`It’s ${ctx.name}’s`}</span>
-              <span className="check-row-sub">Import it for this account anyway.</span>
-            </span>
-          </label>
-        </div>
+      {check?.kind === 'another' && (
+        <Notice level="caution" role="status">
+          {`This file may be for another account: its balance ${onDay(day(check.day))} is `}
+          <Masked>{money(check.balance)}</Masked>
+          {`, and ${ctx.name}’s is `}
+          <Masked>{money(check.account)}</Masked>.
+        </Notice>
+      )}
+      {check?.kind === 'unchecked' && (
+        <Notice level="caution" role="status">
+          {`Nya can’t tell whether this file is ${ctx.name}’s: it has no balance of the account’s on a day the file has.${ctx.balance !== null ? ' A file printed up to today is checked against the balance now.' : ''}`}
+        </Notice>
       )}
       {allAcc && check?.kind === 'all-accounts' && (
         <div className="stack tight">
@@ -724,29 +723,19 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
           </div>
         </div>
       )}
-      {check?.kind === 'matches' && (
+      {/* Whose it is, and how far back it takes the chart: one line. */}
+      {(check?.kind === 'matches' || reaches) && (
         <p className="helper">
-          {`Its balance ${onDay(day(check.day))}, `}
-          <Masked>{money(check.balance)}</Masked>
-          {`, is ${ctx.name}’s.`}
+          {check?.kind === 'matches' && (
+            <>
+              {`Its balance ${onDay(day(check.day))}, `}
+              <Masked>{money(check.balance)}</Masked>
+              {`, is ${ctx.name}’s.`}
+            </>
+          )}
+          {check?.kind === 'matches' && reaches && ' '}
+          {reaches && `The chart and your returns will reach back to ${monthText(firstMonth(imp))}.`}
         </p>
-      )}
-
-      {later && counting && (
-        <div className="stack tight">
-          <Notice level="caution" role="status">
-            {droppedWords(dropped, counting, imp!)}
-          </Notice>
-          <label className="check-row">
-            <input type="checkbox" checked={state.yesDropped} onChange={(e) => state.setYesDropped(e.target.checked)} />
-            <span className="check-row-text">
-              <span className="check-row-title">Use this file’s months only</span>
-              <span className="check-row-sub">
-                {laterWords(dropped, imp!, state.allTimeLater)}
-              </span>
-            </span>
-          </label>
-        </div>
       )}
 
       {imp && !later && !allAcc && future?.unused && (
@@ -758,45 +747,39 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
           )} You can still import them.`}
         </Notice>
       )}
-      {imp && !later && !allAcc && !future?.unused && (
-        <p className="helper">
-          {`The chart and your returns will reach back to ${monthText(firstMonth(imp))}.${
-            future?.applied ? ` Where Nya has its own balances (from ${day(future.applied.first_recorded)}) and activity (from ${day(future.applied.activity_from)}), those count.` : ''
-          }`}
-        </p>
-      )}
-
       {future && future.differs.length > 0 && (
         <div className="stack tight">
           <Notice level="info" role="status">
             {`In ${months(future.differs.length)} Nya has activity for, Vanguard’s deposits and withdrawals aren’t Nya’s. Nya keeps its own for those months, so importing doesn’t change them.`}
           </Notice>
-          <table className="report-table">
-            <thead>
-              <tr>
-                <th scope="col">Month</th>
-                <th scope="col" className="num">
-                  Vanguard
-                </th>
-                <th scope="col" className="num">
-                  Nya
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {[...future.differs].reverse().map((d) => (
-                <tr key={d.month}>
-                  <td className="report-nowrap">{monthText(d.month)}</td>
-                  <td className="num">
-                    <Masked>{signedMoney(d.theirs, ctx.currency, { always: true })}</Masked>
-                  </td>
-                  <td className="num">
-                    <Masked>{signedMoney(d.nyas, ctx.currency, { always: true })}</Masked>
-                  </td>
+          <div className="report-scroll">
+            <table className="report-table">
+              <thead>
+                <tr>
+                  <th scope="col">Month</th>
+                  <th scope="col" className="num">
+                    Vanguard
+                  </th>
+                  <th scope="col" className="num">
+                    Nya
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {[...future.differs].reverse().map((d) => (
+                  <tr key={d.month}>
+                    <td className="report-nowrap">{monthText(d.month)}</td>
+                    <td className="num">
+                      <Masked>{signedMoney(d.theirs, ctx.currency, { always: true })}</Masked>
+                    </td>
+                    <td className="num">
+                      <Masked>{signedMoney(d.nyas, ctx.currency, { always: true })}</Masked>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <p className="helper">A move inside the account, such as a sweep or a conversion, can read as money in or out.</p>
         </div>
       )}
@@ -816,10 +799,47 @@ export function PerformanceReview({ state, ctx, fileName, onAgain }: { state: Re
       )}
 
       <Why>
-        {`${firstRecorded && activityFrom ? `Nya has this account’s balances from ${day(firstRecorded)} and its activity from ${day(activityFrom)}. ` : ''}${SOURCE} has every month since the account opened: its beginning balance, deposits and withdrawals, returns and ending balance. Each month has to add up (beginning balance, plus deposits and withdrawals, plus returns, is its ending balance, and the next month begins there), and the page’s total has to match its months, so a figure read wrong can’t slip through. Nya uses the months only where it has nothing of its own. Vanguard gives one deposits and withdrawals figure a month, so Nya counts it at the middle of the month. Nya reads this one page only, from Vanguard only: a PDF laid out any other way isn’t read, never guessed at. Each import is kept on its own, listed in this sheet with its Undo, and undoing it puts the account back as it was before.`}
+        {`${firstRecorded && activityFrom ? `Nya has this account’s balances from ${day(firstRecorded)} and its activity from ${day(activityFrom)}, and uses` : 'Nya uses'} the months only where it has nothing of its own. Each month has to add up (beginning balance, plus deposits and withdrawals, plus returns, is its ending balance, and the next month begins there), and the page’s total has to match its months, so a figure read wrong can’t slip through. Vanguard gives one deposits and withdrawals figure a month, so Nya counts it at the middle of the month. Nya reads this one page only, from Vanguard only: a PDF laid out any other way isn’t read, never guessed at. Each import is kept on its own, listed in this sheet with its Undo, and undoing it puts the account back as it was before.`}
       </Why>
+
+      {/* The yeses Import waits on, last, just above the footer that says so. */}
+      {(check?.kind === 'another' || check?.kind === 'unchecked') && (
+        <label className="check-row">
+          <input type="checkbox" checked={state.yesAnother} onChange={(e) => state.setYesAnother(e.target.checked)} />
+          <span className="check-row-text">
+            <span className="check-row-title">{`It’s ${ctx.name}’s`}</span>
+            <span className="check-row-sub">Import it for this account anyway.</span>
+          </span>
+        </label>
+      )}
+      {/* A file of every account together can't be imported at all, so no yes is asked of it. */}
+      {later && counting && !allAcc && (
+        <label className="check-row">
+          <input type="checkbox" checked={state.yesDropped} onChange={(e) => state.setYesDropped(e.target.checked)} />
+          <span className="check-row-text">
+            <span className="check-row-title">Use this file’s months only</span>
+            <span className="check-row-sub">{laterWords(dropped, imp!, state.allTimeLater)}</span>
+          </span>
+        </label>
+      )}
     </div>
   );
+}
+
+/** What Import waits on that a check in the review gives, for the footer's
+ *  note: null where it waits on nothing the person can check (a file that
+ *  can't be imported says why in the review). */
+export function monthsWaitsOn(state: ReviewState, name: string): string | null {
+  const { check, dropped, counting, review } = state;
+  if (!review?.importable || check?.kind === 'all-accounts') return null;
+  const whose = (check?.kind === 'another' || check?.kind === 'unchecked') && !state.yesAnother;
+  const only = (dropped.before !== null || dropped.after !== null) && counting !== null && !state.yesDropped;
+  if (whose && only) return `To import, check It’s ${name}’s and Use this file’s months only.`;
+  if (whose) return `To import, check It’s ${name}’s.`;
+  if (!only || !counting) return null;
+  const from = monthText(firstMonth(counting));
+  const other = dropped.before && dropped.after ? `a file from ${from} up to today` : dropped.before ? `a file from ${from}` : 'a file printed up to today';
+  return `To import, check Use this file’s months only, or choose ${other}.`;
 }
 
 /** What using only this file's months does, for its yes. `allTime`: all
