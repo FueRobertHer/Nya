@@ -29,6 +29,7 @@ import {
   noBetterLine,
   orderLine,
   ownLine,
+  sameStrategy,
   tapLine,
   TUNE_BUSY,
   TUNE_FAILED,
@@ -48,6 +49,7 @@ import {
   tunedNote,
   useLabel,
   usedFailed,
+  type TuneUse,
 } from './plan-tune';
 import RadioRows from './RadioRows';
 import { SheetFooter } from './Sheet';
@@ -67,6 +69,8 @@ type Shared = SaveProps & {
   now: NowFigures | null;
   used: (strategy: Strategy) => UsedFigures;
   onTry: (strategy: Strategy) => Promise<true | string>;
+  /** Told once Use in your plan has saved, with what it wrote over and moved. */
+  onUsed?: (use: TuneUse) => void;
 };
 
 const sameAsk = (a: TuneAsk | null, b: TuneAsk | null) => JSON.stringify(a) === JSON.stringify(b);
@@ -320,10 +324,19 @@ export function TunedAnswer({
 
 /** A row's own sheet: the plan as it would be with this setting, what that moves, and the
  *  two ways to take it. */
-export function TuneLevel({ row, ask, money, lawYear, healthGrowth, copyOpen, whyNot, now, used, onTry, ...save }: Shared & { row: TunedRow; ask: TuneAsk }) {
+export function TuneLevel({ row, ask, money, lawYear, healthGrowth, copyOpen, whyNot, now, used, onTry, onUsed, ...save }: Shared & { row: TunedRow; ask: TuneAsk }) {
   const { detail, plan } = save;
   const strategy = row.run.strategy;
-  const { s, more } = useDetailSave(save, detail);
+  // Use's save, told to the tab once it has landed with what it moved, for the done line
+  // and its Undo there (the sheet closes on it).
+  const { s, more } = useDetailSave(save, {
+    ...detail,
+    save: async (next, m, also) => {
+      const r = await detail.save(next, m, also);
+      if (r === true && m.tax && !sameStrategy(own, m.tax.strategy)) onUsed?.({ was: own, now: m.tax.strategy, stop: stopMoved, start: startMoved });
+      return r;
+    },
+  });
   const [trying, setTrying] = useState(false);
   const [tryError, setTryError] = useState<string | null>(null);
   const answer = used(strategy);

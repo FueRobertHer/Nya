@@ -72,6 +72,7 @@ export async function planPage() {
   const planInputs = await import('@/app/api/plan-inputs/route');
   const planFacts = await import('@/app/api/plan-facts/route');
   type FirePlanV2 = import('@/lib/fire/plan-v2').FirePlanV2;
+  type TaxChoices = import('@/lib/fire/tax-choices').TaxChoices;
   type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
 
   beforeEach(async () => {
@@ -164,7 +165,7 @@ export async function planPage() {
     expect([name, r.status, r.body.error]).toEqual([name, 200, undefined]);
     return r.body.plan.id;
   }
-  type Row = { id: string; name: string; plan: FirePlanV2; currency: string | null; updated_at: string | null };
+  type Row = { id: string; name: string; plan: FirePlanV2; currency: string | null; updated_at: string | null; tax: TaxChoices | null };
   /** What is stored: whose plan is yours, and every plan by name. */
   async function stored(): Promise<{ main: string; byName: Record<string, Row> }> {
     const { body } = await json(await plansRoute.GET());

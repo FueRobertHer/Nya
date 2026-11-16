@@ -6,7 +6,7 @@ import { planPage } from './plan-page';
 // job's states, the table and its sort, a row's own sheet, and what Use and Try send.
 
 const page = await planPage();
-const { PLAN, WITH_BALANCES, seedPlan, render, press, button, closeOf, fill, pick, calls, settle, classOf, stored, answers, act, click } = page;
+const { PLAN, WITH_BALANCES, seedPlan, seedCopy, openCopy, render, press, button, closeOf, fill, pick, calls, settle, classOf, stored, answers, act, click, dom } = page;
 type Tab = Awaited<ReturnType<typeof render>>;
 type Node = NonNullable<ReturnType<Tab['dialog']>>;
 
@@ -99,6 +99,7 @@ const { wholeMoney } = await import('@/components/plan-text');
 const { DEFAULT_TAX_CHOICES } = await import('@/lib/fire/tax-choices');
 const { DEFAULT_TAX_FACTS } = await import('@/lib/fire/tax-facts');
 const { NO_STRATEGY } = await import('@/lib/fire/tax/rules');
+const { setHideAmounts } = await import('@/components/hide-amounts');
 
 describe('the row', () => {
   test('only where Compare is: in the detailed model', async () => {
@@ -622,6 +623,309 @@ describe('a row’s own sheet', () => {
     expect(after.findAll((e) => e.getAttribute('role') === 'alert').length).toBe(1);
     await tab.unmount();
   }, 30_000);
+});
+
+describe('Undo after Use', () => {
+  const otherRow = (table: Node) => bodyRows(table).find((r) => !(r.textContent ?? '').includes('Your plan') && !(r.textContent ?? '').includes('This copy') && nameOf(r).startsWith('Fill the 12%'))!;
+  /** What the page says outside any sheet, by the words it starts with (its level's first). */
+  const line = (tab: Tab, start: string) =>
+    tab.container.findAll((e) => (e.getAttribute('role') === 'status' || e.getAttribute('role') === 'alert') && (e.textContent ?? '').startsWith(start) && !(tab.dialog()?.findAll((d) => d === e).length))[0] ?? null;
+  /** Every plan as stored, but its stamps, which move with each save. */
+  const kept = async () => Object.fromEntries(Object.entries((await stored()).byName).map(([n, r]) => [n, { plan: r.plan, currency: r.currency, tax: r.tax }]));
+  /** Tunes, opens a row's own sheet and presses one of its buttons: the row's name. */
+  const useRow = async (tab: Tab, pickRow: (table: Node) => Node = otherRow, words = 'Use in your plan') => {
+    const row = pickRow(await tuned(tab));
+    const name = nameOf(row);
+    await press(ruleOf(row));
+    for (let i = 0; i < 400 && (tab.dialog()!.textContent ?? '').includes('Working it out'); i++) await settle(50);
+    await press(button(tab.dialog(), words));
+    await settle(300);
+    expect(tab.dialog()).toBeNull();
+    return name;
+  };
+
+  test('Use says what it did, focused, and Undo puts your plan back as it was', async () => {
+    const tab = await detailed();
+    const was = await kept();
+    const mine = async () => {
+      const { main, byName } = await stored();
+      return Object.values(byName).find((r) => r.id === main)!;
+    };
+    const strategy = (await mine()).tax?.strategy;
+    expect(strategy).toEqual(NO_STRATEGY);
+    const sub = subOf(tab.row('Roth conversions'));
+    const name = await useRow(tab);
+    const done = line(tab, 'Done: ')!;
+    // Your plan starts from its FI number, which moves with what tax comes to.
+    expect(done.textContent).toMatch(new RegExp(`^Done: Your plan now converts to fill the 12% bracket, until ${untilOf(name)}, and starts from \\$[\\d,]+, not \\$[\\d,]+\\.$`));
+    expect(dom.document.activeElement).toBe(done);
+    expect(await kept()).not.toEqual(was);
+    const n = puts().length;
+    await press(button(tab.container, 'Undo'));
+    await settle(300);
+    expect(puts().length).toBe(n + 1);
+    expect(puts().at(-1)!.body.tax.strategy).toEqual(strategy);
+    expect(await kept()).toEqual(was);
+    expect(subOf(tab.row('Roth conversions'))).toBe(sub);
+    const undone = line(tab, 'Undone: ')!;
+    expect(undone.textContent).toBe('Undone: your plan makes no conversions, as before.');
+    expect(dom.document.activeElement).toBe(undone);
+    expect(line(tab, 'Done: ')).toBeNull();
+    expect(button(tab.container, 'Undo')).toBeNull();
+    await tab.unmount();
+  }, 60_000);
+
+  test('the line goes with any other save, even one that puts the same rule back, and with another plan shown', async () => {
+    const first = await detailed();
+    await first.unmount();
+    await seedCopy('Other');
+    const tab = await render({ ...WITH_BALANCES, ...WITH_ACCOUNTS });
+    await pick(tab.container, 'Drawdown');
+    await useRow(tab);
+    expect(line(tab, 'Done: ')).not.toBeNull();
+    // The order and back, saved alone: the rule is Use's again, but the line is gone.
+    for (const order of ['Taxable, then Roth, then tax-deferred', 'Taxable, then tax-deferred, then Roth']) {
+      await press(tab.row('Order'));
+      await pick(tab.dialog()!, order);
+      await press(button(tab.dialog(), 'Save'));
+      await settle(200);
+    }
+    expect(puts().at(-1)!.body.tax.strategy.order).toBe('standard');
+    expect(line(tab, 'Done: ')).toBeNull();
+    // A figure of the plan's own.
+    await useRow(tab, (t) => named(t, 'Fill the 10%'));
+    expect(line(tab, 'Done: ')).not.toBeNull();
+    await pick(tab.container, 'Your path');
+    await press(tab.row('Assumptions'));
+    await fill(tab.dialog()!, 'Inflation', '4');
+    await press(button(tab.dialog(), 'Save'));
+    await settle(300);
+    await pick(tab.container, 'Drawdown');
+    expect(line(tab, 'Done: ')).toBeNull();
+    // Another plan shown, and back.
+    await useRow(tab, (t) => named(t, 'Fill the 22%'));
+    expect(line(tab, 'Done: ')).not.toBeNull();
+    await openCopy(tab, 'Other');
+    expect(line(tab, 'Done: ')).toBeNull();
+    await press(tab.container.findAll((e) => e.getAttribute('aria-label') === 'Back to your plan')[0]);
+    await settle(300);
+    await pick(tab.container, 'Drawdown');
+    expect(line(tab, 'Done: ')).toBeNull();
+    expect(button(tab.container, 'Undo')).toBeNull();
+    await tab.unmount();
+  }, 90_000);
+
+  test('in a copy, Undo puts the copy back and leaves your plan alone', async () => {
+    const tab = await detailed();
+    const name = await useRow(tab, otherRow, 'Try it in a copy');
+    expect(line(tab, 'Done: ')).toBeNull();
+    const was = await kept();
+    const mainPuts = puts().length;
+    await useRow(tab, (t) => named(t, 'No conversions'), 'Use in this copy');
+    const done = line(tab, 'Done: ')!;
+    // A copy that starts from its FI number starts elsewhere once tax changes.
+    expect(done.textContent).toMatch(/^Done: This copy now makes no conversions(, and starts from \$[\d,]+, not \$[\d,]+)?\.$/);
+    expect(dom.document.activeElement).toBe(done);
+    const copyPuts = () => calls().filter((c) => c.method === 'PUT' && c.path === '/api/plans');
+    const n = copyPuts().length;
+    await press(button(tab.container, 'Undo'));
+    await settle(300);
+    // One save, on the stamp Use's save left, so it isn't refused as changed elsewhere.
+    expect(copyPuts().length).toBe(n + 1);
+    expect(puts().length).toBe(mainPuts);
+    expect(await kept()).toEqual(was);
+    expect(line(tab, 'Undone: ')!.textContent).toBe(`Undone: this copy converts to fill the 12% bracket, until ${untilOf(name)}, as before.`);
+    await tab.unmount();
+  }, 90_000);
+
+  test('a copy that takes your plan’s tax settings gets the line but no Undo, as they can’t be given back', async () => {
+    const first = await detailed();
+    await first.unmount();
+    await seedCopy('Flat');
+    // A copy made today takes your plan's choices as its own; one stored with none of its own is older.
+    const { GET } = await import('@/app/api/plans/route');
+    answers['GET /api/plans'] = async () => {
+      const body = await (await GET()).json();
+      return Response.json({ ...body, plans: body.plans.map((p: { name: string }) => (p.name === 'Flat' ? { ...p, tax: null } : p)) });
+    };
+    const tab = await render({ ...WITH_BALANCES, ...WITH_ACCOUNTS });
+    await openCopy(tab, 'Flat');
+    await pick(tab.container, 'Drawdown');
+    const row = otherRow(await tuned(tab));
+    await press(ruleOf(row));
+    await settle(300);
+    delete answers['GET /api/plans'];
+    await press(button(tab.dialog(), 'Use in this copy'));
+    await settle(300);
+    expect(tab.dialog()).toBeNull();
+    expect(line(tab, 'Done: ')!.textContent).toMatch(/^Done: This copy now converts to fill the 12% bracket, until \d+/);
+    expect(button(tab.container, 'Undo')).toBeNull();
+    await tab.unmount();
+  }, 90_000);
+
+  test('a refused Undo says why under it, focused, and Undo again does it', async () => {
+    const tab = await detailed();
+    const before = await kept();
+    await useRow(tab);
+    const was = await kept();
+    answers['PUT /api/fire-plan'] = () => Response.json({ error: 'Not now, says the server.' }, { status: 500 });
+    await press(button(tab.container, 'Undo'));
+    await settle(300);
+    // Said under the offer, as the store says its own refusal at the top of the tab.
+    const refused = line(tab, 'Critical: It wasn’t undone. Try again in a moment.')!;
+    expect(refused).not.toBeNull();
+    expect(dom.document.activeElement).toBe(refused);
+    expect(line(tab, 'Done: ')).not.toBeNull();
+    expect(line(tab, 'Undone: ')).toBeNull();
+    delete answers['PUT /api/fire-plan'];
+    expect(await kept()).toEqual(was);
+    // The plan still has Use's rule, so Undo is still there, and works.
+    await press(button(tab.container, 'Undo'));
+    await settle(300);
+    expect(await kept()).toEqual(before);
+    expect(line(tab, 'Critical: ')).toBeNull();
+    expect(dom.document.activeElement).toBe(line(tab, 'Undone: '));
+    await tab.unmount();
+  }, 60_000);
+
+  test('in a copy, a refusal is said once, under Undo, and Undo again does it on what is there now', async () => {
+    const tab = await detailed();
+    await useRow(tab, otherRow, 'Try it in a copy');
+    const before = await kept();
+    await useRow(tab, (t) => named(t, 'No conversions'), 'Use in this copy');
+    const was = await kept();
+    answers['PUT /api/plans'] = () => Response.json({ error: 'Changed elsewhere.', stale: true }, { status: 409 });
+    await press(button(tab.container, 'Undo'));
+    await settle(300);
+    delete answers['PUT /api/plans'];
+    const refused = line(tab, 'Critical: Changed on another device, so nothing was saved')!;
+    expect(refused).not.toBeNull();
+    expect(dom.document.activeElement).toBe(refused);
+    // Not again on the copy's card.
+    expect(tab.container.findAll((e) => (e.textContent ?? '').includes('nothing of your change was kept'))).toHaveLength(0);
+    expect(await kept()).toEqual(was);
+    // The list read again, Undo saves on what is there now.
+    await press(button(tab.container, 'Undo'));
+    await settle(300);
+    expect(await kept()).toEqual(before);
+    expect(line(tab, 'Critical: ')).toBeNull();
+    expect(dom.document.activeElement).toBe(line(tab, 'Undone: '));
+    await tab.unmount();
+  }, 90_000);
+
+  test('a change to the household ends the line', async () => {
+    const tab = await detailed();
+    await useRow(tab);
+    expect(line(tab, 'Done: ')).not.toBeNull();
+    await pick(tab.container, 'Your path');
+    await press(tab.row('Health coverage'));
+    await pick(tab.dialog()!, 'ACA marketplace');
+    await fill(tab.dialog()!, 'Benchmark plan', '11,000');
+    await fill(tab.dialog()!, 'Quoted for age', '50');
+    await press(button(tab.dialog(), 'Save'));
+    await settle(300);
+    await pick(tab.container, 'Drawdown');
+    expect(line(tab, 'Done: ')).toBeNull();
+    expect(button(tab.container, 'Undo')).toBeNull();
+    await tab.unmount();
+  }, 90_000);
+
+  test('the copy Use wrote to, made yours, ends the line too, as another plan shown', async () => {
+    const tab = await detailed();
+    await useRow(tab, otherRow, 'Try it in a copy');
+    await useRow(tab, (t) => named(t, 'No conversions'), 'Use in this copy');
+    expect(line(tab, 'Done: ')).not.toBeNull();
+    const { main, byName } = await stored();
+    const copy = Object.keys(byName).find((n) => byName[n].id !== main)!;
+    await press(tab.plans());
+    await press(tab.sheetRow(copy));
+    await press(tab.sheetRow('Make this your plan'));
+    await settle(400);
+    if (tab.dialog()) await press(closeOf(tab.dialog()!));
+    await settle(400);
+    await pick(tab.container, 'Drawdown');
+    expect((await stored()).main).toBe(byName[copy].id);
+    expect(line(tab, 'Done: ')).toBeNull();
+    expect(button(tab.container, 'Undo')).toBeNull();
+    await tab.unmount();
+  }, 120_000);
+
+  test('another plan made yours ends the line: Undo never saves into a plan Use didn’t touch', async () => {
+    const tab = await detailed();
+    // A copy with the rule, then the same rule Used in your plan.
+    await useRow(tab, otherRow, 'Try it in a copy');
+    await press(tab.container.findAll((e) => e.getAttribute('aria-label') === 'Back to your plan')[0]);
+    await settle(300);
+    await pick(tab.container, 'Drawdown');
+    await useRow(tab);
+    expect(line(tab, 'Done: ')).not.toBeNull();
+    const { main, byName } = await stored();
+    const copy = Object.keys(byName).find((n) => byName[n].id !== main)!;
+    await press(tab.plans());
+    await press(tab.sheetRow(copy));
+    await press(tab.sheetRow('Make this your plan'));
+    await settle(400);
+    if (tab.dialog()) await press(closeOf(tab.dialog()!));
+    await settle(400);
+    await pick(tab.container, 'Drawdown');
+    expect((await stored()).main).toBe(byName[copy].id);
+    expect(line(tab, 'Done: ')).toBeNull();
+    expect(button(tab.container, 'Undo')).toBeNull();
+    await tab.unmount();
+  }, 120_000);
+
+  test('its amounts are hidden with the rest', async () => {
+    const tab = await detailed();
+    await press(tab.row('Roth conversions'));
+    await pick(tab.dialog()!, 'A fixed amount');
+    await fill(tab.dialog()!, 'How much a year', '40000');
+    await fill(tab.dialog()!, 'Until age', '60');
+    await press(button(tab.dialog(), 'Save'));
+    await settle(300);
+    await useRow(tab, (t) => named(t, 'No conversions'));
+    try {
+      await act(async () => void setHideAmounts(true, null));
+      // Re-drawn as Dashboard does on the switch, by a change of its own.
+      await pick(tab.container, 'Your path');
+      await pick(tab.container, 'Drawdown');
+      const done = line(tab, 'Done: ')!.textContent ?? '';
+      expect(done).toStartWith('Done: Your plan now makes no conversions, and starts from $••••, not $••••.');
+      expect(done).not.toMatch(/\$\d/);
+      await press(button(tab.container, 'Undo'));
+      await settle(300);
+      const undone = line(tab, 'Undone: ')!.textContent ?? '';
+      expect(undone).toStartWith('Undone: your plan converts $•••• a year, until 60, as before.');
+      expect(undone).not.toContain('40,000');
+    } finally {
+      await act(async () => void setHideAmounts(false, null));
+    }
+    await tab.unmount();
+  }, 60_000);
+
+  test('the line stays, with what moved, when the plan can’t be worked out once used', async () => {
+    const MOVES = { ...PLAN, stopAtFi: true, targetAge: null, spending: 60_000, savings: 40_000 } as typeof PLAN;
+    const search = planSearch();
+    const real = search.answer;
+    const tab = await detailed(MOVES);
+    await settle(400);
+    const row = named(await tuned(tab), 'Fill the 22%');
+    await press(ruleOf(row));
+    for (let i = 0; i < 400 && (tab.dialog()!.textContent ?? '').includes('Working it out'); i++) await settle(50);
+    const moved = /Once used, your plan (.*), so this differs from the table\./.exec(tab.dialog()!.textContent ?? '')?.[1];
+    try {
+      search.answer = (slot, job) => (slot === 'tune-level' ? real(slot, job) : { ok: false, error: 'nope' });
+      await press(button(tab.dialog(), 'Use in your plan'));
+      await settle(400);
+      expect(button(tab.container, 'Try again')).not.toBeNull();
+      const done = line(tab, 'Done: ')!;
+      expect(done.textContent).toMatch(/^Done: Your plan now converts to fill the 22% bracket, until \d+/);
+      if (moved && !moved.startsWith('more of')) expect(done.textContent).toEndWith(`, and ${moved}.`);
+      expect(button(tab.container, 'Undo')).not.toBeNull();
+    } finally {
+      search.answer = real;
+    }
+    await tab.unmount();
+  }, 90_000);
 });
 
 describe('what only some plans see', () => {
