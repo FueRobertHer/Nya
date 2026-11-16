@@ -59,6 +59,9 @@ describe('the answer, with lastsIn and without', () => {
     expect(answer).toContain('The earliest stop that lasts to 95 in at least 95% of historical starts, from what you’d have then.');
     expect(answer).not.toContain('Saving $30,000 a year, growing a steady');
     expect(answer).not.toContain('Working it out');
+    // The chart marks the stop found, and says where the line meets the FI number.
+    const chart = tab.container.findAll((e) => e.tagName.toLowerCase() === 'svg' && (e.getAttribute('aria-label') ?? '').startsWith('Invested assets'))[0];
+    expect(chart.getAttribute('aria-label')).toMatch(/FI number around 52, .* The earliest stop that lasts is around 53\.$/);
     await tab.unmount();
   }, 30_000);
 
