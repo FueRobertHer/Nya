@@ -212,6 +212,31 @@ describe('on the account’s sheet, months that start when it opened', () => {
     }
   });
 
+  test('two days measured: a change in balance too', async () => {
+    // Laid out, so two fingers land on days.
+    const rect = FakeElement.prototype.getBoundingClientRect;
+    FakeElement.prototype.getBoundingClientRect = function (this: FakeElement) {
+      const r = rect.call(this);
+      return this.tagName.toLowerCase() === 'svg' ? { ...r, width: 352, right: 352 } : r;
+    };
+    const v = await mount('acc_opened');
+    try {
+      const slider = v.host.findAll((e) => e.getAttribute('role') === 'slider')[0];
+      const finger = (type: string, id: number, x: number) =>
+        act(() => {
+          slider.dispatchEvent(Object.assign(new FakeEvent(type), { pointerId: id, button: 0, buttons: 1, pointerType: 'touch', clientX: x, clientY: 0 }));
+        });
+      finger('pointerdown', 1, 2);
+      finger('pointerdown', 2, 344);
+      const date = v.host.findAll((e) => (e.getAttribute('class') ?? '').startsWith('chart-readout-date'))[0].textContent;
+      expect(date).toContain(' to ');
+      expect(v.host.findAll((e) => (e.getAttribute('class') ?? '') === 'chart-readout-what').map((e) => e.textContent)).toEqual(['change in balance']);
+    } finally {
+      v.unmount();
+      FakeElement.prototype.getBoundingClientRect = rect;
+    }
+  });
+
   test('totals set stand instead', async () => {
     const v = await mount('acc_opened_set', { money_in_out: TOTALS });
     try {
