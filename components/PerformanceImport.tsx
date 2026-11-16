@@ -50,6 +50,7 @@ import FieldError from './FieldError';
 import { Strip } from './FiguresStrip';
 import { Masked } from './HideAmounts';
 import { Notice } from './TotalCaveats';
+import { useAskFocus } from './TransactionsImport';
 import { Why } from './Why';
 
 export const SOURCE = 'Vanguard’s Performance page';
@@ -204,8 +205,34 @@ export function usePerformanceData<A extends MonthsActivity = MonthsActivity>(ac
   return { imports, setImports, importsError, loaded, points, activity, reload, refreshActivity };
 }
 
-/** What counts now and where, or why it isn't used (the sheet's top, once
- *  something is imported). */
+/** Where Nya uses the counting import's months, after its row's "In use
+ *  where Nya has nothing of its own:". */
+function appliedText(applied: NonNullable<PastMonthsResult['applied']>): string {
+  return `balances ${applied.joined ? `before ${day(applied.first_recorded)}` : `until ${day(applied.entered_to)}, then its own estimates`}, and deposits and withdrawals before ${day(applied.activity_from)}`;
+}
+
+/** Why the counting import's months aren't used, short, for its row in the
+ *  list (the top says it in full, unusedWords). */
+function unusedShort(why: MonthsUnused, o: { name: string; counting: MonthsImport; currency: string | null }): string {
+  switch (why) {
+    case 'currency':
+      return `they are in ${o.counting.currency ?? 'USD'}, and ${o.name} is in ${o.currency ?? 'USD'} now`;
+    case 'activity':
+      return 'Nya has no investment activity to join them to yet';
+    case 'no-record':
+      return 'Nya hasn’t recorded a balance yet';
+    case 'gap':
+      return 'nothing covers the days between them and Nya’s activity';
+    case 'activity-late':
+      return 'Nya’s activity starts after its first recorded balance';
+    case 'covered':
+      return 'Nya’s own balances cover these months';
+  }
+}
+
+/** The months that count and why they aren't used, if they aren't (the
+ *  sheet's top, once something is imported); where they are used, its row
+ *  in the list says. */
 export function PerformanceNow({
   name,
   imports,
@@ -226,9 +253,6 @@ export function PerformanceNow({
   return (
     <div className="stack tight">
       <h3 className="section-label">{`${spanText(span.from, span.to)}, from ${SOURCE}`}</h3>
-      {past?.applied && (
-        <p className="helper">{`Nya uses them where it has nothing of its own: balances ${past.applied.joined ? `before ${day(past.applied.first_recorded)}` : `until ${day(past.applied.entered_to)}, then its own estimates`}, and deposits and withdrawals before ${day(past.applied.activity_from)}.`}</p>
-      )}
       {past?.unused && (
         <Notice level="caution" role="status">
           {`These months aren’t used now: ${unusedWords(
@@ -288,9 +312,9 @@ function MonthsTable({ list, currency }: { list: readonly PastMonth[]; currency:
 /** How many imports the list shows before Show more. */
 const SHOWN = 5;
 
-/** Every Performance page imported into the account, newest first, the one
- *  that counts marked, each with Undo confirmed in place. `onUndo` answers
- *  whether it was undone. */
+/** Every Performance page imported into the account, newest first, each
+ *  leading with whether it is in use and how (none while that loads), with
+ *  Undo confirmed in place. `onUndo` answers whether it was undone. */
 export function PerformanceImports({
   name,
   imports,
@@ -309,6 +333,7 @@ export function PerformanceImports({
   onUndo: (i: MonthsImport) => Promise<boolean>;
 }) {
   const [asking, setAsking] = useState<string | null>(null);
+  const focus = useAskFocus(asking);
   const [all, setAll] = useState(false);
   const list = [...imports.imports].reverse();
   const counting = list[0];
@@ -321,7 +346,7 @@ export function PerformanceImports({
   const askText = (i: MonthsImport) => {
     const d = importedDay(i);
     if (i !== counting)
-      return `Undo the import from ${d}? Nothing you see changes: the newest import counts. There’s just no going back to this one afterwards. You can import the file again later.`;
+      return `Undo the import from ${d}? Nothing you see changes: Nya reads only the newest Performance page. It leaves this list, and you can import the file again later.`;
     const next = list[1];
     const totals = activity?.money_in_out;
     const unreadable = !!activity?.money_in_out_unreadable;
@@ -341,34 +366,57 @@ export function PerformanceImports({
     }. Nothing else changes, and you can import the file again later.`;
   };
 
+  // In use or not, and how: an older import never is, whether or not the
+  // newest is used; the newest by what its months are used for now, nothing
+  // while that loads.
+  const status = (i: MonthsImport): { label: string; why: string } | null => {
+    if (i !== counting) return { label: 'Not in use:', why: ' Nya reads only the newest Performance page' };
+    if (past?.unused) return { label: 'Not in use:', why: ` ${unusedShort(past.unused, { name, counting, currency })}` };
+    if (applied) return { label: 'In use where Nya has nothing of its own:', why: ` ${appliedText(applied)}` };
+    return null;
+  };
+
   return (
     <div className="stack tight">
       <ul className="list-rows">
         {shown.map((i) => {
           const s = importSpan(i);
+          const now = status(i);
           return (
             <li key={i.id}>
               <div className="list-row">
                 <span className="list-row-text">
                   <span className="list-row-title">{i.file_name ?? SOURCE}</span>
-                  <span className="list-row-sub">
-                    {`Imported ${importedDay(i)} · ${months(i.months.length)} · covers ${spanText(s.from, s.to)}`}{' '}
-                    {i === counting && <span className="badge accent">Counts</span>}
+                  <span className="list-row-sub import-status">
+                    {now && (
+                      <>
+                        <b>{now.label}</b>
+                        {`${now.why} · `}
+                      </>
+                    )}
+                    {`${spanText(s.from, s.to)} · ${months(i.months.length)} · imported ${importedDay(i)}`}
                   </span>
                 </span>
                 {asking !== i.id && (
-                  <button type="button" className="btn ghost" aria-label={`Undo the import from ${importedDay(i)}`} disabled={busy} onClick={() => setAsking(i.id)}>
+                  <button
+                    type="button"
+                    className="btn ghost"
+                    ref={focus.undo(i.id)}
+                    aria-label={`Undo the import from ${importedDay(i)}`}
+                    disabled={busy}
+                    onClick={() => setAsking(i.id)}
+                  >
                     Undo
                   </button>
                 )}
               </div>
               {asking === i.id && (
                 <div className="import-confirm stack tight">
-                  <p className="helper" role="status">
+                  <p className="helper" role="status" ref={focus.ask} tabIndex={-1}>
                     {askText(i)}
                   </p>
                   <div className="btn-row">
-                    <button type="button" className="btn secondary" disabled={busy} onClick={() => setAsking(null)}>
+                    <button type="button" className="btn secondary" disabled={busy} onClick={() => focus.keep(() => setAsking(null))}>
                       Keep it
                     </button>
                     <button

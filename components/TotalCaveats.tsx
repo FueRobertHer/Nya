@@ -9,7 +9,7 @@
 // place to each in its own words and color. A <details>, so it works with no
 // script, and the words stay on the page while it is closed.
 
-import type { ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 import type { Severity } from '@/lib/accounts-status';
 import { joinNames } from '@/lib/month-coverage';
 import { CAUTION, LevelWord, levelIcon } from './ConnectionStatus';
@@ -70,10 +70,24 @@ export const DONE = (
  *  level said first: a caveat in full, an error said where it arose (a
  *  budget's sheet, the month's card), or what an action just did (`done`).
  *  One that appears after an action is announced: `role` "alert" for a
- *  critical one, "status" for the rest. */
-export function Notice({ level, role, children }: { level: CaveatSeverity | 'done'; role?: 'alert' | 'status'; children: ReactNode }) {
+ *  critical one, "status" for the rest. One that takes focus after an
+ *  action (where focus would otherwise be lost) gets a `ref` and a
+ *  `tabIndex` of -1. */
+export function Notice({
+  level,
+  role,
+  ref,
+  tabIndex,
+  children,
+}: {
+  level: CaveatSeverity | 'done';
+  role?: 'alert' | 'status';
+  ref?: Ref<HTMLDivElement>;
+  tabIndex?: -1;
+  children: ReactNode;
+}) {
   return (
-    <div className={`notice ${level}`} role={role}>
+    <div className={`notice ${level}`} role={role} ref={ref} tabIndex={tabIndex}>
       {level === 'info' ? INFO : level === 'done' ? DONE : levelIcon(level)}
       <div>
         <LevelWord level={level} />

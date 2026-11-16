@@ -109,7 +109,8 @@ export async function readAccountImports(ctx: Ctx, account_ids: readonly string[
 }
 
 /** One import, listed for its account's sheet: what it is and every account
- *  it took (by the ids they were imported on), without its rows. */
+ *  it took (by the ids they were imported on, the sheet's own by its id now,
+ *  as it may hold the import under an earlier one), without its rows. */
 export type ListedImport = Omit<InvestmentImport, 'rows'> & { import_id: string; rows: number; accounts: string[] };
 
 /** The account's imports, newest first, and the fingerprint they were read
@@ -119,12 +120,12 @@ export async function listImports(ctx: Ctx, account_id: string): Promise<{ impor
   const keys = await importKeys(ctx);
   const mine = (await readAccountImports(ctx, [account_id], keys)).get(account_id) ?? [];
   const imports = mine
-    .map(({ rows, account_id: _, ...i }) => ({
+    .map(({ rows, account_id: held, ...i }) => ({
       ...i,
       rows: rows.length,
       accounts: keys.flatMap((k) => {
         const parts = keyParts(k);
-        return parts && parts.import_id === i.import_id ? [parts.account_id] : [];
+        return parts && parts.import_id === i.import_id ? [parts.account_id === held ? account_id : parts.account_id] : [];
       }),
     }))
     .sort((a, b) => (a.imported_at !== b.imported_at ? (a.imported_at > b.imported_at ? -1 : 1) : a.import_id > b.import_id ? -1 : 1));
