@@ -257,7 +257,7 @@ The only way to say something is wrong or worth knowing. See [Status and honesty
 | Critical | `--neg` text on `--neg-tint`, an edge in `--neg`, the alert triangle | "Chase needs reconnecting. Its balances are from Aug 7." / "This total is short by 2 accounts." |
 | Caution | `--warn` text on `--warn-tint`, the clock | "Couldn't refresh Ally; balances are from yesterday." / "History paused since Oct 3." |
 | Information | `--text-2` on `--caveat-surface`, the circled i | "Converted to USD at ECB rates." |
-| Done | `--pos` text on `--pos-tint`, a check | "Saved. 14 transactions now use this rule." |
+| Done | `--pos` text on `--pos-tint`, a check (`Notice` with `level="done"`) | "Saved. 14 transactions now use this rule." |
 
 - Two forms: **inline** (one line under the number it qualifies) and **block** (inside a card or sheet, with an optional action button).
 - **Gathered** (since phase 4a, `components/TotalCaveats.tsx`): two or more caution or information notices on one figure become one `<details class="notice-summary">` whose summary is a notice in the worst one's color, "2 notes: old exchange rates and accrued interest left out" (the worst kinds first, so an orange line names what made it orange; past three kinds, "and 2 more"), opening in place to each in full in its own color. Critical ones are never gathered. The words stay on the page while it is closed.
@@ -283,6 +283,8 @@ An object's actions in its sheet are one list of rows (`ActionRows`, since the s
 A **destructive action row** (`neg`, `.list-row.neg`, since C2 of the tax plan: a plan's Delete in the Plans sheet) is the object's last action: its title in `--neg`, a subtitle saying it asks first ("Asks before it deletes"), and no chevron, so it never reads as a way somewhere. It never acts at once: it opens a level of the sheet that says what goes and that it can't be undone, with Cancel (`.btn.secondary`) and the action itself (`.btn.danger`) in the footer. This is the one place red marks a row that isn't wrong. `--neg` on `--surface` and on `--elevated` (the row's hover) is above 4.5:1 in both themes.
 
 The footer is `Sheet`'s `footer` prop, drawn as `.sheet-footer` after the scrolling body (the sheet is a flex column, so it stays in view without `position: sticky`): a hairline above, the buttons wrapping like a `.btn-row`. The close and back buttons are 44px with 20px icons. The title wraps rather than being cut with an ellipsis (a plan's name is up to 40 characters), and the buttons stay beside its first line. The footer's buttons sit at its end. Its edge is `--border-strong`, on `--surface`. Tab and Shift+Tab stay inside it: from its last control to its first and back, and focus that has left for the page behind comes back in.
+
+A level drawn deep inside a sheet it shares (the Plan's drawer) gives its buttons with `SheetFooter`, which draws them in that sheet's footer, and in place, footer and all, outside a sheet. The sheet draws its footer while one is mounted, claimed before the first paint. A **footer note** (`.sheet-footer-note` on a `.helper`, first in the footer) says in a line or two what the buttons wait on or will do ("To import, check …"), on a line of its own with the buttons at the end under it, and the buttons are `aria-describedby` it. Anything longer stays in the body, so the footer never squeezes it at 320px.
 
 ### Menu
 

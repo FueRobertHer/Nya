@@ -3320,6 +3320,20 @@ span.meter-fill {
   margin-top: auto;
 }
 
+/* A footer's note (.helper.sheet-footer-note, first in the footer): a line or
+   two saying what its buttons wait on or will do, on a line of its own with
+   the buttons at the end under it. Anything longer stays in the body, so the
+   footer never squeezes it. */
+.sheet-footer-note {
+  flex-basis: 100%;
+}
+
+/* Where SheetFooter draws a level's buttons, after the sheet's own: laid out
+   as if they were the footer's own children. */
+.sheet-footer-slot {
+  display: contents;
+}
+
 /* ...and a panel from the right on wider screens. */
 @media (min-width: 720px) {
   .sheet {

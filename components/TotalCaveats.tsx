@@ -59,14 +59,22 @@ export function summaryText(lesser: readonly Caveat[]): string {
 
 export { LevelWord };
 
+/** A done notice's icon, a check. */
+export const DONE = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M20 6 9 17l-5-5" />
+  </svg>
+);
+
 /** One notice on its own, in its level's color, with its icon and its
- *  level said first: a caveat in full, or an error said where it arose (a
- *  budget's sheet, the month's card). One that appears after an action is
- *  announced: `role` "alert" for a critical one, "status" for the rest. */
-export function Notice({ level, role, children }: { level: CaveatSeverity; role?: 'alert' | 'status'; children: ReactNode }) {
+ *  level said first: a caveat in full, an error said where it arose (a
+ *  budget's sheet, the month's card), or what an action just did (`done`).
+ *  One that appears after an action is announced: `role` "alert" for a
+ *  critical one, "status" for the rest. */
+export function Notice({ level, role, children }: { level: CaveatSeverity | 'done'; role?: 'alert' | 'status'; children: ReactNode }) {
   return (
     <div className={`notice ${level}`} role={role}>
-      {level === 'info' ? INFO : levelIcon(level)}
+      {level === 'info' ? INFO : level === 'done' ? DONE : levelIcon(level)}
       <div>
         <LevelWord level={level} />
         {children}
