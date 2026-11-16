@@ -436,7 +436,8 @@ h1,
 
 /* Your path's answer (rollout phase 8b): words, not a figure, so the hero's
    smaller end, where "Around age 39" fits a phone's line. */
-.hero .total-value.plan-answer {
+.hero .total-value.plan-answer,
+.hero-figure-words {
   font-size: 2rem;
   line-height: 1.15;
 }
@@ -466,9 +467,18 @@ h1,
 }
 
 /* Accounts > Investments' figure, the same: a scrubbed day's returns never
-   move the chart under the finger. */
+   move the chart under the finger. A day it can't count says so over the
+   figure's line, which a blank holds at the figure's height. */
 .investments-hero .total-value {
+  position: relative;
   white-space: nowrap;
+}
+
+.hero-figure-words {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 /* A hero's label with a control at the end of its row (components/Hero.tsx
