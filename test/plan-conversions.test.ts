@@ -16,7 +16,7 @@ const fixed: Strategy = { order: 'standard', conversions: { kind: 'fixed', yearl
 
 describe('a rule’s words', () => {
   test('its short name, as Compare has it', () => {
-    expect(ruleName(NO_STRATEGY.conversions, money)).toBe('None');
+    expect(ruleName(NO_STRATEGY.conversions, money)).toBe('No conversions');
     expect(ruleName(fill.conversions, money)).toBe('Fill the 12% bracket');
     expect(ruleName(aca.conversions, money)).toBe('ACA limit, then the 22% bracket');
     expect(ruleName(fixed.conversions, money)).toBe('$40,000 a year');
@@ -32,7 +32,7 @@ describe('a rule’s words', () => {
   });
 
   test('in a line, to the age it runs: its own, or the one by default', () => {
-    expect(ruleSentence(NO_STRATEGY, 74, money)).toBe('None');
+    expect(ruleSentence(NO_STRATEGY, 74, money)).toBe('No conversions');
     expect(ruleSentence(fill, 74, money)).toBe('Fill the 12% bracket, until 74');
     expect(ruleSentence(aca, 74, money)).toBe('Up to the ACA limit, then the 22% bracket, until 74');
     expect(ruleSentence(fixed, 74, money)).toBe('$40,000 a year, until 60');
@@ -141,7 +141,7 @@ describe('what a held run says of a rule once used (Tune’s two limits, on Comp
 describe('a copy beside your plan', () => {
   test('says each thing that differs, and nothing where nothing does', () => {
     expect(strategyDiffParts(NO_STRATEGY, NO_STRATEGY, 74, money)).toEqual([]);
-    expect(strategyDiffParts(NO_STRATEGY, fill, 74, money)).toEqual(['Roth conversions: Fill the 12% bracket, until 74 (your plan: None)']);
+    expect(strategyDiffParts(NO_STRATEGY, fill, 74, money)).toEqual(['Roth conversions: Fill the 12% bracket, until 74 (your plan: No conversions)']);
     expect(strategyDiffParts(NO_STRATEGY, { ...NO_STRATEGY, order: 'roth-before-deferred' }, 74, money)).toEqual([`Order: ${ORDER_WORDS['roth-before-deferred']} (your plan: ${ORDER_WORDS.standard})`]);
   });
 
@@ -153,7 +153,7 @@ describe('a copy beside your plan', () => {
     const mine: TaxChoices = DEFAULT_TAX_CHOICES;
     const copy: TaxChoices = { ...DEFAULT_TAX_CHOICES, stateRate: 0.05, strategy: fill };
     expect(choicesDiffParts({ mine, copy: mine, until: 74 }, money)).toEqual([]);
-    expect(choicesDiffParts({ mine, copy, until: 74 }, money)).toEqual(['Roth conversions: Fill the 12% bracket, until 74 (your plan: None)', 'Other settings differ']);
+    expect(choicesDiffParts({ mine, copy, until: 74 }, money)).toEqual(['Roth conversions: Fill the 12% bracket, until 74 (your plan: No conversions)', 'Other settings differ']);
   });
 });
 

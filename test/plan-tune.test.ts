@@ -457,7 +457,7 @@ describe('the words', () => {
   const row = { run: run({ strategy: fill(0.12, 60, 'roth-before-deferred') }), crossing: [{ limit: 'aca' as const, years: 2 }, { limit: 'irmaa' as const, years: 1 }, { limit: 'bracket-22' as const, years: 3 }], beatsNone: false };
 
   test('a row’s name', () => {
-    expect(tunedName(noneOf(), 50, money)).toBe('None');
+    expect(tunedName(noneOf(), 50, money)).toBe('No conversions');
     expect(tunedName(fill(0.1, 50), 50, money)).toBe('Fill the 10% bracket, at 50 only');
     // Its floor runs on past its age, so one age isn't all of it.
     expect(tunedName(aca(0.12, 50), 50, money)).toBe('ACA limit, then the 12% bracket, until 50');
@@ -466,8 +466,8 @@ describe('the words', () => {
   });
 
   test('a row’s note: its order where it isn’t yours, what it crosses, and how it stands to None', () => {
-    expect(tunedNote(row, noneOf(), 'left')).toBe('Roth before tax-deferred · Crosses the ACA limit in 2 years · Pays IRMAA’s surcharge in 1 year · Goes past the 22% bracket in 3 years · leaves no more than None');
-    expect(tunedNote({ ...row, crossing: [] }, row.run.strategy, 'cost')).toBe('Costs no less than None');
+    expect(tunedNote(row, noneOf(), 'left')).toBe('Roth before tax-deferred · Crosses the ACA limit in 2 years · Pays IRMAA’s surcharge in 1 year · Goes past the 22% bracket in 3 years · leaves no more than with no conversions');
+    expect(tunedNote({ ...row, crossing: [] }, row.run.strategy, 'cost')).toBe('Costs no less than with no conversions');
     expect(tunedNote({ ...row, crossing: [], beatsNone: true }, row.run.strategy, 'left')).toBe('');
     expect(tunedNote({ ...row, crossing: [], beatsNone: null }, noneOf(), 'left')).toBe('Roth before tax-deferred');
   });
@@ -477,7 +477,7 @@ describe('the words', () => {
     expect(ownLine(a, money)).toBe('Your plan’s rule, until 74, leaves $3,660,060.');
     expect(ownLine({ ...a, goal: 'cost' }, money)).toBe('Your plan’s rule, until 74, costs $497,310 in tax and health.');
     expect(ownLine({ ...a, short: 94 }, money)).toBe('Your plan’s rule, until 74, runs short at 94.');
-    expect(ownLine({ ...a, own: noneOf() }, money)).toBe('With None, your plan leaves $3,660,060.');
+    expect(ownLine({ ...a, own: noneOf() }, money)).toBe('With no conversions, your plan leaves $3,660,060.');
     expect(ownLine({ ...a, copyOpen: true }, money)).toBe('This copy’s rule, until 74, leaves $3,660,060.');
     expect(ownLine({ ...a, own: fill(0.12, 60), copyOpen: true, goal: 'cost' }, money)).toBe('This copy’s rule, until 60, costs $497,310 in tax and health.');
   });
