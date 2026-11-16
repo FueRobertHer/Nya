@@ -222,15 +222,26 @@ describe('a new import is the newest', () => {
     const same = await addMonthsImport(ctx, 'inv', record('aa-second', AT), 'zz-first');
     expect(same.imports.map((i) => i.id)).toEqual(['zz-first', 'aa-second']);
     expect(countingImport(same)?.id).toBe('aa-second');
+    expect(same.imports[1].imported_at).toBe('2026-11-05T12:00:00.001Z');
     const behind = await addMonthsImport(ctx, 'inv', record('aa-third', '2026-11-05T11:00:00.000Z'), 'aa-second');
     expect(behind.imports.map((i) => i.id)).toEqual(['zz-first', 'aa-second', 'aa-third']);
     expect(countingImport(behind)?.id).toBe('aa-third');
+    expect(behind.imports[2].imported_at).toBe('2026-11-05T12:00:00.002Z');
     // Only the new one's time moves: the others stay as stored.
     expect(behind.imports[0]).toEqual(record('zz-first', AT));
     expect(behind.imports[1]).toEqual(same.imports[1]);
     // One whose own time is later keeps it.
     const later = await addMonthsImport(ctx, 'inv', record('aa-fourth', '2026-11-06T09:00:00.000Z'), 'aa-third');
     expect(later.imports.at(-1)).toEqual(record('aa-fourth', '2026-11-06T09:00:00.000Z'));
+  });
+
+  test('ordered by time, whatever form a stored time is written in', async () => {
+    await connect('i1', [{ account_id: 'inv', type: 'investment' }]);
+    // As a restored file may hold them: no milliseconds, or an offset.
+    await investmentMonthsStore.set(ctx, 'inv', { imports: [record('aa-plain', '2026-11-05T12:00:00Z'), record('bb-offset', '2026-11-05T12:30:00+01:00')] });
+    const now = await addMonthsImport(ctx, 'inv', record('cc-newest', '2026-11-05T12:00:00.500Z'), 'aa-plain');
+    expect(now.imports.map((i) => i.id)).toEqual(['bb-offset', 'aa-plain', 'cc-newest']);
+    expect(countingImport(now)?.id).toBe('cc-newest');
   });
 
   test('the same after one held under an earlier id of the account', async () => {

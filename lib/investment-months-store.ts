@@ -9,7 +9,7 @@
 // EACH VALUE IS THE ACCOUNT'S IMPORTS under that id, oldest first, each one
 // as it was read, never changed. An import adds its record as the newest
 // (stamped a millisecond after the newest the account holds where its own
-// time isn't later, as a tie would fall to the random ids); an undo takes
+// time isn't later: two in one millisecond, or a clock behind); an undo takes
 // one record out; nothing else is ever written here. Each is one compare-
 // and-set on the id's value (MapStore.update), so two devices importing at
 // once can't lose each other's. Undoing an id's last import deletes its

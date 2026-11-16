@@ -90,7 +90,9 @@ export type MonthsImport = {
   source: MonthsSource;
   /** The file's name, as the person's device gave it, or null. */
   file_name: string | null;
-  /** When it was imported (an ISO time): the newest counts. */
+  /** When it was imported (an ISO time): the newest counts. A millisecond
+   *  after the newest the account held, where its own time wasn't later
+   *  (lib/investment-months-store.ts addMonthsImport). */
   imported_at: string;
   /** The first month and its beginning balance. */
   start: { month: Month; balance: number };
@@ -203,8 +205,11 @@ export function isInvestmentMonths(v: unknown): v is InvestmentMonths {
   return new Set(list.map((i) => i.id)).size === list.length;
 }
 
-/** Oldest first: by when imported, then by id, so every reader agrees. */
+/** Oldest first: by when imported (as a time, then as written, since a
+ *  stored time need not be in one form), then by id, so every reader agrees. */
 export function byImported(a: MonthsImport, b: MonthsImport): number {
+  const at = Date.parse(a.imported_at) - Date.parse(b.imported_at);
+  if (at !== 0) return at;
   if (a.imported_at !== b.imported_at) return a.imported_at < b.imported_at ? -1 : 1;
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 }
