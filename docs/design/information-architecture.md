@@ -379,6 +379,7 @@ One word for one thing, everywhere. As a button, **Close** only dismisses a shee
 | **Stop age** | The age you plan to stop working, which the Plan's answer is measured against | Retirement age |
 | **Timeline** | The Plan's card of everything a plan holds, on the points in time that place it (not Home's timeline notes) | Life events, What if |
 | **Item** | One thing on a Timeline, of any kind: a cost, income, a child, a change in pay | Life event, event, one-off (a cost is one kind) |
+| **Change in balance** | An account's balance at the end of a range less at its start, with the money that went in and came out; said beside the figure on an investment account's chart, whose returns are the line under it | Returns, gain, growth |
 | **In use** | What a past import does now, on its row: In use, In use for a span, or Not in use and why | Counts, Doesn't count |
 | **Milestone** | A point an item can start or end on that isn't an age: when you stop, when you reach FI, when invested assets reach a figure | Trigger, anchor |
 | **Your plan** | The plan Home and Progress follow; one at a time, any copy can be made it | The Plan, main plan |
