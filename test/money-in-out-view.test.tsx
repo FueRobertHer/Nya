@@ -193,6 +193,25 @@ describe('on the account’s sheet, months that start when it opened', () => {
     }
   });
 
+  test('the readout names its figure: the change in balance, and a day’s balance under a key', async () => {
+    const v = await mount('acc_opened');
+    try {
+      const what = () => v.host.findAll((e) => (e.getAttribute('class') ?? '') === 'chart-readout-what').map((e) => e.textContent);
+      const value = () => v.host.findAll((e) => (e.getAttribute('class') ?? '') === 'chart-readout-value')[0].textContent;
+      expect(what()).toEqual(['change in balance']);
+      const slider = v.host.findAll((e) => e.getAttribute('role') === 'slider')[0];
+      const key = new FakeEvent('keydown');
+      key.key = 'ArrowLeft';
+      act(() => {
+        slider.dispatchEvent(key);
+      });
+      expect(what()).toEqual(['balance']);
+      expect(value()).not.toMatch(/^[+−]/);
+    } finally {
+      v.unmount();
+    }
+  });
+
   test('totals set stand instead', async () => {
     const v = await mount('acc_opened_set', { money_in_out: TOTALS });
     try {
