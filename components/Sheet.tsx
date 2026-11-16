@@ -8,7 +8,8 @@
 // closes (if that is still on the page; if not, to what the control's owner
 // named instead, focusInsteadOf).
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Children, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 // The slide-out transition: --dur-base in app/globals.css (the guard checks
 // they match), so it comes off the page as it finishes sliding.
@@ -132,6 +133,30 @@ export function focusInsteadOf(opener: Element, to: () => HTMLElement | null) {
   insteadOf.set(opener, to);
 }
 
+/** A sheet's footer, as its body's levels see it: where to draw, and a way to
+ *  ask the sheet for one. */
+type FooterSlot = { node: HTMLDivElement | null; claim: () => () => void };
+const FooterSlotContext = createContext<FooterSlot | null>(null);
+
+/** A footer given from inside a sheet's body: a level drawn deep in a sheet
+ *  it shares (the Plan's drawer) whose buttons, and what it says of them, sit
+ *  in the footer. The sheet draws its footer while one is mounted, and it is
+ *  claimed before the first paint, so no frame shows the level without it.
+ *  Outside a sheet (a level drawn on its own) it is drawn in place, footer and
+ *  all. A sheet given `footer` too draws this after it. With nothing in it
+ *  (each child false or null), it draws no footer. Inside a sheet its buttons
+ *  leave the level's markup for the footer, so no form or fieldset around the
+ *  level holds them: a button acts by its own onClick. */
+export function SheetFooter({ children }: { children: ReactNode }) {
+  const slot = useContext(FooterSlotContext);
+  const claim = slot?.claim;
+  const any = Children.toArray(children).length > 0;
+  useLayoutEffect(() => (any ? claim?.() : undefined), [claim, any]);
+  if (!any) return null;
+  if (!slot) return <div className="sheet-footer">{children}</div>;
+  return slot.node ? createPortal(children, slot.node) : null;
+}
+
 export function Sheet({
   open,
   title,
@@ -155,7 +180,8 @@ export function Sheet({
    *  inner level to another moves focus too. Left out, the levels are the
    *  first and any with a back arrow. */
   level?: string;
-  /** Its buttons, kept in view at the foot while the body scrolls. */
+  /** Its buttons, kept in view at the foot while the body scrolls. A level
+   *  inside the body can give them instead, with SheetFooter. */
   footer?: ReactNode;
   children: ReactNode;
 }) {
@@ -163,6 +189,15 @@ export function Sheet({
   const [mounted, setMounted] = useState(open);
   const [shown, setShown] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
+
+  // A footer the body's levels give (SheetFooter): drawn while one claims it.
+  const [claims, setClaims] = useState(0);
+  const [footNode, setFootNode] = useState<HTMLDivElement | null>(null);
+  const claim = useCallback(() => {
+    setClaims((n) => n + 1);
+    return () => setClaims((n) => n - 1);
+  }, []);
+  const slot = useMemo(() => ({ node: footNode, claim }), [footNode, claim]);
 
   useEffect(() => {
     if (open) {
@@ -233,8 +268,17 @@ export function Sheet({
             </svg>
           </button>
         </div>
-        <div className="sheet-body">{children}</div>
-        {footer && <div className="sheet-footer">{footer}</div>}
+        <FooterSlotContext.Provider value={slot}>
+          <div className="sheet-body">{children}</div>
+        </FooterSlotContext.Provider>
+        {(footer || claims > 0) && (
+          <div className="sheet-footer">
+            {footer}
+            {/* Its own node, so a level's footer always follows the sheet's
+                (a portal adds to the end of the node it is given). */}
+            {claims > 0 && <div className="sheet-footer-slot" ref={setFootNode} />}
+          </div>
+        )}
       </div>
     </>
   );
