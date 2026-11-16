@@ -339,8 +339,12 @@ export function timelinePoints(plan: FirePlanV2, f: PlanFigures | null, money: M
 
   const points: TimelinePoint[] = [];
   const todayParts = [`Today, ${today}`];
-  if (stop !== null && stop <= today) todayParts.push(stop < today ? `you stopped at ${stop}` : `you stop at ${stop}`);
-  if (fi.now || (fi.age !== null && fi.age <= today)) todayParts.push('you’re at FI');
+  const stopped = stop !== null && stop <= today;
+  if (stopped) todayParts.push(stop < today ? `you stopped at ${stop}` : `you stop at ${stop}`);
+  // D9's stop found is today: said only while the stop is still to come, as
+  // "you stop at 40" says it already.
+  const couldStop = fi.when.kind === 'now' && fi.when.lasting;
+  if ((fi.now || (fi.age !== null && fi.age <= today)) && !(couldStop && stopped)) todayParts.push(couldStop ? 'you could stop now' : 'you’re at FI');
   if (todayItems.length > 0 || todayParts.length > 1) points.push({ key: 'today', label: todayParts.join(' · '), items: todayItems });
 
   for (const age of [...byYear.keys()].sort((p, q) => p - q)) {

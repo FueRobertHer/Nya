@@ -114,6 +114,8 @@ export function fiDateText(f: PlanFigures, today: string): string {
   // A figure not measured is never taken as zero: said, rather than "--".
   const waits = years === null && f.view.fiNumber !== null ? notMeasuredWhat(f.view) : null;
   if (waits) return `not worked out: ${waits} measured (Your path says why)`;
+  // D9's stop found is today: a stop, not the FI number reached.
+  if (years === 0 && f.resolution.searched === 'lasts') return 'You could stop now';
   if (years === null || years === 0 || years === Infinity) return yearsToFiText(years);
   const year = Math.floor(Number(today.slice(0, 4)) + (Number(today.slice(5, 7)) - 1) / 12 + years);
   return `${yearsToFiText(years)}${f.view.fiAge !== null ? `, around age ${Math.round(f.view.fiAge)}` : ''} (around ${year})`;
