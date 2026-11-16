@@ -165,7 +165,7 @@ describe('the sheet', () => {
     await tab.unmount();
   }, 30_000);
 
-  const LIMITS = ['Stay under the ACA limit', 'Stay out of IRMAA’s surcharges', 'No higher than the 22% bracket'];
+  const LIMITS = ['Stay under the ACA limit', 'Stay out of Medicare’s income surcharges (IRMAA)', 'No higher than the 22% bracket'];
   const limitsIn = (sheet: Node) => LIMITS.filter((l) => (sheet.textContent ?? '').includes(l));
 
   test('the limits offered: the 22% bracket and, where Medicare is reached, IRMAA’s', async () => {
@@ -254,7 +254,7 @@ describe('the sheet', () => {
     const table = await tuned(tab);
     const names = ruleNames(table);
     expect(names.length).toBe(4);
-    expect(names[0]).toBe('None');
+    expect(names[0]).toBe('No conversions');
     expect(names[1]).toMatch(/^Fill the 10% bracket(, until \d+|, at \d+ only)?$/);
     expect(names[2]).toMatch(/^Fill the 12% bracket(, until \d+|, at \d+ only)?$/);
     expect(names[3]).toMatch(/^Fill the 22% bracket(, until \d+|, at \d+ only)?$/);
@@ -266,7 +266,7 @@ describe('the sheet', () => {
     expect(said).not.toContain('Nothing here is called best');
     expect(said).toContain('Each rule here keeps your stop, your start and what’s timed on them where they are now');
     expect(said).toContain('Tap a rule for Use in your plan or Try it in a copy.');
-    expect(said).toMatch(/With None, your plan leaves \$[\d,]+\./);
+    expect(said).toMatch(/With no conversions, your plan leaves \$[\d,]+\./);
     expect(said).toContain('Tuned for the goal you set, under these assumptions. Hypothetical, 2026 tax law, steady growth, health costs');
     expect(said).toContain('Not tax advice.');
     await tab.unmount();
@@ -297,7 +297,7 @@ describe('the sheet', () => {
     await press(button(tab.dialog(), 'Tune'));
     const cost = await waitForTable(tab);
     expect(heading(cost, 'Tax and health').getAttribute('aria-sort')).toBe('none');
-    expect(ruleNames(cost)[0]).toBe('None');
+    expect(ruleNames(cost)[0]).toBe('No conversions');
     expect(ruleNames(cost).map((n) => n.split(',')[0])).toEqual(compareOrder.map((n) => n.split(',')[0]));
     // Which sorts lowest first.
     await press(button(tab.dialog(), 'Sort by your goal'));
@@ -350,19 +350,19 @@ describe('the sheet', () => {
   test('where every setting of a rule breaks a limit, its row says what it crosses, and None breaking one means nothing is compared with it', async () => {
     const tab = await detailed();
     const table = await tuned(tab, LEFT, ['No higher than the 22% bracket']);
-    const none = named(table, 'None');
+    const none = named(table, 'No conversions');
     expect(noteOf(none)).toMatch(/Goes past the 22% bracket in \d+ years?/);
-    for (const r of bodyRows(table)) expect(noteOf(r)).not.toContain('than None');
+    for (const r of bodyRows(table)) expect(noteOf(r)).not.toContain('than with no conversions');
     await tab.unmount();
   }, 30_000);
 
   test('a rule that comes to no better than None on the goal says so, in the goal’s words', async () => {
     const tab = await detailed();
     const table = await tuned(tab, COST);
-    const noneCost = figure(named(table, 'None'), 1);
+    const noneCost = figure(named(table, 'No conversions'), 1);
     for (const r of bodyRows(table).slice(1)) {
-      if (figure(r, 1) >= noneCost) expect(noteOf(r)).toContain('Costs no less than None');
-      else expect(noteOf(r)).not.toContain('than None');
+      if (figure(r, 1) >= noneCost) expect(noteOf(r)).toContain('Costs no less than with no conversions');
+      else expect(noteOf(r)).not.toContain('than with no conversions');
     }
     await tab.unmount();
   }, 30_000);
@@ -501,7 +501,7 @@ describe('a row’s own sheet', () => {
     expect(inCopy.textContent).not.toContain('Your plan');
     expect(tab.dialog()!.textContent).toContain('Tap a rule for Use in this copy or Try it in a copy.');
     expect(tab.dialog()!.textContent).toMatch(/This copy’s rule, until \d+, leaves/);
-    const none = named(inCopy, 'None');
+    const none = named(inCopy, 'No conversions');
     await press(ruleOf(none));
     await settle(300);
     const copyPuts = () => calls().filter((c) => c.method === 'PUT' && c.path === '/api/plans').length;
@@ -589,7 +589,7 @@ describe('what only some plans see', () => {
   test('once required withdrawals have started, the order is all there is to tune', async () => {
     const tab = await detailed({ ...PLAN, age: 76, targetAge: 76 });
     const table = await tuned(tab);
-    expect(ruleNames(table)).toEqual(['None']);
+    expect(ruleNames(table)).toEqual(['No conversions']);
     expect(tab.dialog()!.textContent).toContain('Required withdrawals have started, so the order is all there is to tune.');
     await tab.unmount();
   }, 30_000);
@@ -606,7 +606,7 @@ describe('what only some plans see', () => {
     const sheet = await open(tab);
     const WORDS = 'Medicare’s first years here have no income from two years before to read';
     expect(sheet.textContent).not.toContain(WORDS);
-    await pick(sheet, 'Stay out of IRMAA’s surcharges');
+    await pick(sheet, 'Stay out of Medicare’s income surcharges (IRMAA)');
     expect(tab.dialog()!.textContent).toContain(WORDS);
     await tab.unmount();
   }, 30_000);
@@ -670,7 +670,7 @@ describe('the sheet’s other states, drawn alone', () => {
 
   test('how a level stands to None is said only where its figures are the row’s', () => {
     const level = (answer: object) => renderToStaticMarkup(<TuneLevel {...shared} row={row({ beatsNone: false })} ask={ASK_LEFT} used={() => answer as never} />);
-    const WORDS = 'Leaves no more than None';
+    const WORDS = 'Leaves no more than with no conversions';
     expect(level(READY)).not.toContain(WORDS);
     expect(level(drew({ leftAtEnd: 1_000_000, taxAndHealth: 200_000 }))).toContain(WORDS);
     expect(level({ ...NO_ANSWER, failed: true })).toContain(WORDS);
@@ -714,7 +714,7 @@ describe('a plan that moves when a rule is used', () => {
     expect(level.textContent).toMatch(/Once used, your plan (stops at \d+, not \d+|starts from \$[\d,]+, not \$[\d,]+|more of your plan moves)/);
     expect(level.textContent).toContain('so this differs from the table.');
     expect(level.textContent).not.toContain(said);
-    expect(level.textContent).not.toContain('than None');
+    expect(level.textContent).not.toContain('than with no conversions');
     expect(disabled(button(level, 'Use in your plan'))).toBe(false);
     await tab.unmount();
   }, 60_000);

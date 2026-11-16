@@ -75,7 +75,7 @@ describe('How you draw', () => {
     const tab = await detailed();
     expect(tab.text()).toContain('How you draw');
     expect(subOf(tab.row('Order'))).toBe('Taxable, then tax-deferred, then Roth');
-    expect(subOf(tab.row('Roth conversions'))).toBe('None');
+    expect(subOf(tab.row('Roth conversions'))).toBe('No conversions');
     await tab.unmount();
   }, 30_000);
 
@@ -99,7 +99,7 @@ describe('How you draw', () => {
     expect(tab.dialog()!.textContent).not.toContain('Up to the ACA limit');
     await choose(tab, 'Fill a bracket');
     expect(tab.dialog()!.textContent).toContain('Nya starts with none');
-    expect(tab.dialog()!.textContent).toMatch(/What it comes to.*This ruleNoneConvertedAbout \$[\d,]+, by \d+\$0Tax and health, in all\$[\d,]+\$[\d,]+/);
+    expect(tab.dialog()!.textContent).toMatch(/What it comes to.*This ruleNo conversionsConvertedAbout \$[\d,]+, by \d+\$0Tax and health, in all\$[\d,]+\$[\d,]+/);
     expect(tab.dialog()!.textContent).toContain('Hypothetical, 2026 tax law. Not tax advice.');
     await press(button(tab.dialog(), 'Save'));
     await settle(300);
@@ -139,7 +139,7 @@ describe('How you draw', () => {
     // Its own row in Compare, as no rule there is that one, and a sheet whose title holds no amount.
     const mine = bodyRows(compareTable(tab)).find((r) => (r.textContent ?? '').includes('Your plan'))!;
     expect(ruleOf(mine).textContent).toBe('$40,000 a year, until 60');
-    expect(ruleNames(compareTable(tab)).slice(0, 4)).toEqual(['None', 'Fill the 10% bracket', 'Fill the 12% bracket', 'Fill the 22% bracket']);
+    expect(ruleNames(compareTable(tab)).slice(0, 4)).toEqual(['No conversions', 'Fill the 10% bracket', 'Fill the 12% bracket', 'Fill the 22% bracket']);
     await press(ruleOf(mine));
     expect(tab.dialog()!.getAttribute('aria-label')).toBe('A fixed amount, until 60');
     await tab.unmount();
@@ -212,7 +212,7 @@ describe('Compare conversions', () => {
   test('the rules, none marked best', async () => {
     const tab = await detailed();
     const table = compareTable(tab);
-    expect(ruleNames(table)).toEqual(['None', 'Fill the 10% bracket', 'Fill the 12% bracket', 'Fill the 22% bracket']);
+    expect(ruleNames(table)).toEqual(['No conversions', 'Fill the 10% bracket', 'Fill the 12% bracket', 'Fill the 22% bracket']);
     expect(table.textContent).not.toContain('Years with an ACA credit');
     expect(tab.text()).not.toMatch(/\bbest\b/i);
     await tab.unmount();
@@ -221,7 +221,7 @@ describe('Compare conversions', () => {
   test('the ACA rule and its column, only for someone on the ACA', async () => {
     const tab = await onAca();
     const withAca = compareTable(tab);
-    expect(ruleNames(withAca)).toEqual(['None', 'Fill the 10% bracket', 'Fill the 12% bracket', 'Fill the 22% bracket', 'ACA limit, then the 12% bracket']);
+    expect(ruleNames(withAca)).toEqual(['No conversions', 'Fill the 10% bracket', 'Fill the 12% bracket', 'Fill the 22% bracket', 'ACA limit, then the 12% bracket']);
     expect(withAca.textContent).toContain('Years with an ACA credit');
     expect(bodyRows(withAca)[0].textContent).toContain('Your plan');
     // For one person, it says so.
@@ -299,14 +299,14 @@ describe('Compare conversions', () => {
     expect(tab.text()).toContain('Year by year');
     for (const id of CARDS) expect(copyTag(id)).toBe('Copy: Fill the 12% bracket');
     expect(subOf(tab.row('Roth conversions'))).toMatch(/^Fill the 12% bracket, until \d+$/);
-    expect(tab.text()).toMatch(/Roth conversions: Fill the 12% bracket, until \d+ \(your plan: None\)/);
+    expect(tab.text()).toMatch(/Roth conversions: Fill the 12% bracket, until \d+ \(your plan: No conversions\)/);
     // The rule in use is this copy's: your plan's is another.
     const tagged = bodyRows(compareTable(tab)).filter((r) => (r.textContent ?? '').includes('This copy'));
     expect(tagged.map((r) => ruleOf(r).textContent)).toEqual(['Fill the 12% bracket']);
     expect(compareTable(tab).textContent).not.toContain('Your plan');
     // And in the Plans sheet, with the sheet's own words for how it differs.
     await press(tab.plans());
-    expect(tab.dialog()!.textContent).toMatch(/Roth conversions: Fill the 12% bracket, until \d+ \(your plan: None\)/);
+    expect(tab.dialog()!.textContent).toMatch(/Roth conversions: Fill the 12% bracket, until \d+ \(your plan: No conversions\)/);
     await tab.unmount();
   }, 30_000);
 

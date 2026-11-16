@@ -36,7 +36,7 @@ export const tunedHeading = (goal: TuneGoal, endAge: number | null) => (goal ===
 
 export const LIMIT_NAMES: Record<TuneLimit, string> = {
   aca: 'Stay under the ACA limit',
-  irmaa: 'Stay out of IRMAA’s surcharges',
+  irmaa: 'Stay out of Medicare’s income surcharges (IRMAA)',
   'bracket-22': 'No higher than the 22% bracket',
 };
 
@@ -62,12 +62,12 @@ export function tunedName(s: Strategy, first: number | null, money: Money): stri
 }
 
 /** What a row says under its name: its order where it isn't the plan's, what it crosses,
- *  and where it comes to no better than None. Empty where there is nothing to add. */
+ *  and where it comes to no better than no conversions. Empty where there is nothing to add. */
 export function tunedNote(row: Pick<TunedRow, 'run' | 'crossing' | 'beatsNone'>, own: Strategy, goal: TuneGoal): string {
   const parts = [
     ...(row.run.strategy.order !== own.order ? [ORDER_SHORT[row.run.strategy.order]] : []),
     ...row.crossing.map((c) => LIMIT_NOTES[c.limit](yearsWords(c.years))),
-    ...(row.beatsNone === false ? [goal === 'left' ? 'leaves no more than None' : 'costs no less than None'] : []),
+    ...(row.beatsNone === false ? [goal === 'left' ? 'leaves no more than with no conversions' : 'costs no less than with no conversions'] : []),
   ];
   const line = parts.join(' · ');
   return line.charAt(0).toUpperCase() + line.slice(1);
@@ -82,7 +82,7 @@ export const tapLine = (copyOpen: boolean) => `Tap a rule for ${copyOpen ? 'Use 
 export function ownLine(a: { goal: TuneGoal; own: Strategy; until: number; left: number; cost: number; short: number | null; copyOpen: boolean }, money: Money): string {
   const none = a.own.conversions.kind === 'none';
   const age = a.own.convertUntil ?? a.until;
-  const who = none ? `With None, ${a.copyOpen ? 'this copy' : 'your plan'}` : `${a.copyOpen ? 'This copy’s' : 'Your plan’s'} rule, until ${age},`;
+  const who = none ? `With no conversions, ${a.copyOpen ? 'this copy' : 'your plan'}` : `${a.copyOpen ? 'This copy’s' : 'Your plan’s'} rule, until ${age},`;
   if (a.goal === 'cost') return `${who} costs ${money(a.cost)} in tax and health.`;
   return a.short !== null ? `${who} runs short at ${a.short}.` : `${who} leaves ${endWords({ runsOutAt: null, leftAtEnd: a.left }, money)}.`;
 }

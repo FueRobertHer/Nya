@@ -380,4 +380,5 @@ One word for one thing, everywhere. As a button, **Close** only dismisses a shee
 | **Item** | One thing on a Timeline, of any kind: a cost, income, a child, a change in pay | Life event, event, one-off (a cost is one kind) |
 | **Milestone** | A point an item can start or end on that isn't an age: when you stop, when you reach FI, when invested assets reach a figure | Trigger, anchor |
 | **Your plan** | The plan Home and Progress follow; one at a time, any copy can be made it | The Plan, main plan |
+| **No conversions** | The Plan's Roth conversion rule that moves nothing, wherever a rule is named (How you draw, Compare, Tune to a goal, a copy's name) | None |
 | **Copy** | Another whole plan beside yours, made from it (New copy, Duplicate, the Timeline's Try it in a copy); its changes never reach your plan unless Also change it in is checked | Scenario |
