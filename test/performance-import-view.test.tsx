@@ -25,7 +25,7 @@ const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
 const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { PerformanceReview, PerformanceImports, usePerformanceData, usePerformanceReview } = await import('@/components/PerformanceImport');
+const { monthsWaitsOn, PerformanceReview, PerformanceImports, usePerformanceData, usePerformanceReview } = await import('@/components/PerformanceImport');
 const { default: HistoryImportSheet } = await import('@/components/HistoryImportSheet');
 const { formatMoney } = await import('@/lib/format');
 type ReviewContext = import('@/components/PerformanceImport').ReviewContext;
@@ -111,8 +111,11 @@ describe('the review', () => {
     expect(r.text).toContain('Performance.pdf · Vanguard’s Performance page');
     expect(r.text).toContain('34 months, Jan 2024 to Oct 2026');
     expect(r.text).toContain('Every month adds up, and so does the page’s total. Nov 2026 is left out until it ends.');
-    expect(r.text).toContain(`Its balance yesterday, ${formatMoney(LAST, 'USD')}, is Individual’s.`);
-    expect(r.text).toContain('The chart and your returns will reach back to Jan 2024. Where Nya has its own balances (from Jul 1) and activity (from Jul 1), those count.');
+    // Whose it is and how far back it reaches: one helper.
+    expect(r.html).toContain(`<p class="helper">Its balance yesterday, ${formatMoney(LAST, 'USD')}, is Individual’s. The chart`);
+    expect(r.text).toContain(`Its balance yesterday, ${formatMoney(LAST, 'USD')}, is Individual’s. The chart and your returns will reach back to Jan 2024.`);
+    // Where Nya's own records count is said in Why.
+    expect(r.text).toContain('Why? Nya has this account’s balances from Jul 1 and its activity from Jul 1, and uses the months only where it has nothing of its own.');
     expect(r.text).toContain('The months, newest first');
     expect(r.text).toContain('Show all 34 months');
     expect(r.html).not.toContain('notice critical');
@@ -180,8 +183,9 @@ describe('the review', () => {
   test('a file with no day to compare with the account’s balances: said, imported only on a yes', () => {
     const r = review(readOf(MONTHS), ctx({ points: null, balance: null }));
     expect(r.html).toContain('notice caution');
-    expect(r.text).toContain('Nya can’t tell whether this file is Individual’s: it has no balance of the account’s on a day the file has. It’s Individual’s');
-    expect(r.text).toContain('It’s Individual’s Import it for this account anyway.');
+    expect(r.text).toContain('Nya can’t tell whether this file is Individual’s: it has no balance of the account’s on a day the file has. The chart and your returns');
+    // The yes comes last, after Why, just above the footer that says Import waits on it.
+    expect(r.text).toMatch(/never guessed at\. It’s Individual’s Import it for this account anyway\.$/);
     expect(r.state.body).toBeNull();
     // With a balance now, a newer file is how to have it checked.
     const old = review(readOf(MONTHS), ctx({ points: null, today: '2026-12-20' }));
@@ -229,7 +233,54 @@ describe('the review', () => {
     const r = review(readOf(MONTHS), ctx({ activity: { ...ACTIVITY, flows } }));
     expect(r.text).toContain('In 1 month Nya has activity for, Vanguard’s deposits and withdrawals aren’t Nya’s. Nya keeps its own for those months, so importing doesn’t change them.');
     expect(r.text).toContain('Aug 2026');
+    // The table scrolls on its own at a narrow width.
+    expect(r.html).toContain('<div class="report-scroll"><table class="report-table"><thead><tr><th scope="col">Month</th><th scope="col" class="num">Vanguard</th>');
     expect(r.state.body).not.toBeNull();
+  });
+
+  test('the order: what would stop counting before the figures, the yeses last', () => {
+    const older = makeMonths('2020-01-01', '2026-10-31');
+    const counting = anImport({ start: { month: '2020-01', balance: 0 }, months: older.map((m) => ({ month: m.month, net: dollars(m.net), returns: dollars(m.returns), end: dollars(m.end) })) });
+    const r = review(readOf(MONTHS), ctx({ points: null, balance: null, imports: { imports: [counting] } }));
+    const at = (s: string) => {
+      const i = r.text.indexOf(s);
+      expect(i).toBeGreaterThan(-1);
+      return i;
+    };
+    expect(at('would stop counting')).toBeLessThan(at('Beginning balance'));
+    expect(at('Beginning balance')).toBeLessThan(at('Nya can’t tell whether'));
+    expect(at('The months, newest first')).toBeLessThan(at('Why?'));
+    expect(at('Why?')).toBeLessThan(at('It’s Individual’s Import it'));
+    expect(at('It’s Individual’s Import it')).toBeLessThan(at('Use this file’s months only Before Jan 2024'));
+  });
+
+  test('what Import waits on, for the footer: each yes named, and where another file would do, which', () => {
+    const counted = (from: string, to = '2026-10-31') =>
+      anImport({ start: { month: from.slice(0, 7), balance: 0 }, months: makeMonths(from, to).map((m) => ({ month: m.month, net: dollars(m.net), returns: dollars(m.returns), end: dollars(m.end) })) });
+    const waits = (read: Read, c: ReviewContext, over: Partial<ReviewState> = {}) => monthsWaitsOn({ ...review(read, c).state, ...over }, 'Individual');
+    // The account's own file, with nothing before it: nothing to wait on.
+    expect(waits(readOf(MONTHS), ctx())).toBeNull();
+    // Whose it is, until the yes.
+    expect(waits(readOf(MONTHS), ctx({ points: null, balance: null }))).toBe('To import, check It’s Individual’s.');
+    expect(waits(readOf(MONTHS), ctx({ points: null, balance: null }), { yesAnother: true })).toBeNull();
+    // Months that would stop counting: the yes, or the file that keeps them.
+    const later = ctx({ imports: { imports: [counted('2020-01-01')] } });
+    expect(waits(readOf(MONTHS), later)).toBe('To import, check Use this file’s months only, or go back and choose a file from Jan 2020.');
+    expect(waits(readOf(MONTHS), later, { yesDropped: true })).toBeNull();
+    const inside = readOf(makeMonths('2024-01-01', '2025-12-31'), { range: { from: '2024-01-01', to: '2025-12-31' } });
+    // (It ends before Nya's balances start, so whose it is has its own yes, given here.)
+    expect(waits(inside, later, { yesAnother: true })).toBe('To import, check Use this file’s months only, or go back and choose a file from Jan 2020 up to today.');
+    expect(waits(inside, ctx({ imports: { imports: [counted('2024-01-01')] } }), { yesAnother: true })).toBe(
+      'To import, check Use this file’s months only, or go back and choose a file printed up to today.'
+    );
+    // Both at once.
+    expect(waits(readOf(MONTHS), ctx({ points: null, balance: null, imports: { imports: [counted('2020-01-01')] } }))).toBe(
+      'To import, check It’s Individual’s and Use this file’s months only.'
+    );
+    // What no check gives is said in the review, not here.
+    expect(waits(readOf(MONTHS), ctx({ points: null, balance: LAST * 0.3, vanguard: [LAST * 0.3, LAST * 0.7] }))).toBeNull();
+    const bad = MONTHS.find((m) => m.month === '2025-03')!;
+    expect(waits(readOf(MONTHS, { figures: { '2025-03': { end: bad.end + 9_000 } }, failed: { '2025-03': ['adds-up'] } }), ctx())).toBeNull();
   });
 
   test('months that end before Nya’s activity starts: imported, but said not to be used', () => {
@@ -510,15 +561,23 @@ describe('the sheet', () => {
     const v = await mount({ ...TARGET, account_id: 'acc_vg6' }, async () => readOf(MONTHS), { already: [counting], wrap });
     await v.choose('Performance.pdf');
     expect(v.text()).toContain('Jan 2020 to Dec 2023 would stop counting');
+    // The footer says what Import waits on, and Import is described by it.
+    const note = () => v.host.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes('sheet-footer-note'))[0] ?? null;
+    expect(note()!.textContent).toBe('To import, check Use this file’s months only, or go back and choose a file from Jan 2020.');
+    expect(note()!.parentNode).toBe(v.button('Import 34 months')!.parentNode);
+    expect(v.button('Import 34 months')!.getAttribute('aria-describedby')).toBe(note()!.getAttribute('id'));
     v.tick('Use this file’s months only');
     expect(v.ticked('Use this file’s months only')).toBe(true);
     expect(v.button('Import 34 months')!.getAttribute('disabled')).toBeNull();
+    expect(note()).toBeNull();
+    expect(v.button('Import 34 months')!.getAttribute('aria-describedby')).toBeNull();
     await v.press('Import 34 months');
     expect(v.text()).toContain('The imports changed on another device.');
     await v.press('Check the file again');
-    // The yes was to what counted then.
+    // The yes was to what counted then, and the footer says so again.
     expect(v.ticked('Use this file’s months only')).toBe(false);
     expect(v.button('Import 34 months')!.getAttribute('disabled')).not.toBeNull();
+    expect(note()!.textContent).toContain('To import, check Use this file’s months only');
     await v.press('Cancel');
     expect(v.text()).not.toContain('changed on another device');
     v.unmount();

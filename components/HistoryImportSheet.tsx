@@ -37,7 +37,7 @@
 // and waits for a yes when a QFX differs from what counts now; on an account
 // at another firm that file is refused rather than read as some other file.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import FilePick from './FilePick';
 import { CsvMapping, DateOrderQuestion, kindsText, shownReason, type Picked } from './ImportSheet';
@@ -67,12 +67,14 @@ import {
   TransactionImports,
   TransactionsNow,
   TransactionsReview,
+  txnWaitsOn,
   TXN_SOURCE,
   useTransactionImports,
 } from './TransactionsImport';
 import { MAX_IMPORTS_PER_ACCOUNT } from '@/lib/investment-imports';
 import {
   isPdf,
+  monthsWaitsOn,
   notVanguardWords,
   pdfProblem,
   PerformanceImports,
@@ -371,6 +373,11 @@ export default function HistoryImportSheet({
     [account, name, perf.imports, perf.points, perf.activity]
   );
   const monthsReview = usePerformanceReview(pdf?.read ?? null, reviewCtx, pdf?.name ?? null);
+  // What Import waits on, said beside it in the footer (the review's checks
+  // that give it sit at the end of the body).
+  const waitId = useId();
+  const monthsWait = step === 'months' ? monthsWaitsOn(monthsReview, name) : null;
+  const txnWait = step === 'txns' && txn?.review ? txnWaitsOn(txn.review, txnChecked, txnYes) : null;
 
   const loadPast = useCallback(async (id: string) => {
     setPastError('');
@@ -942,21 +949,40 @@ export default function HistoryImportSheet({
       footer={
         step === 'months' ? (
           <>
+            {monthsWait && (
+              <p className="helper sheet-footer-note" id={waitId}>
+                {monthsWait}
+              </p>
+            )}
             <button type="button" className="btn secondary" onClick={chooseAgain} disabled={busy}>
               Cancel
             </button>
-            <button type="button" className="btn" onClick={() => void importMonths()} disabled={busy || !monthsReview.body || !!monthsError?.again}>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void importMonths()}
+              disabled={busy || !monthsReview.body || !!monthsError?.again}
+              aria-describedby={monthsWait ? waitId : undefined}
+            >
               {pdf?.read && monthsReview.count > 0 ? `Import ${monthsReview.count.toLocaleString()} ${monthsReview.count === 1 ? 'month' : 'months'}` : 'Import'}
             </button>
           </>
         ) : step === 'txns' ? (
           <>
+            {txnWait && (
+              <p className="helper sheet-footer-note" id={waitId}>
+                {txnWait}
+              </p>
+            )}
             <button type="button" className="btn secondary" onClick={chooseAgain} disabled={busy}>
               Cancel
             </button>
-            <button type="button" className="btn" onClick={() => void importTxns()} disabled={
-                busy || !txn?.review || takeOf(txn.review, txnChecked).length === 0 || !!txnError?.again || (qfxDiffers(txn.review, txnChecked) && !txnYes)
-              }
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void importTxns()}
+              disabled={busy || !txn?.review || takeOf(txn.review, txnChecked).length === 0 || !!txnError?.again || (qfxDiffers(txn.review, txnChecked) && !txnYes)}
+              aria-describedby={txnWait ? waitId : undefined}
             >
               {txn?.review && takeOf(txn.review, txnChecked).length > 0
                 ? `Import ${plural(rowsTaken(txn.review, txnChecked), 'transaction')} into ${plural(takeOf(txn.review, txnChecked).length, 'account')}`
@@ -1153,23 +1179,6 @@ export default function HistoryImportSheet({
                 onYes={setTxnYes}
                 disabled={busy}
               />
-              {txn.review.source === 'vanguard-qfx' ? (
-                <Why>
-                  Vanguard’s QFX file is the same download as its CSV, written for money apps, but it leaves out conversions and shares moved in kind: a conversion’s
-                  shares would read as nothing moving. Nor does it say what money in or out was, so none of it counts as new savings. So a CSV decides the days it covers,
-                  whichever was imported last, and a QFX decides only days no CSV covers. Unlike the CSV, a QFX says which days it covers, up to the day it was made,
-                  which Nya leaves out as it may not be complete. Where it and what Nya counts now don’t agree, Nya says so and waits for your yes. What Vanguard gave Nya
-                  isn’t changed, only not counted, so undoing the import brings it back. Each import is kept on its own and listed in this sheet with its Undo.
-                </Why>
-              ) : (
-                <Why>
-                  Vanguard’s download says what happened in its own words: a conversion as a conversion, with the shares it moved and what they were worth, and a sweep
-                  as a move inside the account. Nya reads it only as Vanguard lays it out, and a kind of transaction it doesn’t know stops that account’s import, never
-                  guessed at. The file has every account in your Vanguard login, matched to yours in Nya by their last four digits. It doesn’t say which days it covers,
-                  so Nya takes its first to its last transaction, never later than yesterday. For those days the file decides, over any QFX import. What Vanguard gave
-                  Nya isn’t changed, only not counted, so undoing the import brings it back. Each import is kept on its own and listed in this sheet with its Undo.
-                </Why>
-              )}
             </>
           )}
         </div>

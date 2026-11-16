@@ -179,6 +179,8 @@ async function mount(target: Target, opts: { review?: ImportsReview; refuse?: { 
     imported,
     button,
     box,
+    /** The footer's note, saying what Import waits on. */
+    note: () => host.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes('sheet-footer-note'))[0] ?? null,
     text: () => words(host.textContent),
     /** How to get these files, open or not. */
     how: () => host.findAll((e) => e.tagName === 'DETAILS' && e.textContent.startsWith('How to get these files'))[0],
@@ -368,15 +370,39 @@ describe('the download as QFX', () => {
     expect(v.text()).toContain('Use this file anywayIts transactions will count for May 13, 2025 to yesterday.');
     expect(v.text()).toContain('A QFX file doesn’t say whether money in was a contribution or a rollover, so none of it counts as new savings in your Plan.');
     expect(v.text()).toContain('Vanguard’s QFX file is the same download as its CSV');
+    // The order: the tables, then Why, then the yes, last, above the footer.
+    const all = v.host.findAll(() => true);
+    const why = v.host.findAll((e) => e.tagName === 'DETAILS' && e.textContent.startsWith('Why'))[0];
+    const yesRow = v.host.findAll((e) => e.tagName === 'LABEL' && e.textContent.startsWith('Use this file anyway'))[0];
+    const table = v.host.findAll((e) => e.tagName === 'TABLE')[0];
+    expect(all.indexOf(table)).toBeLessThan(all.indexOf(why));
+    expect(all.indexOf(why)).toBeLessThan(all.indexOf(yesRow));
+    expect((table.parentNode as FakeElement).getAttribute('class')).toBe('report-scroll');
+    // The details moved into Why: the day the file was made, and the QFX's limits.
+    expect(why.textContent).toContain('The file says it runs to today');
+    expect(why.textContent).toContain('Vanguard’s QFX file is the same download as its CSV');
+    expect(v.text().split('Vanguard’s QFX file is the same download as its CSV')).toHaveLength(2);
     const importing = () => v.button('Import 88 transactions into 2 accounts')!;
     expect(importing().getAttribute('disabled')).not.toBeNull();
+    // The footer says what Import waits on, and Import is described by it.
+    expect(v.note()!.textContent).toBe('To import, check Use this file anyway.');
+    expect(v.note()!.parentNode).toBe(importing().parentNode);
+    expect(importing().getAttribute('aria-describedby')).toBe(v.note()!.getAttribute('id'));
     v.toggle('Use this file anyway', true);
     expect(importing().getAttribute('disabled')).toBeNull();
+    expect(v.note()).toBeNull();
+    expect(importing().getAttribute('aria-describedby')).toBeNull();
     v.toggle('Use this file anyway', false);
     // Without the account that differs, nothing waits.
     v.toggle('Individual ••4421', false);
     expect(v.text()).not.toContain('aren’t what Nya counts now');
     expect(v.button('Import 28 transactions into 1 account')!.getAttribute('disabled')).toBeNull();
+    expect(v.note()).toBeNull();
+    // With no account checked, the note says to check one.
+    v.toggle('Traditional IRA ••5519', false);
+    expect(v.note()!.textContent).toBe('To import, check an account to import it into.');
+    expect(v.button('Import')!.getAttribute('aria-describedby')).toBe(v.note()!.getAttribute('id'));
+    v.toggle('Traditional IRA ••5519', true);
     v.toggle('Individual ••4421', true);
     v.toggle('Use this file anyway', true);
     await v.press('Import 88 transactions into 2 accounts');
@@ -505,6 +531,8 @@ describe('the download as QFX', () => {
     v.toggle('Traditional IRA ••5519', true);
     expect(v.box('Use this file anyway').checked).toBe(false);
     expect(importing().getAttribute('disabled')).not.toBeNull();
+    // And the footer says so again.
+    expect(v.note()!.textContent).toBe('To import, check Use this file anyway.');
     v.toggle('Use this file anyway', true);
     await v.press('Cancel');
     await v.choose('OfxDownload.qfx', QFX_FILE);

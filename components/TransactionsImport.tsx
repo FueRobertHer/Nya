@@ -32,6 +32,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import CheckRows, { type CheckRow } from './CheckRows';
 import { Masked } from './HideAmounts';
 import { Notice } from './TotalCaveats';
+import { Why } from './Why';
 import { formatDay, formatInstantDay, formatMoney, plainNumber, signedMoney } from '@/lib/format';
 import { withMask } from '@/lib/account-names';
 import { displayName } from '@/lib/categories';
@@ -153,6 +154,15 @@ const qfxSavingsFall = (r: ImportsReview, checked: readonly string[]) =>
  *  leaves out conversions and shares moved in kind, so it may be the one
  *  that's wrong) or in the Plan's new savings. */
 export const qfxDiffers = (r: ImportsReview, checked: readonly string[]) => qfxChanges(r, checked).length > 0 || qfxSavingsFall(r, checked).length > 0;
+
+/** What Import waits on that a check in the review gives, for the footer's
+ *  note: null where it waits on nothing the person can check. */
+export function txnWaitsOn(r: ImportsReview, checked: readonly string[], yes: boolean): string | null {
+  if (!r.accounts.some(takeable)) return null;
+  if (takeOf(r, checked).length === 0) return 'To import, check an account to import it into.';
+  if (qfxDiffers(r, checked) && !yes) return 'To import, check Use this file anyway.';
+  return null;
+}
 
 /** None of the file's accounts is one of the person's Vanguard accounts in
  *  Nya: said where the file is chosen, as nothing in it can be imported. */
@@ -303,14 +313,7 @@ export function TransactionsReview({
       <p className="helper">{`${fileName} · ${TXN_SOURCE}${qfx ? `, as ${/\.ofx$/i.test(fileName) ? 'OFX' : 'QFX'}` : ''}`}</p>
       <div className="stack tight">
         <h3 className="section-label">{`${plural(lines, 'transaction')} in ${plural(accounts.length, 'account')}, ${spanText(review.covers.from, review.covers.to)}`}</h3>
-        {review.stated_end && (
-          <p className="helper">
-            {`The file says it runs to ${day(review.stated_end)}, the day it was made, which wasn’t over then, so it counts to ${day(review.covers.to)}.${
-              review.after_today > 0 ? ` Its ${plural(review.after_today, 'transaction')} from that day ${review.after_today === 1 ? 'is' : 'are'} left out.` : ''
-            }`}
-          </p>
-        )}
-        <p className="helper">For each account you import it into, the file’s transactions take the place of the ones Vanguard gave Nya for these days. Before and after them, nothing changes.</p>
+        <p className="helper">In each account you import it into, the file’s transactions take the place of Vanguard’s for these days.</p>
       </div>
       {cautions.map((c) => (
         <Notice key={c} level="caution" role="status">
@@ -343,36 +346,31 @@ export function TransactionsReview({
               : 'Vanguard’s CSV download says which: import that instead if you can.'}
           </Notice>
           {differs.length > 0 && (
-          <table className="report-table">
-            <thead>
-              <tr>
-                <th scope="col">Month</th>
-                <th scope="col" className="num">
-                  Now
-                </th>
-                <th scope="col" className="num">
-                  This file
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {differs.map(({ a, m }) => (
-                <tr key={`${a.mask}:${m.month}`}>
-                  <td>{month(a, m.month)}</td>
-                  <td className="num">{m.now === null ? 'None counted' : money(m.now)}</td>
-                  <td className="num">{money(m.file)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+            <div className="report-scroll">
+              <table className="report-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Month</th>
+                    <th scope="col" className="num">
+                      Now
+                    </th>
+                    <th scope="col" className="num">
+                      This file
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {differs.map(({ a, m }) => (
+                    <tr key={`${a.mask}:${m.month}`}>
+                      <td>{month(a, m.month)}</td>
+                      <td className="num">{m.now === null ? 'None counted' : money(m.now)}</td>
+                      <td className="num">{money(m.file)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
-          <label className="check-row">
-            <input type="checkbox" checked={yes} onChange={(e) => onYes(e.target.checked)} disabled={disabled} />
-            <span className="check-row-text">
-              <span className="check-row-title">Use this file anyway</span>
-              <span className="check-row-sub">{`Its transactions will count for ${runsText(differing.flatMap((a) => a.effect?.days ?? []))}.`}</span>
-            </span>
-          </label>
         </div>
       )}
       {note && (
@@ -395,54 +393,84 @@ export function TransactionsReview({
         </p>
       )}
       {!review.sheet_in && <p className="helper">{`${capital(sheet.name)} isn’t in this file. Its other accounts can still be imported.`}</p>}
-      {review.after_today > 0 && !review.stated_end && (
-        <p className="helper">{`The file’s ${plural(review.after_today, 'transaction')} from today ${review.after_today === 1 ? 'is' : 'are'} left out: today may not be complete yet.`}</p>
-      )}
       {changes.length > 0 && (
         <div className="stack tight">
           <h3 className="section-label">Where deposits & withdrawals change</h3>
-          <table className="report-table">
-            <thead>
-              <tr>
-                <th scope="col">Month</th>
-                <th scope="col" className="num">
-                  Now
-                </th>
-                <th scope="col" className="num">
-                  From the file
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {changes.map(({ a, m }) => (
-                <tr key={`${a.mask}:${m.month}`}>
-                  <td>{month(a, m.month)}</td>
-                  <td className="num">{m.now === null ? 'None counted' : money(m.now)}</td>
-                  <td className="num">{money(m.file)}</td>
+          <div className="report-scroll">
+            <table className="report-table">
+              <thead>
+                <tr>
+                  <th scope="col">Month</th>
+                  <th scope="col" className="num">
+                    Now
+                  </th>
+                  <th scope="col" className="num">
+                    From the file
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="helper">
-            Vanguard’s file says what each one was: it values the shares a conversion moves, and a sweep inside an account is no money in or out. A conversion counts
-            as money moving between your accounts, never as new savings, so your Plan’s savings stay as they are.
-          </p>
+              </thead>
+              <tbody>
+                {changes.map(({ a, m }) => (
+                  <tr key={`${a.mask}:${m.month}`}>
+                    <td>{month(a, m.month)}</td>
+                    <td className="num">{m.now === null ? 'None counted' : money(m.now)}</td>
+                    <td className="num">{money(m.file)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="helper">A conversion counts as money moving between your accounts, never as new savings.</p>
         </div>
       )}
-      {twins.slice(0, 3).map(({ a, t }) => {
-        const kind = (displayName(t.subtype) || t.type).toLowerCase();
-        return (
-          <p key={`${a.mask}:${t.date}:${t.file_date}:${t.amount}`} className="helper">
-            {`${several ? `${capital(nameIn(a))}: ` : ''}Vanguard gave Nya ${/^[aeiou]/.test(kind) ? 'an' : 'a'} ${kind} of `}
-            <Masked>{formatMoney(Math.abs(t.amount), CURRENCY)}</Masked>
-            {` on ${day(t.date)} that the file lists on ${day(t.file_date)}, so it counts once, as the file’s.`}
-          </p>
-        );
-      })}
-      {twins.length > 3 && <p className="helper">{`And ${plural(twins.length - 3, 'more like it', 'more like them')}.`}</p>}
+      <Why>
+        <div className="stack tight">
+          {review.stated_end && (
+            <p>
+              {`The file says it runs to ${day(review.stated_end)}, the day it was made, which wasn’t over then, so it counts to ${day(review.covers.to)}.${
+                review.after_today > 0 ? ` Its ${plural(review.after_today, 'transaction')} from that day ${review.after_today === 1 ? 'is' : 'are'} left out.` : ''
+              }`}
+            </p>
+          )}
+          {review.after_today > 0 && !review.stated_end && (
+            <p>{`The file’s ${plural(review.after_today, 'transaction')} from today ${review.after_today === 1 ? 'is' : 'are'} left out: today may not be complete yet.`}</p>
+          )}
+          {changes.length > 0 && (
+            <p>Vanguard’s file says what each one was: it values the shares a conversion moves, and a sweep inside an account is no money in or out. So your Plan’s savings stay as they are.</p>
+          )}
+          {twins.slice(0, 3).map(({ a, t }) => {
+            const kind = (displayName(t.subtype) || t.type).toLowerCase();
+            return (
+              <p key={`${a.mask}:${t.date}:${t.file_date}:${t.amount}`}>
+                {`${several ? `${capital(nameIn(a))}: ` : ''}Vanguard gave Nya ${/^[aeiou]/.test(kind) ? 'an' : 'a'} ${kind} of `}
+                <Masked>{formatMoney(Math.abs(t.amount), CURRENCY)}</Masked>
+                {` on ${day(t.date)} that the file lists on ${day(t.file_date)}, so it counts once, as the file’s.`}
+              </p>
+            );
+          })}
+          {twins.length > 3 && <p>{`And ${plural(twins.length - 3, 'more like it', 'more like them')}.`}</p>}
+          <p>{qfx ? QFX_WHY : CSV_WHY}</p>
+        </div>
+      </Why>
+      {/* The yes Import waits on, last, just above the footer that says so. */}
+      {differing.length > 0 && (
+        <label className="check-row">
+          <input type="checkbox" checked={yes} onChange={(e) => onYes(e.target.checked)} disabled={disabled} />
+          <span className="check-row-text">
+            <span className="check-row-title">Use this file anyway</span>
+            <span className="check-row-sub">{`Its transactions will count for ${runsText(differing.flatMap((a) => a.effect?.days ?? []))}.`}</span>
+          </span>
+        </label>
+      )}
     </div>
   );
 }
+
+/** How Nya reads each download, behind the review's Why. */
+const QFX_WHY =
+  'Vanguard’s QFX file is the same download as its CSV, written for money apps, but it leaves out conversions and shares moved in kind: a conversion’s shares would read as nothing moving. Nor does it say what money in or out was, so none of it counts as new savings. So a CSV decides the days it covers, whichever was imported last, and a QFX decides only days no CSV covers. Unlike the CSV, a QFX says which days it covers, up to the day it was made, which Nya leaves out as it may not be complete. Where it and what Nya counts now don’t agree, Nya says so and waits for your yes. What Vanguard gave Nya isn’t changed, only not counted, so undoing the import brings it back. Each import is kept on its own and listed in this sheet with its Undo.';
+const CSV_WHY =
+  'Vanguard’s download says what happened in its own words: a conversion as a conversion, with the shares it moved and what they were worth, and a sweep as a move inside the account. Nya reads it only as Vanguard lays it out, and a kind of transaction it doesn’t know stops that account’s import, never guessed at. The file has every account in your Vanguard login, matched to yours in Nya by their last four digits. It doesn’t say which days it covers, so Nya takes its first to its last transaction, never later than yesterday. For those days the file decides, over any QFX import. What Vanguard gave Nya isn’t changed, only not counted, so undoing the import brings it back. Each import is kept on its own and listed in this sheet with its Undo.';
 
 // ---- Once imported ----------------------------------------------------------
 
