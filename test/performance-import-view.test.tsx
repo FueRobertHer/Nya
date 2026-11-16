@@ -265,13 +265,13 @@ describe('the review', () => {
     expect(waits(readOf(MONTHS), ctx({ points: null, balance: null }), { yesAnother: true })).toBeNull();
     // Months that would stop counting: the yes, or the file that keeps them.
     const later = ctx({ imports: { imports: [counted('2020-01-01')] } });
-    expect(waits(readOf(MONTHS), later)).toBe('To import, check Use this file’s months only, or go back and choose a file from Jan 2020.');
+    expect(waits(readOf(MONTHS), later)).toBe('To import, check Use this file’s months only, or choose a file from Jan 2020.');
     expect(waits(readOf(MONTHS), later, { yesDropped: true })).toBeNull();
     const inside = readOf(makeMonths('2024-01-01', '2025-12-31'), { range: { from: '2024-01-01', to: '2025-12-31' } });
     // (It ends before Nya's balances start, so whose it is has its own yes, given here.)
-    expect(waits(inside, later, { yesAnother: true })).toBe('To import, check Use this file’s months only, or go back and choose a file from Jan 2020 up to today.');
+    expect(waits(inside, later, { yesAnother: true })).toBe('To import, check Use this file’s months only, or choose a file from Jan 2020 up to today.');
     expect(waits(inside, ctx({ imports: { imports: [counted('2024-01-01')] } }), { yesAnother: true })).toBe(
-      'To import, check Use this file’s months only, or go back and choose a file printed up to today.'
+      'To import, check Use this file’s months only, or choose a file printed up to today.'
     );
     // Both at once.
     expect(waits(readOf(MONTHS), ctx({ points: null, balance: null, imports: { imports: [counted('2020-01-01')] } }))).toBe(
@@ -563,7 +563,7 @@ describe('the sheet', () => {
     expect(v.text()).toContain('Jan 2020 to Dec 2023 would stop counting');
     // The footer says what Import waits on, and Import is described by it.
     const note = () => v.host.findAll((e) => (e.getAttribute('class') ?? '').split(' ').includes('sheet-footer-note'))[0] ?? null;
-    expect(note()!.textContent).toBe('To import, check Use this file’s months only, or go back and choose a file from Jan 2020.');
+    expect(note()!.textContent).toBe('To import, check Use this file’s months only, or choose a file from Jan 2020.');
     expect(note()!.parentNode).toBe(v.button('Import 34 months')!.parentNode);
     expect(v.button('Import 34 months')!.getAttribute('aria-describedby')).toBe(note()!.getAttribute('id'));
     v.tick('Use this file’s months only');

@@ -838,7 +838,7 @@ export function monthsWaitsOn(state: ReviewState, name: string): string | null {
   if (!only || !counting) return null;
   const from = monthText(firstMonth(counting));
   const other = dropped.before && dropped.after ? `a file from ${from} up to today` : dropped.before ? `a file from ${from}` : 'a file printed up to today';
-  return `To import, check Use this file’s months only, or go back and choose ${other}.`;
+  return `To import, check Use this file’s months only, or choose ${other}.`;
 }
 
 /** What using only this file's months does, for its yes. `allTime`: all
