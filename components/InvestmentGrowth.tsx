@@ -596,8 +596,13 @@ function InvestmentsHero({
   const all = g?.basis === 'all';
 
   // A day on the chart: the returns to it, the gap between the lines there;
-  // two days measured: the returns between them.
+  // two days measured: the returns between them. A day before the line of
+  // deposits starts (all time, before Nya has every account's activity) has
+  // no returns to it: words, never the range's figure beside an earlier day.
+  // The day line says what qualifies the day before its balance, which is
+  // what a phone's line cuts.
   let shown = f?.returns ?? null;
+  let uncounted = false;
   let dayLine: string | null = null;
   if (reading && f && g) {
     const balance = `balance ${formatMoney(reading.value, currency)}`;
@@ -606,8 +611,9 @@ function InvestmentsHero({
     // counted (the span's), which can be after the chart starts.
     const counts = all ? null : (g.span?.from ?? null);
     if (reading.base == null || (reading.from && reading.from.base == null)) {
+      uncounted = true;
       const first = g.chart?.baseline[0]?.date;
-      dayLine = `${reading.from ? `${reading.from.day} to ` : ''}${reading.day} · ${balance}${first ? ` · returns count from ${day(first)}` : ''}`;
+      dayLine = `${reading.from ? `${reading.from.day} to ` : ''}${reading.day}${estimated ? ' · estimated' : ''}${first ? ` · returns count from ${day(first)}` : ''} · ${balance}`;
     } else {
       // To the cent, so a measure across a flat stretch is $0.00, never −$0.00.
       shown = Math.round((reading.value - reading.base - (reading.from ? reading.from.value - reading.from.base! : 0)) * 100) / 100 || 0;
@@ -615,7 +621,7 @@ function InvestmentsHero({
       const from = reading.from ? reading.from.day : before ? null : counts !== null ? day(counts) : null;
       // After "to", in a sentence's case ("Jun 1 to yesterday").
       const to = from && reading.date ? day(reading.date) : reading.day;
-      dayLine = `${from ? `${from} to ` : ''}${to} · ${balance}${estimated ? ' · estimated' : ''}${before ? ` · returns count from ${day(counts!)}` : ''}`;
+      dayLine = `${from ? `${from} to ` : ''}${to}${estimated ? ' · estimated' : ''}${before ? ` · returns count from ${day(counts!)}` : ''} · ${balance}`;
     }
   }
 
@@ -630,6 +636,15 @@ function InvestmentsHero({
   // Words, never "--", at the answer's smaller size: what stands in the way
   // is said under it.
   else if (shown === null) figure = 'Nothing to count yet';
+  // At the answer's smaller size too, over a blank at the figure's, so the
+  // figure's line keeps its height and the chart doesn't move under the finger.
+  else if (uncounted)
+    figure = (
+      <>
+        <span aria-hidden="true">{'\u00a0'}</span>
+        <span className="hero-figure-words">Not counted yet</span>
+      </>
+    );
   else figure = <HeroFigure worth={shown} currency={currency} signed />;
 
   let delta: ReactNode = null;

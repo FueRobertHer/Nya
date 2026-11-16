@@ -84,7 +84,7 @@ const ROTH_SET = { roth: { totals: { in: 20_000, out: 0, as_of: '2026-05-01' } }
 // Each test's accounts get their own ids: the activity is cached by account
 // for a minute (components/InvestmentActivity.tsx), across tests too.
 let run = 0;
-type Answer = { status?: number; note?: string | null; unreadable?: boolean; totals?: Fixture['totals']; noActivity?: boolean };
+type Answer = { status?: number; note?: string | null; unreadable?: boolean; totals?: Fixture['totals']; noActivity?: boolean; flowsFrom?: string };
 
 function setup(
   opts: {
@@ -98,6 +98,8 @@ function setup(
     buckets?: Record<string, string>;
     /** Months imported from Vanguard's Performance page, by fixture key. */
     months?: Record<string, import('@/lib/investment-months').InvestmentMonths>;
+    /** Balance history in place of the fixture's, by fixture key. */
+    points?: Record<string, Point[]>;
     /** Names other than the fixtures', by fixture key. */
     names?: Record<string, string>;
   } = {}
@@ -146,7 +148,7 @@ function setup(
       calls.push('history');
       if (opts.history) return Response.json({ error: 'Failed' }, { status: opts.history });
       const ids = u.searchParams.get('ids')!.split(',');
-      return Response.json({ histories: Object.fromEntries(ids.map((i) => [i, FIXTURES[i.replace(/_\d+$/, '')]?.points ?? []])) });
+      return Response.json({ histories: Object.fromEntries(ids.map((i) => [i, opts.points?.[i.replace(/_\d+$/, '')] ?? FIXTURES[i.replace(/_\d+$/, '')]?.points ?? []])) });
     }
     if (u.pathname === '/api/allocation-settings') {
       calls.push('settings');
@@ -164,7 +166,7 @@ function setup(
       ytd_contributions: 0,
       ytd_rollovers: 0,
       flows: none ? null : (opts.flows?.[key] ?? f.flows),
-      flows_from: none ? null : f.flows_from,
+      flows_from: none ? null : (a.flowsFrom ?? f.flows_from),
       flows_to: none ? null : '2026-11-05',
       note: a.note ?? null,
       money_in_out: a.unreadable ? null : 'totals' in a ? a.totals ? { ...a.totals, currency: 'USD', set_at: '2026-11-01T00:00:00.000Z' } : null : f.totals ? { ...f.totals, currency: 'USD', set_at: '2026-11-01T00:00:00.000Z' } : null,
@@ -894,9 +896,73 @@ describe('the hero, under a finger', () => {
       fire(host, 'pointerdown', 1);
       fire(host, 'pointermove', 0);
       expect(figure(host)).toBe('$0.00');
-      expect(words(byClass(host, 'hero-day')[0])).toBe('Jan 1 · balance $100,000.00 · returns count from Jun 1');
+      expect(words(byClass(host, 'hero-day')[0])).toBe('Jan 1 · returns count from Jun 1 · balance $100,000.00');
       fire(host, 'pointermove', 2);
       expect(words(byClass(host, 'hero-day')[0])).toBe('Jun 1 to yesterday · balance $120,000.00');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  // Individual alone, all time, its activity from Feb 1: its line of deposits
+  // starts on Jun 1, the first recorded day it can count from, after the
+  // chart does.
+  const LATE = { only: ['ind'], answers: { ind: { flowsFrom: '2026-02-01' } } };
+  const key = (host: FakeElement, k: string) => {
+    const svg = host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'slider')[0];
+    act(() => {
+      svg.dispatchEvent(Object.assign(new FakeEvent('keydown'), { key: k }));
+    });
+  };
+  const finger = (host: FakeElement, type: string, id: number, x: number) => {
+    const svg = host.findAll((e) => e.tagName.toLowerCase() === 'svg' && e.getAttribute('role') === 'slider')[0];
+    act(() => {
+      svg.dispatchEvent(Object.assign(new FakeEvent(type), { pointerId: id, button: 0, buttons: 1, pointerType: 'touch', clientX: x, clientY: 0 }));
+    });
+  };
+
+  test('a day all time can’t count yet: words in place of the figure, and what qualifies the day before its balance', async () => {
+    const { host, root, range } = setup({ ...LATE, points: { ind: FIXTURES.ind.points.map((q) => (q.date === '2026-01-01' ? { ...q, estimated: true } : q)) } });
+    try {
+      await pass(50);
+      range('All');
+      expect(figure(host)).toBe('+$40,000.00');
+      key(host, 'Home');
+      // Not the range's +$40,000.00 beside Dec 1.
+      expect(figure(host)).toBe('Not counted yet');
+      expect(words(byClass(host, 'hero-figure-words')[0])).toBe('Not counted yet');
+      expect(words(byClass(host, 'hero-day')[0])).toBe('Dec 1, 2025 · returns count from Jun 1 · balance $95,000.00');
+      key(host, 'ArrowRight');
+      expect(figure(host)).toBe('Not counted yet');
+      expect(words(byClass(host, 'hero-day')[0])).toBe('Jan 1 · estimated · returns count from Jun 1 · balance $100,000.00');
+      key(host, 'ArrowRight');
+      expect(figure(host)).toBe('+$30,000.00');
+      expect(byClass(host, 'hero-figure-words')).toHaveLength(0);
+      // Amounts hidden: the balance is, and the words are no amount.
+      key(host, 'ArrowLeft');
+      act(() => setHideAmounts(true, null));
+      expect(figure(host)).toBe('Not counted yet');
+      expect(words(byClass(host, 'hero-day')[0])).toStartWith('Jan 1 · estimated · returns count from Jun 1 · balance ');
+      expect(words(byClass(host, 'hero-day')[0])).not.toContain('100,000');
+      act(() => setHideAmounts(false, null));
+      key(host, 'Escape');
+      expect(figure(host)).toBe('+$40,000.00');
+      expect(byClass(host, 'hero-day')).toHaveLength(0);
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
+  test('two days measured across where all time starts counting: words too', async () => {
+    const { host, root, range } = setup(LATE);
+    try {
+      await pass(50);
+      range('All');
+      finger(host, 'pointerdown', 1, 2);
+      finger(host, 'pointermove', 1, 2);
+      finger(host, 'pointerdown', 2, LAID_OUT - 8);
+      expect(figure(host)).toBe('Not counted yet');
+      expect(words(byClass(host, 'hero-day')[0])).toBe('Dec 1, 2025 to Yesterday · returns count from Jun 1 · balance $120,000.00');
     } finally {
       act(() => root.unmount());
     }
