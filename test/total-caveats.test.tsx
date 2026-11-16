@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { totalCaveats, type TotalNoteInstitution } from '@/components/total-notes';
-import TotalCaveats, { summaryText, type Caveat } from '@/components/TotalCaveats';
+import TotalCaveats, { Notice, summaryText, type Caveat } from '@/components/TotalCaveats';
 import { severityOf } from '@/lib/accounts-status';
 import { CAUSES, type Cause, type ConnectionHealth } from '@/lib/connection-state';
 import type { ConnectorIssue } from '@/lib/connectors/types';
@@ -135,5 +135,18 @@ describe('the caveat line', () => {
   test('more than three kinds: the first three and how many more', () => {
     const items = ['a', 'b', 'c', 'd', 'e'].map((k) => c(k, 'caution', `kind ${k}`));
     expect(summaryText(items)).toBe('5 notes: kind a, kind b, kind c and 2 more');
+  });
+});
+
+describe('a done notice', () => {
+  test('a check, "Done:" said first, announced as a status', () => {
+    const html = renderToStaticMarkup(
+      <Notice level="done" role="status">
+        Imported Performance.pdf.
+      </Notice>
+    );
+    expect(html).toContain('<div class="notice done" role="status"><svg');
+    expect(html).toContain('<path d="M20 6 9 17l-5-5"></path>');
+    expect(text(html)).toBe('Done: Imported Performance.pdf.');
   });
 });

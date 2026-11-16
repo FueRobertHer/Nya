@@ -24,7 +24,7 @@ const untilWords = (until: number | null) => (until === null ? '' : `, until ${u
 function bareTitle(rule: Rule): string {
   switch (rule.kind) {
     case 'none':
-      return 'None';
+      return 'No conversions';
     case 'bracket':
       return `Fill the ${pct(rule.top)} bracket`;
     case 'aca-then-bracket':
@@ -49,7 +49,7 @@ export function ruleSentence(strategy: Pick<Strategy, 'conversions' | 'convertUn
   const until = age === null ? '' : `, until ${age}`;
   switch (rule.kind) {
     case 'none':
-      return 'None';
+      return 'No conversions';
     case 'bracket':
       return `Fill the ${pct(rule.top)} bracket${until}`;
     case 'aca-then-bracket':
@@ -122,8 +122,8 @@ export const COMPARE_HOLDS = 'Each rule here keeps your stop, your start and wha
 /** In its place, where the withdrawal rule spends differently under each rule. */
 export const COMPARE_SPENDS = 'Each rule here keeps your stop, your start and what’s timed on them where they are now, but your withdrawal rule spends differently under each, so what’s left doesn’t compare like with like. A rule’s own sheet shows what it comes to once used.';
 
-/** Under the preview's table, where this rule and None spend differently. */
-export const PREVIEW_SPENDS = 'Your withdrawal rule spends differently under this rule and None, so what’s left doesn’t compare like with like.';
+/** Under the preview's table, where this rule and no conversions spend differently. */
+export const PREVIEW_SPENDS = 'Your withdrawal rule spends differently under this rule than with no conversions, so what’s left doesn’t compare like with like.';
 
 /** A rule's sheet from Compare, where it couldn't be worked out once used. */
 export const RULE_USED_FAILED = 'This couldn’t be worked out once used, so Try it in a copy is off.';

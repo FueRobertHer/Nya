@@ -17,7 +17,7 @@ const { createRoot } = trackRoots(require('react-dom/client') as typeof import('
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { Menu, menuOrder, menuPlacement, nextIndex } = await import('@/components/Menu');
 const { Why } = await import('@/components/Why');
-const { Sheet } = await import('@/components/Sheet');
+const { Sheet, SheetFooter } = await import('@/components/Sheet');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -226,5 +226,82 @@ describe('a sheet footer', () => {
       </Sheet>
     );
     expect(without).not.toContain('sheet-footer');
+  });
+
+  // A level deep in a sheet it shares (the Plan's drawer) gives the footer
+  // with SheetFooter: drawn in the sheet's footer while it is mounted.
+  const classed = (host: FakeElement, cls: string) => host.findAll((e) => e.getAttribute('class') === cls);
+  const Level = ({ label }: { label: string }) => (
+    <>
+      <p>Rule</p>
+      <SheetFooter>
+        <p className="helper sheet-footer-note">To use it, check the rule.</p>
+        <button type="button" className="btn primary">
+          {label}
+        </button>
+      </SheetFooter>
+    </>
+  );
+
+  test('a level inside the body gives the footer, which goes when the level does', () => {
+    const host = dom.document.createElement('div');
+    dom.document.body.appendChild(host);
+    const root = createRoot(host as unknown as HTMLElement);
+    const sheet = (body: React.ReactNode, footer?: React.ReactNode) => (
+      <Sheet open title="Tune to a goal" onClose={() => {}} footer={footer}>
+        {body}
+      </Sheet>
+    );
+    act(() => root.render(sheet(<Level label="Use in your plan" />)));
+    const [body] = classed(host, 'sheet-body');
+    let footers = classed(host, 'sheet-footer');
+    expect(footers).toHaveLength(1);
+    expect(body.textContent).toBe('Rule');
+    expect(footers[0].textContent).toBe('To use it, check the rule.Use in your plan');
+    expect(body.parentNode).toBe(footers[0].parentNode);
+
+    // A footer the sheet is given comes first, the level's after it.
+    act(() => root.render(sheet(<Level label="Use in your plan" />, <button type="button">Close</button>)));
+    footers = classed(host, 'sheet-footer');
+    expect(footers).toHaveLength(1);
+    expect(footers[0].textContent).toBe('CloseTo use it, check the rule.Use in your plan');
+
+    act(() => root.render(sheet(<p>Rules</p>)));
+    expect(classed(host, 'sheet-footer')).toHaveLength(0);
+
+    // One with nothing in it draws no footer, as a `footer` of false doesn't.
+    act(() => root.render(sheet(<SheetFooter>{false}</SheetFooter>)));
+    expect(classed(host, 'sheet-footer')).toHaveLength(0);
+    act(() => root.unmount());
+  });
+
+  test('Tab stays inside the sheet, through the footer a level gave', () => {
+    const host = dom.document.createElement('div');
+    dom.document.body.appendChild(host);
+    const root = createRoot(host as unknown as HTMLElement);
+    act(() =>
+      root.render(
+        <Sheet open title="Tune to a goal" onClose={() => {}}>
+          <Level label="Use in your plan" />
+        </Sheet>
+      )
+    );
+    const use = host.findAll((e) => e.tagName === 'BUTTON' && e.textContent === 'Use in your plan')[0];
+    use.focus();
+    const e = new FakeEvent('keydown') as FakeEvent & { shiftKey: boolean };
+    e.key = 'Tab';
+    e.shiftKey = false;
+    act(() => {
+      (dom.document.defaultView as unknown as FakeElement).dispatchEvent(e);
+    });
+    expect(e.defaultPrevented).toBe(true);
+    expect((dom.document.activeElement as unknown as FakeElement).getAttribute('aria-label')).toBe('Close');
+    act(() => root.unmount());
+  });
+
+  test('outside a sheet (a level drawn on its own) it is drawn in place', () => {
+    expect(renderToStaticMarkup(<Level label="Use in your plan" />)).toBe(
+      '<p>Rule</p><div class="sheet-footer"><p class="helper sheet-footer-note">To use it, check the rule.</p><button type="button" class="btn primary">Use in your plan</button></div>'
+    );
   });
 });

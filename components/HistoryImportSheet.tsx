@@ -50,7 +50,7 @@ import { readImport, type ImportOptions, type ReadResult, type StatementInfo } f
 import { columnsFromNames, DELIMITERS, guessColumns, readCsvTable, type CsvColumns, type CsvSign, type CsvTable, type Delimiter } from '@/lib/import/csv';
 import type { DateOrder } from '@/lib/import/dates';
 import type { DecimalMark } from '@/lib/import/amounts';
-import { LevelWord, Notice } from './TotalCaveats';
+import { Notice } from './TotalCaveats';
 import { StripSkeleton } from './FiguresStrip';
 import { Why } from './Why';
 import { loadInvestmentActivity, investmentImportsChanged, investmentMonthsSaved } from './InvestmentActivity';
@@ -283,13 +283,6 @@ async function postForm(meta: Record<string, unknown>, file: Picked): Promise<{ 
   const res = await fetch('/api/history-import', { method: 'POST', body: form });
   return { res, data: await res.json().catch(() => null) };
 }
-
-/** The done notice's check (as components/DemoDataCard.tsx's). */
-const CHECK = (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M20 6 9 17l-5-5" />
-  </svg>
-);
 
 const loadMonthsActivity = (id: string, item: string) => loadInvestmentActivity(id, item);
 
@@ -1038,13 +1031,9 @@ export default function HistoryImportSheet({
             </Notice>
           )}
           {notice && (
-            <div className="notice done" role="status" ref={resultLine} tabIndex={-1}>
-              {CHECK}
-              <div>
-                <LevelWord level="done" />
-                {notice}
-              </div>
-            </div>
+            <Notice level="done" role="status" ref={resultLine} tabIndex={-1}>
+              {notice}
+            </Notice>
           )}
           {perf.importsError && <p className="helper">{perf.importsError}</p>}
           {txns.error && <p className="helper">{txns.error}</p>}

@@ -71,10 +71,17 @@
 //
 // As Accounts > Investments' hero (`outside`) the hero holds the readout: the
 // figure is the returns, so the chart draws no readout row or split line,
-// its info opens from the hero's button and starts with the hero's lines,
-// and a scrub or a measure goes to the hero with the grey line's value
-// there. The hero's figures follow its range, so the range is the hero's too
-// (`range`, `ranges`, `onRange`).
+// it draws its info into the hero (components/hero-scrub.ts HeroInfo), after
+// the hero's own lines, to open under its figure from its button, and a scrub or
+// a measure goes to the hero with the grey line's value there. The hero's
+// figures follow its range, so the range is the hero's too (`range`,
+// `ranges`, `onRange`). Its lines are named at their ends (`lineNames`), each
+// over or under its own line all along the name, placed from the plot's own
+// geometry so no line runs through a name and neither meets the other, the
+// dot or the months. A grey name with no room is left out, and with no
+// room for Balance neither is drawn; the info names what the plot doesn't.
+// The grey line is named where it ends at zero or above, by the runs it is
+// drawn in (it stops at zero and starts again there).
 //
 // ALL TIME. On an investment account's sheet with deposits and withdrawals
 // that can be carried (`allTime`, with `baselineFrom`), or months from its
@@ -89,12 +96,13 @@
 // in, so it is never a year's. Every other range counts from its start.
 
 import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { formatDay, formatMoney, MINUS, onDay, roundsToNothing, signedPercent, spoken } from '@/lib/format';
 import { totalReturn } from '@/lib/returns-rate';
 import { Masked } from './HideAmounts';
 import { Segmented } from './Segmented';
 import { MIN_LABEL_GAP as LABEL_GAP, labelWidth, useDrawnWidth } from './drawn-width';
-import { HeroScrub, type HeroReading } from './hero-scrub';
+import { HeroInfo, HeroScrub, type HeroReading } from './hero-scrub';
 import {
   availableRanges,
   axisTickLadder,
@@ -168,6 +176,98 @@ function pointDay(p: HistoryPoint, sentence = false): string {
   return `${sentence ? 'the end' : 'End'} of ${month}`;
 }
 
+/** A point on the plot, in its own units. */
+type Pt = readonly [number, number];
+/** A line as it is drawn: its runs, each joined point to point (the grey
+ *  line starts again where it comes back above zero). */
+type Line = readonly (readonly Pt[])[];
+/** What a name covers: a 12px line by its width, from its baseline. */
+type Box = { l: number; r: number; t: number; b: number };
+const nameBox = (x: number, y: number, text: string): Box => ({ l: x - labelWidth(text), r: x, t: y - 11, b: y + 3 });
+type Place = { x: number; y: number };
+/** Where the lines' names go, each null with no room for it, then said in
+ *  the info instead. */
+type NamePlaces = { balance: Place | null; grey: Place | null; unnamed: { balance: boolean; grey: boolean } };
+
+/** A run's height at `x`, between its points; null off its ends. */
+function heightAt(run: readonly Pt[], x: number): number | null {
+  for (let i = 1; i < run.length; i++) {
+    const [x0, y0] = run[i - 1];
+    const [x1, y1] = run[i];
+    if (x >= x0 && x <= x1) return x1 === x0 ? y1 : y0 + ((y1 - y0) * (x - x0)) / (x1 - x0);
+  }
+  return null;
+}
+
+/** The line's heights across a box's width, wherever it runs there. */
+function heightsUnder(line: Line, l: number, r: number): number[] {
+  return line.flatMap((run) =>
+    [heightAt(run, l), heightAt(run, r), ...run.filter(([px]) => px > l && px < r).map(([, py]) => py)].filter((v): v is number => v !== null)
+  );
+}
+
+/** Whether the line runs through the box, by any of its runs. */
+function runsThrough(line: Line, b: Box): boolean {
+  return line.some((run) => {
+    const ys = heightsUnder([run], b.l, b.r);
+    return ys.length > 0 && Math.max(...ys) >= b.t - 1 && Math.min(...ys) <= b.b + 1;
+  });
+}
+
+const apart = (a: Box, b: Box) => a.r + 4 <= b.l || b.r + 4 <= a.l || a.b + 2 <= b.t || b.b + 2 <= a.t;
+const at = (x: number, y: number): Place => ({ x, y: Math.round(y * 10) / 10 });
+
+/** A name by a line, its right end at `x`: over the line or under it, all
+ *  along the name's width, so the line never runs through it. Null where
+ *  the line doesn't run. */
+function byLine(line: Line, x: number, text: string, side: 'over' | 'under'): Place | null {
+  const ys = heightsUnder(line, x - labelWidth(text), x);
+  if (ys.length === 0) return null;
+  return at(x, side === 'over' ? Math.min(...ys) - 6 : Math.max(...ys) + 15);
+}
+
+/** The lines' names at their ends. The balance's under its line where it
+ *  ends, else over it, sliding left from the end dot a step at a time where
+ *  neither fits; the grey line's over its own end, else under it, else the
+ *  same short of the balance's name. Each by its own line and never across
+ *  the other, inside the plot, clear of each other and of the dot's ring
+ *  (4 + 2, so 9 short of the dot). A name with no room is left out, and
+ *  with no room for the balance's, neither is drawn. */
+function placeNames(gold: Line, grey: Line | null, text: { balance: string; grey: string }, plot: { left: number; floor: number }): NamePlaces {
+  const inside = (b: Box) => b.t >= 0 && b.b <= plot.floor && b.l >= plot.left;
+  const end = gold[gold.length - 1];
+  const dotX = end[end.length - 1][0];
+  const hasGrey = !!grey && grey.some((run) => run.length > 0);
+  const balances = [0, 12, 24, 36]
+    .flatMap((k) => (['under', 'over'] as const).map((side) => byLine(gold, dotX - 9 - k, text.balance, side)))
+    .filter((c): c is Place => {
+      if (!c) return false;
+      const b = nameBox(c.x, c.y, text.balance);
+      return inside(b) && !(grey && runsThrough(grey, b));
+    });
+  const greyFor = (bal: Place) => {
+    if (!grey || !hasGrey) return null;
+    const balBox = nameBox(bal.x, bal.y, text.balance);
+    const last = grey[grey.length - 1];
+    const endX = last[last.length - 1][0] - 9;
+    for (const x of [endX, balBox.l - 6].filter((x) => x <= endX)) {
+      for (const side of ['over', 'under'] as const) {
+        const c = byLine(grey, x, text.grey, side);
+        if (!c) continue;
+        const b = nameBox(c.x, c.y, text.grey);
+        if (inside(b) && apart(b, balBox) && !runsThrough(gold, b)) return c;
+      }
+    }
+    return null;
+  };
+  for (const bal of balances) {
+    const g = greyFor(bal);
+    if (g) return { balance: bal, grey: g, unnamed: { balance: false, grey: false } };
+  }
+  const balance = balances[0] ?? null;
+  return { balance, grey: null, unnamed: { balance: !balance, grey: hasGrey } };
+}
+
 // The hero's line draws in once a page load: the first time Home's chart is
 // shown (on its own data, after the skeleton), never again as tabs or
 // ranges change. Server and first client render agree (it is false on both),
@@ -187,6 +287,7 @@ export default function NetWorthChart({
   notes,
   hero = false,
   outside = null,
+  lineNames = null,
   ranges: givenRanges,
   range: givenRange,
   onRange,
@@ -224,9 +325,13 @@ export default function NetWorthChart({
    *  header). */
   hero?: boolean;
   /** Accounts > Investments' hero, which holds the readout (see the header):
-   *  the info's id and open state, from the hero's button, and its first
-   *  lines. Only with `hero`. */
-  outside?: { infoId: string; infoOpen: boolean; info: readonly string[] } | null;
+   *  its own lines for the info, which the chart draws before its own into
+   *  the hero's node (HeroInfo). Only with `hero`. */
+  outside?: { info: readonly string[] } | null;
+  /** The lines' names, drawn at their ends inside the plot (see the header):
+   *  the balance's, and the grey line's while it is drawn. Accounts >
+   *  Investments' only; Home's hero has none. */
+  lineNames?: { balance: string; grey: string } | null;
   /** The ranges to offer, the one shown and a pick, when the screen's figures
    *  follow the range (Accounts > Investments); otherwise the chart keeps its
    *  own. All three or none. */
@@ -390,18 +495,35 @@ export default function NetWorthChart({
     let baseEnd = base.length - 1;
     while (baseEnd >= 0 && base[baseEnd] === null) baseEnd--;
     let basePath = '';
+    // The same, as points, for placing the lines' names.
+    const baseRuns: Pt[][] = [];
     if (baseStart >= 0) {
       const at = (px: number, v: number) => `${px.toFixed(1)},${y(v).toFixed(1)}`;
       for (let i = baseStart; i <= baseEnd; i++) {
         const b = base[i] as number;
         if (i === baseStart) {
-          if (b >= 0) basePath += `M${at(xs[i], b)}`;
+          if (b >= 0) {
+            basePath += `M${at(xs[i], b)}`;
+            baseRuns.push([[xs[i], y(b)]]);
+          }
           continue;
         }
         const prev = base[i - 1] as number;
-        if (prev >= 0 && b >= 0) basePath += `L${at(xs[i], b)}`;
-        else if (prev >= 0) basePath += `L${at(xs[i - 1] + ((xs[i] - xs[i - 1]) * prev) / (prev - b), 0)}`;
-        else if (b >= 0) basePath += `M${at(xs[i - 1] + ((xs[i] - xs[i - 1]) * -prev) / (b - prev), 0)}L${at(xs[i], b)}`;
+        if (prev >= 0 && b >= 0) {
+          basePath += `L${at(xs[i], b)}`;
+          baseRuns[baseRuns.length - 1].push([xs[i], y(b)]);
+        } else if (prev >= 0) {
+          const cx = xs[i - 1] + ((xs[i] - xs[i - 1]) * prev) / (prev - b);
+          basePath += `L${at(cx, 0)}`;
+          baseRuns[baseRuns.length - 1].push([cx, y(0)]);
+        } else if (b >= 0) {
+          const cx = xs[i - 1] + ((xs[i] - xs[i - 1]) * -prev) / (b - prev);
+          basePath += `M${at(cx, 0)}L${at(xs[i], b)}`;
+          baseRuns.push([
+            [cx, y(0)],
+            [xs[i], y(b)],
+          ]);
+        }
       }
     }
 
@@ -453,7 +575,7 @@ export default function NetWorthChart({
     const outline = points.map((_, i) => `${i === 0 ? 'M' : 'L'}${pt(i)}`).join('');
     const baseY = H - bottom;
     const area = `${outline}L${xs[xs.length - 1].toFixed(1)},${baseY}L${xs[0].toFixed(1)},${baseY}Z`;
-    return { vals, xs, y, runs, uniform, area, baseY, xTicks, hasGap, base, baseIn, baseOut, basePath, baseStart, baseEnd };
+    return { vals, xs, y, runs, uniform, area, baseY, xTicks, hasGap, base, baseIn, baseOut, basePath, baseRuns, baseStart, baseEnd };
   }, [points, baseline, frame, W, H]);
 
   // The notes in the range, a day each (several notes on one day join), each
@@ -474,7 +596,7 @@ export default function NetWorthChart({
     return here.length > 0 ? here.map((m) => m.text).join('; ') : null;
   };
 
-  const { vals, xs, y, runs, uniform, area, baseY, xTicks, hasGap, base, baseIn, baseOut, basePath, baseStart, baseEnd } = geo;
+  const { vals, xs, y, runs, uniform, area, baseY, xTicks, hasGap, base, baseIn, baseOut, basePath, baseRuns, baseStart, baseEnd } = geo;
   const last = points.length - 1;
   const hasEstimated = points.some((p) => p.estimated) || hasGap;
   // Dates carry the year outside this one (formatDay), so "Mar 3" is never
@@ -581,6 +703,25 @@ export default function NetWorthChart({
     }
   }
 
+  // The lines' names at their ends (see the header), from the plot's own
+  // geometry: the gold line's points, and the grey line's runs as drawn,
+  // named where it ends at zero or above. Once a plot, not each scrub.
+  const names = useMemo(() => {
+    if (!lineNames) return null;
+    const gold = [xs.map((px, i): Pt => [px, y(vals[i])])];
+    const named = !!basePath && baseEnd >= 0 && (base[baseEnd] as number) >= 0;
+    return placeNames(gold, named ? baseRuns : null, lineNames, { left: frame.left, floor: baseY });
+  }, [lineNames, xs, y, vals, basePath, baseRuns, base, baseEnd, frame.left, baseY]);
+  // What the plot couldn't name, said first in the info.
+  const unnamedLine =
+    names && lineNames && (names.unnamed.balance || names.unnamed.grey)
+      ? names.unnamed.balance && names.unnamed.grey
+        ? `The gold line is ${lineNames.balance}, and the grey line is ${lineNames.grey}.`
+        : names.unnamed.balance
+          ? `The gold line is ${lineNames.balance}.`
+          : `The grey line is ${lineNames.grey}.`
+      : null;
+
   const info: string[] = [];
   // Outside the chart, the hero says what its lines are and where they
   // count from; where the grey line stops is still said here.
@@ -598,7 +739,11 @@ export default function NetWorthChart({
     const none = !shown.some((b) => b >= 0);
     const more =
       baselineFrom || whole || outside ? 'more had come out than gone in' : `more had come out than the balance ${onDay(dayIn(baseStart))} and deposits since`;
-    if (none) info.push(`No grey line for this range: all through it, ${more}${baselineFrom || whole ? ', so deposits less withdrawals were below zero' : ''}.`);
+    const greyName = lineNames?.grey ?? null;
+    if (none)
+      info.push(
+        `${greyName ? `${greyName} isn’t drawn for this range` : 'No grey line for this range'}: all through it, ${more}${baselineFrom || whole ? ', so deposits less withdrawals were below zero' : ''}.`
+      );
     else {
       if (!outside)
         info.push(
@@ -610,8 +755,8 @@ export default function NetWorthChart({
         );
       if (!outside && months && points[baseStart].date < months.activity_from)
         info.push(`${months.firm} gives one figure a month, so until ${fmtDay(months.activity_from, true)}, when Nya’s activity starts, each month’s deposits and withdrawals are drawn at its middle.`);
-      if (stays) info.push(`It stops at zero ${onDay(dayIn(baseStart + below))}: from then on, ${more}.`);
-      else if (below >= 0) info.push(`It stops at zero on the days ${more}.`);
+      if (stays) info.push(`${greyName ?? 'It'} stops at zero ${onDay(dayIn(baseStart + below))}: from then on, ${more}.`);
+      else if (below >= 0) info.push(`${greyName ?? 'It'} stops at zero on the days ${more}.`);
     }
     if (outside) {
       // The hero's lines say it.
@@ -873,8 +1018,14 @@ export default function NetWorthChart({
     `${formatMoney(vals[said], currency)} ${points[said].entered ? `at ${pointDay(points[said], true)}` : onDay(dayIn(said))}${points[said].estimated ? ', estimated' : ''}${saidNote ? `. ${saidNote}` : ''}`
   );
 
-  const infoLines = outside ? [...outside.info, ...info] : info;
-  const infoAt = outside ? outside.infoId : infoId;
+  const infoLines = outside ? [...(unnamedLine ? [unnamedLine] : []), ...outside.info, ...info] : info;
+  // Under the hero's figure, in its node (HeroInfo), where it has one.
+  const heroInfo = useContext(HeroInfo);
+  const infoParas = infoLines.map((n) => (
+    <p key={n}>
+      <Masked>{n}</Masked>
+    </p>
+  ));
 
   return (
     <div>
@@ -921,7 +1072,7 @@ export default function NetWorthChart({
         role="slider"
         tabIndex={0}
         aria-label={spoken(
-          `${label} from ${dayIn(0)} to ${dayIn(last)}. Currently ${formatMoney(vals[last], currency)}. Low ${formatMoney(Math.min(...vals), currency)}, high ${formatMoney(Math.max(...vals), currency)}.${marked.length > 0 ? ` ${marked.length === 1 ? 'One note is' : `${marked.length} notes are`} marked, listed below the chart.` : ''}${uniform ? ` ${estimatedWords}` : ''}`
+          `${label} from ${dayIn(0)} to ${dayIn(last)}. Currently ${formatMoney(vals[last], currency)}. Low ${formatMoney(Math.min(...vals), currency)}, high ${formatMoney(Math.max(...vals), currency)}.${lineNames && basePath ? ` A second line is ${lineNames.grey}.` : ''}${marked.length > 0 ? ` ${marked.length === 1 ? 'One note is' : `${marked.length} notes are`} marked, listed below the chart.` : ''}${uniform ? ` ${estimatedWords}` : ''}`
         )}
         aria-describedby={keysId}
         aria-valuemin={1}
@@ -1001,6 +1152,23 @@ export default function NetWorthChart({
           <circle key={i} cx={xs[i]} cy={y(vals[i])} r={4} fill="var(--data)" stroke={hero ? 'var(--canvas)' : 'var(--surface)'} strokeWidth={2} />
         ))}
 
+        {/* the lines' names at their ends, over everything, haloed in what is
+            behind them (.chart-rule-label) */}
+        {names && lineNames && (
+          <>
+            {names.grey && (
+              <text className="chart-rule-label" x={names.grey.x} y={names.grey.y} textAnchor="end">
+                {lineNames.grey}
+              </text>
+            )}
+            {names.balance && (
+              <text className="chart-rule-label" x={names.balance.x} y={names.balance.y} textAnchor="end">
+                {lineNames.balance}
+              </text>
+            )}
+          </>
+        )}
+
         {/* time axis */}
         {xTicks.map((t) => (
           <text key={t.x} className="chart-xlabel" x={t.x} y={H - 6} textAnchor={t.anchor}>
@@ -1070,14 +1238,14 @@ export default function NetWorthChart({
       </details>
 
       {/* In the markup even while closed (hidden), so it is one tap to show and
-          the page never shifts while loading it. */}
-      <div id={infoAt} className="chart-info" hidden={outside ? !outside.infoOpen : !showInfo}>
-        {infoLines.map((n) => (
-          <p key={n}>
-            <Masked>{n}</Masked>
-          </p>
-        ))}
-      </div>
+          the page never shifts while loading it. The hero opens its own. */}
+      {outside ? (
+        heroInfo && createPortal(infoParas, heroInfo)
+      ) : (
+        <div id={infoId} className="chart-info" hidden={!showInfo}>
+          {infoParas}
+        </div>
+      )}
     </div>
   );
 }

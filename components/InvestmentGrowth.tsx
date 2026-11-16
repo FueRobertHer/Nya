@@ -28,7 +28,16 @@
 // What it can't count is said, never left out quietly: an account whose
 // activity couldn't be loaded or is still loading in a critical notice by the
 // figures it is missing from; manual and SimpleFIN or Lunch Flow accounts,
-// which have no investment activity, in an information notice.
+// which have no investment activity, in an information notice. That one, an
+// account counted from a later day or to an earlier one, and the currency
+// the hero is in, are information notes on the figures, gathered into one
+// line that opens once there are two or more (components/TotalCaveats.tsx).
+//
+// The chart names its lines at their ends: Balance, and the grey line as
+// Deposits & withdrawals for all time or Without returns over a range. What
+// they are and where they count from opens under the figure from the info
+// button: the hero draws the node and the chart writes the hero's lines and
+// its own into it (HeroInfo).
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { nameAndMask, withMask } from '@/lib/account-names';
@@ -46,7 +55,7 @@ import AccountsChooser, { presetOf, type ChooserPreset } from './AccountsChooser
 import type { Institution } from './accounts-format';
 import { Hero } from './Hero';
 import { useAmountsHidden } from './hide-amounts';
-import { HeroScrub, type HeroReading } from './hero-scrub';
+import { HeroInfo, HeroScrub, type HeroReading } from './hero-scrub';
 import { Masked } from './HideAmounts';
 import { CHEVRON } from './InstitutionCard';
 import { loadInvestmentActivity, onMoneyInOutSaved } from './InvestmentActivity';
@@ -56,7 +65,7 @@ import { HeroFigure } from './NetWorthCard';
 import { useSettingsRead } from './plan-detailed-home';
 import { Segmented } from './Segmented';
 import { focusInsteadOf } from './Sheet';
-import { Notice } from './TotalCaveats';
+import TotalCaveats, { Notice, type Caveat } from './TotalCaveats';
 import { Why } from './Why';
 import { Strip, StripSkeleton } from './FiguresStrip';
 
@@ -288,11 +297,8 @@ export default function InvestmentGrowth({
       return false;
     })
     .map((u) => u.words);
-  const notCountedNotice = notCounted.length > 0 && (
-    <Notice level="info">
-      {`Not counted: ${joinNames(notCounted)}. Nya has no investment activity for ${notCounted.length === 1 ? 'it' : 'them'}.`}
-    </Notice>
-  );
+  const notCountedWords = `Not counted: ${joinNames(notCounted)}. Nya has no investment activity for ${notCounted.length === 1 ? 'it' : 'them'}.`;
+  const notCountedNotice = notCounted.length > 0 && <Notice level="info">{notCountedWords}</Notice>;
 
   const g = s.groups[0] ?? null;
   const chart = g?.chart ?? null;
@@ -300,7 +306,11 @@ export default function InvestmentGrowth({
   const baselineFor = useCallback(() => baseline, [baseline]);
   const one = picks.length === 1;
   const info = useMemo(() => (g ? heroInfo(g, one) : []), [g, one]);
-  const outside = useMemo(() => ({ infoId, infoOpen, info }), [infoId, infoOpen, info]);
+  const outside = useMemo(() => ({ info }), [info]);
+  // The grey line's name, by what it is: deposits less withdrawals since each
+  // account opened, or the balance the range starts on plus them.
+  const basis = g?.basis ?? null;
+  const lineNames = useMemo(() => (basis ? { balance: 'Balance', grey: basis === 'all' ? 'Deposits & withdrawals' : 'Without returns' } : null), [basis]);
   const drawn = !!chart && !historyFailed && chart.points.length >= 2;
   // The chart writes amounts (its label, its value, its table): drawn again
   // when they are hidden or shown.
@@ -316,12 +326,13 @@ export default function InvestmentGrowth({
           rangeSet="investment"
           hero
           outside={outside}
+          lineNames={lineNames}
           ranges={s.ranges}
           range={s.range}
           onRange={setPicked}
         />
       ) : null,
-    [drawn, chart, g, baselineFor, outside, s.ranges, s.range, hidden]
+    [drawn, chart, g, baselineFor, outside, lineNames, s.ranges, s.range, hidden]
   );
 
   if (accounts.length === 0) {
@@ -337,6 +348,23 @@ export default function InvestmentGrowth({
   }
 
   const several = s.groups.length > 1;
+  // The hero's notes besides its group's own: what isn't counted, and the
+  // currency it is in when there are others.
+  const more: Caveat[] = [
+    ...(notCounted.length > 0
+      ? [{ key: 'not-counted', severity: 'info' as const, summary: notCounted.length === 1 ? 'an account not counted' : `${notCounted.length} accounts not counted`, body: notCountedWords }]
+      : []),
+    ...(several && g
+      ? [
+          {
+            key: 'currency',
+            severity: 'info' as const,
+            summary: `in ${currencyPlural(g.currency)} only`,
+            body: `In ${currencyPlural(g.currency)}. Accounts in other currencies are added up on their own, below: nothing here is converted.`,
+          },
+        ]
+      : []),
+  ];
   const switcher = s.ranges.length > 1 && (
     <Segmented compact className="chart-range-switch" label="Time range" value={s.range} onChange={setPicked} options={s.ranges.map((key) => [key, RANGE_TEXT[key]] as const)} />
   );
@@ -363,6 +391,7 @@ export default function InvestmentGrowth({
         group={g}
         loading={!g || g.loading}
         rangeWords={s.label}
+        info={drawn ? { id: infoId, open: infoOpen } : null}
         infoButton={
           drawn ? (
             <button
@@ -400,11 +429,7 @@ export default function InvestmentGrowth({
             The accounts’ balance history couldn’t be loaded just now, so their returns over a range can’t be worked out. Refresh to try again.
           </Notice>
         )}
-        {g && !historyFailed && <Qualifiers group={g} />}
-        {notCountedNotice}
-        {several && g && (
-          <p className="helper">{`In ${currencyPlural(g.currency)}. Accounts in other currencies are added up on their own, below: nothing here is converted.`}</p>
-        )}
+        {g && !historyFailed ? <Qualifiers group={g} more={more} /> : <TotalCaveats items={more} />}
       </InvestmentsHero>
 
       {!historyFailed &&
@@ -453,18 +478,18 @@ function endsIn(g: CurrencyGroup<Shown>): { title: string; joined: boolean; day:
   });
 }
 
-/** The hero's lines in the chart's info, before the chart's own. */
+/** The hero's lines in the chart's info, before the chart's own: the grey
+ *  line by its name on the chart (`lineNames`), and where the balance is
+ *  Vanguard's. */
 function heroInfo(g: CurrencyGroup<Shown>, one: boolean): string[] {
-  const these = one ? 'this account' : 'these accounts';
-  // Where a line is each month's end from Vanguard's Performance page.
+  // Where the balance is each month's end from Vanguard's Performance page.
   const ends = endsIn(g)
     .map((m) =>
       one
-        ? ` ${m.joined ? `Before ${day(m.day)}, the first recorded day,` : `Until ${day(m.day)},`} it is each month’s end from Vanguard’s Performance page.`
-        : ` ${m.title}’s, ${m.joined ? 'before' : 'until'} ${day(m.day)}, is each month’s end from Vanguard’s Performance page.`
+        ? ` ${m.joined ? `Before ${day(m.day)}, the first recorded day,` : `Until ${day(m.day)},`} the balance is each month’s end from Vanguard’s Performance page.`
+        : ` ${m.title}’s balance, ${m.joined ? 'before' : 'until'} ${day(m.day)}, is each month’s end from Vanguard’s Performance page.`
     )
     .join('');
-  const gold = `Gold line: the balance of ${these}.${ends}`;
   const middles = monthsIn(g)
     .map((m) => (one ? ` Until ${day(m.day)}, Vanguard gives one figure a month, so each counts from the middle of its month.` : ` For ${m.title}, until ${day(m.day)}, Vanguard gives one figure a month, so each counts from the middle of its month.`))
     .join('');
@@ -476,7 +501,7 @@ function heroInfo(g: CurrencyGroup<Shown>, one: boolean): string[] {
     const counted = g.rows.filter((r) => r.figures).length;
     const source = typed.length === 0 ? '' : typed.length === counted ? ', from the totals you set' : ', from the totals you set and the months you imported';
     return [
-      `${gold} Grey line: your deposits less withdrawals since ${one ? 'it' : 'each account'} opened${source}, by each day${from}. The gap between them is your investment returns so far.`,
+      `Deposits & withdrawals is your deposits less withdrawals since ${one ? 'it' : 'each account'} opened${source}, by each day${from}. The gap between it and Balance is your investment returns so far.${ends}`,
       g.rate
         ? `The rate of return weighs each deposit and withdrawal by how long it was invested.${middles} Past a year it is given a year.`
         : g.total
@@ -489,20 +514,40 @@ function heroInfo(g: CurrencyGroup<Shown>, one: boolean): string[] {
     ].filter(Boolean);
   }
   return [
-    `${gold} Grey line: what ${one ? 'it' : 'they'} would be worth without returns, the beginning balance plus deposits and withdrawals so far. The gap between them is your investment returns.`,
+    `Without returns is what ${one ? 'it' : 'they'} would be worth with no returns: the beginning balance plus deposits and withdrawals so far. The gap between it and Balance is your investment returns.${ends}`,
     `The rate of return weighs each deposit and withdrawal by how long it was invested, so money added late in the range counts for less.${one ? '' : ' An account counted from a later day joins on that day.'}${middles} Past a year it is given a year.`,
   ];
 }
 
+/** Where an account starts or stops, and what isn't counted in the range,
+ *  as notes on a group's figures, each with a few words for the line that
+ *  gathers them. For all time every account counts from when it opened: only
+ *  where one stops is said. */
+function qualifierNotes(g: CurrencyGroup<Shown>): Caveat[] {
+  const toOnly = g.basis === 'all';
+  return [
+    ...g.rows.flatMap((r): Caveat[] => {
+      const words = edgeWords(r, toOnly);
+      if (!words) return [];
+      const from = !toOnly && r.from ? ` ${fromShort(r.from)}` : '';
+      const to = r.to ? ` to ${day(r.to.day)}` : '';
+      return [{ key: `edge:${r.account.key}`, severity: 'info', summary: `${r.account.title}${from}${to}`, body: words }];
+    }),
+    ...g.uncounted.map(
+      (r): Caveat => ({
+        key: `uncounted:${r.account.key}`,
+        severity: 'info',
+        summary: `${r.account.title} not in this range`,
+        body: `${r.account.title} isn’t counted for this range: it has no recorded day in it that Nya has activity for.`,
+      })
+    ),
+  ];
+}
+
 /** What qualifies a group's figures, said with them: what they are short
- *  of (critical, in full), where an account starts or stops, and what isn't
- *  counted in the range. */
-function Qualifiers({ group: g }: { group: CurrencyGroup<Shown> }) {
-  if (g.loading) return null;
-  const short = shortWords(g);
-  // For all time every account counts from when it opened: only where one
-  // stops is said.
-  const edges = g.rows.flatMap((r) => edgeWords(r, g.basis === 'all') ?? []);
+ *  of (critical, in full), then any `more` and its own notes, gathered. */
+function Qualifiers({ group: g, more = [] }: { group: CurrencyGroup<Shown>; more?: readonly Caveat[] }) {
+  const short = g.loading ? null : shortWords(g);
   return (
     <>
       {short && (
@@ -510,16 +555,7 @@ function Qualifiers({ group: g }: { group: CurrencyGroup<Shown> }) {
           {short}
         </Notice>
       )}
-      {edges.map((words) => (
-        <p key={words} className="helper">
-          {words}
-        </p>
-      ))}
-      {g.uncounted.map((r) => (
-        <p key={r.account.key} className="helper">
-          {`${r.account.title} isn’t counted for this range: it has no recorded day in it that Nya has activity for.`}
-        </p>
-      ))}
+      <TotalCaveats items={[...more, ...(g.loading ? [] : qualifierNotes(g))]} />
     </>
   );
 }
@@ -535,6 +571,7 @@ function InvestmentsHero({
   group: g,
   loading,
   rangeWords,
+  info,
   infoButton,
   chart,
   children,
@@ -543,11 +580,17 @@ function InvestmentsHero({
   loading: boolean;
   /** The range in words: "Year to date", "Since Jan 1". */
   rangeWords: string;
+  /** The chart's info, while it is drawn: its id, for the button's
+   *  aria-controls, and whether the button has it open. */
+  info: { id: string; open: boolean } | null;
   infoButton: ReactNode;
   chart: ReactNode;
   children?: ReactNode;
 }) {
   const [reading, setReading] = useState<HeroReading | null>(null);
+  // Where the chart draws its info, the hero's lines and then its own
+  // (HeroInfo).
+  const [infoNode, setInfoNode] = useState<HTMLDivElement | null>(null);
   const f = loading ? null : (g?.figures ?? null);
   const currency = g?.currency ?? null;
   const all = g?.basis === 'all';
@@ -647,9 +690,16 @@ function InvestmentsHero({
         </div>
       }
     >
+      {/* Under the figure, in the markup even while closed (hidden), so it is
+          one tap to show. */}
+      {info && (
+        <div id={info.id} className="chart-info" hidden={!info.open} ref={setInfoNode} />
+      )}
       {children}
       <HeroScrub.Provider value={setReading}>
-        <div>{chart}</div>
+        <HeroInfo.Provider value={infoNode}>
+          <div>{chart}</div>
+        </HeroInfo.Provider>
       </HeroScrub.Provider>
     </Hero>
   );
@@ -662,6 +712,14 @@ function fromWords(e: NonNullable<GrowthRow['from']>): string {
   // A month's end is on the next month's 1st.
   if (e.cause === 'month-end') return `from the end of ${monthText(previousMonth(e.day.slice(0, 7)))}, the first balance in the range from Vanguard’s Performance page`;
   return `from ${day(e.day)}, ${e.cause === 'recorded' ? 'its first recorded day' : 'the first day Nya has its activity'}`;
+}
+
+/** Where a row counts from, in a few words, for the line that gathers the
+ *  notes. */
+function fromShort(e: NonNullable<GrowthRow['from']>): string {
+  if (e.cause === 'opened' || e.cause === 'months') return `from ${monthText(e.day.slice(0, 7))}`;
+  if (e.cause === 'month-end') return `from the end of ${monthText(previousMonth(e.day.slice(0, 7)))}`;
+  return `from ${day(e.day)}`;
 }
 
 /** "Individual ••4421 counts from Jul 12, its first recorded day, to Nov 9,
@@ -722,8 +780,8 @@ function allTimeWhy(g: CurrencyGroup<Shown>): string {
     // both in and out counts only what was left as deposited.
     const months = counted.filter((r) => r.totals !== 'set');
     const each = counted.length === 1 ? 'the account' : 'each account';
-    const moved = counted.length > 1 ? ', so money moved between the accounts you chose counts as deposited in the one it went to' : '';
-    const netted = months.length > 0 ? ` Vanguard gives one figure a month, so for ${joinNames(months.map((r) => r.account.title))} a month with money both in and out counts only what was left as deposited.` : '';
+    const moved = counted.length > 1 ? ', so money moved between the accounts you chose counts as deposited in the one it went to, and as withdrawn from the one it left' : '';
+    const netted = months.length > 0 ? ` Vanguard gives one figure a month, so for ${joinNames(months.map((r) => r.account.title))} a month with money both in and out counts only what was left, as deposited or as withdrawn.` : '';
     rate = ` The total return is your investment returns as a share of everything deposited since ${each} opened, with withdrawals not taken off${moved}.${netted} ${notYearly(typed, counted.length)}`;
   } else if (!g.rate && typed.length > 0) rate = ' There’s no rate of return for all time: Nya doesn’t know when the money before its records went in.';
   return `${from}${middles} ${WHY_DW}${rate}`;
@@ -779,6 +837,17 @@ function RangeCard({
     const late = g.rows.filter((r) => r.figures && r.from).map((r) => `${r.account.title}’s beginning balance is its ${day(r.from!.day)} balance.`);
     helper = [`${day(g.span.from)} to ${day(g.span.to)}.`, ...late].join(' ');
   }
+  // All time's total return: what it is over, and, where money came out
+  // too, what makes up the deposits and withdrawals.
+  let base: string | null = null;
+  if (f && all && g.total) {
+    const deposited = formatMoney(g.total.deposited, g.currency);
+    const withdrawn = Math.round((g.total.deposited - f.dw) * 100) / 100;
+    base = [
+      ...(withdrawn > 0 && !roundsToNothing(withdrawn, g.currency) ? [`Deposits & withdrawals is ${deposited} deposited less ${formatMoney(withdrawn, g.currency)} withdrawn.`] : []),
+      `The total return, ${signedPercent(g.total.value)}, is the returns over the ${deposited} deposited, not a yearly rate.`,
+    ].join(' ');
+  }
 
   return (
     <section className="card stack" aria-labelledby={titleId}>
@@ -790,6 +859,11 @@ function RangeCard({
       <div className="stack tight" {...(g.loading ? { role: 'status', 'aria-label': 'Loading investment activity' } : {})}>
         {g.loading ? <StripSkeleton /> : f ? <Strip f={f} currency={g.currency} /> : <p className="empty-note">Nothing to count in this range yet.</p>}
         {helper && <p className="helper">{helper}</p>}
+        {base && (
+          <p className="helper">
+            <Masked>{base}</Masked>
+          </p>
+        )}
       </div>
       {qualifiers && <Qualifiers group={g} />}
       {missing && (

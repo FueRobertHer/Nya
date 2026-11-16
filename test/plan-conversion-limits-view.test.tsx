@@ -43,7 +43,7 @@ const preview = (sheet: Node, label: string) => {
 
 const HOLDS = 'Each rule here keeps your stop, your start and what’s timed on them where they are now, so the rules compare like with like. A rule’s own sheet shows what it comes to once used.';
 const SPENDS = 'your withdrawal rule spends differently under each, so what’s left doesn’t compare like with like';
-const PREVIEW_SPENDS = 'Your withdrawal rule spends differently under this rule and None, so what’s left doesn’t compare like with like.';
+const PREVIEW_SPENDS = 'Your withdrawal rule spends differently under this rule than with no conversions, so what’s left doesn’t compare like with like.';
 
 const { RuleLevel } = await import('@/components/PlanHowYouDraw');
 const { wholeMoney } = await import('@/components/plan-text');
@@ -299,7 +299,7 @@ describe('on a plan that moves when a rule is used', () => {
       await pick(tab.dialog()!, 'Fill a bracket');
       for (let i = 0; i < 400 && !(tab.dialog()!.textContent ?? '').includes('Once saved'); i++) await settle(50);
       dropped.length = 0;
-      await pick(tab.dialog()!, 'None');
+      await pick(tab.dialog()!, 'No conversions');
       await settle(300);
       expect(tab.dialog()).not.toBeNull();
       expect(dropped).toContain('conversions');
