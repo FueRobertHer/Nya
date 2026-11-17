@@ -600,13 +600,14 @@ function InvestmentsHero({
   // deposits starts (all time, before Nya has every account's activity) has
   // no returns to it: words, never the range's figure beside an earlier day.
   // The day line says what qualifies the day before its balance, which is
-  // what a phone's line cuts.
+  // what a phone's line cuts (on a day not counted yet, an estimate is the
+  // balance's and goes with it). "counted from" and a day each with its year
+  // ("Nov 19, 2025 · counted from Dec 15, 2025") fit a 320px phone's line.
   let shown = f?.returns ?? null;
   let uncounted = false;
   let dayLine: string | null = null;
   if (reading && f && g) {
-    const balance = `balance ${formatMoney(reading.value, currency)}`;
-    const estimated = reading.estimated || !!reading.from?.estimated;
+    const amount = formatMoney(reading.value, currency);
     // Over a range, the returns count from the first day an account is
     // counted (the span's), which can be after the chart starts.
     const counts = all ? null : (g.span?.from ?? null);
@@ -614,15 +615,20 @@ function InvestmentsHero({
       uncounted = true;
       const first = g.chart?.baseline[0]?.date;
       const to = reading.from && reading.date ? day(reading.date) : reading.day;
-      dayLine = `${reading.from ? `${reading.from.day} to ` : ''}${to}${estimated ? ' · estimated' : ''}${first ? ` · returns count from ${day(first)}` : ''} · ${balance}`;
+      // No figure, so an estimate is the balance's, the last day's: said with
+      // it, after where the returns are counted from, so a phone's line cuts
+      // the tag only with the number.
+      dayLine = `${reading.from ? `${reading.from.day} to ` : ''}${to}${first ? ` · counted from ${day(first)}` : ''} · ${reading.estimated ? 'estimated balance' : 'balance'} ${amount}`;
     } else {
+      const balance = `balance ${amount}`;
+      const estimated = reading.estimated || !!reading.from?.estimated;
       // To the cent, so a measure across a flat stretch is $0.00, never −$0.00.
       shown = Math.round((reading.value - reading.base - (reading.from ? reading.from.value - reading.from.base! : 0)) * 100) / 100 || 0;
       const before = !reading.from && counts !== null && !!reading.date && reading.date < counts;
       const from = reading.from ? reading.from.day : before ? null : counts !== null ? day(counts) : null;
       // After "to", in a sentence's case ("Jun 1 to yesterday"), as above.
       const to = from && reading.date ? day(reading.date) : reading.day;
-      dayLine = `${from ? `${from} to ` : ''}${to}${estimated ? ' · estimated' : ''}${before ? ` · returns count from ${day(counts!)}` : ''} · ${balance}`;
+      dayLine = `${from ? `${from} to ` : ''}${to}${estimated ? ' · estimated' : ''}${before ? ` · counted from ${day(counts!)}` : ''} · ${balance}`;
     }
   }
 

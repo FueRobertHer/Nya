@@ -896,7 +896,7 @@ describe('the hero, under a finger', () => {
       fire(host, 'pointerdown', 1);
       fire(host, 'pointermove', 0);
       expect(figure(host)).toBe('$0.00');
-      expect(words(byClass(host, 'hero-day')[0])).toBe('Jan 1 · returns count from Jun 1 · balance $100,000.00');
+      expect(words(byClass(host, 'hero-day')[0])).toBe('Jan 1 · counted from Jun 1 · balance $100,000.00');
       fire(host, 'pointermove', 2);
       expect(words(byClass(host, 'hero-day')[0])).toBe('Jun 1 to yesterday · balance $120,000.00');
     } finally {
@@ -921,7 +921,7 @@ describe('the hero, under a finger', () => {
     });
   };
 
-  test('a day all time can’t count yet: words in place of the figure, and what qualifies the day before its balance', async () => {
+  test('a day all time can’t count yet: words in place of the figure, where it’s counted from before its balance, and an estimate with the balance', async () => {
     const { host, root, range } = setup({ ...LATE, points: { ind: FIXTURES.ind.points.map((q) => (q.date === '2026-01-01' ? { ...q, estimated: true } : q)) } });
     try {
       await pass(50);
@@ -936,10 +936,10 @@ describe('the hero, under a finger', () => {
       const value = byClass(host, 'total-value')[0];
       expect((value.getAttribute('class') ?? '').split(' ')).not.toContain('plan-answer');
       expect((value.childNodes[0] as FakeElement).getAttribute('aria-hidden')).toBe('true');
-      expect(words(byClass(host, 'hero-day')[0])).toBe('Dec 1, 2025 · returns count from Jun 1 · balance $95,000.00');
+      expect(words(byClass(host, 'hero-day')[0])).toBe('Dec 1, 2025 · counted from Jun 1 · balance $95,000.00');
       key(host, 'ArrowRight');
       expect(figure(host)).toBe('Not counted yet');
-      expect(words(byClass(host, 'hero-day')[0])).toBe('Jan 1 · estimated · returns count from Jun 1 · balance $100,000.00');
+      expect(words(byClass(host, 'hero-day')[0])).toBe('Jan 1 · counted from Jun 1 · estimated balance $100,000.00');
       key(host, 'ArrowRight');
       expect(figure(host)).toBe('+$30,000.00');
       expect(byClass(host, 'hero-figure-words')).toHaveLength(0);
@@ -947,7 +947,7 @@ describe('the hero, under a finger', () => {
       key(host, 'ArrowLeft');
       act(() => setHideAmounts(true, null));
       expect(figure(host)).toBe('Not counted yet');
-      expect(words(byClass(host, 'hero-day')[0])).toStartWith('Jan 1 · estimated · returns count from Jun 1 · balance ');
+      expect(words(byClass(host, 'hero-day')[0])).toStartWith('Jan 1 · counted from Jun 1 · estimated balance ');
       expect(words(byClass(host, 'hero-day')[0])).not.toContain('100,000');
       act(() => setHideAmounts(false, null));
       key(host, 'Escape');
@@ -982,11 +982,32 @@ describe('the hero, under a finger', () => {
       finger(host, 'pointermove', 1, 2);
       finger(host, 'pointerdown', 2, LAID_OUT - 8);
       expect(figure(host)).toBe('Not counted yet');
-      expect(words(byClass(host, 'hero-day')[0])).toBe('Dec 1, 2025 to yesterday · returns count from Jun 1 · balance $120,000.00');
+      expect(words(byClass(host, 'hero-day')[0])).toBe('Dec 1, 2025 to yesterday · counted from Jun 1 · balance $120,000.00');
     } finally {
       act(() => root.unmount());
     }
   });
+
+  // With no figure, the only amount is the last day's balance: its estimate
+  // is said with it, and the first day's, which nothing shown is from, isn't.
+  test.each([
+    ['the first day', 30, LAID_OUT - 8, 'Jan 1 to yesterday · counted from Jun 1 · balance $120,000.00'],
+    ['the last day', 2, 30, 'Dec 1, 2025 to Jan 1 · counted from Jun 1 · estimated balance $100,000.00'],
+  ])('two days measured from before all time starts counting, %s estimated: an estimate goes with the balance it is', async (_, a, b, line) => {
+    const { host, root, range } = setup({ ...LATE, points: { ind: FIXTURES.ind.points.map((q) => (q.date === '2026-01-01' ? { ...q, estimated: true } : q)) } });
+    try {
+      await pass(50);
+      range('All');
+      finger(host, 'pointerdown', 1, a);
+      finger(host, 'pointermove', 1, a);
+      finger(host, 'pointerdown', 2, b);
+      expect(figure(host)).toBe('Not counted yet');
+      expect(words(byClass(host, 'hero-day')[0])).toBe(line);
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
 });
 
 describe('hide amounts', () => {
