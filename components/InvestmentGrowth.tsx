@@ -600,7 +600,8 @@ function InvestmentsHero({
   // deposits starts (all time, before Nya has every account's activity) has
   // no returns to it: words, never the range's figure beside an earlier day.
   // The day line says what qualifies the day before its balance, which is
-  // what a phone's line cuts. "counted from" and a day each with its year
+  // what a phone's line cuts (on a day not counted yet, an estimate is the
+  // balance's and goes with it). "counted from" and a day each with its year
   // ("Nov 19, 2025 · counted from Dec 15, 2025") fit a 320px phone's line.
   let shown = f?.returns ?? null;
   let uncounted = false;

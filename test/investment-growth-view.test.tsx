@@ -921,7 +921,7 @@ describe('the hero, under a finger', () => {
     });
   };
 
-  test('a day all time can’t count yet: words in place of the figure, and what qualifies the day before its balance', async () => {
+  test('a day all time can’t count yet: words in place of the figure, where it’s counted from before its balance, and an estimate with the balance', async () => {
     const { host, root, range } = setup({ ...LATE, points: { ind: FIXTURES.ind.points.map((q) => (q.date === '2026-01-01' ? { ...q, estimated: true } : q)) } });
     try {
       await pass(50);
@@ -993,7 +993,7 @@ describe('the hero, under a finger', () => {
   test.each([
     ['the first day', 30, LAID_OUT - 8, 'Jan 1 to yesterday · counted from Jun 1 · balance $120,000.00'],
     ['the last day', 2, 30, 'Dec 1, 2025 to Jan 1 · counted from Jun 1 · estimated balance $100,000.00'],
-  ])('two days measured across where all time starts counting, %s estimated: an estimate goes with the balance it is', async (_, a, b, line) => {
+  ])('two days measured from before all time starts counting, %s estimated: an estimate goes with the balance it is', async (_, a, b, line) => {
     const { host, root, range } = setup({ ...LATE, points: { ind: FIXTURES.ind.points.map((q) => (q.date === '2026-01-01' ? { ...q, estimated: true } : q)) } });
     try {
       await pass(50);
