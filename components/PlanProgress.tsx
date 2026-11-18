@@ -30,7 +30,7 @@ const firstUp = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 import type { Input, PlanCore } from '@/lib/fire/plan';
 import { toStored, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { AssetInstitution } from '@/lib/fire/inputs';
-import { changedSince, DEFAULT_INFLATION, MAX_INFLATION, plannedAt, yearsBetween, YEAR_DAYS, type SavedItems, type SavedPlan } from '@/lib/fire/saved-plan';
+import { changedSince, DEFAULT_INFLATION, MAX_INFLATION, plannedAt, savedGrowth, yearsBetween, YEAR_DAYS, type SavedItems, type SavedPlan } from '@/lib/fire/saved-plan';
 import { isComplete, progressAccountsOf, type InvestedDay } from '@/lib/fire/invested-series';
 import type { PathPoint } from '@/lib/fire/path';
 
@@ -248,7 +248,7 @@ function SavedBody({
   onRetry: () => void;
 }) {
   const flow = saved.savings < 0 ? `spending ${money(-saved.savings)} a year more than comes in` : `saving ${money(saved.savings)} a year`;
-  const assumed = `Growing a steady ${pct(saved.plan.realReturn)} a year after inflation, ${flow}, with prices rising ${pct(saved.inflation)} a year.`;
+  const assumed = `Growing a steady ${pct(savedGrowth(saved))} a year after inflation, ${flow}, with prices rising ${pct(saved.inflation)} a year.`;
   return (
     <>
       <p>Your plan from {dayName(saved.day)}.</p>
@@ -451,6 +451,9 @@ export type PlanProgressProps = {
   progress: Progress;
   plan: FirePlanV2;
   savings: Input;
+  /** The growth after inflation your plan runs at (FiView's), which a save
+   *  keeps where accounts' own rates make it differ from the plan's. */
+  growth: number;
   /** The Plan's currency, which a save keeps. */
   currency: string | null;
   institutions: AssetInstitution[];
@@ -461,7 +464,7 @@ export type PlanProgressProps = {
   flatLine?: string | null;
 };
 
-export default function PlanProgress({ progress, plan, savings, currency, institutions, blocked, copyOpen, items = null, flatLine = null }: PlanProgressProps) {
+export default function PlanProgress({ progress, plan, savings, growth, currency, institutions, blocked, copyOpen, items = null, flatLine = null }: PlanProgressProps) {
   const { savedState, series, setSaved, setSeries, retry } = progress;
   const [sheet, setSheet] = useState<ProgressSheet>(null);
   const [inflation, setInflation] = useState(String(DEFAULT_INFLATION * 100));
@@ -518,7 +521,7 @@ export default function PlanProgress({ progress, plan, savings, currency, instit
       const res = await fetch('/api/saved-plan', {
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ saved: { plan: sent.plan, savings: savings.value, currency, inflation: rate }, based_on: saved?.rev ?? null }),
+        body: JSON.stringify({ saved: { plan: sent.plan, savings: savings.value, currency, inflation: rate, growth }, based_on: saved?.rev ?? null }),
       });
       const body = await json(res);
       if (res.ok && body?.saved) {

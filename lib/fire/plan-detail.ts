@@ -101,8 +101,8 @@ export type DetailWork = {
   /** The drawdown from the plan's own start, as `figures` runs it: what another rule
    *  would come to from there (lib/fire/compare-conversions.ts). Null where it can't run. */
   startRun(f: PlanFigures): Drawdown | null;
-  /** The walk with the tax on what its years before the stop have to sell. */
-  taxWalk(plan: FirePlanV2, walk: WalkChanges, from: { assets: number; savings: number; years: number }): WalkChanges;
+  /** The walk with the tax on what its years before the stop have to sell, growing at `growth` (FiView's). */
+  taxWalk(plan: FirePlanV2, walk: WalkChanges, from: { assets: number; savings: number; years: number }, growth: number): WalkChanges;
   /** Enough for the path alone, for a search's candidate: `start` isn't to be
    *  read, and is `whole`. */
   forPath(f: PlanFigures): PlanDetail | { failed: string } | null;
@@ -139,7 +139,7 @@ export function detailWork(input: DetailedInput): DetailWork {
     if (from === null) return { slots: shares(balance), noMix: true };
     const k = age - (plan.age as number);
     const base = mixToday(input.buckets, from.assets);
-    const mix = k > 0 ? taxedMix(base, { savings: from.savings, split: split(from.savings), realReturn: plan.realReturn, inflation: input.inflation, walk: withoutTaxes(f.walk), years: k }, taxedWalk(plan)).mix : { slots: base, total: base.reduce((s, x) => s + x.value, 0) };
+    const mix = k > 0 ? taxedMix(base, { savings: from.savings, split: split(from.savings), realReturn: f.view.growth, inflation: input.inflation, walk: withoutTaxes(f.walk), years: k }, taxedWalk(plan)).mix : { slots: base, total: base.reduce((s, x) => s + x.value, 0) };
     if (mix === null || !(mix.total > 0)) return { slots: shares(balance), noMix: true };
     const scale = balance / mix.total;
     return { slots: mix.slots.map((s) => ({ ...s, value: s.value * scale, basis: s.basis * scale, reachable: s.reachable * scale })), noMix: false };
@@ -179,7 +179,7 @@ export function detailWork(input: DetailedInput): DetailWork {
       share457: input.share457,
       spending: Math.max(0, spending - paid),
       rule: (rate) => ruleSpec(plan, rate),
-      realReturn: plan.realReturn,
+      realReturn: f.view.growth,
       inflation: input.inflation,
       taxableYield: input.taxableYield,
       oneOffs: items.sim.oneOffs,
@@ -229,10 +229,10 @@ export function detailWork(input: DetailedInput): DetailWork {
       return start === null || failedIn(start.drawn) ? null : start.drawn;
     },
 
-    taxWalk(plan, walk, from) {
+    taxWalk(plan, walk, from, growth) {
       if (from.years <= 0) return walk;
       try {
-        const { taxes } = taxedMix(mixToday(input.buckets, from.assets), { savings: from.savings, split: split(from.savings), realReturn: plan.realReturn, inflation: input.inflation, walk, years: from.years }, taxedWalk(plan));
+        const { taxes } = taxedMix(mixToday(input.buckets, from.assets), { savings: from.savings, split: split(from.savings), realReturn: growth, inflation: input.inflation, walk, years: from.years }, taxedWalk(plan));
         return taxes.length > 0 ? { ...walk, taxes } : walk;
       } catch {
         // The drawdown fails on the same input, and says so.

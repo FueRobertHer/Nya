@@ -243,6 +243,8 @@ export function measuredInputs({ flows, workplace, child, assets, rates }: FiInp
     savings: flows && !yearGap ? flows.savings + (workplace?.total ?? 0) - childTaken({ flows, child }) : null,
     assets: assetsOff ? null : assets.total,
     ...(unmeasured.length > 0 ? { unmeasured } : {}),
+    // What each counted account adds to the total, for their own growth rates.
+    ...(!assetsOff && assets.total !== null && assets.accounts.length > 0 ? { accounts: assets.accounts.map((a) => ({ id: a.account_id, value: a.value })) } : {}),
   };
 }
 

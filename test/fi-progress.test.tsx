@@ -138,8 +138,10 @@ const levels = (html: string, words: string) =>
 
 describe('the figures, from the Plan’s inputs', () => {
   test('measured inputs: a year’s spending, savings with workplace contributions added, invested assets', () => {
-    expect(measuredInputs(inputs())).toEqual({ spending: 40_000, savings: 30_000, assets: 250_000 });
-    expect(measuredInputs(inputs({ workplace: withPlan(12_000) }))).toEqual({ spending: 40_000, savings: 42_000, assets: 250_000 });
+    // With each counted account and what it adds, for their own growth rates.
+    const accounts = [{ id: 'a', value: 250_000 }];
+    expect(measuredInputs(inputs())).toEqual({ spending: 40_000, savings: 30_000, assets: 250_000, accounts });
+    expect(measuredInputs(inputs({ workplace: withPlan(12_000) }))).toEqual({ spending: 40_000, savings: 42_000, assets: 250_000, accounts });
     expect(measuredInputs(inputs({ flows: null, assets: assets({ total: null }) }))).toEqual({ spending: null, savings: null, assets: null });
   });
 
@@ -206,6 +208,32 @@ describe('the FI card on Home', () => {
         expect(closed(figureRow(html, 'Annual savings'))).toContain(`<span class="plan-input-line">${rate} savings rate</span>`);
       }
     }
+  });
+
+  test('with an account’s own growth, Home and the Plan tab give the same FI date, at the blend, and say the rate', () => {
+    const two = inputs({
+      assets: assets({
+        total: 400_000,
+        accounts: [
+          { account_id: 'a', name: 'Brokerage', type: 'investment', balance: 250_000, value: 250_000, currency: 'USD', institution: 'Vanguard', item_id: 'i1' },
+          { account_id: 'b', name: 'IRA', type: 'investment', balance: 150_000, value: 150_000, currency: 'USD', institution: 'Vanguard', item_id: 'i1' },
+        ],
+      }),
+    });
+    const base = plan({ age: 35 });
+    const rated = { ...base, accounts: [{ account_id: 'b', growth: 0.08, yield: null }] };
+    const f = fiFigures(rated, two, 'USD');
+    // 250,000 at the plan's 5% and 150,000 at 8%.
+    expect(f.view.growth).toBeCloseTo(0.06125, 14);
+    expect(f.view.fiAge).not.toBe(fiFigures(base, two, 'USD').view.fiAge);
+    const head = fiHeadline(f.view, { age: rated.age, stopAge: f.view.stopAge });
+    expect(head.kind).toBe('age');
+    const age = head.kind === 'age' ? head.age : null;
+    expect(home(rated, two)).toContain(`FI around age ${age}`);
+    expect(planTab(rated, two)).toContain(`Financial independence ${head.headline}`);
+    expect(home(rated, two)).toContain('and 6.13% growth after inflation');
+    expect(planTab(rated, two)).toContain('6.13% growth after inflation until FI, 1 account at its own');
+    expect(planTab(base, two)).toContain('5% growth after inflation until FI ·');
   });
 
   test('with savings typed into the plan, both show the rate the transactions measure, and Home says it is that', () => {

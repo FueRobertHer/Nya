@@ -1228,7 +1228,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       stopAge={42}
       fiNumber={1_000_000}
       fiAge={41.8}
-      realReturn={0.05}
+      growth={0.05}
       currency="USD"
     />
   ),
@@ -1244,7 +1244,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       stopAge={42}
       fiNumber={1_000_000}
       fiAge={41.8}
-      realReturn={0.05}
+      growth={0.05}
       currency="USD"
       recorded={{
         from: '2026-01-02',
@@ -1274,7 +1274,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       stopAge={42}
       fiNumber={1_000_000}
       fiAge={41.8}
-      realReturn={0.05}
+      growth={0.05}
       currency="USD"
       after={{
         points: [
@@ -1327,7 +1327,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
   ),
   'Plan: Compare conversions, what each rule leaves and costs': () => {
     const { rows, money } = WORKED();
-    return <CompareCard rows={rows} money={money} realReturn={0.05} lawYear={2026} healthGrowth={0.021} acaLaw="2026" onRule={() => {}} />;
+    return <CompareCard rows={rows} money={money} growth={0.05} lawYear={2026} healthGrowth={0.021} acaLaw="2026" onRule={() => {}} />;
   },
   'Plan: a rule’s sheet, its figures and stages': () => {
     const { rows, money } = WORKED();
@@ -1391,7 +1391,7 @@ const SCREENS: Record<string, () => React.ReactElement> = {
         held={false}
         number={f.view.fiNumber}
         withdrawalRate={0.04}
-        realReturn={0.05}
+        growth={0.05}
         start={{ ...detail.start, t: detail.start.t + 0.01 }}
         startBalance={1_500_000}
         hypothetical="Hypothetical."

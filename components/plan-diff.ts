@@ -3,8 +3,9 @@
 // How a copy differs from your plan, in words: the copy's card, its row and
 // its level in the Plans sheet, and compare mode (components/PlansSheet.tsx).
 // Each part is one difference: the stop, a setting (lib/fire/plan-list.ts
-// SET_FIELDS), your own FI number, each item by id (added, changed, left out),
-// and for anything else that other settings differ. The facts (your age, how
+// SET_FIELDS), your own FI number, accounts' own growth and dividends, each
+// item by id (added, changed, left out), and for anything else that other
+// settings differ. The facts (your age, how
 // figures are measured, the method) are the same in every plan, so never a
 // difference. Every amount goes through the `money` a caller gives
 // (components/plan-text.ts wholeMoney), so hidden amounts stay hidden. No
@@ -26,13 +27,16 @@ const SETTINGS = SET_FIELDS.filter((f): f is Exclude<SetField, 'targetAge'> => f
 
 /** The fields said above, or the same in every plan: anything else that
  *  differs is "Other settings differ". */
-const SAID = new Set<string>([...SET_FIELDS, 'version', 'items', 'stopAtFi', 'fiNumber', 'lastsIn', 'stocksPct', 'bondsPct', 'age', 'partnerAge', 'includeCash', 'planFunding', 'method']);
+const SAID = new Set<string>([...SET_FIELDS, 'version', 'items', 'stopAtFi', 'fiNumber', 'lastsIn', 'accounts', 'stocksPct', 'bondsPct', 'age', 'partnerAge', 'includeCash', 'planFunding', 'method']);
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 function valueOf(p: FirePlanV2, field: Exclude<SetField, 'targetAge'>): unknown {
   return field === 'mix' ? { stocksPct: p.stocksPct, bondsPct: p.bondsPct } : p[field];
 }
+
+/** One of a plan's accounts' own rates, by account, for comparing two plans (both lists are sorted by id). */
+const ownRates = (p: FirePlanV2, k: 'growth' | 'yield') => JSON.stringify((p.accounts ?? []).filter((x) => x[k] !== null).map((x) => [x.account_id, x[k]]));
 
 /** What a plan's FI date is (D9): when the walk reaches the number, or the earliest stop that lasts. */
 function fiDateText(p: FirePlanV2): string {
@@ -74,6 +78,8 @@ export function copyDiffParts(main: FirePlanV2, copy: FirePlanV2, money: Money, 
     parts.push(`Your own FI number: ${fi(copy.fiNumber)} (your plan: ${fi(main.fiNumber)})`);
   }
   if (copy.lastsIn !== main.lastsIn) parts.push(`Your FI date: ${fiDateText(copy)} (your plan: ${fiDateText(main)})`);
+  if (ownRates(copy, 'growth') !== ownRates(main, 'growth')) parts.push('Account growth differs');
+  if (ownRates(copy, 'yield') !== ownRates(main, 'yield')) parts.push('Account dividends differ');
   const mainItems = new Map(main.items.map((x) => [x.id, x]));
   const copyIds = new Set(copy.items.map((x) => x.id));
   for (const x of copy.items) {
@@ -125,11 +131,12 @@ const FACTS = new Set<string>(['age', 'partnerAge', 'includeCash', 'planFunding'
 /** `target` with the change from `before` to `after` made in it too (Also
  *  change it in): each setting `after` changed, and each item it changed
  *  that `target` holds too, by id. Nothing added or removed is passed on,
- *  and the facts are the caller's. */
+ *  nor accounts' own rates (each plan keeps its own), and the facts are the
+ *  caller's. */
 export function sameChange(before: FirePlanV2, after: FirePlanV2, target: FirePlanV2): FirePlanV2 {
   const next: Record<string, unknown> = { ...target };
   for (const k of Object.keys(after)) {
-    if (k === 'items' || FACTS.has(k)) continue;
+    if (k === 'items' || k === 'accounts' || FACTS.has(k)) continue;
     const a = (after as Record<string, unknown>)[k];
     if (!same(a, (before as Record<string, unknown>)[k])) next[k] = a;
   }

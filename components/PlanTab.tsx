@@ -1395,7 +1395,7 @@ export default function PlanTab({
     if (drawn && first) return mixLine(drawn.startAge, balanceShares(first.start));
     const today = bucketsFor(plan.includeCash);
     const split = savingsSplit(today, view.savings.value);
-    const projected = projectMix(mixToday(today, view.assets.value), { savings: view.savings.value ?? 0, split: split.shares, realReturn: plan.realReturn, inflation: detailedOn ? ((entry ? entry.tax : yourChoices)?.inflation ?? DEFAULT_INFLATION) : DEFAULT_INFLATION, walk: shown.walk, years: Math.max(0, startsAt - plan.age) });
+    const projected = projectMix(mixToday(today, view.assets.value), { savings: view.savings.value ?? 0, split: split.shares, realReturn: view.growth, inflation: detailedOn ? ((entry ? entry.tax : yourChoices)?.inflation ?? DEFAULT_INFLATION) : DEFAULT_INFLATION, walk: shown.walk, years: Math.max(0, startsAt - plan.age) });
     return projected && mixLine(startsAt, mixShares(projected));
   };
   const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: closeFor(opened), editable: formEditable, copy: copyName, paused };
@@ -1474,7 +1474,7 @@ export default function PlanTab({
         ages: { ...shownNow.ages, sub: `${shownNow.ages.sub} · ${householdLine(shared.taxFacts, detailChoices)}` },
         assumptions: {
           ...shownNow.assumptions,
-          sub: taxWorked ? assumptionsWorked(shownPlan, detailChoices, detailChoices.health.growth ?? lawNow.healthGrowth.overPrices, money) : `${shownNow.assumptions.sub} · ${assumptionsLine(detailChoices, detailChoices.health.growth ?? lawNow.healthGrowth.overPrices)}`,
+          sub: taxWorked ? assumptionsWorked(shownPlan, view, detailChoices, detailChoices.health.growth ?? lawNow.healthGrowth.overPrices, money) : `${shownNow.assumptions.sub} · ${assumptionsLine(detailChoices, detailChoices.health.growth ?? lawNow.healthGrowth.overPrices)}`,
         },
       };
   const taxRow: (FigureText & { value: string }) | null = shownShares
@@ -1497,7 +1497,7 @@ export default function PlanTab({
     drawn && shownInput
       ? {
           money,
-          realReturn: plan.realReturn,
+          growth: view.growth,
           healthGrowth: shownInput.health.growth,
           acaLaw: shownInput.health.acaLaw,
           lawYear: drawn.law.year,
@@ -2141,6 +2141,7 @@ export default function PlanTab({
             progress={progress}
             plan={basePlan}
             savings={figures.view.savings}
+            growth={figures.view.growth}
             currency={figures.currency}
             institutions={institutions}
             blocked={progressBlocked}
@@ -2222,7 +2223,7 @@ export default function PlanTab({
               <DrawdownCard
                 copyName={copyName}
                 detail={drawn}
-                realReturn={plan.realReturn}
+                growth={view.growth}
                 money={money}
                 rmdAge={yearContext.rmdAge}
                 joint={shared.taxFacts.filing === 'joint' && plan.partnerAge !== null}
@@ -2247,7 +2248,7 @@ export default function PlanTab({
                 <CompareCard
                   rows={compare}
                   money={money}
-                  realReturn={plan.realReturn}
+                  growth={view.growth}
                   lawYear={drawn.law.year}
                   healthGrowth={yearContext.healthGrowth}
                   acaLaw={yearContext.acaLaw}
@@ -2384,10 +2385,10 @@ export default function PlanTab({
             ownNumber={plan.fiNumber !== null}
             converts={detailChoices.strategy.conversions.kind !== 'none'}
             withdrawalRate={plan.withdrawalRate}
-            realReturn={plan.realReturn}
+            growth={view.growth}
             start={drawn && (plan.start !== 'fi-number' || plan.fiNumber !== null) ? drawn.start : null}
             startBalance={'sim' in engine ? engine.sim.startBalance : null}
-            hypothetical={taxHypothetical({ lawYear: lawNow.year, state: detailChoices.state, stateRate: detailChoices.stateRate, stateTaxes: detailChoices.state ? lawNow.stateIncomeTax[detailChoices.state] : null, converts: detailChoices.strategy.conversions.kind !== 'none', realReturn: plan.realReturn, healthGrowth: detailChoices.health.growth ?? lawNow.healthGrowth.overPrices })}
+            hypothetical={taxHypothetical({ lawYear: lawNow.year, state: detailChoices.state, stateRate: detailChoices.stateRate, stateTaxes: detailChoices.state ? lawNow.stateIncomeTax[detailChoices.state] : null, converts: detailChoices.strategy.conversions.kind !== 'none', growth: view.growth, healthGrowth: detailChoices.health.growth ?? lawNow.healthGrowth.overPrices })}
             money={money}
             onYears={
               drawn
@@ -2557,6 +2558,7 @@ const REPAIR_NAMES: Record<string, string> = {
   fiNumber: 'your own FI number',
   lastsIn: 'the share your FI date lasts in',
   planFunding: 'how a workplace plan is paid into',
+  accounts: 'an account’s own growth or dividends',
 };
 
 /** What a repair changed, in words: an income or one-off by its label, or by
@@ -2576,7 +2578,7 @@ function repairName(f: Repair, money: (n: number) => string): string {
 export function RepairCard({ fixed, editable, onSave, money }: { fixed: Repair[]; editable: boolean; onSave: () => void; money: (n: number) => string }) {
   const whole = fixed.some((f) => f.field === 'plan');
   const what = names(fixed.map((f) => repairName(f, money)));
-  const dropped = fixed.some((f) => f.item !== undefined || f.field === 'planFunding');
+  const dropped = fixed.some((f) => f.item !== undefined || f.field === 'planFunding' || f.field === 'accounts');
   return (
     <div className="card">
       <Notice level="critical" role="alert">
@@ -2603,7 +2605,7 @@ export function RepairCard({ fixed, editable, onSave, money }: { fixed: Repair[]
 function copyRepairText(fixed: Repair[], money: (n: number) => string): string {
   if (fixed.some((f) => f.field === 'plan')) return 'This copy can’t be used by this version of Nya with your plan as it is now, so it shows the defaults. Nothing is saved to it until you choose Save it this way.';
   const what = names(fixed.map((f) => repairName(f, money)));
-  const dropped = fixed.some((f) => f.item !== undefined || f.field === 'planFunding');
+  const dropped = fixed.some((f) => f.item !== undefined || f.field === 'planFunding' || f.field === 'accounts');
   return `This copy has ${fixed.length === 1 ? 'a value that doesn’t' : 'values that don’t'} fit your plan as it is now: ${what}. It shows the defaults instead${dropped ? ' and leaves out what is named' : ''}, and nothing is saved to it until you choose Save it this way.`;
 }
 
@@ -2756,17 +2758,17 @@ export function FiCard({
   } else if (walked && view.yearsToFi !== null && view.yearsToFi > 0 && view.yearsToFi !== Infinity) {
     howLine =
       words === EVENTS_WORDS
-        ? `Growing a steady ${pct(plan.realReturn)} a year after inflation, with this plan’s items changing what is saved in their years.`
-        : `Growing a steady ${pct(plan.realReturn)} a year after inflation, with ${words}${inTheirYears}.`;
+        ? `Growing a steady ${pct(view.growth)} a year after inflation, with this plan’s items changing what is saved in their years.`
+        : `Growing a steady ${pct(view.growth)} a year after inflation, with ${words}${inTheirYears}.`;
   } else if (walked && view.yearsToFi === Infinity) {
     howLine =
       words === EVENTS_WORDS
-        ? `With this plan’s items you’d save ${money(walkedSavings ?? 0)} a year after its last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`
-        : `With ${words}${inTheirYears} you’d save ${money(walkedSavings ?? 0)} a year after the last change, and growing ${pct(plan.realReturn)} a year after inflation that never reaches it.`;
+        ? `With this plan’s items you’d save ${money(walkedSavings ?? 0)} a year after its last change, and growing ${pct(view.growth)} a year after inflation that never reaches it.`
+        : `With ${words}${inTheirYears} you’d save ${money(walkedSavings ?? 0)} a year after the last change, and growing ${pct(view.growth)} a year after inflation that never reaches it.`;
   } else if (view.yearsToFi === Infinity) {
-    howLine = `Saving ${money(savings.value ?? 0)} a year, growing ${pct(plan.realReturn)} a year after inflation, never reaches it.`;
+    howLine = `Saving ${money(savings.value ?? 0)} a year, growing ${pct(view.growth)} a year after inflation, never reaches it.`;
   } else if (view.yearsToFi !== null && view.yearsToFi > 0) {
-    howLine = `Saving ${money(savings.value ?? 0)} a year, growing a steady ${pct(plan.realReturn)} a year after inflation.`;
+    howLine = `Saving ${money(savings.value ?? 0)} a year, growing a steady ${pct(view.growth)} a year after inflation.`;
   } else if (view.yearsToFi === null && view.fiNumber !== null) {
     // A figure not measured is never taken as zero: the answer names what it
     // needs, and this says why (nothing when the answer says it all).
@@ -2927,7 +2929,7 @@ export function FiCard({
           fiNumber={view.fiNumber}
           fiAge={view.fiAge}
           lasting={lasting !== null}
-          realReturn={plan.realReturn}
+          growth={view.growth}
           currency={currency}
           withEvents={path.fromWalk}
           walkWords={path.fromWalk ? words : null}
@@ -2947,7 +2949,7 @@ export function FiCard({
           value={view.coast ? money(view.coast.number) : coastNeed({ age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi }, view, takes)}
           note={
             view.coast
-              ? `With this much invested today you could stop saving now: growing ${pct(plan.realReturn)} a year after inflation, it reaches your FI number by age ${view.stopAge}. ${view.coast.reached === null ? 'Your invested assets aren’t measured (below), so whether you have that much isn’t said.' : view.coast.reached ? 'You have that much.' : `You have ${money(assets.value ?? 0)}.`}`
+              ? `With this much invested today you could stop saving now: growing ${pct(view.growth)} a year after inflation, it reaches your FI number by age ${view.stopAge}. ${view.coast.reached === null ? 'Your invested assets aren’t measured (below), so whether you have that much isn’t said.' : view.coast.reached ? 'You have that much.' : `You have ${money(assets.value ?? 0)}.`}`
               : undefined
           }
         />
@@ -2962,7 +2964,7 @@ export function FiCard({
           />
         )}
         {view.atTargetAge !== null && view.stopAge !== null && (
-          <Row label={`At age ${view.stopAge}`} value={money(view.atTargetAge)} note={`Projected growing a steady ${pct(plan.realReturn)} a year after inflation${stopWalked ? `, with ${words} in the years they cover` : ''}. Real markets don't move steadily; the simulation on Drawdown shows how much that matters.`} />
+          <Row label={`At age ${view.stopAge}`} value={money(view.atTargetAge)} note={`Projected growing a steady ${pct(view.growth)} a year after inflation${stopWalked ? `, with ${words} in the years they cover` : ''}. Real markets don't move steadily; the simulation on Drawdown shows how much that matters.`} />
         )}
         {view.atTargetAge === null && (notWorkedOut ?? stopShort) && plan.age !== null && view.stopAge !== null && (
           <Row

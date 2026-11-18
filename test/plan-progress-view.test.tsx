@@ -268,7 +268,7 @@ describe('the lines before today on Your path’s chart', () => {
     const points = Array.from({ length: 17 }, (_, k) => ({ age: 39 + k, balance: 190_000 + k * 20_000 }));
     const html = renderToStaticMarkup(
       <DrawnWidth.Provider value={320}>
-        <PlanPathChart points={points} today={39} stopAge={55} fiNumber={1_000_000} fiAge={null} realReturn={0.05} currency="USD" recorded={recorded} />
+        <PlanPathChart points={points} today={39} stopAge={55} fiNumber={1_000_000} fiAge={null} growth={0.05} currency="USD" recorded={recorded} />
       </DrawnWidth.Provider>
     );
     expect(html).toContain('stroke="var(--text-1)"');

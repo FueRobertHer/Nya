@@ -22,7 +22,7 @@ export function PlanTaxSheet({
   ownNumber = false,
   converts = false,
   withdrawalRate,
-  realReturn,
+  growth,
   start,
   startBalance,
   hypothetical,
@@ -41,7 +41,8 @@ export function PlanTaxSheet({
   /** The plan has a conversion rule, which can move this share against its lifetime costs. */
   converts?: boolean;
   withdrawalRate: number;
-  realReturn: number;
+  /** The growth after inflation the plan runs at (FiView's). */
+  growth: number;
   /** The years Will it last? runs, when they aren't from the FI number itself. */
   start: Drawdown | null;
   startBalance: number | null;
@@ -89,7 +90,7 @@ export function PlanTaxSheet({
             {shares.drawn.stages.map((s) => (
               <div key={s.key} className="txn-detail-row">
                 <dt>{stageTitle(s)}</dt>
-                <dd>{pct(taxShares(shares.drawn.years.slice(s.first, s.last), realReturn).t, 1)}</dd>
+                <dd>{pct(taxShares(shares.drawn.years.slice(s.first, s.last), growth).t, 1)}</dd>
               </div>
             ))}
           </dl>

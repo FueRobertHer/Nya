@@ -324,7 +324,7 @@ export function FiProgressView({
   const typed = [view.spending.source === 'typed' && 'spending', view.savings.source === 'typed' && 'savings', view.assets.source === 'typed' && 'invested assets'].filter(
     (x): x is string => !!x
   );
-  const rates = `a ${pct(plan.withdrawalRate)} withdrawal rate${taxAfterStop !== null ? `, ${pct(taxAfterStop, 1)} tax after you stop` : plan.taxRate > 0 && !working ? `, ${pct(plan.taxRate)} tax on withdrawals` : ''} and ${pct(plan.realReturn)} growth after inflation`;
+  const rates = `a ${pct(plan.withdrawalRate)} withdrawal rate${taxAfterStop !== null ? `, ${pct(taxAfterStop, 1)} tax after you stop` : plan.taxRate > 0 && !working ? `, ${pct(plan.taxRate)} tax on withdrawals` : ''} and ${pct(view.growth)} growth after inflation`;
   notes.push({
     key: 'estimates',
     severity: 'info',
@@ -380,7 +380,7 @@ export function FiProgressView({
   // but with savings that run the steady projection out before the stop
   // age, it says so, as the Plan does.
   const from = walk ? null : projectFrom(plan, view);
-  const runsOut = view.yearsToFi === 0 && from !== null && plan.age !== null ? projectionShort(from.assets, from.savings, plan.realReturn, from.years) : null;
+  const runsOut = view.yearsToFi === 0 && from !== null && plan.age !== null ? projectionShort(from.assets, from.savings, view.growth, from.years) : null;
   const runsOutAt = walk ? walk.runsOutAt : runsOut && plan.age !== null ? plan.age + runsOut.year : null;
   const head = fiHeadline(view, { age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi, lasting: lasting !== null }, { noDate: !!walk?.short, runsOutAt, saving: (view.savings.value ?? 0) > 0 });
   const there = view.progress !== null ? progressText(view.progress) : null;
