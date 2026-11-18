@@ -42,7 +42,7 @@
     "inlineLayoutStyles": 7
   },
   "components/Dashboard.tsx": {
-    "inlineLayoutStyles": 6
+    "inlineLayoutStyles": 3
   },
   "components/DebtPayoff.tsx": {
     "inlineLayoutStyles": 1

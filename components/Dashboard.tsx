@@ -39,7 +39,6 @@ import { onPartShown, preloadParts } from './lazy-part';
 import RestoreBanner from './RestoreBanner';
 import { downloadAccounts } from './DownloadOptions';
 import { localDate, localMonth } from '@/lib/local-date';
-import { PLAID_PORTAL } from '@/lib/deletion-receipt';
 import { SharedWithMe } from './SharedWithMe';
 import { Sheet } from './Sheet';
 import { CoverageNote, TrustLinks } from './TrustLinks';
@@ -62,7 +61,7 @@ import { unreadNotesOf } from '@/lib/fire/inputs';
 import type { PathRange } from '@/lib/fire/path';
 import { historyPausedSince } from '@/lib/history-status';
 import MonthBreakdown, { nameForRules, type Txn } from './MonthBreakdown';
-import DisconnectSplitsNote from './DisconnectSplitsNote';
+import DisconnectSheet from './DisconnectSheet';
 import ManualTxnSheet from './ManualTxnSheet';
 import type { ImportTarget } from './ImportSheet';
 import type { HistoryImportTarget } from './HistoryImportSheet';
@@ -650,8 +649,6 @@ export default function Dashboard({
   // What the SimpleFIN drawer is asked to do (components/Connectors.tsx).
   const [connectorAsk, setConnectorAsk] = useState<ConnectorAsk | null>(null);
   const shownDisconnectTarget = useLast(disconnectTarget);
-  const [disconnectInput, setDisconnectInput] = useState('');
-  const [disconnecting, setDisconnecting] = useState(false);
   // Manual accounts: `manualDraft` drives the add/edit drawer, and
   // `editingManual` flips the same form between adding and editing.
   // `manualError` is separate from the page-level `error` so a failed save can't
@@ -943,35 +940,6 @@ export default function Dashboard({
     if (!loading && !txnsLoading) preloadParts([budgetsTabPart, sharedExpensesPart, settingsCardsPart, debtPayoffPart, importSheetPart, historyImportSheetPart, migrationSheetPart]);
   }, [loading, txnsLoading]);
 
-  const renameVendor = useCallback(
-    async (vendor_key: string, name: string) => {
-      // Optimistically relabel every transaction from this vendor. An empty
-      // name clears the rename; we can't reconstruct the original Plaid name
-      // locally, so reload to pick the reverted names back up. The person's
-      // name is shown as typed, never reworded as the bank's text would be.
-      if (name) {
-        setTxns((prev) =>
-          prev
-            ? prev.map((t) => (t.vendor_key === vendor_key ? { ...t, name, name_from_bank: undefined } : t))
-            : prev
-        );
-      }
-      try {
-        const res = await fetch('/api/rename', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ vendor_key, name }),
-        });
-        // Re-sync on a clear (to recover the reverted Plaid names) or on a
-        // rejected write, so the optimistic change can't linger out of sync.
-        if (!name || !res.ok) loadTransactions();
-      } catch {
-        loadTransactions(); // network failure: reload to server truth
-      }
-    },
-    [loadTransactions]
-  );
-
   // What a rule can name of the accounts, and a rule as a sentence, for the
   // Rules screen, the rule drawer and a transaction's detail: those that
   // ended too, with their end (#50).
@@ -1197,28 +1165,13 @@ export default function Dashboard({
     }
   }, []);
 
-  const performDisconnect = useCallback(
-    async (item_id: string) => {
-      setDisconnecting(true);
-      setError('');
-      try {
-        const res = await fetch('/api/disconnect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ item_id }),
-        });
-        if (!res.ok) throw new Error('failed');
-        setDisconnectTarget(null);
-        loadNetWorth(true);
-        if (txns !== null) loadTransactions(true);
-      } catch {
-        setError('Could not disconnect account.');
-      } finally {
-        setDisconnecting(false);
-      }
-    },
-    [loadNetWorth, loadTransactions, txns]
-  );
+  // A connection disconnected (components/DisconnectSheet.tsx, which makes
+  // the write and says a failure itself): what it moved, read again.
+  const disconnected = useCallback(() => {
+    setDisconnectTarget(null);
+    loadNetWorth(true);
+    if (txns !== null) loadTransactions(true);
+  }, [loadNetWorth, loadTransactions, txns]);
 
   // Notes on the timeline (#50), read again with each load.
   const timeline = useTimelineNotes(reloadKey);
@@ -1238,7 +1191,6 @@ export default function Dashboard({
     (c: EndedConnection) => {
       const target = institutions.find((i) => i.item_id === c.item_id) ?? { ...c, accounts: [], holdings: [], error: null, needs_reauth: false };
       setEndedOffer(c.item_id);
-      setDisconnectInput('');
       setDisconnectTarget(target);
     },
     [institutions]
@@ -2006,7 +1958,6 @@ export default function Dashboard({
 
 
   const startDisconnect = (inst: Institution) => {
-    setDisconnectInput('');
     setEndedOffer(null);
     setDisconnectTarget(inst);
   };
@@ -2801,7 +2752,7 @@ export default function Dashboard({
                   loading={txnsLoading}
                   taxonomy={categories.taxonomy}
                   onRecategorize={txnEdits.recategorize}
-                  onRename={renameVendor}
+                  onRename={txnEdits.rename}
                   // Only with a manual account to add to (hidden ones aren't offered).
                   onAddTransaction={
                     institutions.some((i) => i.manual && !i.connector && i.accounts.some((a) => !a.hidden)) ? () => txnEdits.openAdd() : undefined
@@ -3336,80 +3287,13 @@ export default function Dashboard({
         onConnector={setConnectorAsk}
       />
 
-      <Sheet
+      <DisconnectSheet
         open={!!disconnectTarget}
-        title={
-          shownDisconnectTarget
-            ? `Disconnect ${shownDisconnectTarget.institution_name}?`
-            : 'Disconnect'
-        }
-        onClose={() => !disconnecting && setDisconnectTarget(null)}
-      >
-        {shownDisconnectTarget && (
-          <>
-            {/* Every account of it ended (#50): the connection still syncs
-                nothing of use, and Plaid bills it until it is removed. */}
-            {endedOffer === shownDisconnectTarget.item_id && (
-              <p className="panel-note" style={{ marginTop: 0 }}>
-                Every account at {shownDisconnectTarget.institution_name} has ended, but the connection is still
-                open, and Plaid charges for it until it is removed. Their history, and when each ended, are kept.
-              </p>
-            )}
-            <p className="panel-note" style={endedOffer === shownDisconnectTarget.item_id ? undefined : { marginTop: 0 }}>
-              This removes {shownDisconnectTarget.institution_name} and its accounts from Nya, and ends the
-              connection at Plaid. What you told your plan about those accounts for tax goes too. You can
-              reconnect it later. Type{' '}
-              <strong>{shownDisconnectTarget.institution_name}</strong> below to confirm.
-            </p>
-            {/* What adding it back doesn't bring back (#39). */}
-            <DisconnectSplitsNote itemId={shownDisconnectTarget.item_id} />
-            {/* Disconnecting is about the connection; closing is about an
-                account (#50). Only the person knows which happened. */}
-            {endedOffer !== shownDisconnectTarget.item_id && (
-              <p className="panel-note">
-                Disconnecting doesn&apos;t say an account closed. If one did, mark it instead (open the account, then Mark as closed…): it then stops counting from that day, and the chart marks it.
-              </p>
-            )}
-            {/* What Plaid itself keeps is beyond a disconnect's reach (the
-                deletion receipt says the same, lib/deletion-receipt.ts): say
-                where people can see and delete it. */}
-            <p className="panel-note">
-              Plaid keeps its own records of what it collected, under its own privacy policy. See and delete
-              them at the{' '}
-              <a href={PLAID_PORTAL} target="_blank" rel="noreferrer">
-                Plaid Portal
-              </a>
-              .
-            </p>
-            <label className="field" style={{ marginTop: 12 }}>
-              Institution name
-              <input
-                value={disconnectInput}
-                onChange={(e) => setDisconnectInput(e.target.value)}
-                placeholder={shownDisconnectTarget.institution_name}
-                disabled={disconnecting}
-                autoCapitalize="off"
-                autoCorrect="off"
-              />
-            </label>
-            <div className="button-pair" style={{ marginTop: 16 }}>
-              <button className="secondary" onClick={() => setDisconnectTarget(null)} disabled={disconnecting}>
-                Cancel
-              </button>
-              <button
-                className="danger"
-                disabled={
-                  disconnecting ||
-                  disconnectInput.trim().toLowerCase() !== shownDisconnectTarget.institution_name.trim().toLowerCase()
-                }
-                onClick={() => performDisconnect(shownDisconnectTarget.item_id)}
-              >
-                {disconnecting ? 'Disconnecting…' : 'Disconnect'}
-              </button>
-            </div>
-          </>
-        )}
-      </Sheet>
+        target={shownDisconnectTarget}
+        ended={!!shownDisconnectTarget && endedOffer === shownDisconnectTarget.item_id}
+        onClose={() => setDisconnectTarget(null)}
+        onDisconnected={disconnected}
+      />
     </>
   );
 }
