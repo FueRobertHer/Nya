@@ -20,7 +20,7 @@ const ALLOWED: Record<string, { reads: number; why: string }> = {
   'lib/fire/plan.ts': { reads: 2, why: 'version 1’s reader, and formulasTake' },
   'lib/fire/account-growth.ts': { reads: 4, why: 'the blend, from the plan’s rate' },
   'lib/fire/saved-plan.ts': { reads: 4, why: 'a save keeps growth only where it differs, savedGrowth, and changedSince, which compares the setting' },
-  'components/PlanForms.tsx': { reads: 1, why: 'the Assumptions sheet, where the plan’s rate is typed' },
+  'components/PlanForms.tsx': { reads: 2, why: 'the Assumptions sheet, where the plan’s rate is typed, and Invested assets, which says it as the rate an account without its own grows at' },
 };
 
 const READS = [/(?<!LIMITS)\??\.realReturn\b/g, /\[\s*'realReturn'\s*\]/g];

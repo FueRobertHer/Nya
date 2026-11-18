@@ -10,7 +10,8 @@ import { copyRow, plansListing } from './plans-listing';
 // is shared about the account, one save each, a failed one staying open, a save
 // holding the drawer, facts locked in a copy and until they are known, the other
 // accounts' rows asked for only when a sheet opens, and Home and the Plan moving
-// together on a fact. Every request is answered here.
+// together on a fact; an account's own growth handed from its level to the
+// sheet, which keeps it on Save, in a copy too. Every request is answered here.
 
 const dom = installDom();
 const realFetch = globalThis.fetch;
@@ -79,6 +80,14 @@ function serve(over: { tax?: TaxFacts; plan?: typeof PLAN; refuse?: string; rows
       state.tax = applyTaxFactOp(state.tax, parsed.op);
       return json(plan());
     }
+    if (u.pathname === '/api/fire-plan' && method === 'PUT') {
+      state.plan = call.body.plan;
+      return json({ plan: state.plan, currency: 'USD', updated_at: '2026-11-01T00:00:00.000Z' });
+    }
+    if (u.pathname === '/api/plans' && method === 'PUT') {
+      const saved = call.body.saves.map((x: { id: string; plan: typeof PLAN; currency: string | null }) => ({ ...copyRow(state.plan, x.id, 'Stop at 52', x.plan, x.currency, 2) }));
+      return json({ plans: saved, main: null });
+    }
     if (u.pathname === '/api/plans' && method === 'GET') {
       const [status, body] = plansListing(state.plan, over.copies ? [copyRow(state.plan, 'a', 'Stop at 52', { targetAge: 52 })] : []);
       return json(body, status as number);
@@ -89,7 +98,14 @@ function serve(over: { tax?: TaxFacts; plan?: typeof PLAN; refuse?: string; rows
     }
     return json({ error: 'not here' }, 404);
   };
-  return { calls, state, facts: () => calls.filter((c) => c.url === '/api/plan-facts'), asked: () => calls.filter((c) => c.url.startsWith('/api/plan-inputs')).map((c) => c.url) };
+  return {
+    calls,
+    state,
+    facts: () => calls.filter((c) => c.url === '/api/plan-facts'),
+    asked: () => calls.filter((c) => c.url.startsWith('/api/plan-inputs')).map((c) => c.url),
+    /** The plans each save sent: your plan's, or a copy's. */
+    saved: () => calls.flatMap((c) => (c.method !== 'PUT' ? [] : c.url === '/api/fire-plan' ? [c.body.plan] : c.url === '/api/plans' ? c.body.saves.map((x: { plan: unknown }) => x.plan) : [])),
+  };
 }
 
 const has = (e: FakeNode | null, cls: string) => e instanceof FakeElement && (e.getAttribute('class') ?? '').split(' ').includes(cls);
@@ -201,7 +217,9 @@ describe('the Invested assets sheet', () => {
     expect(part(rowIn(d, 'Brokerage')!, 'list-row-sub')!.textContent).toBe('Cost basis $105,000 · gain $35,000');
     expect(part(rowIn(d, '401(k)')!, 'list-row-sub')).toBeNull();
     expect(tab.shown()).toContain('$485,000 in 5 accounts, as of ');
-    expect(tab.shown()).toContain('Each account’s tax bucket comes from its type. Open an account to change it.');
+    expect(tab.shown()).toContain('Each account’s tax bucket comes from its type, and each grows at the plan’s 5% after inflation unless you give it its own. Open an account to change either.');
+    expect(tab.shown()).not.toContain('together');
+    expect(tab.shown()).not.toContain('is kept when you save');
     expect(tab.shown()).toContain('counts them as tax-deferred until you say');
     expect(tab.shown()).toContain('Nya’s figure');
     expect(tab.shown()).toContain('Count checking and savings accounts too');
@@ -536,6 +554,201 @@ describe('the account level', () => {
   });
 });
 
+describe('each account’s growth', () => {
+  const growthField = (tab: Tab) => field(tab.dialog()!, 'Its growth after inflation');
+  /** Opens an account, sets its own growth, and hands it to the sheet. */
+  async function setOwn(tab: Tab, title: string, rate: string, button = 'Save') {
+    await openRow(tab, title);
+    await press(buttonShown(tab.dialog()!, 'Its own'));
+    await act(async () => type(growthField(tab)!, rate));
+    await press(buttonShown(tab.dialog()!, button));
+  }
+
+  test('the plan’s rate or its own: handed to the sheet, said on its row and together, kept by the sheet’s Save', async () => {
+    const server = serve();
+    const tab = await mount();
+    await openAssets(tab);
+    await openRow(tab, 'Brokerage');
+    expect(tab.shown()).toContain('Growth after inflation');
+    expect(buttonShown(tab.dialog()!, 'The plan’s 5%')!.getAttribute('aria-checked')).toBe('true');
+    expect(growthField(tab)).toBeNull();
+    await press(buttonShown(tab.dialog()!, 'Its own'));
+    // It starts from the plan's.
+    expect(growthField(tab)!.value).toBe('5');
+    await act(async () => type(growthField(tab)!, '7'));
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    // Its facts didn't change: nothing is sent for them, and nothing is saved yet.
+    expect(server.facts()).toEqual([]);
+    expect(server.saved()).toEqual([]);
+    expect(tab.title()).toBe('Invested assets');
+    expect(subOf(tab, 'Brokerage')).toBe('Cost basis $105,000 · gain $35,000 · grows 7%');
+    // 5% + 140,000 × 2% / 485,000, the 529 left out.
+    expect(tab.shown()).toContain('With 1 account’s own rate, they grow 5.58% a year together.');
+    expect(tab.shown()).toContain('An account’s growth is kept when you save. Cancel or close this, and what you set is dropped.');
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    expect(server.saved().map((p: any) => p.accounts)).toEqual([[{ account_id: 'brk', growth: 0.07, yield: null }]]);
+    expect(tab.dialog()).toBeNull();
+    // After the save: the plan runs at it, and the sheet opens on it.
+    expect(tab.container.textContent).toContain('5.58% growth after inflation until FI, 1 account at its own');
+    await openAssets(tab);
+    expect(subOf(tab, 'Brokerage')).toBe('Cost basis $105,000 · gain $35,000 · grows 7%');
+    expect(tab.shown()).toContain('With 1 account’s own rate, they grow 5.58% a year together.');
+    expect(tab.shown()).not.toContain('is kept when you save');
+    await openRow(tab, 'Brokerage');
+    expect(buttonShown(tab.dialog()!, 'Its own')!.getAttribute('aria-checked')).toBe('true');
+    expect(growthField(tab)!.value).toBe('7');
+    await tab.unmount();
+  });
+
+  test('two of their own, and the 401(k)’s row, with nothing else to say, says only that', async () => {
+    const server = serve();
+    const tab = await mount();
+    await openAssets(tab);
+    await setOwn(tab, 'Brokerage', '7');
+    await setOwn(tab, '401(k)', '4');
+    expect(subOf(tab, '401(k)')).toBe('grows 4%');
+    // 5% + (140,000 × 2% − 260,000 × 1%) / 485,000.
+    expect(tab.shown()).toContain('With 2 accounts’ own rates, they grow 5.04% a year together.');
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    expect(server.saved().map((p: any) => p.accounts)).toEqual([
+      [
+        { account_id: 'brk', growth: 0.07, yield: null },
+        { account_id: 'k', growth: 0.04, yield: null },
+      ],
+    ]);
+    await tab.unmount();
+  });
+
+  test('the level’s Cancel hands nothing over, and the sheet’s Cancel drops what was', async () => {
+    const server = serve();
+    const tab = await mount();
+    await openAssets(tab);
+    await setOwn(tab, 'Brokerage', '7', 'Cancel');
+    expect(subOf(tab, 'Brokerage')).toBe('Cost basis $105,000 · gain $35,000');
+    await setOwn(tab, 'Brokerage', '7');
+    expect(subOf(tab, 'Brokerage')).toContain('grows 7%');
+    await press(buttonShown(tab.dialog()!, 'Cancel'));
+    expect(server.saved()).toEqual([]);
+    await openAssets(tab);
+    expect(subOf(tab, 'Brokerage')).toBe('Cost basis $105,000 · gain $35,000');
+    await tab.unmount();
+  });
+
+  test('back to the plan’s rate: its growth goes, and dividends held stay', async () => {
+    const server = serve({ plan: { ...PLAN, accounts: [{ account_id: 'brk', growth: 0.07, yield: 0.02 }, { account_id: 'gone', growth: 0.09, yield: null }] } });
+    const tab = await mount();
+    await openAssets(tab);
+    expect(subOf(tab, 'Brokerage')).toContain('grows 7%');
+    await openRow(tab, 'Brokerage');
+    await press(buttonShown(tab.dialog()!, 'The plan’s 5%'));
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    expect(subOf(tab, 'Brokerage')).toBe('Cost basis $105,000 · gain $35,000');
+    expect(tab.shown()).not.toContain('together');
+    expect(tab.shown()).toContain('is kept when you save');
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    // An account no longer listed keeps its own, ignored.
+    expect(server.saved().map((p: any) => p.accounts)).toEqual([
+      [
+        { account_id: 'brk', growth: null, yield: 0.02 },
+        { account_id: 'gone', growth: 0.09, yield: null },
+      ],
+    ]);
+    await tab.unmount();
+  });
+
+  test('a growth out of range is said under its field, and nothing is handed over', async () => {
+    serve();
+    const tab = await mount();
+    await openAssets(tab);
+    await setOwn(tab, 'Brokerage', '20');
+    expect(tab.title()).toBe('Brokerage');
+    expect(tab.shown()).toContain('Its growth must be from -5% to 15%.');
+    expect(growthField(tab)!.getAttribute('aria-invalid')).toBe('true');
+    await act(async () => type(growthField(tab)!, '-5'));
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    expect(subOf(tab, 'Brokerage')).toContain('grows -5%');
+    await tab.unmount();
+  });
+
+  test('with your own figure every account grows at the plan’s rate: the level says so, and no row says otherwise', async () => {
+    serve({ plan: { ...PLAN, assets: 200_000, accounts: [{ account_id: 'brk', growth: 0.07, yield: null }] } });
+    const tab = await mount();
+    await openAssets(tab);
+    expect(subOf(tab, 'Brokerage')).toBe('Cost basis $105,000 · gain $35,000');
+    await openRow(tab, 'Brokerage');
+    expect(tab.shown()).toContain('With your own figure for invested assets, every account grows at the plan’s 5% after inflation.');
+    expect(buttonShown(tab.dialog()!, 'Its own')).toBeNull();
+    await tab.unmount();
+  });
+
+  test('a child’s account left out has none', async () => {
+    serve();
+    const tab = await mount();
+    await openAssets(tab);
+    await openRow(tab, 'NY 529 plan');
+    expect(tab.shown()).not.toContain('Growth after inflation');
+    await tab.unmount();
+  });
+
+  test('in a copy: Done hands it over, and the sheet’s Save keeps it in the copy, never your plan', async () => {
+    const server = serve({ copies: true });
+    const tab = await mount();
+    await press(part(tab.container, 'plan-bar')!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.startsWith('Plans'))[0]);
+    await press(rowIn(tab.dialog()!, 'Stop at 52'));
+    await press(rowIn(tab.dialog()!, 'Open it'));
+    await openAssets(tab);
+    await setOwn(tab, 'Brokerage', '6', 'Done');
+    expect(server.facts()).toEqual([]);
+    expect(subOf(tab, 'Brokerage')).toContain('grows 6%');
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    const puts = server.calls.filter((c) => c.method === 'PUT');
+    expect(puts.map((c) => c.url)).toEqual(['/api/plans']);
+    expect(puts[0].body.saves.map((x: any) => [x.id, x.plan.accounts])).toEqual([['a', [{ account_id: 'brk', growth: 0.06, yield: null }]]]);
+    await tab.unmount();
+  });
+
+  test('Assumptions says the plan’s rate is every account’s but their own, and what they come to as it is typed', async () => {
+    serve({ plan: { ...PLAN, accounts: [{ account_id: 'brk', growth: 0.07, yield: null }] } });
+    const tab = await mount();
+    await press(tab.row('Assumptions'));
+    await settle(60);
+    expect(tab.shown()).toContain('The plan’s rate: every account grows at it unless you give one its own in Invested assets. With 1 account at its own, yours grow 5.58% a year together.');
+    await act(async () => type(field(tab.dialog()!, 'Growth after inflation')!, '6'));
+    // 6% + 140,000 × 1% / 485,000.
+    expect(tab.shown()).toContain('With 1 account at its own, yours grow 6.29% a year together.');
+    await act(async () => type(field(tab.dialog()!, 'Growth after inflation')!, '99'));
+    expect(tab.shown()).toContain('in Invested assets.Only for the years until FI');
+    await tab.unmount();
+  });
+
+  test('hide amounts masks the amounts beside a rate, never the rate', async () => {
+    serve({ plan: { ...PLAN, accounts: [{ account_id: 'brk', growth: 0.07, yield: null }] } });
+    const { setAmountsHidden } = await import('@/lib/format');
+    setAmountsHidden(true);
+    try {
+      const tab = await mount();
+      await openAssets(tab);
+      const sub = subOf(tab, 'Brokerage');
+      expect(sub).not.toContain('105,000');
+      expect(sub).toEndWith(' · grows 7%');
+      expect(tab.shown()).toContain('With 1 account’s own rate, they grow 5.58% a year together.');
+      await tab.unmount();
+    } finally {
+      setAmountsHidden(false);
+    }
+  });
+
+  test('Assumptions with your own figure: it grows at the plan’s rate', async () => {
+    serve({ plan: { ...PLAN, assets: 200_000, accounts: [{ account_id: 'brk', growth: 0.07, yield: null }] } });
+    const tab = await mount();
+    await press(tab.row('Assumptions'));
+    await settle(60);
+    expect(tab.shown()).toContain('The plan’s rate: your own figure for invested assets grows at it.');
+    expect(tab.shown()).not.toContain('together');
+    await tab.unmount();
+  });
+});
+
 describe('Roth contributions', () => {
   test('one for each person, at the group’s foot, each saving its amount', async () => {
     const server = serve({ plan: { ...PLAN, partnerAge: 40 } });
@@ -672,9 +885,34 @@ describe('before the facts are known', () => {
     await settle(60);
     expect(tab.shown()).not.toContain('hasn’t loaded');
     expect(field(tab.dialog()!, 'Cost basis')!.value).toBe('120000');
-    await press(button(tab.dialog()!, 'Save'));
-    expect(server.facts()[0].body).toEqual({ kind: 'account', account_id: 'brk', owner: 'partner', basis: 120_000, count: false });
+    // A fact unchanged isn't sent; one changed goes with the others as stored.
+    await act(async () => type(field(tab.dialog()!, 'Cost basis')!, '125000'));
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    expect(server.facts()[0].body).toEqual({ kind: 'account', account_id: 'brk', owner: 'partner', basis: 125_000, count: false });
     expect(server.state.tax.owners).toEqual(STORED.owners);
+    await tab.unmount();
+  });
+
+  test('a growth typed while they come stays once they do, and the facts start from what came', async () => {
+    const server = serve({ tax: { ...STORED, futureKey: 1 } as unknown as TaxFacts, plan: { ...PLAN, partnerAge: 40 } });
+    const store = createPlanInputsStore();
+    const tab = await mount({ planInputs: store });
+    await settle(60);
+    await openAssets(tab);
+    await openRow(tab, 'Brokerage');
+    expect(tab.shown()).toContain('hasn’t loaded');
+    await press(buttonShown(tab.dialog()!, 'Its own'));
+    await act(async () => type(field(tab.dialog()!, 'Its growth after inflation')!, '7'));
+    server.state.tax = STORED;
+    await act(async () => store.invalidate());
+    await settle(60);
+    expect(tab.shown()).not.toContain('hasn’t loaded');
+    expect(field(tab.dialog()!, 'Cost basis')!.value).toBe('120000');
+    expect(field(tab.dialog()!, 'Its growth after inflation')!.value).toBe('7');
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    expect(server.facts()).toEqual([]);
+    expect(tab.title()).toBe('Invested assets');
+    expect(subOf(tab, 'Brokerage')).toBe('Your partner’s · Cost basis $120,000 · gain $20,000 · grows 7%');
     await tab.unmount();
   });
 
@@ -697,8 +935,13 @@ describe('before the facts are known', () => {
     await openAssets(tab);
     await openRow(tab, 'Brokerage');
     expect(tab.shown()).toContain('hasn’t loaded');
-    expect(button(tab.dialog()!, 'Save')!.disabled).toBe(true);
+    // Its facts are off; its growth isn't, which the button hands to the sheet.
+    expect(field(tab.dialog()!, 'Cost basis')!.disabled).toBe(true);
+    expect(buttonShown(tab.dialog()!, 'Save')).toBeNull();
+    expect(buttonShown(tab.dialog()!, 'Done')!.disabled).toBe(false);
+    await press(buttonShown(tab.dialog()!, 'Done'));
     expect(server.facts()).toEqual([]);
+    expect(tab.title()).toBe('Invested assets');
     await tab.unmount();
   });
 
@@ -732,8 +975,9 @@ describe('before the facts are known', () => {
     expect(head()).toContain('Education$48,000');
     await openRow(tab, 'Brokerage');
     expect(field(tab.dialog()!, 'Cost basis')!.value).toBe('120000');
-    await press(button(tab.dialog()!, 'Save'));
-    expect(server.facts()[0].body).toEqual({ kind: 'account', account_id: 'brk', owner: 'partner', basis: 120_000, count: false });
+    await act(async () => type(field(tab.dialog()!, 'Cost basis')!, '125000'));
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    expect(server.facts()[0].body).toEqual({ kind: 'account', account_id: 'brk', owner: 'partner', basis: 125_000, count: false });
     await tab.unmount();
   });
 });
@@ -754,10 +998,11 @@ describe('with a copy open', () => {
     const tab = await inCopy(server);
     await openAssets(tab);
     await openRow(tab, 'Brokerage');
-    expect(tab.shown()).toContain('What is said about an account is the same in every plan: change it on your plan.');
+    expect(tab.shown()).toContain('What is said about an account is the same in every plan: change it on your plan. Its growth is this copy’s own.');
     expect(field(tab.dialog()!, 'Cost basis')!.disabled).toBe(true);
-    expect(button(tab.dialog()!, 'Save')!.disabled).toBe(true);
-    await press(button(tab.dialog()!, 'Cancel'));
+    expect(buttonShown(tab.dialog()!, 'Save')).toBeNull();
+    expect(buttonShown(tab.dialog()!, 'Done')!.disabled).toBe(false);
+    await press(buttonShown(tab.dialog()!, 'Cancel'));
     await openRow(tab, 'Your Roth contributions');
     expect(field(tab.dialog()!, 'Put in so far')!.disabled).toBe(true);
     expect(button(tab.dialog()!, 'Save')!.disabled).toBe(true);

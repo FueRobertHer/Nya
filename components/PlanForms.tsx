@@ -16,7 +16,8 @@
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { plainNumber } from '@/lib/format';
-import { allocationOf, asText, LIMITS, PLAN_TO_AGE, pctText, stopOf, type FiView, type FirePlan, type PlanCore, type PlanFunding } from '@/lib/fire/plan';
+import { allocationOf, asText, LIMITS, PLAN_TO_AGE, pctText, stopOf, type AccountRate, type FiView, type FirePlan, type PlanCore, type PlanFunding } from '@/lib/fire/plan';
+import { planGrowth, withGrowth } from '@/lib/fire/account-growth';
 import type { PathAfter } from '@/lib/fire/path';
 import { LASTS_IN_CHOICES, parsePlanV2, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
@@ -39,7 +40,7 @@ import { taxOnHoldText } from './plan-figure-notes';
 import { Notice } from './TotalCaveats';
 import AlsoChange, { type AlsoChoice } from './AlsoChange';
 import { itemRuleText } from './plan-items';
-import { BucketGroups, BucketLevel, SavingsSplitLines, type BucketSheet } from './PlanBuckets';
+import { BucketGroups, BucketLevel, SavingsSplitLines, type BucketSheet, type SheetRates } from './PlanBuckets';
 import { BUCKET_NAMES, type TaxBucket } from '@/lib/allocation/buckets';
 import { byBucket, type SavingsSplit } from '@/lib/fire/savings-split';
 import type { SavingsBucket } from '@/lib/fire/tax-choices';
@@ -689,7 +690,12 @@ const FIGURE_TEXT: Record<FigureKind, { title: string; field: string; note: stri
 /** Said after that note: a child's accounts are out (D7). */
 const CHILD_ACCOUNTS_NOTE = ' Accounts for a child’s education are left out unless you count one.';
 
-type CountedAccount = { account_id: string; name: string; institution: string; balance: number; currency?: string | null };
+type CountedAccount = { account_id: string; name: string; institution: string; balance: number; currency?: string | null; /** What it adds to the total. */ value: number };
+
+/** Each account's own growth in a plan, by id. */
+const ownGrowth = (accounts: readonly AccountRate[] | undefined) => new Map((accounts ?? []).flatMap((x) => (x.growth === null ? [] : [[x.account_id, x.growth] as const])));
+
+const sameRates = (a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>) => a.size === b.size && [...a].every(([id, r]) => b.get(id) === r);
 
 const SAVINGS_BUCKETS: readonly SavingsBucket[] = ['taxable', 'tax-deferred', 'roth', 'hsa'];
 
@@ -776,11 +782,38 @@ export function FigureForm(
   const today = kind === 'assets' && sheet ? sheet.bucketsFor(includeCash) : null;
   const level = (kind === 'assets' && sheet?.level) || null;
   const money = (n: number) => wholeMoney(n, props.currency);
+  // Each account's own growth, as its level hands it over: kept by Save, with
+  // the rest of the sheet, and by nothing else.
+  const planRate = plan.realReturn;
+  const [rates, setRates] = useState<ReadonlyMap<string, number>>(() => ownGrowth(plan.accounts));
+  const ratesMoved = kind === 'assets' && !sameRates(rates, ownGrowth(plan.accounts));
+  const listed = new Set(live ? live.accounts.map((a) => a.account_id) : []);
+  const accountsNow = () => withGrowth(plan.accounts, rates, listed, LIMITS.accountRates);
+  const growth: SheetRates | null =
+    kind === 'assets'
+      ? {
+          plan: planRate,
+          rates,
+          set: (id, rate) =>
+            setRates((m) => {
+              const next = new Map(m);
+              if (rate === null) next.delete(id);
+              else next.set(id, rate);
+              return next;
+            }),
+          typed: mode === 'typed',
+          off: s.disabled,
+          copy: !!props.copy,
+        }
+      : null;
+  // What they come to together, as the plan will run at it once saved: only for
+  // Nya's figure, which they make up.
+  const blend = live && mode === 'measured' && props.measured !== null ? planGrowth({ realReturn: planRate, assets: null, accounts: accountsNow() }, { assets: live.total, accounts: live.accounts.map((a) => ({ id: a.account_id, value: a.value })) }) : null;
   return (
     <>
       {/* A level of the drawer over the form, which stays, so what was typed in
           it is there on the way back. */}
-      {level && sheet && today && <BucketLevel level={level} today={today} sheet={sheet} money={money} />}
+      {level && sheet && today && <BucketLevel level={level} today={today} sheet={sheet} money={money} growth={growth} />}
       <div hidden={!!level}>
       <p className="panel-note" style={{ marginTop: 0 }}>
         {t.note}
@@ -802,7 +835,7 @@ export function FigureForm(
               'Nya has nothing to measure this from yet, so the plan leaves it out until you type your own.'
             ) : today && sheet ? (
               <>
-                <Masked>{headLine(measured, today.groups.reduce((n, g) => n + g.accounts.length, 0), sheet.asOf, money)}</Masked> Each account&rsquo;s tax bucket comes from its type. Open an account to change it.
+                <Masked>{headLine(measured, today.groups.reduce((n, g) => n + g.accounts.length, 0), sheet.asOf, money)}</Masked> Each account&rsquo;s tax bucket comes from its type, and each grows at the plan&rsquo;s {pct(planRate)} after inflation unless you give it its own. Open an account to change either.
               </>
             ) : (
               <>
@@ -813,6 +846,11 @@ export function FigureForm(
               </>
             )}
           </p>
+          {blend && blend.own > 0 && (
+            <p className="panel-note">
+              {blend.own === 1 ? 'With 1 account’s own rate' : `With ${blend.own} accounts’ own rates`}, they grow <strong>{pct(blend.growth)} a year</strong> together.
+            </p>
+          )}
           {measured !== null && why && (
             <Why>
               <Masked>{why}</Masked>
@@ -846,7 +884,7 @@ export function FigureForm(
           {today && sheet && (today.groups.length > 0 || today.leftOut.accounts.length > 0 || today.roth.length > 0) && (
             <>
               {mode === 'typed' && (today.groups.length > 0 || today.leftOut.accounts.length > 0) && <p className="panel-note">Your own figure is shared out as these accounts are.</p>}
-              <BucketGroups today={today} sheet={sheet} mix={props.mix ?? null} money={money} />
+              <BucketGroups today={today} sheet={sheet} mix={props.mix ?? null} money={money} rates={mode === 'measured' ? rates : null} />
             </>
           )}
           {!today && live && live.accounts.length > 0 && mode === 'measured' && (
@@ -954,6 +992,7 @@ export function FigureForm(
         alsoIn={s.alsoIn}
         onAlso={s.setAlsoIn}
         paused={props.paused}
+        extra={ratesMoved ? <p className="helper">An account&rsquo;s growth is kept when you save. Cancel or close this, and what you set is dropped.</p> : null}
         onDone={props.onDone}
         disabled={s.disabled}
         saving={s.saving}
@@ -963,12 +1002,16 @@ export function FigureForm(
               const savingsSplit = splitMode === 'measured' ? null : readSplit(splitText);
               more.current = JSON.stringify(savingsSplit) === JSON.stringify(detail.choices.savingsSplit) ? {} : { tax: { ...detail.choices, savingsSplit } };
             }
-            return {
+            const next: FirePlanV2 = {
               ...plan,
               [kind]: mode === 'measured' ? null : readNumber(text, t.field, range[0], range[1]),
               includeCash: kind === 'assets' ? includeCash : plan.includeCash,
               planFunding: kind === 'savings' ? planFunding() : plan.planFunding,
             };
+            if (kind !== 'assets') return next;
+            const { accounts: _, ...rest } = next;
+            const accounts = accountsNow();
+            return accounts ? { ...rest, accounts } : rest;
           })
         }
       />
@@ -1079,6 +1122,9 @@ export function AssumptionsForm(
     defaultGrowth?: number;
     /** What the accounts' year measured as a yield, for the field's placeholder. */
     measuredYield?: number | null;
+    /** The growth the plan would run at with this rate as its own, its accounts'
+     *  own rates blended in (lib/fire/account-growth.ts), and how many those are. */
+    growthAt?: (rate: number) => { growth: number; own: number };
   }
 ) {
   const { plan, at = null } = props;
@@ -1124,6 +1170,9 @@ export function AssumptionsForm(
   const drawnNow = detail && start === plan.start && startBalanceSame(balance, plan) && (!taxWorked || start !== 'fi-number' || rateSame) ? (props.drawnRate ?? null) : null;
   const workedRate = drawnNow ?? (taxWorked ? null : startRate(start, props, Number(balance), taxNow));
   const ruleRate = workedRate !== null ? saidRate(workedRate, rateNow) : rateNow;
+  // The accounts' own rates with the plan's as typed: nothing while it isn't a rate.
+  const retNow = typedRate(ret, LIMITS.realReturn, NaN);
+  const together = props.growthAt && Number.isFinite(retNow) ? props.growthAt(retNow) : null;
 
   // Opened at a part: the sheet's body is scrolled to it. Set on the body
   // alone (never scrollIntoView, which would scroll the page behind too, as
@@ -1211,6 +1260,11 @@ export function AssumptionsForm(
           />
         </label>
         {s.under('Growth after inflation')}
+        <p className="helper">
+          {plan.assets !== null
+            ? 'The plan’s rate: your own figure for invested assets grows at it.'
+            : `The plan’s rate: every account grows at it unless you give one its own in Invested assets.${together && together.own > 0 ? ` With ${together.own === 1 ? '1 account at its own' : `${together.own} at their own`}, yours grow ${pct(together.growth)} a year together.` : ''}`}
+        </p>
         <p className="helper">{detail ? 'For years to FI, Coast FI, the balance at your stop age and the steady years on Drawdown, which your FI number’s tax and health coverage come from. Will it last? uses market history for its returns, and works out each year’s tax and health coverage on them.' : 'Only for the years until FI: years to FI, Coast FI and the balance at your stop age. Will it last? uses market history for its returns.'}</p>
         {!taxWorked && (
           <>
