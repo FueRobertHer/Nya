@@ -138,7 +138,7 @@ async function mount() {
   };
 }
 
-const HIDDEN = 'Total Checking ••4421 is hidden. It no longer counts, on any day, earlier ones too, and its transactions are out of Activity.';
+const HIDDEN = 'Total Checking ••4421 is hidden. It’s out of every total, past days included, and its transactions are out of Activity.';
 
 describe('hiding an account from its sheet', () => {
   test('stays open on what moved, with focus on its line, though the account has left the list', async () => {
@@ -168,7 +168,7 @@ describe('hiding an account from its sheet', () => {
     expect(v.said).toEqual(['hide acc_checking', 'unhide acc_checking']);
     expect(v.listed()).toEqual(['acc_checking']);
     const line = v.doneLine()!;
-    expect(line.textContent).toContain('Undone: Total Checking ••4421 counts again, on every day.');
+    expect(line.textContent).toContain('Undone: Total Checking ••4421 is back in every total, past days included.');
     expect(dom.document.activeElement).toBe(line);
     expect(v.button('Undo')).toBeNull();
     expect(v.dialog()!.textContent).not.toContain('Unhide brings it back');
@@ -189,6 +189,21 @@ describe('hiding an account from its sheet', () => {
     expect(v.footer()!.firstChild).toBe(note);
     expect(v.button('Hide')!.getAttribute('aria-describedby')).toBe(note.getAttribute('id'));
     expect(v.footButtons()).toEqual(['Hide', 'Mark as closed…']);
+    v.unmount();
+  });
+
+  test('closed after a refused Hide and opened again: nothing said from before', async () => {
+    const v = await mount();
+    v.answers.hide = async () => 'That account is not currently available to hide';
+    await v.press('Hide');
+    expect(v.footNote()).not.toBeNull();
+    const close = v.dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('aria-label') === 'Close')[0]!;
+    act(() => click(close));
+    await pass(20);
+    expect(v.dialog()).toBeNull();
+    await v.openAgain();
+    expect(v.footNote()).toBeNull();
+    expect(v.button('Hide')!.getAttribute('aria-describedby')).toBeNull();
     v.unmount();
   });
 

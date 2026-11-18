@@ -12,9 +12,11 @@
 // acts here (docs/design/guidelines.md#after-save): the account leaves the
 // list behind, and Unhide is far away under Hidden, so the sheet stays open
 // on a done notice that says what moved, with an Undo. Undo unhides it,
-// which puts back exactly what was there: hiding only adds the account to
+// which puts back exactly what the person had: hiding adds the account to
 // the hidden set (app/api/hidden-accounts), and an account on the list has
-// no entry there, under any of its ids.
+// no entry there, under any of its ids. What hiding clears beside it is
+// worked out again from the accounts (the caches, and the backfill of past
+// days, which a hide may start and an Undo leaves done).
 
 import { useEffect, useId, useRef, useState } from 'react';
 import AccountSparkline from './AccountSparkline';
@@ -206,18 +208,19 @@ export default function AccountSheet({
   const [undoError, setUndoError] = useState('');
   const doneLine = useRef<HTMLDivElement>(null);
   const id = useId();
-  // Opened again: on the account, nothing said from before.
+  // Opened again: on the account, nothing said from before, a refused Hide
+  // included (it leaves `hid` empty), whichever account it is now.
   const [wasOpen, setWasOpen] = useState(open);
   if (open !== wasOpen) {
     setWasOpen(open);
-    if (open && hid?.closed) {
+    if (open && (!hid || hid.closed)) {
       setHid(null);
       setHideError('');
       setUndoError('');
     }
   }
   // Each time it says something new (hidden, then undone), focus goes to
-  // the line; a refused Undo keeps it on Undo, which its words describe.
+  // the line; a refused Undo is said beside Undo, as an alert.
   const [said, setSaid] = useState(0);
   useEffect(() => {
     if (said > 0) doneLine.current?.focus();
@@ -258,7 +261,7 @@ export default function AccountSheet({
       >
         <div className="stack">
           <Notice level="done" role="status" ref={doneLine} tabIndex={-1}>
-            {undone ? `Undone: ${h.label} counts again, on every day.` : `${h.label} is hidden. It no longer counts, on any day, earlier ones too, and its transactions are out of Activity.`}
+            {undone ? `Undone: ${h.label} is back in every total, past days included.` : `${h.label} is hidden. It’s out of every total, past days included, and its transactions are out of Activity.`}
           </Notice>
           {!undone && (
             // In a row of its own: a .stack would stretch the button to its width.
