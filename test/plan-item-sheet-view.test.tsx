@@ -9,7 +9,7 @@ import { planPage } from './plan-page';
 
 const page = await planPage();
 const { dom, PLAN, WITH_BALANCES, settle, rest, seedPlan, seedCopy, stored, writes, classOf, render, press, button, fill, field, pick, choice, addTemplate, openCopy } = page;
-const { ITEM_TEMPLATES, templateHelp } = await import('@/components/plan-items');
+const { BREAK_HELP, ITEM_TEMPLATES, templateHelp } = await import('@/components/plan-items');
 const { itemFromExpense, itemFromIncome } = await import('@/lib/fire/items');
 type PlanItem = import('@/lib/fire/items').PlanItem;
 type FirePlanV2 = import('@/lib/fire/plan-v2').FirePlanV2;
@@ -39,37 +39,31 @@ const removeRow = (sheet: { findAll: (p: (e: { tagName: string; textContent: str
 
 describe('each template', () => {
   const FIELDS: Record<string, string[]> = {
-    home: ['Name', 'Paid from your investments', 'Change in yearly spending from then'],
-    child: ['Name', 'More spending a year'],
-    car: ['Name', 'Paid from your investments, each'],
-    'loan-end': ['Name', 'Spending less a year'],
-    spending: ['Name', 'Change a year'],
     cost: ['Name', 'The amount'],
-    'social-security': ['Name', 'A year'],
-    pension: ['Name', 'A year'],
+    spending: ['Name', 'By, a year'],
+    home: ['Name', 'Paid from your investments', 'Change in yearly spending from then'],
+    income: ['Name', 'A year'],
     windfall: ['Name', 'Amount, after tax'],
-    'other-income': ['Name', 'A year'],
     pay: ['Name', 'By, a year'],
     'part-time': ['Name', 'A year', 'The take-home it replaces, a year'],
-    'career-break': ['Name', 'Saved less a year'],
   };
 
-  test('13 of them, each with its own helper, its fields, its name filled in and nothing else, and whether it has an end', async () => {
+  test('7 of them, each with its own helper, its fields, its name filled in and nothing else, and whether it has an end', async () => {
     await seedPlan({ ...PLAN, items: [ROOF] });
     const tab = await render();
-    expect(ITEM_TEMPLATES.length).toBe(13);
+    expect(ITEM_TEMPLATES.length).toBe(7);
     for (const t of ITEM_TEMPLATES) {
       const sheet = await addTemplate(tab, t.label);
       expect([t.id, sheet.getAttribute('aria-label')]).toEqual([t.id, t.label]);
-      expect(sheet.textContent).toContain(templateHelp(t.id)!);
+      expect(sheet.textContent).toContain((templateHelp(t.id) ?? templateHelp(t.kind))!);
       expect(sheet.textContent).toContain('Your own figures: Nya suggests none.');
       // The age field under Starts follows them.
       expect([t.id, labelsIn(sheet)]).toEqual([t.id, [...FIELDS[t.id], 'Starts at age']]);
       expect(field(sheet, 'Name')?.value).toBe(t.name);
       const inputs = sheet.findAll((e) => e.tagName === 'INPUT' && e.getAttribute('type') === 'number');
       expect([t.id, inputs.map((e) => e.value).join('')]).toEqual([t.id, '']);
-      // Once-only kinds and a loan paid off have no Ends.
-      const noEnd = ['car', 'cost', 'windfall', 'loan-end', 'home'].includes(t.id);
+      // Once-only kinds have no Ends, nor a home until it changes spending.
+      const noEnd = ['cost', 'windfall', 'home'].includes(t.id);
       expect([t.id, tab.sheetRow('Ends') === null]).toEqual([t.id, noEnd]);
       await press(button(sheet, 'Add to your plan') && sheet.findAll((e) => e.getAttribute('aria-label') === 'Close')[0]);
       await settle(400);
@@ -77,10 +71,53 @@ describe('each template', () => {
     await tab.unmount();
   }, 60_000);
 
+  test('Income asks what it is: the helper and a name it gave follow the pick, a typed name stays, and it saves as that kind', async () => {
+    await seedPlan({ ...PLAN, items: [ROOF] });
+    const tab = await render();
+    const sheet = await addTemplate(tab, 'Income');
+    expect(choice(sheet, 'Social Security')?.findAll((e) => e.tagName === 'INPUT')[0].checked).toBe(true);
+    expect(sheet.textContent).toContain('as your statement gives it');
+    await pick(sheet, 'A pension');
+    expect(field(tab.dialog()!, 'Name')?.value).toBe('A pension');
+    expect(tab.dialog()!.textContent).toContain(templateHelp('pension')!);
+    await fill(tab.dialog()!, 'Name', 'Rent from the flat');
+    await pick(tab.dialog()!, 'Other income');
+    expect(field(tab.dialog()!, 'Name')?.value).toBe('Rent from the flat');
+    await pick(tab.dialog()!, 'A pension');
+    await fill(tab.dialog()!, 'A year', '12000');
+    await fill(tab.dialog()!, 'Starts at age', '65');
+    await press(button(tab.dialog(), 'Add to your plan'));
+    await settle(400);
+    const added = (await stored()).byName['First plan'].plan.items.find((x: PlanItem) => x.label === 'Rent from the flat');
+    expect([added?.kind, added?.yearly, added?.beforeTax]).toEqual(['pension', 12_000, true]);
+    await tab.unmount();
+  }, 30_000);
+
+  test('A change in pay, less: a line on what a break is, and it saves as pay down for its years', async () => {
+    await seedPlan({ ...PLAN, items: [ROOF] });
+    const tab = await render();
+    const sheet = await addTemplate(tab, 'A change in pay');
+    expect(sheet.textContent).not.toContain(BREAK_HELP);
+    await pick(sheet, 'Less');
+    expect(tab.dialog()!.textContent).toContain(BREAK_HELP);
+    await fill(tab.dialog()!, 'Name', 'A career break');
+    await fill(tab.dialog()!, 'By, a year', '30000');
+    await fill(tab.dialog()!, 'Starts at age', '45');
+    await press(tab.sheetRow('Ends'));
+    await pick(tab.dialog()!, 'After some years');
+    await fill(tab.dialog()!, 'For how many years', '2');
+    await press(button(tab.dialog(), 'Done'));
+    await press(button(tab.dialog(), 'Add to your plan'));
+    await settle(400);
+    const added = (await stored()).byName['First plan'].plan.items.find((x: PlanItem) => x.label === 'A career break');
+    expect([added?.kind, added?.yearly, added?.until]).toEqual(['pay', -30_000, { years: 2 }]);
+    await tab.unmount();
+  }, 30_000);
+
   test('no Whose without a partner; income is before or after tax, before first', async () => {
     await seedPlan({ ...PLAN, items: [ROOF] });
     const tab = await render();
-    const sheet = await addTemplate(tab, 'A pension');
+    const sheet = await addTemplate(tab, 'Income');
     expect(sheet.textContent).not.toContain('Whose');
     expect(choice(sheet, 'Before tax')?.getAttribute('aria-checked')).toBe('true');
     await tab.unmount();
@@ -89,7 +126,7 @@ describe('each template', () => {
   test('Whose with a partner set, and its age follows', async () => {
     await seedPlan({ ...PLAN, partnerAge: 38, items: [ROOF] });
     const tab = await render();
-    const sheet = await addTemplate(tab, 'A pension');
+    const sheet = await addTemplate(tab, 'Income');
     expect(sheet.textContent).toContain('Whose');
     await pick(sheet, 'Your partner');
     expect(field(sheet, 'Starts at your partner’s age')).not.toBeNull();
@@ -97,12 +134,63 @@ describe('each template', () => {
   }, 30_000);
 });
 
+describe('kinds with no row of their own', () => {
+  const CAR = mk('car', 'car', at(44), { label: 'New car', once: 30_000, times: 1 });
+  const CHILD = mk('kid', 'child', at(43), { label: 'Maya', yearly: 9_000, until: { years: 18 } });
+  const LOAN = mk('loan', 'loan-end', at(45), { label: 'Car loan paid off', yearly: 6_000 });
+  const BREAK = mk('brk', 'pay', at(44), { label: 'Sabbatical', yearly: -40_000, until: { years: 2 } });
+  const PENSION = mk('pen', 'pension', at(65), { label: 'Teacher pension', yearly: 12_000, inflationAdjusted: false, beforeTax: true });
+  const cases: [PlanItem, string, string[]][] = [
+    [CAR, 'cost', ['Name', 'Paid from your investments, each']],
+    [CHILD, 'spending', ['Name', 'More spending a year']],
+    [LOAN, 'spending', ['Name', 'Spending less a year']],
+    [BREAK, 'pay', ['Name', 'By, a year']],
+    [PENSION, 'income', ['Name', 'A year']],
+  ];
+
+  test('each opens in the row that took its place, with its own fields, and saves back as it was', async () => {
+    await seedPlan({ ...PLAN, items: [ROOF, ...cases.map(([x]) => x)] });
+    const tab = await render();
+    for (const [x, template, labels] of cases) {
+      await press(tab.row(x.label));
+      const sheet = tab.dialog()!;
+      expect([x.id, sheet.textContent.includes((templateHelp(template) ?? templateHelp(x.kind))!)]).toEqual([x.id, true]);
+      expect([x.id, labelsIn(sheet)]).toEqual([x.id, [...labels, 'Starts at age']]);
+      // Income says which kind it is.
+      if (template === 'income') expect(choice(sheet, 'A pension')?.findAll((e) => e.tagName === 'INPUT')[0].checked).toBe(true);
+      await fill(sheet, 'Name', `${x.label}, renamed`);
+      await press(button(tab.dialog(), 'Save'));
+      await settle(400);
+      const saved = (await stored()).byName['First plan'].plan.items.find((y: PlanItem) => y.id === x.id);
+      expect(saved).toEqual({ ...x, label: `${x.label}, renamed` });
+    }
+    await tab.unmount();
+  }, 60_000);
+
+  test('a break opens on Less, with its line; a child keeps an end and a loan paid off has none', async () => {
+    await seedPlan({ ...PLAN, items: [ROOF, CHILD, LOAN, BREAK] });
+    const tab = await render();
+    await press(tab.row('Sabbatical'));
+    expect(choice(tab.dialog()!, 'Less')?.getAttribute('aria-checked')).toBe('true');
+    expect(tab.dialog()!.textContent).toContain(BREAK_HELP);
+    await press(button(tab.dialog(), 'Cancel'));
+    await press(tab.row('Maya'));
+    await press(tab.sheetRow('Ends'));
+    expect(tab.dialog()!.textContent).not.toContain('For good');
+    await press(button(tab.dialog(), 'Done'));
+    await press(button(tab.dialog(), 'Cancel'));
+    await press(tab.row('Car loan paid off'));
+    expect(tab.sheetRow('Ends')).toBeNull();
+    await tab.unmount();
+  }, 40_000);
+});
+
 describe('Starts and Ends', () => {
   test('a level with back named, its choices by kind, the picked one’s fields under it, and back keeps what was typed', async () => {
     await seedPlan({ ...PLAN, items: [ROOF] });
     const tab = await render();
     const sheet = await addTemplate(tab, 'A change in spending');
-    await fill(sheet, 'Change a year', '4000');
+    await fill(sheet, 'By, a year', '4000');
     await press(tab.sheetRow('Starts'));
     const level = tab.dialog()!;
     expect(level.getAttribute('aria-label')).toBe('Starts');
@@ -121,7 +209,7 @@ describe('Starts and Ends', () => {
     // Focus back on the row that opened it.
     expect(dom.document.activeElement).toBe(tab.sheetRow('Starts')!);
     expect(tab.sheetRow('Starts')!.textContent).toContain('When invested assets reach $700,000');
-    expect(field(tab.dialog()!, 'Change a year')?.value).toBe('4000');
+    expect(field(tab.dialog()!, 'By, a year')?.value).toBe('4000');
     // Ends: the same, with For good and after some years.
     await press(tab.sheetRow('Ends'));
     expect(tab.dialog()!.textContent).toContain('For good');
@@ -137,12 +225,12 @@ describe('Starts and Ends', () => {
     await tab.unmount();
   }, 30_000);
 
-  test('part-time work and a child always end; When you stop is off with no stop, and the legend says why', async () => {
+  test('part-time work always ends; When you stop is off with no stop, and the legend says why', async () => {
     await seedPlan({ ...PLAN, targetAge: null, items: [ROOF] });
     const tab = await render();
     await addTemplate(tab, 'Part-time work');
     await press(tab.sheetRow('Ends'));
-    let level = tab.dialog()!;
+    const level = tab.dialog()!;
     expect(level.textContent).not.toContain('For good');
     expect(level.textContent).toContain('Set when you stop in Household first.');
     const off = choice(level, 'When you stop')!.findAll((e) => e.tagName === 'INPUT')[0];
@@ -151,11 +239,6 @@ describe('Starts and Ends', () => {
     const describedBy = fieldset.getAttribute('aria-describedby');
     expect(level.findAll((e) => e.getAttribute('id') === describedBy)[0]?.textContent).toContain('Set when you stop in Household first.');
     await press(button(level, 'Done'));
-    await press(level.findAll((e) => e.getAttribute('aria-label') === 'Back to Add to your Timeline')[0]);
-    await press(tab.sheetRow('A child'));
-    await press(tab.sheetRow('Ends'));
-    level = tab.dialog()!;
-    expect(level.textContent).not.toContain('For good');
     await tab.unmount();
   }, 30_000);
 
@@ -176,7 +259,7 @@ describe('what is possible', () => {
     await seedPlan({ ...PLAN, items: [ROOF] });
     const tab = await render();
     const sheet = await addTemplate(tab, 'A change in spending');
-    await fill(sheet, 'Change a year', '4000');
+    await fill(sheet, 'By, a year', '4000');
     await press(tab.sheetRow('Starts'));
     await pick(tab.dialog()!, 'When invested assets reach');
     await fill(tab.dialog()!, 'Invested assets', '700000');
@@ -194,7 +277,7 @@ describe('what is possible', () => {
     await seedPlan({ ...PLAN, start: 'at-stop', items: [ROOF] });
     const tab = await render(WITH_BALANCES);
     const sheet = await addTemplate(tab, 'A change in spending');
-    await fill(sheet, 'Change a year', '4000');
+    await fill(sheet, 'By, a year', '4000');
     await press(tab.sheetRow('Starts'));
     await pick(tab.dialog()!, 'When invested assets reach');
     await fill(tab.dialog()!, 'Invested assets', '5000000');
@@ -347,7 +430,7 @@ describe('what it refuses', () => {
     await seedPlan({ ...PLAN, items: [ROOF] });
     const tab = await render();
     const sheet = await addTemplate(tab, 'A change in spending');
-    await fill(sheet, 'Change a year', '50000');
+    await fill(sheet, 'By, a year', '50000');
     await pick(sheet, 'Less');
     await fill(sheet, 'Starts at age', '45');
     await press(button(sheet, 'Add to your plan'));
@@ -368,7 +451,7 @@ describe('a refused plan', () => {
     expect(tab.row('Mortgage paid off')).not.toBeNull();
     // Fixed a step at a time, from there.
     await press(tab.row('Mortgage paid off'));
-    await fill(tab.dialog()!, 'Change a year', '10000');
+    await fill(tab.dialog()!, 'By, a year', '10000');
     await press(button(tab.dialog(), 'Save'));
     await settle(400);
     expect(writes()).toEqual(['PUT /api/fire-plan']);
@@ -382,7 +465,7 @@ describe('a refused plan', () => {
     const tab = await render();
     await openCopy(tab, 'Mortgage gone');
     await press(tab.row('Less too'));
-    await fill(tab.dialog()!, 'Change a year', '20000');
+    await fill(tab.dialog()!, 'By, a year', '20000');
     await press(button(tab.dialog(), 'Save'));
     await settle(400);
     expect(writes()).toEqual(['PUT /api/plans']);
@@ -441,7 +524,7 @@ describe('an item there', () => {
     const sheet = tab.dialog()!;
     const rows = sheet.findAll((e) => e.tagName === 'LABEL' && classOf(e).includes('check-row'));
     expect(rows.map((r) => r.findAll((e) => classOf(e).includes('check-row-title'))[0]?.textContent)).toEqual(['Lean', 'Same']);
-    await fill(sheet, 'Change a year', '20000');
+    await fill(sheet, 'By, a year', '20000');
     const box = rows[0].findAll((e) => e.tagName === 'INPUT')[0];
     await page.act(async () => {
       box.checked = true;

@@ -173,7 +173,7 @@ export function Sheet({
   /** Shows a back arrow before the title (a second level inside the drawer). */
   onBack?: () => void;
   /** The back arrow's name, where "Back" alone wouldn't say to what ("Back
-   *  to Buy a car"). */
+   *  to Add to your Timeline"). */
   backLabel?: string;
   /** Which level is shown, for a sheet with more than one inside it (a
    *  budget's: its rollover, then the reset under that), so a step from one

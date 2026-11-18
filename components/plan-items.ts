@@ -34,66 +34,94 @@ export const TEMPLATE_GROUPS: readonly { id: TemplateGroup; name: string }[] = [
   { id: 'work', name: 'Work' },
 ];
 
+/** One of the kinds a template's sheet asks between ("What it is"): a kind
+ *  that is taxed its own way. */
+export type KindChoice = { kind: ItemKind; name: string; note: string };
+
 export type ItemTemplate = {
   id: string;
   group: TemplateGroup;
+  /** The kind a new item takes: the first of `kinds` when it asks. */
   kind: ItemKind;
   /** Add's row, the chip and the sheet's title. */
   label: string;
+  /** Add's line under the row: what it covers. */
+  sub: string;
   /** The item's name, as the form starts it. */
   name: string;
-  /** A career break: pay down, for some years. */
-  less?: true;
+  /** The kinds its sheet asks between, each with the name the form takes
+   *  while the person hasn't typed their own. */
+  kinds?: readonly KindChoice[];
 };
 
-/** Add to your Timeline's 13 templates (timeline.md), in their groups'
- *  order. A template fills in nothing but the item's name and its kind's
- *  direction: every amount, age and length is the person's own. */
-export const ITEM_TEMPLATES: readonly ItemTemplate[] = [
-  { id: 'home', group: 'out', kind: 'home', label: 'Buy a home', name: 'Buying a home' },
-  { id: 'child', group: 'out', kind: 'child', label: 'A child', name: 'A child' },
-  { id: 'car', group: 'out', kind: 'car', label: 'Buy a car', name: 'A car' },
-  { id: 'loan-end', group: 'out', kind: 'loan-end', label: 'Pay off a loan', name: 'A loan paid off' },
-  { id: 'spending', group: 'out', kind: 'spending', label: 'A change in spending', name: 'A change in spending' },
-  { id: 'cost', group: 'out', kind: 'one-off', label: 'A cost', name: 'A cost' },
-  { id: 'social-security', group: 'in', kind: 'social-security', label: 'Social Security', name: 'Social Security' },
-  { id: 'pension', group: 'in', kind: 'pension', label: 'A pension', name: 'A pension' },
-  { id: 'windfall', group: 'in', kind: 'windfall', label: 'A windfall', name: 'A windfall' },
-  { id: 'other-income', group: 'in', kind: 'other-income', label: 'Other income', name: 'Other income' },
-  { id: 'pay', group: 'work', kind: 'pay', label: 'A change in pay', name: 'A change in pay' },
-  { id: 'part-time', group: 'work', kind: 'part-time', label: 'Part-time work', name: 'Part-time work' },
-  { id: 'career-break', group: 'work', kind: 'pay', label: 'A career break', name: 'A career break', less: true },
+/** Income's kinds: taxed apart (Social Security in part, the rest in full),
+ *  so the sheet asks which. */
+export const INCOME_CHOICES: readonly KindChoice[] = [
+  { kind: 'social-security', name: 'Social Security', note: 'As your statement gives it' },
+  { kind: 'pension', name: 'A pension', note: 'From a job you had' },
+  { kind: 'other-income', name: 'Other income', note: 'Rent, a business, an annuity' },
 ];
 
-/** The empty Timeline's five chips, the rest in Add. */
-export const CHIP_TEMPLATES: readonly ItemTemplate[] = ['social-security', 'part-time', 'home', 'child', 'cost'].map((id) => ITEM_TEMPLATES.find((t) => t.id === id)!);
+/** Add to your Timeline's 7 templates (timeline.md), in their groups'
+ *  order. A template fills in nothing but the item's name and its kind's
+ *  direction: every amount, age and length is the person's own. A car, a
+ *  child, a loan paid off and a career break have no row of their own: they
+ *  are a cost, a change in spending and a change in pay. */
+export const ITEM_TEMPLATES: readonly ItemTemplate[] = [
+  { id: 'cost', group: 'out', kind: 'one-off', label: 'A cost', sub: 'Once or every few years: a car, a roof, a wedding', name: 'A cost' },
+  { id: 'spending', group: 'out', kind: 'spending', label: 'A change in spending', sub: 'More or less a year: a child, a loan paid off, travel', name: 'A change in spending' },
+  { id: 'home', group: 'out', kind: 'home', label: 'Buy a home', sub: 'A down payment, then what you spend from then', name: 'Buying a home' },
+  { id: 'income', group: 'in', kind: 'social-security', label: 'Income', sub: 'A year: Social Security, a pension, rent', name: 'Social Security', kinds: INCOME_CHOICES },
+  { id: 'windfall', group: 'in', kind: 'windfall', label: 'A windfall', sub: 'Once: an inheritance, a sale', name: 'A windfall' },
+  { id: 'pay', group: 'work', kind: 'pay', label: 'A change in pay', sub: 'A raise, a pay cut or a break', name: 'A change in pay' },
+  { id: 'part-time', group: 'work', kind: 'part-time', label: 'Part-time work', sub: 'In place of your job, or after you stop', name: 'Part-time work' },
+];
 
-/** The template an item there is shown with: its kind's, a career break for
- *  pay down for some years. */
+/** The empty Timeline's four chips, the rest in Add. */
+export const CHIP_TEMPLATES: readonly ItemTemplate[] = ['income', 'part-time', 'home', 'cost'].map((id) => ITEM_TEMPLATES.find((t) => t.id === id)!);
+
+/** The template each kind is shown with. Kinds no row makes any more (a car,
+ *  a child, a loan paid off) open in the row that took their place and keep
+ *  their kind. */
+const TEMPLATE_FOR: Record<ItemKind, string> = {
+  'one-off': 'cost',
+  car: 'cost',
+  spending: 'spending',
+  child: 'spending',
+  'loan-end': 'spending',
+  home: 'home',
+  'social-security': 'income',
+  pension: 'income',
+  'other-income': 'income',
+  windfall: 'windfall',
+  pay: 'pay',
+  'part-time': 'part-time',
+};
+
+/** The template an item there is shown with. */
 export function templateOf(x: PlanItem): ItemTemplate {
-  if (x.kind === 'pay' && x.yearly !== null && x.yearly < 0 && x.until !== null) return ITEM_TEMPLATES.find((t) => t.id === 'career-break')!;
-  return ITEM_TEMPLATES.find((t) => t.kind === x.kind && !t.less)!;
+  return ITEM_TEMPLATES.find((t) => t.id === TEMPLATE_FOR[x.kind])!;
 }
 
-/** Each template's helper in the item sheet: today's words for its kind
- *  (the income and one-off sheets', and the life events' notes), with what
- *  E1 made false rewritten (part-time work counts before the stop once it
- *  says what it replaces, and its amount may be before tax). */
+/** The helper in the item sheet: its template's, else its kind's (Income
+ *  says the picked kind's). Today's words for each kind (the income and
+ *  one-off sheets', and the life events' notes), with what E1 made false
+ *  rewritten (part-time work counts before the stop once it says what it
+ *  replaces, and its amount may be before tax). */
 export const TEMPLATE_HELP: Record<string, string> = {
+  cost: 'A one-off from your investments, once or every few years: a car, a roof, a wedding, tuition. In today’s money, after tax. For a car, count only what comes from your investments: a car loan’s payments are already in your measured spending. Counted in Will it last? from where it starts, and in your FI date before then.',
+  spending: 'How much more or less you would spend a year, for some years or for good: a child, travel, care for a parent, or a loan you will pay off, whose payments are in your measured spending until then. It changes what you save in its years too. A change for good that is already in effect when you stop working is part of your spending in retirement, and so of your FI number. Typing the plan’s own annual spending instead changes the FI number the same way, but leaves what you save as it is.',
   home: 'What you pay from your investments when you buy (0 if the down payment comes from cash the plan doesn’t count), and how your yearly spending changes from then: the mortgage, taxes and upkeep, less the rent you stop paying. A change for good that is already in effect when you stop working is part of your spending in retirement, and so of your FI number.',
-  child: 'How much more you would spend a year, and for how many years.',
-  car: 'What you pay from your investments for each car when you buy it, once or every few years. Payments on a car loan are already in your measured spending, so count only what comes from your investments, never a loan’s payments.',
-  'loan-end': 'How much less you would spend a year, for good, once a loan is paid off: its payments, which are in your measured spending until then. You save that much more from then until FI. Paid off by the time you stop, it is part of your spending in retirement, and so of your FI number.',
-  spending: 'How much more (or less) you would spend a year, for some years or for good: travel, a hobby, care for a parent. It changes what you save in its years too. A change for good that is already in effect when you stop working is part of your spending in retirement, and so of your FI number. Typing the plan’s own annual spending instead changes the FI number the same way, but leaves what you save as it is.',
-  cost: 'A one-off from your investments, once or every few years: a roof, a wedding, tuition. In today’s money, after tax. Counted in Will it last? from where it starts, and in your FI date before then.',
   'social-security': 'A year, from the age it starts, as your statement gives it. Counted in Will it last? from where it starts, and in your FI date before then.',
   pension: 'A year, from the age it starts. Counted in Will it last? from where it starts, and in your FI date before then.',
-  windfall: 'Money that comes in once (an inheritance, a sale), after tax, added to your investments at that age. From where Will it last? starts, it takes it as money in that year.',
   'other-income': 'Money in a year from anything but your job: rent from a property, a business, an annuity. Counted in Will it last? from where it starts, and in your FI date before then.',
-  pay: 'Your own take-home pay, up or down: a raise, a pay cut, a new job. It moves your FI date and what you’d have when you stop: it never changes your spending in retirement, or your FI number.',
+  windfall: 'Money that comes in once (an inheritance, a sale), after tax, added to your investments at that age. From where Will it last? starts, it takes it as money in that year.',
+  pay: 'Your own take-home pay, up or down: a raise, a pay cut, a new job, or a break for some years. It moves your FI date and what you’d have when you stop: it never changes your spending in retirement, or your FI number.',
   'part-time': 'Work in place of your job, or after you stop. Started before you stop, it also asks the take-home it replaces, so it counts in your FI date. The FI card’s Barista FI uses your plan’s own part-time income, not this.',
-  'career-break': 'How much less you would save each year of it: what you would have saved, plus anything you would spend from savings. It moves your FI date; once you have stopped working it changes nothing.',
 };
+
+/** What a break's amount is, under pay's when it is less. */
+export const BREAK_HELP = 'For a break, what you would have saved each year of it, plus anything you would spend from savings, and its years under Ends. Once you have stopped working it changes nothing.';
 
 const years = (n: number) => `${n} year${n === 1 ? '' : 's'}`;
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -524,8 +552,9 @@ export function copyNameFor(template: ItemTemplate, x: PlanItem, plan: Facts, ot
   const a = x.from.anchor;
   const n = Math.abs(x.from.offset);
   const dir = x.from.offset < 0 ? 'before' : 'after';
-  // The item's own name, once it has one: the template's says what it is.
-  const what = x.label !== template.name ? x.label : template.label;
+  // The item's own name, once it has one: the template's says what it is,
+  // unless it asks between kinds, whose names already say it.
+  const what = x.label !== template.name || template.kinds ? x.label : template.label;
   let when: string;
   // Too long with the years, "before you stop" says enough.
   const by = (where: string) => (x.from.offset === 0 ? `when ${where === 'FI' ? 'you reach FI' : where}` : `${what} ${years(n)} ${dir} ${where}`.length <= SCENARIO_NAME_MAX ? `${years(n)} ${dir} ${where}` : `${dir} ${where}`);

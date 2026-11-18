@@ -180,12 +180,12 @@ describe('a row’s notes', () => {
 });
 
 describe('the empty state', () => {
-  test('its title, line, five chips and Add; in a copy its line says so', () => {
+  test('its title, line, four chips and Add; in a copy its line says so', () => {
     const html = card(PLAN);
     const t = text(html);
     expect(html).toContain('Nothing on your Timeline yet</h4>');
     expect(t).toContain('Add what you expect, or try it in a copy:');
-    expect([...html.matchAll(/class="chip"[^>]*>([^<]+)</g)].map((m) => m[1])).toEqual(['Social Security', 'Part-time work', 'Buy a home', 'A child', 'A cost']);
+    expect([...html.matchAll(/class="chip"[^>]*>([^<]+)</g)].map((m) => m[1])).toEqual(['Income', 'Part-time work', 'Buy a home', 'A cost']);
     expect(text(card(PLAN, { copyName: 'Stop at 52' }))).toContain('Add what you expect to this copy:');
   });
 
@@ -395,11 +395,11 @@ describe('where focus goes', () => {
     const add = button(tab.timeline(), 'Add')!;
     await page.act(async () => add.focus());
     await press(add);
-    await press(tab.sheetRow('Buy a car'));
+    await press(tab.sheetRow('A change in spending'));
     const back = tab.dialog()!.findAll((e) => e.getAttribute('aria-label') === 'Back to Add to your Timeline');
     expect(back.length).toBe(1);
     await press(back[0]);
-    expect(dom.document.activeElement).toBe(tab.sheetRow('Buy a car')!);
+    expect(dom.document.activeElement).toBe(tab.sheetRow('A change in spending')!);
     await press(closeOf(tab.dialog()!));
     await settle(400);
     expect(dom.document.activeElement).toBe(add);

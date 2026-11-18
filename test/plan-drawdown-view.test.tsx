@@ -184,7 +184,7 @@ describe('while what a plan’s years rest on is out', () => {
     await holding('/api/allocation-settings', async (letGo) => {
       const tab = await render({ ...WITH_BALANCES, ...(props as object) });
       const sheet = await page.addTemplate(tab, 'A change in spending');
-      await page.fill(sheet, 'Change a year', '4000');
+      await page.fill(sheet, 'By, a year', '4000');
       await press(tab.sheetRow('Starts'));
       await pick(tab.dialog()!, 'When invested assets reach');
       await page.fill(tab.dialog()!, 'Invested assets', '5000000');

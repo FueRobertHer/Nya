@@ -17,7 +17,7 @@ import { Segmented } from './Segmented';
 import { Masked, NO_EXAMPLE } from './HideAmounts';
 import { Notice } from './TotalCaveats';
 import { chevron, RIGHT } from './MonthStepper';
-import { ITEM_TEMPLATES, TEMPLATE_GROUPS, itemRuleText, templateHelp, type ItemTemplate, type PreviewLines } from './plan-items';
+import { BREAK_HELP, ITEM_TEMPLATES, TEMPLATE_GROUPS, itemRuleText, templateHelp, type ItemTemplate, type PreviewLines } from './plan-items';
 import { INCOME_KINDS, ONCE_KINDS, parseItem, withItem, type ItemKind, type PlanItem, type When } from '@/lib/fire/items';
 import { LIMITS } from '@/lib/fire/plan';
 import { parsePlanV2, type FirePlanV2 } from '@/lib/fire/plan-v2';
@@ -45,7 +45,8 @@ export type WhenDraft = {
 export type ItemDraft = {
   id: string;
   kind: ItemKind;
-  /** The template it is shown with (a career break is pay down). */
+  /** The template it is shown with: a car is a cost, a child or a loan paid
+   *  off a change in spending, each kind of income Income. */
   template: string;
   label: string;
   once: string;
@@ -128,7 +129,7 @@ export function draftOf(x: PlanItem | null, t: ItemTemplate): ItemDraft {
       until: ONCE_KINDS.includes(x.kind) || x.kind === 'loan-end' ? { ...EMPTY_WHEN, pick: 'good' } : whenDraft(x.until),
     };
   }
-  const end: EndPick = t.kind === 'part-time' ? 'age' : t.kind === 'child' || t.less ? 'years' : 'good';
+  const end: EndPick = t.kind === 'part-time' ? 'age' : 'good';
   return {
     id: crypto.randomUUID(),
     kind: t.kind,
@@ -136,7 +137,7 @@ export function draftOf(x: PlanItem | null, t: ItemTemplate): ItemDraft {
     label: t.name,
     once: '',
     yearly: '',
-    less: !!t.less,
+    less: false,
     replaces: '',
     repeats: false,
     every: '',
@@ -216,7 +217,7 @@ function buildItem(d: ItemDraft): PlanItem {
       break;
     case 'spending':
     case 'pay':
-      yearly = yearlyOf(d.template === 'career-break' ? 'how much less you would save a year' : 'the change a year');
+      yearly = yearlyOf('the change a year');
       break;
     default:
       yearly = need(d.yearly, 'the income a year');
@@ -342,8 +343,18 @@ export function ItemFields({
       )}
     </>
   );
+  const choices = templateById(d.template).kinds;
+  // A name the form gave follows the pick; one typed stays.
+  const pickKind = (kind: ItemKind) => {
+    const was = choices?.find((c) => c.kind === k);
+    const now = choices?.find((c) => c.kind === kind);
+    set({ kind, ...(was && now && d.label === was.name ? { label: now.name } : {}) });
+  };
   return (
     <>
+      {choices && (
+        <RadioRows legend="What it is" name="item-kind" options={choices.map((c) => ({ value: c.kind, name: c.name, note: c.note }))} value={k} onChange={(v) => pickKind(v as ItemKind)} disabled={saving} />
+      )}
       <p className="helper">
         {templateHelp(d.template) ?? templateHelp(k)} Your own figures: Nya suggests none. {where}
       </p>
@@ -377,19 +388,17 @@ export function ItemFields({
         {k === 'loan-end' && field('Spending less a year', d.yearly, (v) => set({ yearly: v }), true)}
         {k === 'spending' && (
           <>
-            {field('Change a year', d.yearly, (v) => set({ yearly: v }), true)}
-            {direction('Spending')}
+            {direction('Your spending')}
+            {field('By, a year', d.yearly, (v) => set({ yearly: v }), true)}
           </>
         )}
-        {k === 'pay' &&
-          (d.template === 'career-break' ? (
-            field('Saved less a year', d.yearly, (v) => set({ yearly: v }), true)
-          ) : (
-            <>
-              {direction('Your take-home')}
-              {field('By, a year', d.yearly, (v) => set({ yearly: v }), true)}
-            </>
-          ))}
+        {k === 'pay' && (
+          <>
+            {direction('Your take-home')}
+            {field('By, a year', d.yearly, (v) => set({ yearly: v }), true)}
+            {d.less && <p className="helper">{BREAK_HELP}</p>}
+          </>
+        )}
         {income && (
           <>
             {field('A year', d.yearly, (v) => set({ yearly: v }), true)}
@@ -607,6 +616,7 @@ export function TemplateList({ onPick, disabled, refFor }: { onPick: (t: ItemTem
                 <button type="button" className="list-row" ref={refFor?.(t.id)} onClick={() => !disabled && onPick(t)} aria-disabled={disabled || undefined}>
                   <span className="list-row-text">
                     <span className="list-row-title">{t.label}</span>
+                    <span className="list-row-sub">{t.sub}</span>
                   </span>
                   {chevron(RIGHT)}
                 </button>
