@@ -12,10 +12,13 @@
 // currency alone: app/api/manual-accounts); the balance they typed never
 // changes its number. Beside a corrected account, the offer to move the
 // transactions typed on it too, with the server's count and the plain words
-// that it has no undo (RelabelOffer); once saved, the sheet says what moved.
+// that it has no undo (RelabelOffer); once saved, the sheet says what moved,
+// on a done notice with focus on it (docs/design/guidelines.md#after-save).
+// Saved with no account corrected, it closes: the totals behind show the
+// choice. A correction shows nowhere behind, so it is said there too.
 
-import { useEffect, useState } from 'react';
-import { Sheet } from './Sheet';
+import { useEffect, useId, useRef, useState } from 'react';
+import { Sheet, SheetFooter } from './Sheet';
 import { currencyName, errorOf, everyCurrency, useCurrencySettings, useRelabelCount, type CurrencySettingsView, type RelabelCount } from './currency-state';
 import { CORRECTION_KEEPS, RELABEL_KEEPS, relabelKeptText, relabelText, relabelUndoText, relabelledText } from './currency-text';
 import { Notice } from './TotalCaveats';
@@ -169,7 +172,8 @@ export default function CurrencyChoiceSheet({ open, onClose, title = 'Show your 
           return;
         }
         changed = true;
-        if (moves[m.account_id]) {
+        if (!moves[m.account_id]) done.push({ name: '', text: `${m.name} is counted in ${to} now.` });
+        else {
           const r = (await res.json().catch(() => null))?.relabelled;
           if (typeof r?.moved === 'number' && typeof r?.kept === 'number') done.push({ name: m.name, text: relabelledText(r, m.currency, to) });
         }
@@ -183,7 +187,7 @@ export default function CurrencyChoiceSheet({ open, onClose, title = 'Show your 
       }
       changed = false;
       onSaved(chosen);
-      // What the moves did, said before the sheet closes.
+      // What the corrections and moves did, said before the sheet closes.
       if (done.length > 0) setMoved(done);
       else onClose();
     } catch {
@@ -220,20 +224,31 @@ export default function CurrencyChoiceSheet({ open, onClose, title = 'Show your 
   );
 }
 
-/** Saved: what moving each account's typed transactions did. */
+/** Saved: what correcting each account, and moving its typed transactions,
+ *  did (an entry with no name says its account itself), on a done
+ *  notice that takes focus as it is drawn. No Undo: a move has none, as the
+ *  offer said before it was ticked (RelabelOffer). */
 export function MovedBody({ moved, onClose }: { moved: readonly Moved[]; onClose: () => void }) {
+  const line = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    line.current?.focus();
+  }, []);
   return (
-    <div className="sheet-form">
-      <p className="panel-note">Saved.</p>
-      {moved.map((m) => (
-        <p key={m.name} className="panel-note">
-          {moved.length === 1 ? m.text : `${m.name}: ${m.text}`}
-        </p>
-      ))}
-      <div className="button-pair">
-        <button onClick={onClose}>Done</button>
-      </div>
-    </div>
+    <>
+      <Notice level="done" role="status" ref={line} tabIndex={-1}>
+        <span className="stack tight">
+          <span>Saved.</span>
+          {moved.map((m) => (
+            <span key={m.name || m.text}>{moved.length === 1 || !m.name ? m.text : `${m.name}: ${m.text}`}</span>
+          ))}
+        </span>
+      </Notice>
+      <SheetFooter>
+        <button type="button" className="btn" onClick={onClose}>
+          Done
+        </button>
+      </SheetFooter>
+    </>
   );
 }
 
@@ -292,6 +307,10 @@ export function CurrencyChoiceBody({
   const fixing = accounts.some((m, i) => m.currency !== manual[i].currency);
   const option = optionOf;
   const said = manualText(accounts, chosen);
+  // What the footer says beside Save: why it can't, and what went wrong.
+  const id = useId();
+  const current = same && !fixing;
+  const described = [current && `${id}-current`, error && `${id}-error`].filter(Boolean).join(' ') || undefined;
   return (
     <div className="sheet-form currency-choice">
       <label className="field">
@@ -358,21 +377,27 @@ export function CurrencyChoiceBody({
         <p className="stale-note">Nya doesn’t have the ECB’s rates yet, so nothing in another currency can be converted until it has fetched them (it does each evening).</p>
       )}
       {view?.problem && <p className="stale-note">Your currency settings couldn’t be read, so nothing can be saved over them. See the Currency card in Settings, Preferences.</p>}
-      <div className="button-pair">
-        <button onClick={onSave} disabled={saving || (same && !fixing) || !!view?.problem}>
-          {saving ? 'Saving…' : same && fixing ? 'Save the currencies' : `Show my net worth in ${chosen}`}
-        </button>
-        <button className="secondary" onClick={onClose} disabled={saving}>
+      <p className="panel-note">You can change it, or stop converting, at any time on the Currency card. Nya’s server never keeps a converted figure, so nothing has to be undone.</p>
+      <SheetFooter>
+        {current && (
+          <p className="helper sheet-footer-note" id={`${id}-current`}>
+            It is your home currency now.
+          </p>
+        )}
+        {error && (
+          <div className="sheet-footer-note" id={`${id}-error`}>
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          </div>
+        )}
+        <button type="button" className="btn secondary" onClick={onClose} disabled={saving}>
           Not now
         </button>
-      </div>
-      {same && !fixing && <p className="panel-note">It is your home currency now.</p>}
-      {error && (
-        <Notice level="critical" role="alert">
-          {error}
-        </Notice>
-      )}
-      <p className="panel-note">You can change it, or stop converting, at any time on the Currency card. Nya’s server never keeps a converted figure, so nothing has to be undone.</p>
+        <button type="button" className="btn" onClick={onSave} disabled={saving || current || !!view?.problem} aria-describedby={described}>
+          {saving ? 'Saving…' : same && fixing ? 'Save the currencies' : `Show my net worth in ${chosen}`}
+        </button>
+      </SheetFooter>
     </div>
   );
 }
