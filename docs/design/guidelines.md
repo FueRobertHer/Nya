@@ -137,9 +137,22 @@ Nya shows its gaps on purpose ([features.md](../features.md)). A new feature tha
 - Forms, confirmations and detail views open in `components/Sheet.tsx`. A sheet that needs a second level replaces its content and gets a back button, instead of opening a sheet on top of a sheet.
 - Destructive actions live in a menu or a detail sheet and are confirmed in a sheet. An irreversible one says it can't be undone; disconnecting an institution asks for its name to be typed.
 - A footer's note is one or two short lines. Anything longer stays in the body, so the footer never squeezes it in a sheet at 320px.
-- **Preview, apply, undo.** A change that can be taken back first says what it will move. Once done, a done notice (`Notice` with `done`) says what moved, and an Undo under it puts back exactly what was there before.
+- **Preview, apply, undo.** A change that can be taken back first says what it will move. Once done, a done notice (`Notice` with `done`) says what moved, and an Undo under it puts back exactly what was there before. [After Save](#after-save) says when a sheet owes one.
 - Rare actions on an object go in its ⋯; urgent ones (Reconnect) stay as visible buttons.
 - A number field keeps its value as a string while it is typed (see `ManualDraft` in `Dashboard.tsx`), so a minus sign survives.
+
+### After Save
+
+What a sheet shows once it has saved depends on whether the person can see the change.
+
+- **The change shows behind the sheet** (a row appears or changes, a figure moves): the sheet may close with nothing more.
+- **The change doesn't show behind it, or can be taken back elsewhere** (Hide, Exclude, Archive, Not recurring, a rule, Mark settled, Split, Group, Stop sharing, and the like): the sheet ends on a done notice. A `Notice` with `level="done"` says what moved, an Undo under it (a `.btn.ghost`) puts back exactly what was there before, so an undo loses nothing, and focus goes to the done line.
+- **Where the done notice goes.** Prefer a done level inside the sheet, as `HistoryImportSheet`'s Vanguard import and the Starter sets (`CategoryTemplates`, in `TemplateOffer`) do. A sheet that closes onto the object it changed may put it on that screen instead, as Plan's Tune does.
+- **A save that keeps the sheet open says so in the sheet**: a done line with `role="status"`, never silence.
+- **A save that fails says so where the person is**: in the sheet while it is open, never only on the screen behind it, and never as a silent revert.
+- **Buttons in the footer.** A sheet's buttons go in `Sheet`'s `footer` (or `SheetFooter` from a level), not in a `.button-pair` or `.btn-row` in the body. What they wait on, and their errors, go in its `.sheet-footer-note`.
+- **Done lines are done notices.** A `.status-note`, `.panel-note`, `.import-headline` or visually hidden status line that says a save worked becomes a `Notice` with `level="done"`.
+- **Tested.** A view test covers each sheet's after-save state: what it says, its Undo, and where focus lands.
 
 ## Copy
 
@@ -189,6 +202,7 @@ For every pull request that adds or changes UI:
 - [ ] Warnings keep their words and severity; critical ones are on the number in full.
 - [ ] Amounts go through `lib/format.ts`; hide amounts still masks them.
 - [ ] Targets at least 44px; no nested controls; focus visible.
+- [ ] A sheet that saves follows [After Save](#after-save): it closes with nothing more only when its change shows behind it, else ends on a done notice with an Undo and focus on it; a save that stays open or fails says so in the sheet; its buttons are in the footer.
 - [ ] Works at 320 and 375px and on desktop, in print where a report is involved.
-- [ ] A view test (`test/*-view.test.tsx` pattern) covers the new UI's states, including its warnings.
+- [ ] A view test (`test/*-view.test.tsx` pattern) covers the new UI's states, including its warnings and, for a sheet that saves, what it shows after Save.
 - [ ] `bun test` and `bun run typecheck` pass.
