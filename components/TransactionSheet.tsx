@@ -319,9 +319,24 @@ function TxnSheet({
     return ++changes.current;
   };
   /** Said once the server has it (a refusal is said above, and puts the row back). */
-  const sayOnce = (n: number, saved: unknown, id: string, text: string, holds: (x: Txn) => boolean) => {
-    if (saved === true && n === changes.current) setDone({ id, text, holds });
+  const sayOnce = (n: number, saved: unknown, id: string, text: string, holds: (x: Txn) => boolean, focus = false) => {
+    if (saved === true && n === changes.current) {
+      focusDone.current = focus;
+      setDone({ id, text, holds });
+    }
   };
+  // A note or tags saved: what was pressed has gone (the editor starts again
+  // on the saved note, a chip goes) or can't be pressed (Add, its field
+  // emptied), so focus goes to the line, unless it has moved on to something
+  // else meanwhile. Exclude and Looks right keep their own.
+  const doneRef = useRef<HTMLDivElement>(null);
+  const focusDone = useRef(false);
+  useEffect(() => {
+    if (!done || !focusDone.current) return;
+    focusDone.current = false;
+    const at = document.activeElement;
+    if (!at || at === document.body || !at.isConnected || at.getAttribute('disabled') !== null) doneRef.current?.focus();
+  }, [done]);
   // Include on a pending row takes its row away (exclusionOffer: it can't be
   // excluded again until it posts): focus goes to the line said in its place.
   const waitRef = useRef<HTMLParagraphElement>(null);
@@ -566,7 +581,11 @@ function TxnSheet({
           {/* What the last change saved, said where focus is: a live region
               kept on the page, out of the flow while it says nothing. */}
           <div className="txn-sheet-said" role="status">
-            {done && done.id === t.transaction_id && done.holds(t) && <Notice level="done">{done.text}</Notice>}
+            {done && done.id === t.transaction_id && done.holds(t) && (
+              <Notice level="done" ref={doneRef} tabIndex={-1}>
+                {done.text}
+              </Notice>
+            )}
           </div>
           {t.excluded === true && <p className="helper">{t.excluded_by_rule ? 'Hidden by a rule: out of budgets and reports' : 'Excluded from budgets and reports'}</p>}
           <TxnNotes t={t} whole={t} shared={shared} as="p" />
@@ -611,12 +630,12 @@ function TxnSheet({
               const id = t.transaction_id;
               // On, or off, while the row still has it so.
               const holds = (x: Txn) => (change.add ?? []).every((g) => x.tags?.includes(g)) && !(change.remove ?? []).some((g) => x.tags?.includes(g));
-              void Promise.resolve(onChangeTags(t, change)).then((saved) => sayOnce(n, saved, id, tagsSaid(change, tags), holds));
+              void Promise.resolve(onChangeTags(t, change)).then((saved) => sayOnce(n, saved, id, tagsSaid(change, tags), holds, true));
             }}
             onSaveNote={(note) => {
               const n = begin();
               const id = t.transaction_id;
-              void Promise.resolve(onSaveNote(t, note)).then((saved) => sayOnce(n, saved, id, note ? 'Note saved.' : 'Note cleared.', (x) => (x.note ?? '') === note));
+              void Promise.resolve(onSaveNote(t, note)).then((saved) => sayOnce(n, saved, id, note ? 'Note saved.' : 'Note cleared.', (x) => (x.note ?? '') === note, true));
             }}
           />
         )}
@@ -667,7 +686,7 @@ function TxnSheet({
 function PartSheet({ open, onClose, said, parent, part: p, taxonomy, onSplitsChanged, onSplit, onSplitError }: Inner & { parent: Txn; part: Txn }) {
   const c = currencyOf(parent);
   const label = p.category_name !== undefined ? p.category_name : p.category;
-  const { busy, refused, send } = useWrite(onClose, onSplitsChanged, onSplitError);
+  const { busy, refused, send } = useWrite(open, onClose, onSplitsChanged, onSplitError);
   const patch = (change: Record<string, unknown>) =>
     send(() => sendChange('/api/transaction-splits', 'PATCH', { transaction_id: splitKeptUnder(parent), part_id: p.transaction_id.slice(PART_PREFIX.length), ...change }));
   return (
@@ -747,7 +766,7 @@ function PartSheet({ open, onClose, said, parent, part: p, taxonomy, onSplitsCha
 function MemberSheet({ open, onClose, said, group, member: m, onSplitsChanged, onSplitError }: Inner & { group: Txn; member: Txn }) {
   const members = group.group_members ?? [];
   const c = currencyOf(group);
-  const { busy, refused, send } = useWrite(onClose, onSplitsChanged, onSplitError);
+  const { busy, refused, send } = useWrite(open, onClose, onSplitsChanged, onSplitError);
   const failedId = useId();
   return (
     <Sheet
@@ -802,14 +821,40 @@ function MemberSheet({ open, onClose, said, group, member: m, onSplitsChanged, o
 /** A part's or a group transaction's change: sent while the sheet stays
  *  open, then closed and the list read again; refused, the words for the
  *  sheet to say, and the list read again too (as it always was). */
-function useWrite(onClose: () => void, onSplitsChanged: (() => void) | undefined, onSplitError: (message: string | null) => void) {
+function useWrite(open: boolean, onClose: () => void, onSplitsChanged: (() => void) | undefined, onSplitError: (message: string | null) => void) {
   const [busy, setBusy] = useState(false);
   const [refused, setRefused] = useState<string | null>(null);
+  // Gone from the page while open and saying a refusal (its part or
+  // transaction no longer there once the list is read again): the list says
+  // it instead, under its heading, where focus goes, rather than nowhere. An
+  // answer that comes once it has gone goes to the list too, and closes
+  // nothing. Kept as the write and the props say, not as a render last
+  // drew, so a refusal and its sheet going in one render still reach it.
+  const live = useRef({ mounted: true, open, refused: null as string | null, onSplitError });
+  useEffect(() => {
+    live.current.open = open;
+    live.current.onSplitError = onSplitError;
+  });
+  useEffect(() => {
+    const now = live.current;
+    now.mounted = true;
+    return () => {
+      now.mounted = false;
+      if (now.open && now.refused) now.onSplitError(now.refused);
+    };
+  }, []);
   const send = async (write: () => Promise<string | null>) => {
     if (busy) return;
     setBusy(true);
     setRefused(null);
+    live.current.refused = null;
     const failed = await write();
+    live.current.refused = failed;
+    if (!live.current.mounted) {
+      onSplitError(failed);
+      onSplitsChanged?.();
+      return;
+    }
     setBusy(false);
     if (failed) setRefused(failed);
     else {

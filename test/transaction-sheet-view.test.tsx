@@ -776,21 +776,59 @@ describe('a transaction’s sheet', () => {
   describe('a note and tags, written through the tab’s edits', () => {
     const status = (v: ReturnType<typeof mount>) => v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent;
     const note = (v: ReturnType<typeof mount>) => v.dialog()!.findAll((e) => e.tagName === 'TEXTAREA')[0]!;
+    const doneLine = (v: ReturnType<typeof mount>) => v.dialog()!.findAll((e) => e.getAttribute('class') === 'notice done')[0] ?? null;
+    /** Pressed as a person does: focus on it, then the click. */
+    const press = (el: FakeElement) => {
+      el.focus();
+      act(() => click(el));
+    };
 
-    test('a note saved, then cleared, says so in the sheet once the server has it', async () => {
+    test('a note saved, then cleared, says so in the sheet once the server has it, with focus on the line', async () => {
       annotationAnswer = null;
       const v = mount({}, { wired: true });
       await v.open('Whole Foods');
       expect(status(v)).toBe('');
       act(() => type(note(v), 'Team lunch'));
-      act(() => click(v.button('Save note', v.dialog()!)!));
+      press(v.button('Save note', v.dialog()!)!);
       await settle();
       expect(status(v)).toBe('Done: Note saved.');
       expect(v.dialog()!.findAll((e) => e.getAttribute('class') === 'notice done').length).toBe(1);
+      // The editor started again on the saved note, the button pressed gone with it.
+      expect(doneLine(v)!.getAttribute('tabindex')).toBe('-1');
+      expect(dom.document.activeElement).toBe(doneLine(v));
       act(() => type(note(v), ''));
-      act(() => click(v.button('Clear note', v.dialog()!)!));
+      press(v.button('Clear note', v.dialog()!)!);
       await settle();
       expect(status(v)).toBe('Done: Note cleared.');
+      expect(dom.document.activeElement).toBe(doneLine(v));
+      v.unmount();
+    });
+
+    test('focus moved on while a note saves stays where it went; on nothing, it goes to the line', async () => {
+      let answer: (r: unknown) => void = () => {};
+      annotationAnswer = () => new Promise((r) => (answer = r));
+      const v = mount({}, { wired: true });
+      await v.open('Whole Foods');
+      act(() => type(note(v), 'Team lunch'));
+      press(v.button('Save note', v.dialog()!)!);
+      await settle();
+      const picker = v.field('Category')!;
+      picker.focus();
+      act(() => answer({ ok: true, json: async () => ({}) }));
+      await settle();
+      expect(status(v)).toBe('Done: Note saved.');
+      expect(dom.document.activeElement).toBe(picker);
+      // Where a browser leaves focus once what had it has gone: on nothing.
+      act(() => type(note(v), ''));
+      press(v.button('Clear note', v.dialog()!)!);
+      await settle();
+      (dom.document.activeElement as FakeElement).blur();
+      expect(dom.document.activeElement).toBe(dom.document.body);
+      act(() => answer({ ok: true, json: async () => ({}) }));
+      await settle();
+      expect(status(v)).toBe('Done: Note cleared.');
+      expect(dom.document.activeElement).toBe(doneLine(v));
+      annotationAnswer = null;
       v.unmount();
     });
 
@@ -808,24 +846,65 @@ describe('a transaction’s sheet', () => {
       v.unmount();
     });
 
-    test('a tag added, then one taken off, each said by its name', async () => {
+    test('a tag added, then one taken off, each said by its name, with focus on the line', async () => {
       annotationAnswer = null;
       const v = mount({}, { wired: true });
       await v.open('Whole Foods');
       const field = v.dialog()!.findAll((e) => e.getAttribute('aria-label') === 'Add a tag to Whole Foods')[0]!;
       act(() => type(field, 'Travel'));
-      act(() => click(v.button('Add', v.dialog()!)!));
+      const add = v.button('Add', v.dialog()!)!;
+      press(add);
       await settle();
       expect(status(v)).toBe('Done: Tag added: Travel.');
-      act(() => click(v.button('Take Reimbursable off', v.dialog()!)!));
+      // Add can't be pressed again with its field emptied.
+      expect(add.getAttribute('disabled')).not.toBeNull();
+      expect(dom.document.activeElement).toBe(doneLine(v));
+      press(v.button('Take Reimbursable off', v.dialog()!)!);
       await settle();
       expect(status(v)).toBe('Done: Tag removed: Reimbursable.');
+      expect(dom.document.activeElement).toBe(doneLine(v));
       v.unmount();
     });
   });
 
   describe('a part’s or a group transaction’s change, refused', () => {
     const refusedWith = (error: string) => async () => ({ ok: false, status: 409, json: async () => ({ error }) });
+    /** The list read again with Costco no longer split. */
+    const unsplit = () => [txn('Costco', { amount: 150 }), ...served().filter((t) => t.split_of !== 'Costco' && t.transaction_id !== 'Costco')];
+
+    test('a part gone once the list is read again after a refusal: the list says why, not nothing', async () => {
+      const gone = 'That part no longer exists: the split was changed or undone. Reload to see it as it is.';
+      splitAnswer = async () => ({ ok: false, status: 404, json: async () => ({ error: gone }) });
+      let v: ReturnType<typeof mount> | null = null;
+      const onSplitsChanged = () => queueMicrotask(() => v!.render({ onSplitsChanged, txns: unsplit() }));
+      v = mount({ onSplitsChanged });
+      act(() => click(v!.row('Household')!));
+      await settle();
+      act(() => click(v.button('Leave this part out of budgets and reports', v.dialog()!)!));
+      await settle();
+      await settle();
+      expect(v.dialog()).toBeNull();
+      expect(v.all((e) => e.getAttribute('role') === 'alert' && e.textContent.includes(gone)).length).toBe(1);
+      splitAnswer = null;
+      v.unmount();
+    });
+
+    test('closed after a refusal, then gone from the list: the list says nothing', async () => {
+      splitAnswer = refusedWith('This split changed since it opened. Open it again.');
+      const v = mount();
+      act(() => click(v.row('Household')!));
+      await settle();
+      act(() => click(v.button('Leave this part out of budgets and reports', v.dialog()!)!));
+      await settle();
+      expect(v.dialog()!.textContent).toContain('This split changed since it opened.');
+      act(() => click(v.button('Close', v.dialog()!)!));
+      await settle(400);
+      v.render({ txns: unsplit() });
+      await settle();
+      expect(v.host.textContent).not.toContain('This split changed since it opened.');
+      splitAnswer = null;
+      v.unmount();
+    });
 
     test('a part waits for its write: refused, it stays open and says why, once, in the sheet', async () => {
       let answer: (r: unknown) => void = () => {};
