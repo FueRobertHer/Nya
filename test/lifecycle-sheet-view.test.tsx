@@ -68,6 +68,8 @@ describe('after Save and Reopen it', () => {
     expect(v.said).toEqual(['changed']);
     const line = v.doneLine()!;
     expect(line.getAttribute('role')).toBe('status');
+    // Focusable by script only, which a browser needs to take the focus.
+    expect(line.getAttribute('tabindex')).toBe('-1');
     expect(line.textContent).toContain('Ally Savings ••1234: Closed today. Every day before stays as it was; from then on it isn’t counted.');
     expect(dom.document.activeElement).toBe(line);
     expect(v.dialog()!.textContent).toContain('It’s under Accounts that ended, on the Accounts tab, where you can change or reopen it.');
@@ -87,6 +89,9 @@ describe('after Save and Reopen it', () => {
     expect(v.said).toEqual(['changed']);
     expect(v.dialog()!.textContent).toContain('Every account at Ally has ended, but the connection is still open, and Plaid charges for it until it is removed.');
     expect(v.footer()!.findAll((e) => e.tagName === 'BUTTON').map((e) => e.textContent)).toEqual(['Disconnect Ally…', 'Done']);
+    // The offer is described by what the connection still costs.
+    const cost = v.dialog()!.findAll((e) => e.getAttribute('id') === v.button('Disconnect Ally…')!.getAttribute('aria-describedby'))[0]!;
+    expect(cost.textContent).toContain('Plaid charges for it until it is removed.');
     act(() => click(v.button('Disconnect Ally…')!));
     await pass(400);
     expect(v.said).toEqual(['changed', 'remove item_ally']);
@@ -117,7 +122,7 @@ describe('after Save and Reopen it', () => {
     expect(v.doneLine()).toBeNull();
     const note = v.footer()!.findAll((e) => (e.getAttribute('class') ?? '') === 'sheet-footer-note')[0]!;
     expect(note.findAll((e) => e.getAttribute('role') === 'alert')[0]!.textContent).toContain('Failed to save that account’s change');
-    expect(v.button('Save')).not.toBeNull();
+    expect(v.button('Save')!.getAttribute('aria-describedby')).toBe(note.getAttribute('id'));
     // Saved, closed and opened on another account: its form, not the last done level.
     answer = ok({ account_id: 'acc_sav', lifecycle: { state: 'closed', on: '2026-11-18' } });
     act(() => click(v.button('Save')!));

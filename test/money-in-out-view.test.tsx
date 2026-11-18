@@ -372,4 +372,18 @@ describe('the form', () => {
     expect(v.done()).toBe(1);
     v.unmount();
   });
+
+  test('a clear refused: said beside Clear, which points at it, not beside Save', async () => {
+    const v = await mount(target(), () => Response.json({ error: 'Your totals couldn’t be cleared just now.' }, { status: 500 }));
+    await act(async () => click(v.button('Clear deposits and withdrawals')!));
+    await pass(5);
+    const clear = v.button('Clear deposits and withdrawals')!;
+    const said = v.sheet().findAll((e) => e.getAttribute('id') === clear.getAttribute('aria-describedby'))[0]!;
+    expect(said.findAll((e) => e.getAttribute('role') === 'alert')[0].textContent).toContain('Your totals couldn’t be cleared just now.');
+    const foot = v.sheet().findAll((e) => (e.getAttribute('class') ?? '') === 'sheet-footer')[0];
+    expect(foot.findAll((e) => (e.getAttribute('class') ?? '') === 'sheet-footer-note')).toHaveLength(0);
+    expect(v.button('Save')!.getAttribute('aria-describedby')).toBeNull();
+    expect(v.done()).toBe(0);
+    v.unmount();
+  });
 });

@@ -272,6 +272,8 @@ export function useAccountLifecycle(opts: { onChanged: () => void; onRemoveConne
 
   const shown = useLast(target);
   const removal = done?.kind === 'ended' ? done.remove : null;
+  // What the connection still costs, said in the body, describes the offer to remove it.
+  const removalNote = useId();
   const sheet = (
     <Sheet
       open={!!target}
@@ -284,6 +286,7 @@ export function useAccountLifecycle(opts: { onChanged: () => void; onRemoveConne
               <button
                 type="button"
                 className="btn secondary"
+                aria-describedby={removalNote}
                 onClick={() => {
                   close();
                   onRemoveConnection(removal);
@@ -300,7 +303,7 @@ export function useAccountLifecycle(opts: { onChanged: () => void; onRemoveConne
       }
     >
       {done ? (
-        <LifecycleDoneLevel done={done} lineRef={doneLine} />
+        <LifecycleDoneLevel done={done} lineRef={doneLine} removalNoteId={removalNote} />
       ) : (
         shown && <LifecycleForm key={`${shown.account_id}|${shown.state}|${shown.day}`} target={shown} busy={busy} error={error} onCancel={close} onEnd={end} onReopen={reopenHere} />
       )}
@@ -334,7 +337,7 @@ export function endEffect(t: Pick<LifecycleTarget, 'balance' | 'type' | 'currenc
 /** What the sheet says once it has saved, pure: what moved, and where it
  *  is taken back. An end that leaves its connection with no open account
  *  says what the connection still costs, beside the offer to remove it. */
-export function LifecycleDoneLevel({ done, lineRef }: { done: LifecycleDone; lineRef?: Ref<HTMLDivElement> }) {
+export function LifecycleDoneLevel({ done, lineRef, removalNoteId }: { done: LifecycleDone; lineRef?: Ref<HTMLDivElement>; removalNoteId?: string }) {
   const name = accountName(done.target.name, done.target.mask);
   if (done.kind === 'reopened') {
     return (
@@ -354,7 +357,7 @@ export function LifecycleDoneLevel({ done, lineRef }: { done: LifecycleDone; lin
       </Notice>
       <p className="helper">It’s under Accounts that ended, on the Accounts tab, where you can change or reopen it.</p>
       {done.remove && (
-        <p className="helper">
+        <p className="helper" id={removalNoteId}>
           Every account at {done.remove.institution_name} has ended, but the connection is still open, and Plaid charges for it until it is removed.
         </p>
       )}
@@ -388,6 +391,8 @@ export function LifecycleForm({
   const effect = valid ? endEffect(target, day) : null;
   const confirmed = !effect?.owed || owedOk;
   const reopenId = useId();
+  const errorId = useId();
+  const failed = error ? errorId : undefined;
   return (
     <div className="stack">
       <p className="helper">
@@ -442,7 +447,7 @@ export function LifecycleForm({
       )}
       <SheetFooter>
         {error && (
-          <div className="sheet-footer-note">
+          <div className="sheet-footer-note" id={errorId}>
             <Notice level="critical" role="alert">
               {error}
             </Notice>
@@ -452,11 +457,23 @@ export function LifecycleForm({
           Cancel
         </button>
         {target.ended && (
-          <button type="button" className="btn secondary" onClick={() => onReopen(target.account_id)} disabled={busy} aria-describedby={reopenId}>
+          <button
+            type="button"
+            className="btn secondary"
+            onClick={() => onReopen(target.account_id)}
+            disabled={busy}
+            aria-describedby={failed ? `${reopenId} ${failed}` : reopenId}
+          >
             Reopen it
           </button>
         )}
-        <button type="button" className="btn" disabled={busy || !valid || !confirmed} onClick={() => onEnd(target.account_id, state, day, note, target.balance)}>
+        <button
+          type="button"
+          className="btn"
+          disabled={busy || !valid || !confirmed}
+          aria-describedby={failed}
+          onClick={() => onEnd(target.account_id, state, day, note, target.balance)}
+        >
           {busy ? 'Saving…' : 'Save'}
         </button>
       </SheetFooter>

@@ -22,7 +22,7 @@
 // derives it again, but until then the months can't be read: it says so, never
 // that nothing was recorded, and offers the same rebuild.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Sheet, SheetFooter } from './Sheet';
 import { formatDay } from '@/lib/format';
@@ -223,6 +223,7 @@ export function RepairConfirm({
   onConfirm: () => void;
 }) {
   const busy = phase.kind === 'repairing';
+  const errorId = useId();
   return (
     <>
       <div className="stack">
@@ -241,7 +242,7 @@ export function RepairConfirm({
       </div>
       <SheetFooter>
         {phase.kind === 'failed' && (
-          <div className="sheet-footer-note">
+          <div className="sheet-footer-note" id={errorId}>
             <Notice level="critical" role="alert">
               {phase.error}
             </Notice>
@@ -250,7 +251,7 @@ export function RepairConfirm({
         <button type="button" className="btn secondary" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
-        <button type="button" className="btn" onClick={onConfirm} disabled={busy}>
+        <button type="button" className="btn" onClick={onConfirm} disabled={busy} aria-describedby={phase.kind === 'failed' ? errorId : undefined}>
           {busy ? 'Rebuilding…' : 'Rebuild it'}
         </button>
       </SheetFooter>

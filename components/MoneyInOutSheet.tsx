@@ -95,7 +95,8 @@ function MoneyInOutForm({ open, target, onClose, onDone }: { open: boolean; targ
   const [asOf, setAsOf] = useState(totals?.as_of ?? localDate());
   const [attempted, setAttempted] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
+  // What went wrong, and which button it came from: said beside that one.
+  const [error, setError] = useState<{ text: string; from: 'save' | 'clear' } | null>(null);
   const id = useId();
   const money = (n: number) => formatMoney(n, target.currency);
 
@@ -118,13 +119,13 @@ function MoneyInOutForm({ open, target, onClose, onDone }: { open: boolean; targ
   );
 
   const close = () => !busy && onClose();
-  const finish = async (body: Record<string, unknown>) => {
+  const finish = async (body: Record<string, unknown>, from: 'save' | 'clear') => {
     setBusy(true);
-    setError('');
+    setError(null);
     const answer = await send(body);
     setBusy(false);
     if (!answer.ok) {
-      setError(answer.error);
+      setError({ text: answer.error, from });
       return;
     }
     moneyInOutSaved(target.account_id, target.item_id, answer.totals);
@@ -134,7 +135,7 @@ function MoneyInOutForm({ open, target, onClose, onDone }: { open: boolean; targ
     e?.preventDefault();
     setAttempted(true);
     if (busy || inn === null || out === null || dayError) return;
-    void finish({ account_id: target.account_id, in: inn, out, as_of: asOf, currency: target.currency });
+    void finish({ account_id: target.account_id, in: inn, out, as_of: asOf, currency: target.currency }, 'save');
   };
 
   return (
@@ -145,17 +146,17 @@ function MoneyInOutForm({ open, target, onClose, onDone }: { open: boolean; targ
       footer={
         <>
           {/* A refusal beside the buttons, in view, its amounts masked. */}
-          {error && (
+          {error?.from === 'save' && (
             <div className="sheet-footer-note" id={`${id}-error`}>
               <Notice level="critical" role="alert">
-                <Masked>{hideAmountsIn(error)}</Masked>
+                <Masked>{hideAmountsIn(error.text)}</Masked>
               </Notice>
             </div>
           )}
           <button type="button" className="btn secondary" onClick={() => !busy && onDone()} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" form={`${id}-form`} className="btn" disabled={busy} aria-describedby={error ? `${id}-error` : undefined}>
+          <button type="submit" form={`${id}-form`} className="btn" disabled={busy} aria-describedby={error?.from === 'save' ? `${id}-error` : undefined}>
             {busy ? 'Saving…' : 'Save'}
           </button>
         </>
@@ -249,10 +250,23 @@ function MoneyInOutForm({ open, target, onClose, onDone }: { open: boolean; targ
           </Notice>
         )}
         {totals && (
-          <div>
-            <button type="button" className="btn ghost" onClick={() => void finish({ account_id: target.account_id, clear: true })} disabled={busy}>
+          <div className="stack tight">
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={() => void finish({ account_id: target.account_id, clear: true }, 'clear')}
+              disabled={busy}
+              aria-describedby={error?.from === 'clear' ? `${id}-clear-error` : undefined}
+            >
               Clear deposits and withdrawals
             </button>
+            {error?.from === 'clear' && (
+              <div id={`${id}-clear-error`}>
+                <Notice level="critical" role="alert">
+                  <Masked>{hideAmountsIn(error.text)}</Masked>
+                </Notice>
+              </div>
+            )}
           </div>
         )}
         <Why>

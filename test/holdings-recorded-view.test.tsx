@@ -166,10 +166,11 @@ describe('the repair', () => {
     const busy = confirm({ kind: 'repairing' });
     expect(busy).toContain('<button type="button" class="btn secondary" disabled="">Cancel</button>');
     expect(busy).toContain('<button type="button" class="btn" disabled="">Rebuilding…</button>');
-    // A refusal beside the buttons, first in the footer.
-    expect(confirm({ kind: 'failed', error: 'Your holdings records need no repair.' })).toContain(
-      '<div class="sheet-footer"><div class="sheet-footer-note"><div class="notice critical" role="alert">'
-    );
+    // A refusal beside the buttons, first in the footer, describing Rebuild it.
+    const failed = confirm({ kind: 'failed', error: 'Your holdings records need no repair.' });
+    const note = failed.match(/<div class="sheet-footer"><div class="sheet-footer-note" id="([^"]+)"><div class="notice critical" role="alert">/);
+    expect(note).not.toBeNull();
+    expect(failed).toContain(`<button type="button" class="btn" aria-describedby="${note![1]}">Rebuild it</button>`);
     expect(confirm({ kind: 'failed', error: 'Your holdings records need no repair.' })).toContain('<span class="visually-hidden">Critical: </span>Your holdings records need no repair.</div></div>');
   });
 

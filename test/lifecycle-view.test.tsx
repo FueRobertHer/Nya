@@ -169,6 +169,9 @@ describe('the sheet', () => {
     // Every button in the footer, Reopen it beside Save and pointing to what it does.
     expect(buttons(ended)).toEqual(['Cancel', 'Reopen it', 'Save']);
     expect(ended).toMatch(/<div class="sheet-footer"><button[^>]*>Cancel<\/button><button[^>]*aria-describedby="[^"]+"[^>]*>Reopen it<\/button><button[^>]*>Save<\/button><\/div>/);
+    // Reopen it is described by the paragraph saying what reopening does.
+    const reopenNote = ended.match(/<p class="helper lifecycle-reopen" id="([^"]+)">/)![1];
+    expect(ended.match(/aria-describedby="([^"]+)"[^>]*>Reopen it</)![1]).toBe(reopenNote);
     expect(text(ended)).toContain('If its bank no longer returns it, it is held at its last known balance, and asked about, until the bank does.');
   });
 

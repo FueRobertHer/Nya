@@ -92,6 +92,7 @@ describe('rebuilding holdings history', () => {
     const alert = note.findAll((e) => e.getAttribute('role') === 'alert')[0]!;
     expect(alert.getAttribute('class')).toBe('notice critical');
     expect(alert.textContent).toContain('The store couldn’t be reached just now.');
+    expect(v.button('Rebuild it', v.dialog()!)!.getAttribute('aria-describedby')).toBe(note.getAttribute('id'));
     expect(v.button('Rebuild it', v.dialog()!)!.getAttribute('disabled')).toBeNull();
     v.unmount();
   });
