@@ -348,11 +348,17 @@ describe('the form', () => {
     v.unmount();
   });
 
-  test('a refusal is said, and the sheet stays open on what was typed', async () => {
+  test('a refusal is said beside its buttons, and the sheet stays open on what was typed', async () => {
     const v = await mount(target({ totals: null }), () => Response.json({ error: 'Deposits and withdrawals are for investment accounts' }, { status: 400 }));
     v.typeIn('Deposits', '9000');
     await v.submit();
     expect(v.notices()).toEqual(['notice critical: Critical: Deposits and withdrawals are for investment accounts']);
+    const foot = v.sheet().findAll((e) => (e.getAttribute('class') ?? '') === 'sheet-footer')[0];
+    const note = foot.findAll((e) => (e.getAttribute('class') ?? '') === 'sheet-footer-note')[0];
+    expect(note.findAll((e) => e.getAttribute('role') === 'alert')[0].textContent).toContain('Deposits and withdrawals are for investment accounts');
+    expect(v.button('Save')!.getAttribute('aria-describedby')).toBe(note.getAttribute('id'));
+    // Its buttons are the footer's own, no group in a group.
+    expect(foot.findAll((e) => (e.getAttribute('class') ?? '') === 'btn-row')).toHaveLength(0);
     expect(v.field('Deposits').value).toBe('9000');
     expect(v.done()).toBe(0);
     v.unmount();
@@ -364,6 +370,20 @@ describe('the form', () => {
     await pass(5);
     expect(v.sent).toEqual([{ url: '/api/money-in-out', body: { account_id: 'acc_inv', clear: true } }]);
     expect(v.done()).toBe(1);
+    v.unmount();
+  });
+
+  test('a clear refused: said beside Clear, which points at it, not beside Save', async () => {
+    const v = await mount(target(), () => Response.json({ error: 'Your totals couldn’t be cleared just now.' }, { status: 500 }));
+    await act(async () => click(v.button('Clear deposits and withdrawals')!));
+    await pass(5);
+    const clear = v.button('Clear deposits and withdrawals')!;
+    const said = v.sheet().findAll((e) => e.getAttribute('id') === clear.getAttribute('aria-describedby'))[0]!;
+    expect(said.findAll((e) => e.getAttribute('role') === 'alert')[0].textContent).toContain('Your totals couldn’t be cleared just now.');
+    const foot = v.sheet().findAll((e) => (e.getAttribute('class') ?? '') === 'sheet-footer')[0];
+    expect(foot.findAll((e) => (e.getAttribute('class') ?? '') === 'sheet-footer-note')).toHaveLength(0);
+    expect(v.button('Save')!.getAttribute('aria-describedby')).toBeNull();
+    expect(v.done()).toBe(0);
     v.unmount();
   });
 });

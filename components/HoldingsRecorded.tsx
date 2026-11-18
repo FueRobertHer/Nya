@@ -22,9 +22,9 @@
 // derives it again, but until then the months can't be read: it says so, never
 // that nothing was recorded, and offers the same rebuild.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Sheet } from './Sheet';
+import { Sheet, SheetFooter } from './Sheet';
 import { formatDay } from '@/lib/format';
 import { Notice } from './TotalCaveats';
 
@@ -207,8 +207,10 @@ export function HoldingsRecordedView({
   );
 }
 
-/** What the repair says before it does anything, pure. `missing`: the list
- *  is missing rather than damaged, which stops no recording. */
+/** What the repair says before it does anything, pure, its buttons in the
+ *  sheet's footer and a refusal beside them. `missing`: the list is missing
+ *  rather than damaged, which stops no recording. Done, the sheet closes on
+ *  the line read again, which says what came of it. */
 export function RepairConfirm({
   phase,
   missing = false,
@@ -221,35 +223,38 @@ export function RepairConfirm({
   onConfirm: () => void;
 }) {
   const busy = phase.kind === 'repairing';
+  const errorId = useId();
   return (
     <>
       <div className="stack">
         {missing ? (
-          <p className="panel-note">
+          <p className="helper">
             The list of where each month of your holdings history is kept is missing, so what was recorded can&apos;t be
             read. Nya can rebuild it from the months themselves. Nothing is lost: every month stays as it is.
           </p>
         ) : (
-          <p className="panel-note">
+          <p className="helper">
             The list of where each month of your holdings history is kept is damaged and can&apos;t be read, so no holdings
             are being recorded. Nya can rebuild it from the months themselves. Nothing that can be read is lost: the
             damaged list can&apos;t be read by anyone. Recording starts again with the next refresh.
           </p>
         )}
-        {phase.kind === 'failed' && (
-          <Notice level="critical" role="alert">
-            {phase.error}
-          </Notice>
-        )}
       </div>
-      <div className="button-pair" style={{ marginTop: 16 }}>
-        <button className="secondary" onClick={onCancel} disabled={busy}>
+      <SheetFooter>
+        {phase.kind === 'failed' && (
+          <div className="sheet-footer-note" id={errorId}>
+            <Notice level="critical" role="alert">
+              {phase.error}
+            </Notice>
+          </div>
+        )}
+        <button type="button" className="btn secondary" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
-        <button onClick={onConfirm} disabled={busy}>
+        <button type="button" className="btn" onClick={onConfirm} disabled={busy} aria-describedby={phase.kind === 'failed' ? errorId : undefined}>
           {busy ? 'Rebuilding…' : 'Rebuild it'}
         </button>
-      </div>
+      </SheetFooter>
     </>
   );
 }
