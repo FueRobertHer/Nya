@@ -30,8 +30,8 @@
 // stops counting: ending one raises net worth, and must never look like
 // money gained by accident.
 
-import { useCallback, useRef, useState, type ReactNode } from 'react';
-import { Sheet } from './Sheet';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode, type Ref } from 'react';
+import { Sheet, SheetFooter } from './Sheet';
 import { CollapsibleHeader } from './Collapsible';
 import { Masked } from './HideAmounts';
 import { localDate } from '@/lib/local-date';
@@ -156,7 +156,18 @@ function useLast<T>(value: T | null): T | null {
 /** A Plaid connection whose every account has ended (the route's answer). */
 export type EndedConnection = { item_id: string; institution_name: string };
 
-type Answer = { lifecycle?: unknown; remove_connection?: EndedConnection; error?: string };
+type Answer = { lifecycle?: unknown; remove_connection?: EndedConnection; held?: boolean; error?: string };
+
+/** What the sheet just saved, said on its done level
+ *  (docs/design/guidelines.md#after-save): an end, with the offer to remove
+ *  its connection when it was the last open account there, or a reopen. No
+ *  Undo: the other way back (Reopen it, or Mark as closed… again) doesn't put
+ *  the stored record back as it was (lib/lifecycle.ts withoutEnd keeps only
+ *  `missed`, and an end is stamped anew), so the line names where it is taken
+ *  back instead. */
+export type LifecycleDone =
+  | { kind: 'ended'; target: LifecycleTarget; lifecycle: EndedAccount['lifecycle']; remove: EndedConnection | null }
+  | { kind: 'reopened'; target: LifecycleTarget; held: boolean };
 
 /**
  * The state behind the sheet, the questions and the card, and the one route
@@ -170,7 +181,15 @@ export function useAccountLifecycle(opts: { onChanged: () => void; onRemoveConne
   const [target, setTarget] = useState<LifecycleTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  // What the sheet saved, while it says so; kept as it slides out.
+  const [done, setDone] = useState<LifecycleDone | null>(null);
+  const doneLine = useRef<HTMLDivElement>(null);
   const { onChanged, onRemoveConnection } = opts;
+  // Focus to the done line once it is said: here, after the sheet's own
+  // focus on its panel, which runs first.
+  useEffect(() => {
+    if (done) doneLine.current?.focus();
+  }, [done]);
 
   const post = useCallback(
     async (body: Record<string, unknown>): Promise<Answer | null> => {
@@ -201,21 +220,32 @@ export function useAccountLifecycle(opts: { onChanged: () => void; onRemoveConne
 
   const open = useCallback((t: LifecycleTarget) => {
     setError('');
+    setDone(null);
     setTarget(t);
   }, []);
   const close = useCallback(() => setTarget(null), []);
 
-  /** Ends an account as the sheet says; asks about the connection after. */
+  /** Ends an account as the sheet says, and says so; the connection's
+   *  removal is offered there, when it was the last open account on it. */
   const end = useCallback(
     async (account_id: string, state: EndState, day: string, note: string, balance?: number | null) => {
       const seen = balance !== undefined ? { balance } : {};
       const body = state === 'untracked' ? { account_id, state, from: day, ...seen } : { account_id, state, on: day, ...(note.trim() ? { note: note.trim() } : {}), ...seen };
-      const done = await post(body);
-      if (!done) return;
-      setTarget(null);
-      if (done.remove_connection) onRemoveConnection(done.remove_connection);
+      const answer = await post(body);
+      if (!answer || !target) return;
+      const lifecycle: EndedAccount['lifecycle'] = state === 'untracked' ? { state, from: day } : { state, on: day };
+      setDone({ kind: 'ended', target, lifecycle, remove: answer.remove_connection ?? null });
     },
-    [post, onRemoveConnection]
+    [post, target]
+  );
+
+  /** Reopened from the sheet: said there. */
+  const reopenHere = useCallback(
+    async (account_id: string) => {
+      const answer = await post({ account_id, state: 'active' });
+      if (answer && target) setDone({ kind: 'reopened', target, held: answer.held === true });
+    },
+    [post, target]
   );
 
   const reopen = useCallback(
@@ -241,9 +271,39 @@ export function useAccountLifecycle(opts: { onChanged: () => void; onRemoveConne
   );
 
   const shown = useLast(target);
+  const removal = done?.kind === 'ended' ? done.remove : null;
   const sheet = (
-    <Sheet open={!!target} title={shown ? accountName(shown.name, shown.mask) : 'Account'} onClose={() => !busy && close()}>
-      {shown && <LifecycleForm key={`${shown.account_id}|${shown.state}|${shown.day}`} target={shown} busy={busy} error={error} onCancel={close} onEnd={end} onReopen={reopen} />}
+    <Sheet
+      open={!!target}
+      title={shown ? accountName(shown.name, shown.mask) : 'Account'}
+      onClose={() => !busy && close()}
+      footer={
+        done && (
+          <>
+            {removal && (
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={() => {
+                  close();
+                  onRemoveConnection(removal);
+                }}
+              >
+                {`Disconnect ${removal.institution_name}…`}
+              </button>
+            )}
+            <button type="button" className="btn" onClick={close}>
+              Done
+            </button>
+          </>
+        )
+      }
+    >
+      {done ? (
+        <LifecycleDoneLevel done={done} lineRef={doneLine} />
+      ) : (
+        shown && <LifecycleForm key={`${shown.account_id}|${shown.state}|${shown.day}`} target={shown} busy={busy} error={error} onCancel={close} onEnd={end} onReopen={reopenHere} />
+      )}
     </Sheet>
   );
 
@@ -271,7 +331,38 @@ export function endEffect(t: Pick<LifecycleTarget, 'balance' | 'type' | 'currenc
   return { text: `${shows} ${amount}. From ${dayText(day)} it stops counting, so your net worth falls by ${amount}.`, owed: false };
 }
 
-/** The sheet's form. */
+/** What the sheet says once it has saved, pure: what moved, and where it
+ *  is taken back. An end that leaves its connection with no open account
+ *  says what the connection still costs, beside the offer to remove it. */
+export function LifecycleDoneLevel({ done, lineRef }: { done: LifecycleDone; lineRef?: Ref<HTMLDivElement> }) {
+  const name = accountName(done.target.name, done.target.mask);
+  if (done.kind === 'reopened') {
+    return (
+      <div className="stack">
+        <Notice level="done" role="status" ref={lineRef} tabIndex={-1}>
+          {`${name} counts again, on every day.`}
+        </Notice>
+        {done.held && <p className="helper">Its bank no longer returns it, so it is held at its last known balance, and asked about, until the bank does.</p>}
+        <p className="helper">To end it again, open it and choose Mark as closed….</p>
+      </div>
+    );
+  }
+  return (
+    <div className="stack">
+      <Notice level="done" role="status" ref={lineRef} tabIndex={-1}>
+        {`${name}: ${endText(done.lifecycle)}. Every day before stays as it was; from then on it isn’t counted.`}
+      </Notice>
+      <p className="helper">It’s under Accounts that ended, on the Accounts tab, where you can change or reopen it.</p>
+      {done.remove && (
+        <p className="helper">
+          Every account at {done.remove.institution_name} has ended, but the connection is still open, and Plaid charges for it until it is removed.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The sheet's form, its buttons in the sheet's footer and an error beside them. */
 export function LifecycleForm({
   target,
   busy,
@@ -296,9 +387,10 @@ export function LifecycleForm({
   const valid = /^\d{4}-\d{2}-\d{2}$/.test(day) && day >= '1970-01-01' && day <= today;
   const effect = valid ? endEffect(target, day) : null;
   const confirmed = !effect?.owed || owedOk;
+  const reopenId = useId();
   return (
-    <>
-      <p className="panel-note" style={{ marginTop: 0 }}>
+    <div className="stack">
+      <p className="helper">
         {target.institution ? `${target.institution}. ` : ''}What happened to it?
       </p>
       <fieldset className="lifecycle-choices" disabled={busy}>
@@ -326,7 +418,7 @@ export function LifecycleForm({
           </label>
         )}
       </div>
-      <p className="panel-note">
+      <p className="helper">
         {valid
           ? `Every day before ${dayText(day)} stays as it was. From ${dayText(day)} on it isn’t counted: not in net worth, the chart, allocation, budgets or spending. Nothing is deleted, so reopening puts it back exactly.`
           : 'Choose a day up to today.'}
@@ -342,31 +434,33 @@ export function LifecycleForm({
           <span>Stop counting what it owes</span>
         </label>
       )}
-      {error && (
-        <Notice level="critical" role="alert">
-          {error}
-        </Notice>
+      {target.ended && (
+        <p className="helper lifecycle-reopen" id={reopenId}>
+          Still open after all? Reopening counts it again on every day. If its bank no longer returns it, it is held at its
+          last known balance, and asked about, until the bank does.
+        </p>
       )}
-      <div className="button-pair" style={{ marginTop: 16 }}>
-        <button className="secondary" onClick={onCancel} disabled={busy}>
+      <SheetFooter>
+        {error && (
+          <div className="sheet-footer-note">
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          </div>
+        )}
+        <button type="button" className="btn secondary" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
-        <button disabled={busy || !valid || !confirmed} onClick={() => onEnd(target.account_id, state, day, note, target.balance)}>
-          {busy ? 'Saving…' : 'Save'}
-        </button>
-      </div>
-      {target.ended && (
-        <div className="lifecycle-reopen">
-          <p className="panel-note">
-            Still open after all? Reopening counts it again on every day. If its bank no longer returns it, it is held at its
-            last known balance, and asked about, until the bank does.
-          </p>
-          <button className="secondary" onClick={() => onReopen(target.account_id)} disabled={busy}>
+        {target.ended && (
+          <button type="button" className="btn secondary" onClick={() => onReopen(target.account_id)} disabled={busy} aria-describedby={reopenId}>
             Reopen it
           </button>
-        </div>
-      )}
-    </>
+        )}
+        <button type="button" className="btn" disabled={busy || !valid || !confirmed} onClick={() => onEnd(target.account_id, state, day, note, target.balance)}>
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+      </SheetFooter>
+    </div>
   );
 }
 

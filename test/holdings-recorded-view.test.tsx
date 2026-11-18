@@ -148,8 +148,8 @@ describe('the repair', () => {
     expect(html).toContain("is damaged and can't be read, so no holdings are being recorded");
     expect(html).toContain('Nya can rebuild it from the months themselves');
     expect(html).toContain('Nothing that can be read is lost');
-    expect(html).toContain('<button class="secondary">Cancel</button>');
-    expect(html).toContain('<button>Rebuild it</button>');
+    // Its buttons in the sheet's footer (drawn in place outside a sheet).
+    expect(html).toContain('<div class="sheet-footer"><button type="button" class="btn secondary">Cancel</button><button type="button" class="btn">Rebuild it</button></div>');
   });
 
   test('for a missing list, says it is missing, not damaged, and that nothing is lost', () => {
@@ -159,13 +159,17 @@ describe('the repair', () => {
     expect(html).toContain('Nothing is lost');
     expect(html).not.toContain('damaged');
     expect(html).not.toContain('no holdings are being recorded');
-    expect(html).toContain('<button>Rebuild it</button>');
+    expect(html).toContain('<button type="button" class="btn">Rebuild it</button>');
   });
 
   test('while it works nothing can be pressed, and a refusal is shown in the server\'s words', () => {
     const busy = confirm({ kind: 'repairing' });
-    expect(busy).toContain('<button class="secondary" disabled="">Cancel</button>');
-    expect(busy).toContain('<button disabled="">Rebuilding…</button>');
+    expect(busy).toContain('<button type="button" class="btn secondary" disabled="">Cancel</button>');
+    expect(busy).toContain('<button type="button" class="btn" disabled="">Rebuilding…</button>');
+    // A refusal beside the buttons, first in the footer.
+    expect(confirm({ kind: 'failed', error: 'Your holdings records need no repair.' })).toContain(
+      '<div class="sheet-footer"><div class="sheet-footer-note"><div class="notice critical" role="alert">'
+    );
     expect(confirm({ kind: 'failed', error: 'Your holdings records need no repair.' })).toContain('<span class="visually-hidden">Critical: </span>Your holdings records need no repair.</div></div>');
   });
 

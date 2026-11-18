@@ -6961,10 +6961,6 @@ button.tag-color.chosen {
   border-top: 1px solid var(--line);
 }
 
-.lifecycle-reopen button {
-  margin-top: 8px;
-}
-
 /* A question about an account, on its institution's card and in connection
    health: amber, like the other notes about what a total holds. */
 .lifecycle-questions {

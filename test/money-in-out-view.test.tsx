@@ -348,11 +348,17 @@ describe('the form', () => {
     v.unmount();
   });
 
-  test('a refusal is said, and the sheet stays open on what was typed', async () => {
+  test('a refusal is said beside its buttons, and the sheet stays open on what was typed', async () => {
     const v = await mount(target({ totals: null }), () => Response.json({ error: 'Deposits and withdrawals are for investment accounts' }, { status: 400 }));
     v.typeIn('Deposits', '9000');
     await v.submit();
     expect(v.notices()).toEqual(['notice critical: Critical: Deposits and withdrawals are for investment accounts']);
+    const foot = v.sheet().findAll((e) => (e.getAttribute('class') ?? '') === 'sheet-footer')[0];
+    const note = foot.findAll((e) => (e.getAttribute('class') ?? '') === 'sheet-footer-note')[0];
+    expect(note.findAll((e) => e.getAttribute('role') === 'alert')[0].textContent).toContain('Deposits and withdrawals are for investment accounts');
+    expect(v.button('Save')!.getAttribute('aria-describedby')).toBe(note.getAttribute('id'));
+    // Its buttons are the footer's own, no group in a group.
+    expect(foot.findAll((e) => (e.getAttribute('class') ?? '') === 'btn-row')).toHaveLength(0);
     expect(v.field('Deposits').value).toBe('9000');
     expect(v.done()).toBe(0);
     v.unmount();

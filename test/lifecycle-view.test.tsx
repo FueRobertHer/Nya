@@ -166,7 +166,9 @@ describe('the sheet', () => {
   test('an account that ended can be reopened from it; one its bank no longer returns is held, which it says', () => {
     expect(buttons(form())).toEqual(['Cancel', 'Save']);
     const ended = form({ target: { ...target, state: 'left', day: '2024-03-13', ended: true } });
-    expect(buttons(ended)).toEqual(['Cancel', 'Save', 'Reopen it']);
+    // Every button in the footer, Reopen it beside Save and pointing to what it does.
+    expect(buttons(ended)).toEqual(['Cancel', 'Reopen it', 'Save']);
+    expect(ended).toMatch(/<div class="sheet-footer"><button[^>]*>Cancel<\/button><button[^>]*aria-describedby="[^"]+"[^>]*>Reopen it<\/button><button[^>]*>Save<\/button><\/div>/);
     expect(text(ended)).toContain('If its bank no longer returns it, it is held at its last known balance, and asked about, until the bank does.');
   });
 
@@ -176,7 +178,7 @@ describe('the sheet', () => {
     expect(text(html)).toContain('It still shows $310.00 owed. From Jun 30, 2024 that debt stops counting, so your net worth rises by $310.00.');
     expect(text(html)).toContain('Stop counting what it owes');
     // Save waits for the tick.
-    expect(html).toMatch(/<button disabled="">Save<\/button>/);
+    expect(html).toMatch(/<button type="button" class="btn" disabled="">Save<\/button>/);
     // An asset says what leaves net worth, and asks nothing more; a zero says nothing.
     expect(endEffect({ balance: 5000, type: 'depository', currency: 'USD' }, '2024-03-12')).toEqual({
       text: 'It still shows $5,000.00. From Mar 12, 2024 it stops counting, so your net worth falls by $5,000.00.',

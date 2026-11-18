@@ -143,14 +143,22 @@ function MoneyInOutForm({ open, target, onClose, onDone }: { open: boolean; targ
       title="Deposits and withdrawals"
       onClose={close}
       footer={
-        <div className="btn-row">
+        <>
+          {/* A refusal beside the buttons, in view, its amounts masked. */}
+          {error && (
+            <div className="sheet-footer-note" id={`${id}-error`}>
+              <Notice level="critical" role="alert">
+                <Masked>{hideAmountsIn(error)}</Masked>
+              </Notice>
+            </div>
+          )}
           <button type="button" className="btn secondary" onClick={() => !busy && onDone()} disabled={busy}>
             Cancel
           </button>
-          <button type="submit" form={`${id}-form`} className="btn" disabled={busy}>
+          <button type="submit" form={`${id}-form`} className="btn" disabled={busy} aria-describedby={error ? `${id}-error` : undefined}>
             {busy ? 'Saving…' : 'Save'}
           </button>
-        </div>
+        </>
       }
     >
       <form id={`${id}-form`} className="sheet-form" onSubmit={save} noValidate>
@@ -238,11 +246,6 @@ function MoneyInOutForm({ open, target, onClose, onDone }: { open: boolean; targ
         {nearWords.length > 0 && (
           <Notice level="info" role="status">
             <Masked>{`Make sure your brokerage’s figures include ${nearWords.join(' and ')}: Nya counts ${nearWords.length > 1 ? 'them' : 'it'} in these totals.`}</Masked>
-          </Notice>
-        )}
-        {error && (
-          <Notice level="critical" role="alert">
-            <Masked>{hideAmountsIn(error)}</Masked>
           </Notice>
         )}
         {totals && (
