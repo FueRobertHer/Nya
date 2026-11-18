@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MASK, setAmountsHidden } from '@/lib/format';
-import { ConnectionView, SharingListView, SharedWithMeView, PreviewView, sharedProblem, readSharedWithMe, rememberShares, rememberedShares, sharedSeenKey, type Choice } from '@/components/Sharing';
+import { ConnectionView, SharingListView, SharedWithMeView, SharedAccountItem, PreviewView, sharedProblem, readSharedWithMe, rememberShares, rememberedShares, sharedSeenKey, type Choice } from '@/components/Sharing';
 import { LOCAL_CACHE_KEY } from '@/components/device-cache';
 import { SharedViewsList, outlookWords } from '@/components/SharedViews';
 import { seenText, kindsText, viewsToSave, sameViews } from '@/components/ShareKinds';
@@ -143,6 +143,28 @@ const VIEWS: SharedViews = {
 const card = (views: SharedViews = VIEWS) =>
   renderToStaticMarkup(<SharedWithMeView data={{ shared: [{ connection: 'c1', label: 'Sam', accounts: [], expires_at: null, views }] }} />);
 
+/** Each notice drawn (components/TotalCaveats.tsx Notice), with its level
+ *  and its words, a gathered one's too: a closed <details> keeps them in
+ *  the page. */
+const notices = (html: string) =>
+  [...html.matchAll(/<div class="notice (critical|caution|info|done)"[^>]*>([\s\S]*?)<\/div><\/div>/g)].map((m) => ({ level: m[1], words: text(m[2]).trim() }));
+/** The level of the one notice that says `words`: it must be said once,
+ *  on the whole card too, so no grey copy is left behind. */
+const levelOf = (html: string, words: string) => {
+  const found = notices(html).filter((n) => n.words.includes(words));
+  expect(found.map((n) => n.words)).toHaveLength(1);
+  expect(text(html).split(words)).toHaveLength(2);
+  return found[0].level;
+};
+/** Whether `first` is drawn before `then`: a caveat under its figure comes
+ *  before the rows under it. */
+const before = (html: string, first: string, then: string) => {
+  const page = text(html);
+  expect(page).toContain(first);
+  expect(page).toContain(then);
+  return page.indexOf(first) < page.indexOf(then);
+};
+
 describe('on the card of the one it is shared with', () => {
   test('each kind, with its as-of day, its figures and its words', () => {
     const page = text(card());
@@ -224,7 +246,8 @@ describe('on the card of the one it is shared with', () => {
     expect(page).not.toMatch(AMOUNT);
     // Money that is there never reads 0%.
     expect(page).toContain('<1%');
-    expect(page).toContain('112% spent, over');
+    // Over said in its word, beside the name.
+    expect(page).toContain('Food Over 112% spent');
     expect(page).toContain('33%');
   });
 
@@ -259,7 +282,8 @@ describe('on the card of the one it is shared with', () => {
     );
     expect(page).toContain('All budgets <1% spent');
     expect(page).toContain('Fun 0% spent');
-    expect(page).toContain('New fund 0%');
+    // A goal's share at the end of its row, after its meta line.
+    expect(page).toMatch(/New fund [^%]*· as of yesterday 0%/);
     expect(page).toContain('US stocks >99%');
     expect(page).toContain('Cash <1%');
     expect(page).toContain('Bonds >-1%');
@@ -311,6 +335,214 @@ describe('on the card of the one it is shared with', () => {
     const goals = (VIEWS.goals as GoalsView).goals;
     const twice = text(card({ goals: { detail: 'amounts', goals: [goals[0], goals[0]] } }));
     expect(twice.match(/Rainy day/g)).toHaveLength(2);
+  });
+});
+
+// The review of 2026-11-18: every caveat on a short total was grey helper
+// text, lower than the owner's own screens say the same fact. Each is now a
+// notice at the owner's level (design-system.md "Status and honesty"),
+// under the figure it qualifies, in its words.
+describe('each caveat at the level the owner’s own screens give it, under its figure', () => {
+  const nw = VIEWS.net_worth as any;
+  const sp = VIEWS.spending as any;
+  const ho = VIEWS.holdings as any;
+  const bu = VIEWS.budgets as any;
+
+  test('net worth: a currency with no public rate left out is critical, as on Home; converted is information', () => {
+    const html = card({ net_worth: { ...nw, converted: { rates: 'ecb' } } });
+    expect(levelOf(html, '1 account in EUR isn’t in this total: there is no public rate for it.')).toBe('critical');
+    expect(levelOf(html, 'Converted into USD at the European Central Bank’s daily rates.')).toBe('info');
+    // Said in full, never folded into a count.
+    expect(html).not.toContain('notice-summary');
+    // Under the total, above the chart.
+    expect(before(html, '$321,480.00', 'there is no public rate for it')).toBe(true);
+    expect(before(html, 'there is no public rate for it', 'One point a week')).toBe(true);
+  });
+
+  test('net worth: totals not converted, and accounts with no balance yet, are cautions; two of them are gathered in amber', () => {
+    const html = card({ net_worth: { ...nw, without_balance: 2 } });
+    expect(levelOf(html, '1 account in EUR isn’t in this total: their totals don’t convert currencies.')).toBe('caution');
+    expect(levelOf(html, '2 accounts have no balance yet, so they aren’t in this total.')).toBe('caution');
+    // Gathered as Home gathers them: one line in the worst one's color,
+    // naming each kind, never an amount.
+    expect(html).toContain('<summary class="notice caution">');
+    expect(text(html)).toContain('2 notes: currencies not converted and accounts with no balance');
+    const one = card({ net_worth: { detail: 'total', currency: null, total: null, as_of: null, from: null, other_currencies: [], without_balance: 1 } });
+    expect(levelOf(one, '1 account has no balance yet, so it isn’t in this total.')).toBe('caution');
+  });
+
+  test('spending: that a month may be short and how they file it are cautions; what they left out is information; all under the month’s total', () => {
+    const html = card({
+      spending: { ...sp, converted: { rates: 'ecb' }, may_be_incomplete: true, filing_unread: true, months: [{ ...sp.months[0], exclusions_unknown: true }] },
+    });
+    expect(levelOf(html, 'Some transactions aren’t all in yet, so a month may be short.')).toBe('caution');
+    expect(levelOf(html, 'Some of how they file their transactions couldn’t be read just now')).toBe('caution');
+    expect(levelOf(html, 'What went out in EUR isn’t in these totals, which are in USD.')).toBe('info');
+    expect(levelOf(html, 'Whether they left some transactions out of their totals couldn’t be read, so those are counted here.')).toBe('info');
+    expect(text(html)).toContain('5 notes: a month may be short, categories that couldn’t be read, other currencies left out');
+    // On the number: under the month's total, before the first category,
+    // not after every row.
+    expect(before(html, '$1,357.50', 'a month may be short')).toBe(true);
+    expect(before(html, 'a month may be short', 'Housing')).toBe(true);
+    expect(before(html, 'What went out in EUR', 'Housing')).toBe(true);
+    // With no month to show, said all the same, at the same level.
+    const none = card({ spending: { ...sp, months: [], may_be_incomplete: true, converted: { rates: 'ecb' } } });
+    expect(levelOf(none, 'Some transactions aren’t all in yet, so a month may be short.')).toBe('caution');
+    // With no figure, nothing is said to be converted.
+    expect(text(none)).not.toContain('Converted into');
+    // What is counted stays helper text, not a notice.
+    expect(notices(html).some((n) => n.words.includes('by their own categories'))).toBe(false);
+  });
+
+  test('the unread-filing sentence is one level under spending and budgets alike', () => {
+    const html = card({ spending: { ...sp, filing_unread: true }, budgets: { ...bu, filing_unread: true } });
+    const said = notices(html).filter((n) => n.words.includes('Some of how they file their transactions couldn’t be read just now'));
+    expect(said.map((n) => n.level)).toEqual(['caution', 'caution']);
+    expect(html).not.toContain('stale-note');
+  });
+
+  test('holdings: what isn’t counted is a caution under the total; what Unclassified is stays helper text', () => {
+    const notes = [
+      'Unclassified is money Nya can’t place in a class: a fund it doesn’t know, or money no position explains.',
+      'What is held in EUR isn’t counted here: there is no public rate for it.',
+      '2 positions with no value aren’t counted.',
+      '1 investment account has no balance yet and no position, so it isn’t counted.',
+      // A note this card doesn't know yet: never drawn lower than it may be.
+      'Something new isn’t counted.',
+    ];
+    const html = card({ holdings: { ...ho, converted: { rates: 'ecb' }, notes } });
+    for (const n of notes.slice(1)) expect(levelOf(html, n)).toBe('caution');
+    expect(levelOf(html, 'Converted into USD at the European Central Bank’s daily rates.')).toBe('info');
+    expect(notices(html).some((n) => n.words.includes('Unclassified is money'))).toBe(false);
+    expect(text(html)).toContain('Unclassified is money Nya can’t place');
+    expect(before(html, '$20,500.00', 'What is held in EUR')).toBe(true);
+    expect(before(html, 'What is held in EUR', 'By asset class')).toBe(true);
+    // A gathered line names one in the singular.
+    const one = card({ holdings: { ...ho, notes: ['A position with no value isn’t counted.', '1 investment account has no balance yet and no position, so it isn’t counted.'] } });
+    expect(text(one)).toContain('2 notes: a position with no value and an account with no balance');
+    const empty = card({ holdings: { ...ho, classes: [], buckets: [], positions: [], notes: ['No investment accounts to show.'] } });
+    expect(notices(empty)).toEqual([]);
+    expect(text(empty)).toContain('No investment accounts to show.');
+  });
+
+  test('budgets: a month that may be off is a caution under its total; what they left out is information', () => {
+    const html = card({ budgets: { ...bu, converted: { rates: 'ecb' }, months: [{ ...bu.months[0], left_out: 'What went out in EUR isn’t in these budgets.' }, bu.months[1]] } });
+    expect(levelOf(html, 'What is spent in October 2026 may be off')).toBe('caution');
+    expect(levelOf(html, 'What went out in EUR isn’t in these budgets.')).toBe('info');
+    expect(levelOf(html, 'Spending in other currencies counts converted into USD')).toBe('info');
+    // Under the month's total, above its budgets; what bears on both months
+    // once, above them.
+    expect(before(html, '$1,242.50 of $1,800.00', 'What is spent in October 2026 may be off')).toBe(true);
+    expect(before(html, 'What is spent in October 2026 may be off', 'Food and drink')).toBe(true);
+    expect(before(html, 'Spending in other currencies counts converted into USD', 'This month, October 2026')).toBe(true);
+  });
+
+  test('a kind that couldn’t be read is a caution', () => {
+    expect(levelOf(card({ budgets: { unreadable: true } }), 'Sam’s budgets couldn’t be read just now, so none of it is shown.')).toBe('caution');
+  });
+
+  test('a budget past its limit is amber, never red, and says Over in a word, with amounts hidden too', () => {
+    const over = { name: 'Fun', pct: 117, label: '117%', over: true, spent: 350, limit: 300 };
+    const near = { name: 'Food', pct: 90, label: '90%', over: false, spent: 90, limit: 100 };
+    const views: SharedViews = { budgets: { ...bu, months: [{ ...bu.months[0], may_be_incomplete: false, groups: [over, near] }, bu.months[1]] } };
+    for (const html of [card(views), hidden(() => card(views))]) {
+      expect(html).not.toMatch(/meter-(track|fill)[^"]* over/);
+      const meter = (name: string) => html.match(new RegExp(`<span class="(meter-track[^"]*)" role="meter" aria-label="${name}"[^>]*><span class="(meter-fill[^"]*)"`))?.slice(1);
+      expect(meter('Fun')).toEqual(['meter-track incoming-meter warn', 'meter-fill warn']);
+      expect(meter('Food')).toEqual(['meter-track incoming-meter warn', 'meter-fill warn']);
+      expect(meter('All budgets')).toEqual(['meter-track incoming-meter', 'meter-fill']);
+      // Over in its word beside the name, unmasked; the one near its limit has none.
+      expect(text(html)).toContain('Fun Over');
+      expect(text(html)).not.toContain('Food Over');
+      expect(html).toContain('<span class="badge warn">Over</span>');
+    }
+    expect(text(card(views))).toContain('Fun Over $350.00 of $300.00');
+  });
+});
+
+// The review of 2026-11-18: the card was on legacy classes. It is now on
+// the primitives (docs/design/guidelines.md "Which class to use").
+describe('the card on the primitives', () => {
+  const account = {
+    id: 'a',
+    label: 'Joint ••1111',
+    level: 'transactions' as const,
+    balance: 500,
+    currency: 'USD',
+    as_of: '2026-10-19',
+    debt: false,
+    transactions: [{ date: '2026-10-18', name: 'Blue Bottle', amount: 12, pending: true, currency: 'USD' }],
+  };
+  const full = (accounts: any[] = [account]) =>
+    renderToStaticMarkup(<SharedWithMeView data={{ shared: [{ connection: 'c1', label: 'Sam', accounts, expires_at: null, views: VIEWS }] }} />);
+
+  test('its title row is a card header with an h3 (under its section’s h2), Read-only a badge, and nothing is left on the classes it replaces', () => {
+    const html = full();
+    expect(html).toContain('<div class="card-header"><span class="avatar small">S</span><h3>Shared by Sam</h3><span class="badge">Read-only</span></div>');
+    for (const legacy of ['incoming-head', 'peer-row', 'link-btn', 'panel-note', 'stale-note', 'class="pill"', 'incoming-account-value', '<section aria-label']) {
+      expect(html).not.toContain(legacy);
+    }
+    // The cards and the note above them stacked, the note after the cards a helper.
+    expect(html).toContain('<div id="shared-with-me" class="stack">');
+    expect(html).toContain('<p class="helper incoming-note">Sam sees each time this is shown to you, and so do you, in Sharing.</p>');
+  });
+
+  test('accounts and each kind’s lines are rows in lists, their figures lined up as money', () => {
+    const html = full();
+    expect(html).toContain(
+      '<ul class="list-rows"><li><div class="list-row"><span class="list-row-text"><span class="list-row-title">Joint ••1111</span><span class="list-row-sub">Yesterday</span></span><span class="list-row-value money">$500.00</span></div>'
+    );
+    // A spending group's categories set in under it, in a list of their own.
+    const housing = html.indexOf('<span class="list-row-title">Housing</span>');
+    const sub = html.indexOf('<ul class="list-rows incoming-sub-rows"><li><div class="list-row"><span class="list-row-text"><span class="list-row-title">Rent</span>');
+    expect(housing).toBeGreaterThan(0);
+    expect(sub).toBeGreaterThan(housing);
+    expect(html.slice(housing, sub)).not.toContain('</li>');
+    // Every figure on a row is money, so the digits line up.
+    expect([...html.matchAll(/<span class="list-row-value( money)?">/g)].every((m) => m[1] === ' money')).toBe(true);
+    // A kind's own figure too.
+    expect(html).toContain('<span class="incoming-figure-value money">$321,480.00</span>');
+  });
+
+  test('each kind is under a heading, below the card’s, and the parts inside it under lesser ones; no kind is a region of its own', () => {
+    const html = full();
+    for (const k of ['Net worth', 'Spending', 'Holdings', 'Budgets', 'Goals']) expect(html).toContain(`<h4 class="incoming-kind-name">${k}</h4>`);
+    for (const p of ['By asset class', 'By tax bucket', 'Positions', 'This month, October 2026', 'Last month, September 2026']) {
+      expect(html).toContain(`<h5 class="incoming-kind-sub">${p}</h5>`);
+    }
+    // The card holds no region: only the part's own section, around it.
+    const cardOnly = html.slice(html.indexOf('<div class="card">'));
+    expect(cardOnly).not.toContain('<section');
+  });
+
+  test('spending’s month is a field with a label one can see', () => {
+    const m = full().match(new RegExp('<div class="field"><label for="([^"]+)">Month</label><select id="([^"]+)"'));
+    expect(m?.[1]).toBeTruthy();
+    expect(m![1]).toBe(m![2]);
+  });
+
+  test('Recent transactions is a ghost button (.btn, 44px tall) that says whether it is open and, open, names the list it opens', () => {
+    // Closed, the list isn't drawn, so the button names nothing (as Collapsible's).
+    const closed = renderToStaticMarkup(<SharedAccountItem a={account} open={false} onToggle={() => {}} />);
+    expect(closed).toContain('<button type="button" class="btn ghost" aria-expanded="false">Recent transactions (1)</button>');
+    expect(closed).not.toContain('incoming-txns');
+    const open = renderToStaticMarkup(<SharedAccountItem a={account} open onToggle={() => {}} />);
+    const o = open.match(new RegExp('<button type="button" class="btn ghost" aria-expanded="true" aria-controls="([^"]+)">Hide transactions</button>'));
+    expect(open).toContain(`<ul id="${o![1]}" class="incoming-txns">`);
+    // Pending a badge on its line, the amount money.
+    expect(open).toContain('Blue Bottle <span class="badge">Pending</span>');
+    expect(text(open)).not.toContain('(pending)');
+    expect(open).toContain('<span class="money">−$12.00</span>');
+  });
+
+  test('transactions that can’t be read say so as a caution; none in the window, as helper text', () => {
+    const unreadable = renderToStaticMarkup(<SharedAccountItem a={{ ...account, transactions: undefined, transactions_unreadable: true }} open={false} onToggle={() => {}} />);
+    expect(levelOf(unreadable, "Its transactions can't be read, so they aren't shown.")).toBe('caution');
+    const none = renderToStaticMarkup(<SharedAccountItem a={{ ...account, transactions: [] }} open={false} onToggle={() => {}} />);
+    expect(none).toContain('<p class="helper">No transactions in the last');
+    expect(notices(none)).toEqual([]);
+    // A balance-only account has nothing under its row.
+    expect(renderToStaticMarkup(<SharedAccountItem a={{ ...account, level: 'balance', transactions: undefined }} open={false} onToggle={() => {}} />)).not.toContain('incoming-account-more');
   });
 });
 
@@ -527,6 +759,11 @@ describe('a read of what is shared turned away or failing', () => {
     const problem = sharedProblem(429, { error: 'What is shared can be read 60 times in 10 minutes. Try again in 7 minutes.' }, '420');
     const page = text(renderToStaticMarkup(<SharedWithMeView data={shown} problem={problem} />));
     expect(page).toContain('This is what was last shown: it couldn’t be refreshed. What is shared can be read 60 times in 10 minutes. Try again in 7 minutes.');
+    // A caution, as what is shown is real but may be dated, and announced, as
+    // it comes after a read, a refresh among them.
+    const html = renderToStaticMarkup(<SharedWithMeView data={shown} problem={problem} />);
+    expect(levelOf(html, 'This is what was last shown: it couldn’t be refreshed.')).toBe('caution');
+    expect(html).toContain('<div class="notice caution" role="status">');
     expect(page).toContain('Shared by Sam');
     expect(page).toContain('Rainy day');
     // And with nothing wrong, nothing is said.
@@ -571,7 +808,10 @@ describe('a read of what is shared turned away or failing', () => {
     // A later page on this device, turned away before anything loaded.
     const turned = await readSharedWithMe('user_a', answer(429, null, { 'Retry-After': '120' }), storage);
     expect(turned).toEqual({ data: null, problem: 'Try again in 2 minutes.', hadShares: true });
-    expect(text(cards(turned))).toBe(' What is shared with you couldn’t be shown just now. Try again in 2 minutes. ');
+    // Critical, as none of it could be shown, and said at once: never the
+    // caution of what was last shown.
+    expect(notices(cards(turned))).toEqual([{ level: 'critical', words: 'Critical: What is shared with you couldn’t be shown just now. Try again in 2 minutes.' }]);
+    expect(cards(turned)).toContain('role="alert"');
     // Someone else on the same device never hears of the first one's shares.
     expect(cards(await readSharedWithMe('user_b', offline, storage))).toBe('');
     // Once a good read has nothing, it is forgotten.

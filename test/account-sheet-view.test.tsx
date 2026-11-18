@@ -66,7 +66,8 @@ const props = (a: Account, inst: Institution, over: Partial<Props> = {}): Props 
   hiding: false,
   lifecycleBusy: false,
   onDismiss: noop,
-  onHide: noop,
+  onHide: async () => null,
+  onUnhide: async () => null,
   onEnd: noop,
   onUpdate: noop,
   onAddTransaction: noop,
@@ -188,7 +189,7 @@ describe('the account sheet', () => {
     expect(text(html)).toMatch(/\$4,200\.00 (uninvested|in cash) · cash is \d+(\.\d)?% of holdings/);
   });
 
-  test('each action closes the sheet first, then opens its own', () => {
+  test('each action but Hide closes the sheet first, then opens its own', () => {
     const a = account({ account_id: 'acc_cash', name: 'Cash', mask: null });
     const events: string[] = [];
     const host = dom.document.createElement('div');
@@ -199,7 +200,6 @@ describe('the account sheet', () => {
         <AccountSheet
           {...props(a, typed(a), {
             onDismiss: () => events.push('dismiss'),
-            onHide: (id) => events.push(`hide ${id}`),
             onEnd: (t) => events.push(`end ${t.account_id} ${t.institution}`),
             onAddTransaction: (id) => events.push(`add ${id}`),
             onUpdate: (m) => events.push(`update ${m.account_id} ${m.balance}`),
@@ -214,14 +214,13 @@ describe('the account sheet', () => {
       const [el] = body.findAll((e) => e.tagName === 'BUTTON' && e.textContent === label);
       act(() => click(el));
     };
-    for (const label of ['Hide', 'Mark as closed…', 'Add transaction', 'Update balance']) press(label);
+    for (const label of ['Mark as closed…', 'Add transaction', 'Update balance']) press(label);
     const [more] = body.findAll((e) => e.getAttribute('aria-haspopup') === 'menu');
     act(() => click(more));
     press('Import a file');
     act(() => click(more));
     press('Delete…');
     expect(events).toEqual([
-      'dismiss', 'hide acc_cash',
       'dismiss', 'end acc_cash Wallet',
       'dismiss', 'add acc_cash',
       'dismiss', 'update acc_cash 1200',

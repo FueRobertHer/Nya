@@ -1,12 +1,6 @@
 {
-  "app/connect/[token]/page.tsx": {
-    "inlineLayoutStyles": 1
-  },
   "app/globals.css": {
     "smallFonts": 2
-  },
-  "app/not-allowed/page.tsx": {
-    "inlineLayoutStyles": 1
   },
   "components/AdminUnusedItems.tsx": {
     "inlineLayoutStyles": 3
@@ -37,9 +31,6 @@
   },
   "components/Connectors.tsx": {
     "inlineLayoutStyles": 7
-  },
-  "components/Dashboard.tsx": {
-    "inlineLayoutStyles": 6
   },
   "components/DebtPayoff.tsx": {
     "inlineLayoutStyles": 1

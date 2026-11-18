@@ -13,16 +13,23 @@
 //
 // Changes shown at once (a category, an exclusion, tags and a note, a review)
 // leave it open on the row as it now is; after a category, the offer to make
-// a rule of it shows under the field. Changes the list shows only once it is
-// read again (a part's, a group's, a rename) close it, as the editor closed.
+// a rule of it shows under the field. Looks right, Exclude or Include, a note
+// and tags say what they saved in a done line once the server has it
+// (docs/design/guidelines.md#after-save), which a refusal never does. Changes
+// the list shows only once it is read again (a part's, a group's) close it,
+// as the editor closed: a part's or a group transaction's waits for its write
+// first, and says in the sheet why one wasn't made. A rename waits for its
+// write too: it closes once saved, the rows behind it renamed, or says beside
+// Rename why it wasn't.
 // Each action that has a sheet of its own closes this one first, so no sheet
 // opens on top of another.
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
 import { Menu, type MenuItem } from './Menu';
 import { Masked } from './HideAmounts';
 import { ALERT, LevelWord } from './ConnectionStatus';
+import { Notice } from './TotalCaveats';
 import CategoryPicker from './CategoryPicker';
 import TxnTagsNote, { type TagChange } from './TxnTagsNote';
 import ReviewNote from './ReviewNote';
@@ -43,6 +50,20 @@ import { IMPORTED_TXN_PREFIX, importedChangedNote } from '@/lib/history-import/v
 import { sourceLabel } from '@/lib/manual-txn-input';
 import { shownName } from '@/lib/merchant-name';
 import type { Tag } from '@/lib/tags';
+
+/** What an exclusion saved says; the row's own line says how it stands. */
+const EXCLUDED_SAID = 'Excluded: it stays in this list, out of totals, budgets, insights, bills and the Plan.';
+const INCLUDED_SAID = 'Included again: it counts in totals, budgets, insights, bills and the Plan.';
+
+/** What a change of tags saved says, by the tags' names. */
+export function tagsSaid(change: TagChange, tags: readonly Tag[]): string {
+  const names = (ids: readonly string[] | undefined) => (ids ?? []).flatMap((id) => tags.find((g) => g.id === id)?.name ?? []);
+  const added = [...names(change.add), ...(change.newTag ? [change.newTag] : [])];
+  const removed = names(change.remove);
+  if (added.length > 0) return `${added.length === 1 ? 'Tag' : 'Tags'} added: ${added.join(', ')}.`;
+  if (removed.length > 0) return `${removed.length === 1 ? 'Tag' : 'Tags'} removed: ${removed.join(', ')}.`;
+  return 'Tags saved.';
+}
 
 /** What a row opens: a transaction, by its id in the list; a part of a split
  *  one, by its own id and its transaction's; a group's transaction, by its
@@ -209,12 +230,16 @@ export type TransactionSheetProps = {
   /** May return a promise that resolves true once the change is saved: the
    *  status line says so only then (components/transaction-edits.ts). */
   onRecategorize: (transaction_id: string, choice: CategoryChoice) => unknown;
-  onRename: (vendor_key: string, name: string) => void;
+  /** As onRecategorize, a promise: of null once saved, or of what went
+   *  wrong, which the sheet says beside Rename, staying open. */
+  onRename: (vendor_key: string, name: string) => unknown;
   onEditTransaction?: (t: Txn) => void;
   /** As onRecategorize: a promise of true once saved. */
   onToggleExcluded?: (t: Txn, excluded: boolean) => unknown;
-  onChangeTags?: (t: Txn, change: TagChange) => void;
-  onSaveNote?: (t: Txn, note: string) => void;
+  /** As onRecategorize: a promise of true once saved. */
+  onChangeTags?: (t: Txn, change: TagChange) => unknown;
+  /** As onRecategorize: a promise of true once saved (empty clears it). */
+  onSaveNote?: (t: Txn, note: string) => unknown;
   onCreateRule?: (t: Txn, category_id?: string) => void;
   /** Splits and groups (#39): the list read again after one changes;
    *  without it, nothing is offered to split or group. */
@@ -280,20 +305,49 @@ function TxnSheet({
 }: Inner & { t: Txn }) {
   // The category just chosen, while the offer to make a rule of it stands.
   const [offer, setOffer] = useState<string | null>(null);
-  // What the status line says: the last of Looks right or Exclude / Include
-  // to be saved, and on which row. A kept is said only while the row still
-  // files under what it kept (its category's id, not its name, which can
-  // change on saving), and picking a category clears it, so a choice made
-  // while the save is out, or after, never reads as kept.
-  const [announced, setAnnounced] = useState<{ id: string; kept: Filed } | { id: string; excluded: boolean } | null>(null);
-  const forgetKept = () => setAnnounced((a) => (a && 'kept' in a ? null : a));
+  // What the done line says: the last change saved (Looks right, Exclude or
+  // Include, a note, tags), on which row, while the row still holds it. A kept
+  // is said only while the row still files under what it kept (its
+  // category's id, not its name, which can change on saving). Every change
+  // starts by taking the line away, and an answer says something only if no
+  // change has started since, so a choice made while a save is out, or after,
+  // never reads as the earlier one saved.
+  const [done, setDone] = useState<{ id: string; text: string; holds: (x: Txn) => boolean } | null>(null);
+  const changes = useRef(0);
+  const begin = () => {
+    setDone(null);
+    return ++changes.current;
+  };
+  /** Said once the server has it (a refusal is said above, and puts the row back). */
+  const sayOnce = (n: number, saved: unknown, id: string, text: string, holds: (x: Txn) => boolean, focus = false) => {
+    if (saved === true && n === changes.current) {
+      focusDone.current = focus;
+      setDone({ id, text, holds });
+    }
+  };
+  // A note or tags saved: what was pressed has gone (the editor starts again
+  // on the saved note, a chip goes) or can't be pressed (Add, its field
+  // emptied), so focus goes to the line, unless it has moved on to something
+  // else meanwhile. Exclude and Looks right keep their own.
+  const doneRef = useRef<HTMLDivElement>(null);
+  const focusDone = useRef(false);
+  useEffect(() => {
+    if (!done || !focusDone.current) return;
+    focusDone.current = false;
+    const at = document.activeElement;
+    if (!at || at === document.body || !at.isConnected || at.getAttribute('disabled') !== null) doneRef.current?.focus();
+  }, [done]);
   // Include on a pending row takes its row away (exclusionOffer: it can't be
   // excluded again until it posts): focus goes to the line said in its place.
   const waitRef = useRef<HTMLParagraphElement>(null);
   const focusWait = useRef(false);
-  // Rename vendor, a second level of the sheet, and what is typed there.
+  // Rename vendor, a second level of the sheet, what is typed there, and
+  // its write: out, or what went wrong with it.
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(t.name);
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const renameErrorId = useId();
   const categoryRef = useRef<HTMLSelectElement>(null);
   const act = (go: () => void) => () => {
     onClose();
@@ -323,26 +377,51 @@ function TxnSheet({
 
   if (renaming && t.vendor_key) {
     const vendor = t.vendor_key;
+    const rename = async () => {
+      setRenameBusy(true);
+      setRenameError(null);
+      let failed: unknown;
+      try {
+        failed = await Promise.resolve(onRename(vendor, draft.trim()));
+      } finally {
+        setRenameBusy(false);
+      }
+      if (typeof failed === 'string') setRenameError(failed);
+      else onClose();
+    };
     return (
       <Sheet
         open={open}
         title="Rename vendor"
-        onClose={onClose}
-        onBack={() => setRenaming(false)}
+        onClose={() => !renameBusy && onClose()}
+        // Kept while it waits, so the level (and focus) stays put: it just
+        // doesn't go back until the answer is in.
+        onBack={() => !renameBusy && setRenaming(false)}
         footer={
-          <button
-            className="btn"
-            disabled={draft.trim() === t.name}
-            onClick={act(() => onRename(vendor, draft.trim()))}
-          >
-            Rename
-          </button>
+          <>
+            {renameError && (
+              <div className="sheet-footer-note" id={renameErrorId}>
+                <Notice level="critical" role="alert">
+                  {renameError}
+                </Notice>
+              </div>
+            )}
+            <button
+              type="button"
+              className="btn"
+              disabled={renameBusy || draft.trim() === t.name}
+              aria-describedby={renameError ? renameErrorId : undefined}
+              onClick={() => void rename()}
+            >
+              {renameBusy ? 'Renaming…' : 'Rename'}
+            </button>
+          </>
         }
       >
         <div className="stack">
           <label className="field">
             Name
-            <input className="text-input" value={draft} maxLength={100} onChange={(e) => setDraft(e.target.value)} />
+            <input className="text-input" value={draft} maxLength={100} onChange={(e) => setDraft(e.target.value)} disabled={renameBusy} />
           </label>
           <p className="helper">Applies to this vendor&apos;s transactions; older ones may update later.</p>
         </div>
@@ -357,6 +436,7 @@ function TxnSheet({
             label: 'Rename vendor',
             onSelect: () => {
               setDraft(t.name);
+              setRenameError(null);
               setRenaming(true);
             },
           },
@@ -378,7 +458,7 @@ function TxnSheet({
           value={t.category_id ?? taxonomy.uncategorized}
           onChange={(id) => {
             if (!id || id === t.category_id) return;
-            forgetKept();
+            begin();
             if (t.group_members) {
               onClose();
               void sendChange('/api/transaction-groups', 'PATCH', { id: t.group_id, category_id: id }).then((failed) => {
@@ -400,7 +480,7 @@ function TxnSheet({
           className="text-input"
           value={t.category ?? 'other'}
           onChange={(e) => {
-            forgetKept();
+            begin();
             onRecategorize(t.transaction_id, { category: e.target.value });
           }}
         >
@@ -416,8 +496,8 @@ function TxnSheet({
   // Its actions, one list (components/ActionRows.tsx), and "Create a rule
   // from this" in a list of its own after the rules that match it. Each that
   // opens another sheet closes this one first; Exclude acts in place, so
-  // focus stays on its row (its key holds while its title flips) and the
-  // status line below says what it did once it is saved.
+  // focus stays on its row (its key holds while its title flips), the way
+  // back, and the done line says what it did once it is saved.
   const split = onSplitsChanged
     ? splitActions(t, {
         onSplit: act(() => onSplit(t)),
@@ -447,11 +527,10 @@ function TxnSheet({
               const excluded = t.excluded !== true;
               const id = t.transaction_id;
               focusWait.current = exclusionOffer({ ...t, excluded: excluded ? true : undefined, excluded_by_rule: undefined }) !== 'toggle';
-              setAnnounced(null);
-              // Said only once the server has it (a refusal puts it back and says why).
-              void Promise.resolve(onToggleExcluded!(t, excluded)).then((saved) => {
-                if (saved === true) setAnnounced({ id, excluded });
-              });
+              const n = begin();
+              void Promise.resolve(onToggleExcluded!(t, excluded)).then((saved) =>
+                sayOnce(n, saved, id, excluded ? EXCLUDED_SAID : INCLUDED_SAID, (x) => (x.excluded === true) === excluded)
+              );
             },
           },
         ]
@@ -485,11 +564,10 @@ function TxnSheet({
                     onClick={() => {
                       const id = t.transaction_id;
                       const kept = filedUnder(t);
-                      setAnnounced(null);
-                      // Said only once the server has it.
-                      void Promise.resolve(onRecategorize(id, confirm)).then((saved) => {
-                        if (saved === true) setAnnounced({ id, kept });
-                      });
+                      const n = begin();
+                      void Promise.resolve(onRecategorize(id, confirm)).then((saved) =>
+                        sayOnce(n, saved, id, `Category kept: ${t.category_name ?? t.category ?? 'uncategorized'}.`, (x) => stillFiled(kept, x))
+                      );
                       // The button goes with the mark: focus to the field it was about.
                       categoryRef.current?.focus();
                     }}
@@ -500,21 +578,15 @@ function TxnSheet({
               )}
             </p>
           )}
-          {/* Said once Looks right is pressed, since the button goes, or
-              once Exclude or Include is, whose row stays where it was. */}
-          <p className="visually-hidden" role="status">
-            {announced?.id !== t.transaction_id
-              ? ''
-              : 'kept' in announced
-                ? stillFiled(announced.kept, t)
-                  ? `Category kept: ${t.category_name ?? t.category ?? 'uncategorized'}.`
-                  : ''
-                : announced.excluded === (t.excluded === true)
-                  ? announced.excluded
-                    ? 'Excluded from budgets and reports.'
-                    : 'Included in budgets and reports again.'
-                  : ''}
-          </p>
+          {/* What the last change saved, said where focus is: a live region
+              kept on the page, out of the flow while it says nothing. */}
+          <div className="txn-sheet-said" role="status">
+            {done && done.id === t.transaction_id && done.holds(t) && (
+              <Notice level="done" ref={doneRef} tabIndex={-1}>
+                {done.text}
+              </Notice>
+            )}
+          </div>
           {t.excluded === true && <p className="helper">{t.excluded_by_rule ? 'Hidden by a rule: out of budgets and reports' : 'Excluded from budgets and reports'}</p>}
           <TxnNotes t={t} whole={t} shared={shared} as="p" />
         </div>
@@ -553,8 +625,18 @@ function TxnSheet({
             key={`${t.transaction_id}:${t.note ?? ''}`}
             t={t}
             tags={tags}
-            onChangeTags={(change) => onChangeTags(t, change)}
-            onSaveNote={(note) => onSaveNote(t, note)}
+            onChangeTags={(change) => {
+              const n = begin();
+              const id = t.transaction_id;
+              // On, or off, while the row still has it so.
+              const holds = (x: Txn) => (change.add ?? []).every((g) => x.tags?.includes(g)) && !(change.remove ?? []).some((g) => x.tags?.includes(g));
+              void Promise.resolve(onChangeTags(t, change)).then((saved) => sayOnce(n, saved, id, tagsSaid(change, tags), holds, true));
+            }}
+            onSaveNote={(note) => {
+              const n = begin();
+              const id = t.transaction_id;
+              void Promise.resolve(onSaveNote(t, note)).then((saved) => sayOnce(n, saved, id, note ? 'Note saved.' : 'Note cleared.', (x) => (x.note ?? '') === note, true));
+            }}
           />
         )}
 
@@ -598,37 +680,47 @@ function TxnSheet({
 }
 
 /** A part of a split transaction: its category, whether it counts on its
- *  own, and the whole split. Each change closes it: the list shows it once
- *  it is read again. */
+ *  own, and the whole split. Each change waits for its write, then closes
+ *  it: the list shows it once it is read again. A refusal is said here, the
+ *  sheet still open. */
 function PartSheet({ open, onClose, said, parent, part: p, taxonomy, onSplitsChanged, onSplit, onSplitError }: Inner & { parent: Txn; part: Txn }) {
   const c = currencyOf(parent);
   const label = p.category_name !== undefined ? p.category_name : p.category;
-  const patch = (change: Record<string, unknown>) => {
-    onClose();
-    void sendChange('/api/transaction-splits', 'PATCH', { transaction_id: splitKeptUnder(parent), part_id: p.transaction_id.slice(PART_PREFIX.length), ...change }).then((failed) => {
-      onSplitError(failed);
-      onSplitsChanged?.();
-    });
-  };
+  const { busy, refused, send } = useWrite(open, onClose, onSplitsChanged, onSplitError);
+  const patch = (change: Record<string, unknown>) =>
+    send(() => sendChange('/api/transaction-splits', 'PATCH', { transaction_id: splitKeptUnder(parent), part_id: p.transaction_id.slice(PART_PREFIX.length), ...change }));
   return (
     <Sheet
       open={open}
       title={`Part of ${shownName(parent)}`}
-      onClose={onClose}
+      onClose={() => !busy && onClose()}
       footer={
-        <button
-          className="btn secondary"
-          onClick={() => {
-            onClose();
-            onSplit(parent);
-          }}
-        >
-          Edit split
-        </button>
+        <>
+          {busy && (
+            <p className="helper sheet-footer-note" role="status">
+              Saving…
+            </p>
+          )}
+          <button
+            className="btn secondary"
+            disabled={busy}
+            onClick={() => {
+              onClose();
+              onSplit(parent);
+            }}
+          >
+            Edit split
+          </button>
+        </>
       }
     >
       <div className="stack">
         {said}
+        {refused && (
+          <Notice level="critical" role="alert">
+            {refused}
+          </Notice>
+        )}
         <div className="txn-sheet-hero">
           <p className={`txn-sheet-amount money${p.amount < 0 ? ' inflow' : ''}`}>
             <Masked>{signedMoney(-p.amount, c, { always: true })}</Masked>
@@ -653,6 +745,7 @@ function PartSheet({ open, onClose, said, parent, part: p, taxonomy, onSplitsCha
               onChange={(id) => {
                 if (id && id !== p.category_id) patch({ category_id: id });
               }}
+              disabled={busy}
             />
           </label>
         )}
@@ -668,29 +761,37 @@ function PartSheet({ open, onClose, said, parent, part: p, taxonomy, onSplitsCha
 }
 
 /** One of a group's transactions: as it is, and taken out of the group.
- *  Taking it out closes it: the list shows that once it is read again. */
+ *  Taking it out waits for its write, then closes it: the list shows that
+ *  once it is read again. A refusal is said beside the button. */
 function MemberSheet({ open, onClose, said, group, member: m, onSplitsChanged, onSplitError }: Inner & { group: Txn; member: Txn }) {
   const members = group.group_members ?? [];
   const c = currencyOf(group);
+  const { busy, refused, send } = useWrite(open, onClose, onSplitsChanged, onSplitError);
+  const failedId = useId();
   return (
     <Sheet
       open={open}
       title={shownName(m)}
-      onClose={onClose}
+      onClose={() => !busy && onClose()}
       footer={
         members.length > MIN_MEMBERS ? (
-          <button
-            className="btn secondary"
-            onClick={() => {
-              onClose();
-              void sendChange('/api/transaction-groups', 'PATCH', { id: group.group_id, remove: [heldInGroupAs(m)] }).then((failed) => {
-                onSplitError(failed);
-                onSplitsChanged?.();
-              });
-            }}
-          >
-            Take it out of the group
-          </button>
+          <>
+            {refused && (
+              <div className="sheet-footer-note" id={failedId}>
+                <Notice level="critical" role="alert">
+                  {refused}
+                </Notice>
+              </div>
+            )}
+            <button
+              className="btn secondary"
+              disabled={busy}
+              aria-describedby={refused ? failedId : undefined}
+              onClick={() => send(() => sendChange('/api/transaction-groups', 'PATCH', { id: group.group_id, remove: [heldInGroupAs(m)] }))}
+            >
+              {busy ? 'Taking it out…' : 'Take it out of the group'}
+            </button>
+          </>
         ) : undefined
       }
     >
@@ -715,4 +816,53 @@ function MemberSheet({ open, onClose, said, group, member: m, onSplitsChanged, o
       </div>
     </Sheet>
   );
+}
+
+/** A part's or a group transaction's change: sent while the sheet stays
+ *  open, then closed and the list read again; refused, the words for the
+ *  sheet to say, and the list read again too (as it always was). */
+function useWrite(open: boolean, onClose: () => void, onSplitsChanged: (() => void) | undefined, onSplitError: (message: string | null) => void) {
+  const [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState<string | null>(null);
+  // Gone from the page while open and saying a refusal (its part or
+  // transaction no longer there once the list is read again): the list says
+  // it instead, under its heading, where focus goes, rather than nowhere. An
+  // answer that comes once it has gone goes to the list too, and closes
+  // nothing. Kept as the write and the props say, not as a render last
+  // drew, so a refusal and its sheet going in one render still reach it.
+  const live = useRef({ mounted: true, open, refused: null as string | null, onSplitError });
+  useEffect(() => {
+    live.current.open = open;
+    live.current.onSplitError = onSplitError;
+  });
+  useEffect(() => {
+    const now = live.current;
+    now.mounted = true;
+    return () => {
+      now.mounted = false;
+      if (now.open && now.refused) now.onSplitError(now.refused);
+    };
+  }, []);
+  const send = async (write: () => Promise<string | null>) => {
+    if (busy) return;
+    setBusy(true);
+    setRefused(null);
+    live.current.refused = null;
+    const failed = await write();
+    live.current.refused = failed;
+    if (!live.current.mounted) {
+      onSplitError(failed);
+      onSplitsChanged?.();
+      return;
+    }
+    setBusy(false);
+    if (failed) setRefused(failed);
+    else {
+      // Made: what the list said of an earlier one goes.
+      onSplitError(null);
+      onClose();
+    }
+    onSplitsChanged?.();
+  };
+  return { busy, refused, send };
 }

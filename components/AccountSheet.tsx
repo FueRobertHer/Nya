@@ -8,13 +8,23 @@
 // row that expanded in place and the buttons that sat inside it.
 //
 // Each action closes this sheet first and opens its own, as the rest of the
-// dashboard does, so no sheet opens on top of another.
+// dashboard does, so no sheet opens on top of another. Hide is the one that
+// acts here (docs/design/guidelines.md#after-save): the account leaves the
+// list behind, and Unhide is far away under Hidden, so the sheet stays open
+// on a done notice that says what moved, with an Undo. Undo unhides it,
+// which puts back exactly what the person had: hiding adds the account to
+// the hidden set (app/api/hidden-accounts), and an account on the list has
+// no entry there, under any of its ids. What hiding clears beside it is
+// worked out again from the accounts (the caches, and the backfill of past
+// days, which a hide may start and an Undo leaves done).
 
+import { useEffect, useId, useRef, useState } from 'react';
 import AccountSparkline from './AccountSparkline';
 import HoldingsRecorded from './HoldingsRecorded';
 import InvestmentActivity from './InvestmentActivity';
 import type { MoneyInOutTarget } from './MoneyInOutFigures';
 import { Sheet } from './Sheet';
+import { Notice } from './TotalCaveats';
 import { Menu, type MenuItem } from './Menu';
 import { Masked } from './HideAmounts';
 import type { LifecycleTarget } from './AccountLifecycle';
@@ -156,7 +166,11 @@ export type AccountSheetProps = {
   hiding: boolean;
   lifecycleBusy: boolean;
   onDismiss: () => void;
-  onHide: (account_id: string) => void;
+  /** Hides it, and the screen behind reads it again: the words of a refusal,
+   *  or null once done. */
+  onHide: (account_id: string) => Promise<string | null>;
+  /** Unhides it: its Undo. */
+  onUnhide: (account_id: string) => Promise<string | null>;
   onEnd: (target: LifecycleTarget) => void;
   onUpdate: (account: ManualAccount) => void;
   onAddTransaction: (account_id: string) => void;
@@ -177,6 +191,7 @@ export default function AccountSheet({
   lifecycleBusy,
   onDismiss,
   onHide,
+  onUnhide,
   onEnd,
   onUpdate,
   onAddTransaction,
@@ -185,8 +200,99 @@ export default function AccountSheet({
   onMoneyInOut,
   onDelete,
 }: AccountSheetProps) {
+  // Hidden from here: kept open on what was said (the account has left the
+  // list behind, so the screen closes its sheet), until Done. `closed` keeps
+  // the words while it slides out.
+  const [hid, setHid] = useState<Hid | null>(null);
+  const [hideError, setHideError] = useState('');
+  const [undoError, setUndoError] = useState('');
+  const doneLine = useRef<HTMLDivElement>(null);
+  const id = useId();
+  // Opened again: on the account, nothing said from before, a refused Hide
+  // included (it leaves `hid` empty), whichever account it is now.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open && (!hid || hid.closed)) {
+      setHid(null);
+      setHideError('');
+      setUndoError('');
+    }
+  }
+  // Each time it says something new (hidden, then undone), focus goes to
+  // the line; a refused Undo is said beside Undo, as an alert.
+  const [said, setSaid] = useState(0);
+  useEffect(() => {
+    if (said > 0) doneLine.current?.focus();
+  }, [said]);
+
+  if (hid && hid.step !== 'hiding') {
+    const h = hid;
+    const busy = h.step === 'undoing';
+    const undo = async () => {
+      if (busy) return;
+      setUndoError('');
+      setHid({ ...h, step: 'undoing' });
+      const refused = await onUnhide(h.account_id);
+      if (refused) {
+        setHid({ ...h, step: 'hidden' });
+        setUndoError(refused);
+        return;
+      }
+      setHid({ ...h, step: 'undone' });
+      setSaid((n) => n + 1);
+    };
+    const close = () => {
+      if (busy) return;
+      setHid({ ...h, closed: true });
+      onDismiss();
+    };
+    const undone = h.step === 'undone';
+    return (
+      <Sheet
+        open={!h.closed}
+        title={h.label}
+        onClose={close}
+        footer={
+          <button type="button" className="btn" onClick={close} disabled={busy}>
+            Done
+          </button>
+        }
+      >
+        <div className="stack">
+          <Notice level="done" role="status" ref={doneLine} tabIndex={-1}>
+            {undone ? `Undone: ${h.label} is back in every total, past days included.` : `${h.label} is hidden. It’s out of every total, past days included, and its transactions are out of Activity.`}
+          </Notice>
+          {!undone && (
+            // In a row of its own: a .stack would stretch the button to its width.
+            <div>
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => void undo()}
+                disabled={busy}
+                aria-describedby={undoError ? `${id}-undo-error` : undefined}
+              >
+                {busy ? 'Undoing…' : 'Undo'}
+              </button>
+            </div>
+          )}
+          {undoError && (
+            <div id={`${id}-undo-error`}>
+              <Notice level="critical" role="alert">
+                {undoError}
+              </Notice>
+            </div>
+          )}
+          {!undone && <p className="helper">It keeps syncing. It’s under Hidden at the bottom of Accounts, where Unhide brings it back.</p>}
+        </div>
+      </Sheet>
+    );
+  }
   if (!a || !inst) return null;
   const act = (go: () => void) => () => {
+    // Not while it hides: the sheet stays on it.
+    if (hid) return;
     onDismiss();
     go();
   };
@@ -241,9 +347,21 @@ export default function AccountSheet({
     <>
       {/* Hiding only stops it counting. Not on a row held for an answer:
           its bank isn't returning it, so there is nothing to hide yet (#50). */}
+      {hideError && (
+        <div className="sheet-footer-note" id={`${id}-hide-error`}>
+          <Notice level="critical" role="alert">
+            {hideError}
+          </Notice>
+        </div>
+      )}
       {!a.held && (
-        <button className="btn secondary" disabled={hiding} onClick={act(() => onHide(a.account_id))}>
-          Hide
+        <button
+          className="btn secondary"
+          disabled={hiding}
+          onClick={() => void hide()}
+          aria-describedby={hideError ? `${id}-hide-error` : undefined}
+        >
+          {hid?.step === 'hiding' ? 'Hiding…' : 'Hide'}
         </button>
       )}
       {/* Closed, no longer theirs, or not tracked from a day (#50): unlike
@@ -283,8 +401,24 @@ export default function AccountSheet({
     </>
   );
 
+  /** Hides it, kept open on the sheet while it does. */
+  async function hide() {
+    if (!a || hiding || hid) return;
+    const at = { account_id: a.account_id, label: withMask(a.name, a.mask) };
+    setHideError('');
+    setHid({ ...at, step: 'hiding', closed: false });
+    const refused = await onHide(at.account_id);
+    if (refused) {
+      setHid(null);
+      setHideError(refused);
+      return;
+    }
+    setHid({ ...at, step: 'hidden', closed: false });
+    setSaid((n) => n + 1);
+  }
+
   return (
-    <Sheet open={open} title={withMask(a.name, a.mask)} onClose={onDismiss} footer={footer}>
+    <Sheet open={open || hid?.step === 'hiding'} title={withMask(a.name, a.mask)} onClose={() => hid?.step !== 'hiding' && onDismiss()} footer={footer}>
       <div className="stack">
         <div className="account-hero">
           <p className="account-balance money">
@@ -377,3 +511,11 @@ export default function AccountSheet({
     </Sheet>
   );
 }
+
+type Hid = {
+  account_id: string;
+  /** Its name and mask, as the sheet's title said them. */
+  label: string;
+  step: 'hiding' | 'hidden' | 'undoing' | 'undone';
+  closed: boolean;
+};

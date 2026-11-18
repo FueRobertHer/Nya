@@ -659,8 +659,12 @@ describe('what they see: the preview', () => {
   };
   const previewHtml = (props: Partial<Parameters<typeof PreviewView>[0]> = {}) =>
     renderToStaticMarkup(<PreviewView who="Pat" expiresAt={view.expires_at} preview={{ connection: 'c1', view }} error="" unsaved={false} {...props} />);
-  /** A card's accounts, as rendered. */
-  const rows = (html: string) => html.slice(html.indexOf('<div class="incoming-account">'), html.lastIndexOf('<p class="panel-note">'));
+  /** A card's accounts, as rendered, each id React gave a toggle's list
+   *  (useId) said the same way, as it differs from one page to another. */
+  const rows = (html: string) => {
+    const start = html.indexOf('<ul class="list-rows">');
+    return html.slice(start, html.indexOf('</ul>', start) + 5).replace(/aria-controls="[^"]*"/g, 'aria-controls=""');
+  };
 
   test('is the card they get, accounts, dates and end and all, with "you" for their name for me, and says whose time zone its dates are in', () => {
     const html = previewHtml();

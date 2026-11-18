@@ -350,7 +350,10 @@ export default function MonthBreakdown({
   /** May return a promise that resolves true once the change is saved, so
    *  the sheet says it was kept only then. */
   onRecategorize: (transaction_id: string, choice: CategoryChoice) => unknown;
-  onRename: (vendor_key: string, name: string) => void;
+  /** May return a promise that resolves null once the rename is saved, or
+   *  to what went wrong, which the Rename vendor sheet says while it stays
+   *  open (components/transaction-edits.ts rename). */
+  onRename: (vendor_key: string, name: string) => unknown;
   /** Opens the quick-add form; left out when there is no manual account to
    *  add to, which hides the button. */
   onAddTransaction?: () => void;
@@ -376,10 +379,11 @@ export default function MonthBreakdown({
   /** Your tags (components/tags-state.ts): names and colors for each row's
    *  tag ids, the filter, and spending by tag. */
   tags?: Tag[];
-  /** Puts tags on a transaction or takes them off, or makes one as typed. */
-  onChangeTags?: (t: Txn, change: TagChange) => void;
-  /** Saves a transaction's note (empty clears it). */
-  onSaveNote?: (t: Txn, note: string) => void;
+  /** Puts tags on a transaction or takes them off, or makes one as typed:
+   *  a promise of true once saved, for its sheet to say so. */
+  onChangeTags?: (t: Txn, change: TagChange) => unknown;
+  /** Saves a transaction's note (empty clears it), as onChangeTags. */
+  onSaveNote?: (t: Txn, note: string) => unknown;
   /** Opens the rule drawer on a rule made from a transaction, filing it
    *  under `category_id` (the one just chosen in its sheet) or the one it is
    *  under now. */

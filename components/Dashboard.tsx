@@ -39,7 +39,6 @@ import { onPartShown, preloadParts } from './lazy-part';
 import RestoreBanner from './RestoreBanner';
 import { downloadAccounts } from './DownloadOptions';
 import { localDate, localMonth } from '@/lib/local-date';
-import { PLAID_PORTAL } from '@/lib/deletion-receipt';
 import { SharedWithMe } from './SharedWithMe';
 import { Sheet } from './Sheet';
 import { CoverageNote, TrustLinks } from './TrustLinks';
@@ -62,7 +61,7 @@ import { unreadNotesOf } from '@/lib/fire/inputs';
 import type { PathRange } from '@/lib/fire/path';
 import { historyPausedSince } from '@/lib/history-status';
 import MonthBreakdown, { nameForRules, type Txn } from './MonthBreakdown';
-import DisconnectSplitsNote from './DisconnectSplitsNote';
+import DisconnectSheet from './DisconnectSheet';
 import ManualTxnSheet from './ManualTxnSheet';
 import type { ImportTarget } from './ImportSheet';
 import type { HistoryImportTarget } from './HistoryImportSheet';
@@ -110,9 +109,9 @@ import { useCategories, useCategoriesForBudgets } from './categories-state';
 import { useBudgetMonth } from './budget-month-state';
 import { useTagList } from './tags-state';
 import { newDraft, useRules } from './rules-state';
-import CurrencyChoiceSheet, { CurrencyOptions, MovedBody, RelabelOffer } from './CurrencyChoiceSheet';
+import CurrencyChoiceSheet from './CurrencyChoiceSheet';
 import { ChartCurrencyNote, CurrencyOfferSheet, dismissOffer, heroCurrencyCaveats, offerDismissed, offerFor } from './CurrencyNotes';
-import { CORRECTION_KEEPS, RELABEL_KEEPS, rateEffectText, relabelledText } from './currency-text';
+import { rateEffectText } from './currency-text';
 import { asFxTable } from '@/lib/fx/fields';
 import type { FxTable } from '@/lib/fx/rates';
 import type { NetWorthBase } from '@/lib/fx/net-worth-base';
@@ -127,18 +126,17 @@ import { EMPTY_PLANNED, isPlanned, type Planned } from '@/lib/planned';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { type Goal } from './GoalsCard';
 import { withAccountEnds } from '@/lib/goal-view';
-import { dominantCurrency, hiddenFigure, zeroExample } from '@/lib/format';
+import { dominantCurrency, hiddenFigure } from '@/lib/format';
 import { accruedCaveats } from './AccruedInterestNote';
 import NetWorthCard, { HeroDelta } from './NetWorthCard';
 import { allHiddenCaveats, type Caveat, Notice } from './TotalCaveats';
 import { useOfflineCaveats } from './online';
-import OwedFlipNote, { crossesOwed, OWED_FLIP_REASON } from './OwedFlipNote';
+import { useManualAccountSheets } from './ManualAccountSheet';
 import { HideAmountsToggle, Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
 // outside lib/hidden.ts so the client can import it without pulling in Redis.
-import { CASH_SUBTYPE, isCashOnHand, isOwedType } from '@/lib/balance';
-import { minorDigits } from '@/lib/manual-txn-input';
+import { isOwedType } from '@/lib/balance';
 // Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
 // between the server payload and this component.
 import { institutionCash } from '@/lib/cash';
@@ -152,41 +150,7 @@ import type { PlanSegment } from './PlanBar';
 import FiProgressLoader from './FiProgressLoader';
 import { createPlanInputsStore } from '@/lib/plan-inputs-store';
 import InstitutionCard, { cardHeadingId, institutionMenu } from './InstitutionCard';
-import { fmt, fmtInstantDay, fmtStaleDay, kindWords, signedBalance, type Account, type Institution, type ManualAccount } from './accounts-format';
-
-
-
-// The form's working copy. `balance` is a STRING, as in BudgetsTab and GoalsCard:
-// an <input type="number"> reports '' for a partly typed value like "-", and
-// Number('') is 0, so a number would erase the minus sign as you type it. It's
-// parsed once on submit. `account_id` is null while adding; the server mints it.
-// `currency` is the one chosen; `stored` the one the account is in now, so the
-// form can say what changing it does.
-type ManualDraft = Omit<ManualAccount, 'account_id' | 'balance' | 'currency'> & {
-  account_id: string | null;
-  balance: string;
-  currency: string;
-  stored: string | null;
-  /** With its currency corrected: also move the transactions typed on it
-   *  into the new one (lib/manual-relabel.ts), only when the person ticks it. */
-  relabel?: boolean;
-  /** The account as it was when Update opened (null when adding): a type
-   *  across money held and owed from its own is offered as a close instead
-   *  (components/OwedFlipNote.tsx). */
-  kept?: ManualAccount | null;
-};
-
-// "cash" is a choice, not a type: saved as depository with the subtype
-// CASH_SUBTYPE (lib/balance.ts), which the Plan reads to count cash
-// withdrawals and the cash spending entered on the account once.
-const MANUAL_TYPE_LABELS: { value: string; label: string }[] = [
-  { value: 'depository', label: 'Checking or savings' },
-  { value: 'cash', label: 'Cash on hand (a wallet)' },
-  { value: 'investment', label: 'Investment (brokerage, 401k, HSA)' },
-  { value: 'credit', label: 'Credit card' },
-  { value: 'loan', label: 'Loan (mortgage, auto, student)' },
-  { value: 'other', label: 'Other (property, crypto)' },
-];
+import { fmt, fmtInstantDay, fmtStaleDay, kindWords, signedBalance, type Account, type Institution } from './accounts-format';
 
 // Last-known dashboard snapshot, kept on-device so the app paints instantly on
 // open (and shows something useful offline) while fresh data loads. Cleared on
@@ -650,28 +614,6 @@ export default function Dashboard({
   // What the SimpleFIN drawer is asked to do (components/Connectors.tsx).
   const [connectorAsk, setConnectorAsk] = useState<ConnectorAsk | null>(null);
   const shownDisconnectTarget = useLast(disconnectTarget);
-  const [disconnectInput, setDisconnectInput] = useState('');
-  const [disconnecting, setDisconnecting] = useState(false);
-  // Manual accounts: `manualDraft` drives the add/edit drawer, and
-  // `editingManual` flips the same form between adding and editing.
-  // `manualError` is separate from the page-level `error` so a failed save can't
-  // linger on the Accounts card after the drawer closes, and a background refresh
-  // failure can't look like a save failure.
-  const [manualDraft, setManualDraft] = useState<ManualDraft | null>(null);
-  const [editingManual, setEditingManual] = useState(false);
-  const [savingManual, setSavingManual] = useState(false);
-  const [manualError, setManualError] = useState('');
-  const [manualDeleteTarget, setManualDeleteTarget] = useState<ManualAccount | null>(null);
-  // Saved with its typed transactions moved too: what moved, shown in the
-  // same drawer until the person closes it (kept while it slides out).
-  const [manualMoved, setManualMoved] = useState<{ text: string; open: boolean } | null>(null);
-  // What each drawer shows: the current value, or the last one while it slides out.
-  const shownManualDraft = useLast(manualDraft);
-  const editingManualShown = useLast(manualDraft ? editingManual : null) ?? false;
-  // Update, with a type across money held and owed from the account's own:
-  // refused, said why, and offered as a close or a hide (components/OwedFlipNote.tsx).
-  const manualCrossing = !!shownManualDraft?.kept && crossesOwed(shownManualDraft.kept.type, shownManualDraft.type);
-  const shownDeleteTarget = useLast(manualDeleteTarget);
   // The Hidden card starts collapsed: it exists so hidden accounts are
   // findable, not so they take up room on the balance sheet you decluttered.
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
@@ -943,35 +885,6 @@ export default function Dashboard({
     if (!loading && !txnsLoading) preloadParts([budgetsTabPart, sharedExpensesPart, settingsCardsPart, debtPayoffPart, importSheetPart, historyImportSheetPart, migrationSheetPart]);
   }, [loading, txnsLoading]);
 
-  const renameVendor = useCallback(
-    async (vendor_key: string, name: string) => {
-      // Optimistically relabel every transaction from this vendor. An empty
-      // name clears the rename; we can't reconstruct the original Plaid name
-      // locally, so reload to pick the reverted names back up. The person's
-      // name is shown as typed, never reworded as the bank's text would be.
-      if (name) {
-        setTxns((prev) =>
-          prev
-            ? prev.map((t) => (t.vendor_key === vendor_key ? { ...t, name, name_from_bank: undefined } : t))
-            : prev
-        );
-      }
-      try {
-        const res = await fetch('/api/rename', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ vendor_key, name }),
-        });
-        // Re-sync on a clear (to recover the reverted Plaid names) or on a
-        // rejected write, so the optimistic change can't linger out of sync.
-        if (!name || !res.ok) loadTransactions();
-      } catch {
-        loadTransactions(); // network failure: reload to server truth
-      }
-    },
-    [loadTransactions]
-  );
-
   // What a rule can name of the accounts, and a rule as a sentence, for the
   // Rules screen, the rule drawer and a transaction's detail: those that
   // ended too, with their end (#50).
@@ -1197,28 +1110,13 @@ export default function Dashboard({
     }
   }, []);
 
-  const performDisconnect = useCallback(
-    async (item_id: string) => {
-      setDisconnecting(true);
-      setError('');
-      try {
-        const res = await fetch('/api/disconnect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ item_id }),
-        });
-        if (!res.ok) throw new Error('failed');
-        setDisconnectTarget(null);
-        loadNetWorth(true);
-        if (txns !== null) loadTransactions(true);
-      } catch {
-        setError('Could not disconnect account.');
-      } finally {
-        setDisconnecting(false);
-      }
-    },
-    [loadNetWorth, loadTransactions, txns]
-  );
+  // A connection disconnected (components/DisconnectSheet.tsx, which makes
+  // the write and says a failure itself): what it moved, read again.
+  const disconnected = useCallback(() => {
+    setDisconnectTarget(null);
+    loadNetWorth(true);
+    if (txns !== null) loadTransactions(true);
+  }, [loadNetWorth, loadTransactions, txns]);
 
   // Notes on the timeline (#50), read again with each load.
   const timeline = useTimelineNotes(reloadKey);
@@ -1238,7 +1136,6 @@ export default function Dashboard({
     (c: EndedConnection) => {
       const target = institutions.find((i) => i.item_id === c.item_id) ?? { ...c, accounts: [], holdings: [], error: null, needs_reauth: false };
       setEndedOffer(c.item_id);
-      setDisconnectInput('');
       setDisconnectTarget(target);
     },
     [institutions]
@@ -1247,56 +1144,6 @@ export default function Dashboard({
   // Closures that can't be read stop the load: said with the load's error,
   // wherever that shows, with the repair.
   const lifecycleRepair = lifecycleDamage && <LifecycleRepair damage={lifecycleDamage} onRepaired={() => loadNetWorth(true)} />;
-
-  /**
-   * One manual-account mutation. Every call names a single account, so a stale
-   * page can only affect the account it acted on: it can't delete accounts it
-   * doesn't know about or revert a balance a scheduled push to
-   * /api/ingest/balance wrote meanwhile.
-   */
-  const mutateManual = useCallback(
-    async (method: 'POST' | 'PATCH' | 'DELETE', body: unknown) => {
-      setSavingManual(true);
-      setManualError('');
-      try {
-        const res = await fetch('/api/manual-accounts', {
-          method,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        });
-        if (!res.ok) {
-          const data = await res.json().catch(() => null);
-          setManualError(data?.error ?? 'Could not save. Please try again.');
-          return false;
-        }
-        // What a move of its typed transactions did, said before the drawer
-        // closes (the answer's `relabelled`).
-        const done = await res.json().catch(() => null);
-        const asked = body as { relabel_from?: string; currency?: string };
-        const r = done?.relabelled;
-        if (method === 'PATCH' && asked.relabel_from && asked.currency && typeof r?.moved === 'number' && typeof r?.kept === 'number') {
-          setManualMoved({ text: relabelledText(r, asked.relabel_from, asked.currency), open: true });
-        }
-        setManualDraft(null);
-        setManualDeleteTarget(null);
-        // A forced fetch writes the new balance into today's history point, as the
-        // disconnect flow does. Then recompute estimated history, which the save
-        // invalidated server-side (the automatic backfill only fires when history
-        // is thin).
-        await loadNetWorth(true);
-        requestBackfill(() => loadNetWorth());
-        // Its transactions carry its name, and go with it when it is deleted.
-        loadTransactions();
-        return true;
-      } catch {
-        setManualError('Could not reach the server.');
-        return false;
-      } finally {
-        setSavingManual(false);
-      }
-    },
-    [loadNetWorth, requestBackfill, loadTransactions]
-  );
 
   // After a change through SimpleFIN (components/Connectors.tsx): balances and
   // transactions reload, and when accounts were added, retyped, kept or
@@ -1336,25 +1183,6 @@ export default function Dashboard({
     });
   }, [enterSettings]);
 
-  // `currency`: what a new account's currency starts as (the home currency,
-  // else the one most accounts are in), for the person to change.
-  const startAddManual = useCallback((currency: string) => {
-    setManualError('');
-    setManualMoved(null);
-    setEditingManual(false);
-    // The id is minted server-side on create, so a draft doesn't carry one.
-    setManualDraft({
-      account_id: null,
-      name: '',
-      institution_name: '',
-      type: 'depository',
-      subtype: null,
-      balance: '',
-      currency,
-      stored: null,
-    });
-  }, []);
-
   // A home currency, a rate or an account's currency changed: net worth
   // converts again, and so do the transactions' totals, whose rates come with
   // them (/api/transactions `fx`), with any rows a correction moved.
@@ -1363,33 +1191,6 @@ export default function Dashboard({
     loadTransactions();
   }, [loadNetWorth, loadTransactions]);
 
-  const startEditManual = useCallback((account: ManualAccount) => {
-    setManualError('');
-    setManualMoved(null);
-    setEditingManual(true);
-    const currency = account.currency ?? 'USD';
-    setManualDraft({ ...account, balance: String(account.balance), currency, stored: currency, kept: account });
-  }, []);
-
-  const submitManualDraft = useCallback(() => {
-    if (!manualDraft) return;
-    const payload = {
-      name: manualDraft.name,
-      institution_name: manualDraft.institution_name,
-      type: manualDraft.type,
-      subtype: manualDraft.subtype,
-      // As typed: choosing its currency never changes the number.
-      balance: Number(manualDraft.balance),
-      currency: manualDraft.currency,
-    };
-    if (manualDraft.account_id) {
-      // The rows typed on it move too only when the person ticked it.
-      const relabel = manualDraft.relabel && manualDraft.stored !== null && manualDraft.stored !== manualDraft.currency ? { relabel_from: manualDraft.stored } : {};
-      mutateManual('PATCH', { ...payload, ...relabel, account_id: manualDraft.account_id });
-    } else {
-      mutateManual('POST', payload);
-    }
-  }, [manualDraft, mutateManual]);
 
   // What a sign-out through Clerk clears first (components/ClerkAccount.tsx).
   const clearDevice = useCallback(() => {
@@ -1870,9 +1671,11 @@ export default function Dashboard({
       .sort((a, b) => a.account.name.localeCompare(b.account.name));
   }, [institutions, hiddenMeta]);
 
-  const toggleHidden = useCallback(
-    async (account_id: string, hidden: boolean) => {
-      setError('');
+  // Hides or unhides one account, then reads the accounts again: the words
+  // of a refusal, or null once done. The account sheet says them itself
+  // (components/AccountSheet.tsx); `toggleHidden` says them on the page.
+  const writeHidden = useCallback(
+    async (account_id: string, hidden: boolean): Promise<string | null> => {
       // Guarded like the adjacent manual-account actions: each toggle triggers
       // a full refresh, so repeated taps would queue several of them.
       setTogglingHidden(account_id);
@@ -1883,10 +1686,7 @@ export default function Dashboard({
           body: JSON.stringify({ account_id, hidden }),
         });
         const data = await res.json().catch(() => null);
-        if (!res.ok) {
-          setError(data?.error ?? 'Could not update hidden accounts.');
-          return;
-        }
+        if (!res.ok) return data?.error ?? 'Could not update hidden accounts.';
         await loadNetWorth(true);
         // Hidden accounts' transactions must leave the Activity tab too. Guarded
         // like every other refresh here, so this can't kick off a first-ever
@@ -1897,13 +1697,22 @@ export default function Dashboard({
         // seam. The server cleared the backfill flag; running the recompute is on
         // us, since the automatic one only fires when history is thin.
         if (data?.recompute) requestBackfill(() => loadNetWorth());
+        return null;
       } catch {
-        setError('Could not update hidden accounts.');
+        return 'Could not update hidden accounts.';
       } finally {
         setTogglingHidden(null);
       }
     },
     [loadNetWorth, loadTransactions, requestBackfill, txns]
+  );
+  const toggleHidden = useCallback(
+    async (account_id: string, hidden: boolean) => {
+      setError('');
+      const refused = await writeHidden(account_id, hidden);
+      if (refused) setError(refused);
+    },
+    [writeHidden]
   );
 
   // One currency to label summed account figures (net worth, deltas). Accounts
@@ -1931,6 +1740,25 @@ export default function Dashboard({
     for (const i of institutions) for (const a of i.accounts) if (a.currency) counts.set(a.currency, (counts.get(a.currency) ?? 0) + 1);
     return [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([c]) => c);
   }, [institutions]);
+  // The manual account sheets (components/ManualAccountSheet.tsx). A save
+  // reads the balances again (a forced fetch writes the new balance into
+  // today's history point, as the disconnect flow does), then the estimated
+  // history, which the save invalidated server-side (the automatic backfill
+  // only fires when history is thin), and the transactions, which carry the
+  // account's name and go with it when it is deleted.
+  const manualSaved = useCallback(async () => {
+    await loadNetWorth(true);
+    requestBackfill(() => loadNetWorth());
+    loadTransactions();
+  }, [loadNetWorth, requestBackfill, loadTransactions]);
+  const manualAccounts = useManualAccountSheets({
+    currencies: accountCurrencies,
+    onSaved: manualSaved,
+    onEnd: (a) =>
+      lifecycle.open({ account_id: a.account_id, name: a.name, mask: null, institution: a.institution_name, balance: a.balance, type: a.type, currency: a.currency ?? 'USD', lastKnown: false }),
+    onHide: (account_id) => void toggleHidden(account_id, true),
+    hiding: togglingHidden !== null,
+  });
   // The manual accounts typed in the app, with their currency, which the
   // choice of a home currency lists for the person to correct.
   const manualCurrencies = useMemo(
@@ -2006,7 +1834,6 @@ export default function Dashboard({
 
 
   const startDisconnect = (inst: Institution) => {
-    setDisconnectInput('');
     setEndedOffer(null);
     setDisconnectTarget(inst);
   };
@@ -2441,7 +2268,7 @@ export default function Dashboard({
                     connected the tab bar is hidden, so this is the only reachable
                     entry point for someone whose bank Plaid doesn't support at all. */}
                 <div className="action-row">
-                  <button className="secondary" onClick={() => startAddManual(manualDefaultCurrency)} disabled={savingManual}>
+                  <button className="secondary" onClick={() => manualAccounts.startAdd(manualDefaultCurrency)} disabled={manualAccounts.saving}>
                     <ActionIcon d="M12 5v14M5 12h14" />
                     Add manual
                   </button>
@@ -2801,7 +2628,7 @@ export default function Dashboard({
                   loading={txnsLoading}
                   taxonomy={categories.taxonomy}
                   onRecategorize={txnEdits.recategorize}
-                  onRename={renameVendor}
+                  onRename={txnEdits.rename}
                   // Only with a manual account to add to (hidden ones aren't offered).
                   onAddTransaction={
                     institutions.some((i) => i.manual && !i.connector && i.accounts.some((a) => !a.hidden)) ? () => txnEdits.openAdd() : undefined
@@ -3014,203 +2841,7 @@ export default function Dashboard({
       {/* Forms and confirmations open in a drawer (components/Sheet.tsx), as
           a person does in Settings > Sharing. Each keeps its last content while it slides
           out, so it doesn't empty mid-animation. */}
-      <Sheet
-        open={!!manualDraft || !!manualMoved?.open}
-        title={manualMoved && !manualDraft ? 'Saved' : shownManualDraft && editingManualShown ? 'Update account' : 'Add a manual account'}
-        onClose={() => {
-          if (savingManual) return;
-          setManualDraft(null);
-          setManualMoved((m) => (m ? { ...m, open: false } : m));
-        }}
-      >
-        {manualMoved && !manualDraft ? (
-          <MovedBody moved={[{ name: '', text: manualMoved.text }]} onClose={() => setManualMoved((m) => (m ? { ...m, open: false } : m))} />
-        ) : shownManualDraft && (
-          <>
-            <p className="panel-note" style={{ marginTop: 0 }}>
-              For institutions Plaid can&apos;t reach. The balance you type counts toward net worth
-              and is recorded on the timeline each time you update it.
-            </p>
-            <div className="sheet-form">
-              <label className="field">
-                Account name
-                <input
-                  value={shownManualDraft.name}
-                  onChange={(e) => setManualDraft({ ...shownManualDraft, name: e.target.value })}
-                  placeholder="e.g. Credit Union Checking"
-                  maxLength={60}
-                  disabled={savingManual}
-                />
-              </label>
-              <label className="field">
-                Institution
-                <input
-                  value={shownManualDraft.institution_name}
-                  onChange={(e) => setManualDraft({ ...shownManualDraft, institution_name: e.target.value })}
-                  placeholder="Groups accounts into one card"
-                  maxLength={60}
-                  disabled={savingManual}
-                />
-              </label>
-              <label className="field">
-                Type
-                <select
-                  value={isCashOnHand(shownManualDraft) ? 'cash' : shownManualDraft.type}
-                  onChange={(e) => {
-                    const cash = e.target.value === 'cash';
-                    setManualDraft({
-                      ...shownManualDraft,
-                      type: cash ? 'depository' : e.target.value,
-                      // Cash only when chosen; another subtype is kept as it was.
-                      subtype: cash ? CASH_SUBTYPE : shownManualDraft.subtype === CASH_SUBTYPE ? null : shownManualDraft.subtype,
-                    });
-                  }}
-                  disabled={savingManual}
-                  aria-describedby={manualCrossing ? OWED_FLIP_REASON : undefined}
-                >
-                  {MANUAL_TYPE_LABELS.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                Currency
-                <select
-                  value={shownManualDraft.currency}
-                  // The balance stays as typed: only what it is counted in changes.
-                  onChange={(e) => setManualDraft({ ...shownManualDraft, currency: e.target.value })}
-                  disabled={savingManual}
-                >
-                  <CurrencyOptions first={accountCurrencies} value={shownManualDraft.currency} />
-                </select>
-              </label>
-              <label className="field">
-                {isOwedType(shownManualDraft.type) ? 'Amount owed' : 'Current balance'}
-                <input
-                  // Held as a string (see ManualDraft) so a leading "-" survives
-                  // typing. Credit and loan balances are amounts owed, which
-                  // subtract from net worth, so a negative would double-negate.
-                  type="number"
-                  inputMode="decimal"
-                  step={String(10 ** -minorDigits(shownManualDraft.currency))}
-                  min={isOwedType(shownManualDraft.type) ? 0 : undefined}
-                  value={shownManualDraft.balance}
-                  onChange={(e) => setManualDraft({ ...shownManualDraft, balance: e.target.value })}
-                  placeholder={zeroExample(minorDigits(shownManualDraft.currency))}
-                  disabled={savingManual}
-                />
-              </label>
-            </div>
-            {shownManualDraft.stored !== null && shownManualDraft.currency !== shownManualDraft.stored && (
-              <p className="panel-note">
-                The balance you typed stays as it is, now in {shownManualDraft.currency}: this account and its history are counted in {shownManualDraft.currency} from now on.{' '}
-                {shownManualDraft.relabel ? RELABEL_KEEPS : CORRECTION_KEEPS}
-              </p>
-            )}
-            {shownManualDraft.stored !== null && shownManualDraft.account_id && shownManualDraft.currency !== shownManualDraft.stored && (
-              // The server's count of every row the move would take, older
-              // ones too, and that it has no undo.
-              <RelabelOffer
-                account_id={shownManualDraft.account_id}
-                from={shownManualDraft.stored}
-                to={shownManualDraft.currency}
-                checked={!!shownManualDraft.relabel}
-                onChange={(on) => setManualDraft({ ...shownManualDraft, relabel: on })}
-                disabled={savingManual}
-              />
-            )}
-            <p className="panel-note">
-              {isOwedType(shownManualDraft.type)
-                ? 'Enter what you owe as a positive number. It subtracts from net worth.'
-                : 'Negative balances are allowed (e.g. an overdrawn account).'}
-            </p>
-            <OwedFlipNote
-              crossing={manualCrossing}
-              toOwed={isOwedType(shownManualDraft.type)}
-              disabled={savingManual || togglingHidden !== null}
-              onClose={() => {
-                const a = shownManualDraft.kept!;
-                setManualDraft(null);
-                lifecycle.open({ account_id: a.account_id, name: a.name, mask: null, institution: a.institution_name, balance: a.balance, type: a.type, currency: a.currency ?? 'USD', lastKnown: false });
-              }}
-              onHide={() => {
-                const a = shownManualDraft.kept!;
-                setManualDraft(null);
-                void toggleHidden(a.account_id, true);
-              }}
-            />
-
-            {editingManualShown && shownManualDraft.account_id && (
-              <p className="panel-note manual-id">
-                Account ID for scripted updates: <code>{shownManualDraft.account_id}</code>
-              </p>
-            )}
-
-            {manualError && (
-              <Notice level="critical" role="alert">
-                {manualError}
-              </Notice>
-            )}
-
-            <div className="button-pair" style={{ marginTop: 16 }}>
-              <button className="secondary" onClick={() => setManualDraft(null)} disabled={savingManual}>
-                Cancel
-              </button>
-              <button
-                disabled={
-                  savingManual ||
-                  !shownManualDraft.name.trim() ||
-                  !shownManualDraft.institution_name.trim() ||
-                  shownManualDraft.balance.trim() === '' ||
-                  !Number.isFinite(Number(shownManualDraft.balance)) ||
-                  manualCrossing ||
-                  (isOwedType(shownManualDraft.type) && Number(shownManualDraft.balance) < 0)
-                }
-                onClick={submitManualDraft}
-                aria-describedby={manualCrossing ? OWED_FLIP_REASON : undefined}
-              >
-                {savingManual ? 'Saving…' : editingManualShown ? 'Save' : 'Add account'}
-              </button>
-            </div>
-          </>
-        )}
-      </Sheet>
-
-      <Sheet
-        open={!!manualDeleteTarget}
-        title={shownDeleteTarget ? `Delete ${shownDeleteTarget.name}?` : 'Delete'}
-        onClose={() => !savingManual && setManualDeleteTarget(null)}
-      >
-        {shownDeleteTarget && (
-          <>
-            <div className="stack">
-              <p className="panel-note">
-                This account&apos;s balance history, any transactions entered on it and what you told your plan about it are <strong>not recoverable</strong>. Re-adding it creates a new account with an empty
-                history.
-              </p>
-              {manualError && (
-                <Notice level="critical" role="alert">
-                  {manualError}
-                </Notice>
-              )}
-            </div>
-            <div className="button-pair" style={{ marginTop: 16 }}>
-              <button className="secondary" onClick={() => setManualDeleteTarget(null)} disabled={savingManual}>
-                Cancel
-              </button>
-              <button
-                className="danger"
-                disabled={savingManual}
-                onClick={() => mutateManual('DELETE', { account_id: shownDeleteTarget.account_id })}
-              >
-                {savingManual ? 'Deleting…' : 'Delete'}
-              </button>
-            </div>
-          </>
-        )}
-      </Sheet>
+      {manualAccounts.sheets}
 
       <ManualTxnSheet
         target={txnEdits.sheet}
@@ -3250,13 +2881,14 @@ export default function Dashboard({
         account={shownAccount?.account ?? null}
         inst={shownAccount?.inst ?? null}
         shownCurrency={shownCurrency}
-        saving={savingManual}
+        saving={manualAccounts.saving}
         hiding={togglingHidden !== null}
         lifecycleBusy={lifecycle.busy}
         onDismiss={() => setAccountOpen(null)}
-        onHide={(account_id) => toggleHidden(account_id, true)}
+        onHide={(account_id) => writeHidden(account_id, true)}
+        onUnhide={(account_id) => writeHidden(account_id, false)}
         onEnd={lifecycle.open}
-        onUpdate={startEditManual}
+        onUpdate={manualAccounts.startEdit}
         onAddTransaction={(account_id) => txnEdits.openAdd(account_id)}
         onImport={(account_id) => setImportTarget({ account_id })}
         // A Vanguard account's file is checked against every Vanguard
@@ -3266,10 +2898,7 @@ export default function Dashboard({
           moneyFromInvestments.current = false;
           setMoneyTarget(target);
         }}
-        onDelete={(account) => {
-          setManualError('');
-          setManualDeleteTarget(account);
-        }}
+        onDelete={manualAccounts.startDelete}
       />
       <AddAccountSheet
         open={addAccountOpen}
@@ -3279,7 +2908,7 @@ export default function Dashboard({
         onConnect={startConnect}
         onConnectSimpleFin={connectSimpleFin}
         onConnectLunchFlow={connectLunchFlow}
-        onAddManual={() => startAddManual(manualDefaultCurrency)}
+        onAddManual={() => manualAccounts.startAdd(manualDefaultCurrency)}
         onSwitching={() => setMigrationOpen(true)}
       />
       <MigrationSheet
@@ -3336,80 +2965,13 @@ export default function Dashboard({
         onConnector={setConnectorAsk}
       />
 
-      <Sheet
+      <DisconnectSheet
         open={!!disconnectTarget}
-        title={
-          shownDisconnectTarget
-            ? `Disconnect ${shownDisconnectTarget.institution_name}?`
-            : 'Disconnect'
-        }
-        onClose={() => !disconnecting && setDisconnectTarget(null)}
-      >
-        {shownDisconnectTarget && (
-          <>
-            {/* Every account of it ended (#50): the connection still syncs
-                nothing of use, and Plaid bills it until it is removed. */}
-            {endedOffer === shownDisconnectTarget.item_id && (
-              <p className="panel-note" style={{ marginTop: 0 }}>
-                Every account at {shownDisconnectTarget.institution_name} has ended, but the connection is still
-                open, and Plaid charges for it until it is removed. Their history, and when each ended, are kept.
-              </p>
-            )}
-            <p className="panel-note" style={endedOffer === shownDisconnectTarget.item_id ? undefined : { marginTop: 0 }}>
-              This removes {shownDisconnectTarget.institution_name} and its accounts from Nya, and ends the
-              connection at Plaid. What you told your plan about those accounts for tax goes too. You can
-              reconnect it later. Type{' '}
-              <strong>{shownDisconnectTarget.institution_name}</strong> below to confirm.
-            </p>
-            {/* What adding it back doesn't bring back (#39). */}
-            <DisconnectSplitsNote itemId={shownDisconnectTarget.item_id} />
-            {/* Disconnecting is about the connection; closing is about an
-                account (#50). Only the person knows which happened. */}
-            {endedOffer !== shownDisconnectTarget.item_id && (
-              <p className="panel-note">
-                Disconnecting doesn&apos;t say an account closed. If one did, mark it instead (open the account, then Mark as closed…): it then stops counting from that day, and the chart marks it.
-              </p>
-            )}
-            {/* What Plaid itself keeps is beyond a disconnect's reach (the
-                deletion receipt says the same, lib/deletion-receipt.ts): say
-                where people can see and delete it. */}
-            <p className="panel-note">
-              Plaid keeps its own records of what it collected, under its own privacy policy. See and delete
-              them at the{' '}
-              <a href={PLAID_PORTAL} target="_blank" rel="noreferrer">
-                Plaid Portal
-              </a>
-              .
-            </p>
-            <label className="field" style={{ marginTop: 12 }}>
-              Institution name
-              <input
-                value={disconnectInput}
-                onChange={(e) => setDisconnectInput(e.target.value)}
-                placeholder={shownDisconnectTarget.institution_name}
-                disabled={disconnecting}
-                autoCapitalize="off"
-                autoCorrect="off"
-              />
-            </label>
-            <div className="button-pair" style={{ marginTop: 16 }}>
-              <button className="secondary" onClick={() => setDisconnectTarget(null)} disabled={disconnecting}>
-                Cancel
-              </button>
-              <button
-                className="danger"
-                disabled={
-                  disconnecting ||
-                  disconnectInput.trim().toLowerCase() !== shownDisconnectTarget.institution_name.trim().toLowerCase()
-                }
-                onClick={() => performDisconnect(shownDisconnectTarget.item_id)}
-              >
-                {disconnecting ? 'Disconnecting…' : 'Disconnect'}
-              </button>
-            </div>
-          </>
-        )}
-      </Sheet>
+        target={shownDisconnectTarget}
+        ended={!!shownDisconnectTarget && endedOffer === shownDisconnectTarget.item_id}
+        onClose={() => setDisconnectTarget(null)}
+        onDisconnected={disconnected}
+      />
     </>
   );
 }

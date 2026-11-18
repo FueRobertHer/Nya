@@ -2075,6 +2075,12 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
   margin: 0;
 }
 
+/* What a change saved says (components/TransactionSheet.tsx): a live region
+   kept on the page, out of the hero's flow while it says nothing. */
+.txn-sheet-said:empty {
+  position: absolute;
+}
+
 .txn-sheet-amount {
   font-size: var(--fs-6);
   font-weight: var(--fw-semibold);
@@ -3592,57 +3598,22 @@ button.danger-outline {
 }
 
 /* "Shared by ..." cards on the Accounts tab. */
-.incoming-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
+
+/* Under an account's row: its transactions' toggle and list, or why there
+   are none, set in as the row's words are. The ghost button's own padding
+   sits in the margin, so its words line up with the row's. */
+.incoming-account-more {
+  padding: 0 var(--inset) var(--sp-3);
 }
 
-.incoming-head h3 {
-  flex: 1;
+.incoming-account-more > .btn.ghost {
+  margin-inline-start: calc(-1 * var(--sp-2));
+}
+
+.incoming-txns {
   margin: 0;
-  font-size: var(--fs-3);
-}
-
-.pill {
-  font-size: var(--fs-1);
-  font-weight: 600;
-  color: var(--text-2);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 2px 8px;
-}
-
-.incoming-account {
-  padding: 10px 0;
-}
-
-.incoming-account + .incoming-account {
-  border-top: 1px solid var(--line);
-}
-
-.incoming-account .peer-row {
   padding: 0;
-}
-
-.incoming-account-name {
-  font-size: var(--fs-3);
-}
-
-.incoming-account-date {
-  color: var(--text-2);
-  font-size: var(--fs-1);
-}
-
-.incoming-account-value {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.incoming-account .link-btn {
-  margin-top: 6px;
+  list-style: none;
 }
 
 .incoming-txn {
@@ -3703,6 +3674,22 @@ button.danger-outline {
   }
 }
 
+/* Clerk's account window, Security: a device's icon is drawn in fixed fills
+   (black, with gray for the screen), a black box on the dark surface, and
+   Clerk's appearance doesn't reach it (lib/theme.ts). Its frame in secondary
+   text and its screen raised, so it reads in both themes. */
+.cl-activeDeviceIcon [fill="#000"] {
+  fill: var(--text-2);
+}
+
+.cl-activeDeviceIcon [stroke="#000"] {
+  stroke: var(--text-2);
+}
+
+.cl-activeDeviceIcon :is([fill="#575757"], [fill="#444"]) {
+  fill: var(--elevated);
+}
+
 .auth-wrap .brand h1 {
   font-size: var(--fs-6);
 }
@@ -3721,6 +3708,16 @@ button.danger-outline {
 .auth-wrap > .why {
   width: 100%;
   max-width: 400px;
+}
+
+/* An invite link's page (app/connect/[token], components/AcceptInvite.tsx):
+   its one card, as wide as the sign-in form, its words at the body size. */
+.connect-card {
+  width: 100%;
+  max-width: 400px;
+  margin: 0;
+  font-size: var(--fs-3);
+  line-height: var(--lh-body);
 }
 
 /* --- demo accounts on the sign-in page (Preview only, lib/demo.ts) --- */
@@ -3743,6 +3740,18 @@ button.danger-outline {
 .auth-notice {
   width: 400px;
   max-width: calc(100vw - 40px);
+}
+
+/* Not allowed yet (app/not-allowed): its one card, as wide as the sign-in
+   form, its words at the body size. The account's id is one long word,
+   which breaks rather than run past a phone's edge. */
+.not-allowed-card {
+  width: 100%;
+  max-width: 400px;
+  margin: 0;
+  font-size: var(--fs-3);
+  line-height: var(--lh-body);
+  overflow-wrap: anywhere;
 }
 
 /* --- loading placeholders (components/LoadingSkeletons.tsx) --- */
@@ -3942,6 +3951,22 @@ button.danger-outline {
   border-radius: var(--r-pill);
 }
 
+/* A demo account's own account menu (components/ClerkAccount.tsx): its
+   picture, the size Clerk's button draws it, in a 44px target, round as
+   the picture is, so its hover and focus ring are too. */
+.account-menu-btn {
+  padding: 0;
+  border-radius: var(--r-pill);
+}
+
+.account-menu-btn img {
+  display: block;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-pill);
+  object-fit: cover;
+}
+
 /* Clerk's sign-in form while it loads: its card's width (25rem, and 40px
    less than the screen on a phone) and about its height, with its title,
    field, button and footer. */
@@ -3988,8 +4013,9 @@ button.danger-outline {
   height: var(--sp-3);
 }
 
+/* As tall as Clerk's field and Continue, a finger's target (lib/theme.ts). */
 .signin-skeleton-form > :not(:first-child) {
-  height: 36px;
+  height: var(--tap);
 }
 
 .signin-skeleton-form > :last-child {
@@ -4616,8 +4642,17 @@ button.danger-outline {
 }
 
 .trust-links a {
+  position: relative;
   color: var(--text-2);
   text-decoration: none;
+}
+
+/* Each link a finger's target, 44px each way, through a box over it: the
+   links keep their one quiet line, and the page around them doesn't move. */
+.trust-links a::after {
+  content: "";
+  position: absolute;
+  inset: min(0px, calc((100% - var(--tap)) / 2));
 }
 
 .trust-links a[aria-current="page"] {
@@ -8061,27 +8096,55 @@ button.review-keys-toggle {
   color: var(--text-2);
 }
 
-.incoming-kind .peer-row {
-  padding: 6px 0;
+/* A kind's figure, on the line under its name: what it is as of, or the
+   month chosen, on the left; the figure on the right. */
+.incoming-figure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
 }
 
-.incoming-kind .peer-row + .peer-row {
-  border-top: none;
+.incoming-figure > :first-child {
+  min-width: 0;
 }
 
-.incoming-kind .peer-row select {
-  max-width: 70%;
+.incoming-figure > .field {
+  margin-bottom: 0;
 }
 
-.incoming-line + .incoming-line {
-  margin-top: 6px;
+.incoming-figure-name,
+.incoming-figure-value {
+  font-weight: var(--fw-semibold);
 }
 
-/* A category under its group, or a goal's lesser line. */
-.incoming-sub {
-  padding-left: 12px;
-  font-size: var(--fs-2);
-  color: var(--text-2);
+.incoming-figure-value {
+  white-space: nowrap;
+}
+
+/* A kind's rows run to the card's edges, as the card's own rows do. */
+.incoming-kind > .list-rows,
+.incoming-kind > .stack > .list-rows {
+  margin-inline: calc(-1 * var(--inset));
+}
+
+/* A category under its group, set in, as Budgets sets its categories in
+   (.budget-sub-rows). */
+.incoming-sub-rows {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.incoming-sub-rows .list-row {
+  padding-left: calc(var(--inset) + var(--sp-4));
+}
+
+.incoming-sub-rows .list-row-title {
+  font-weight: var(--fw-regular);
+}
+
+/* The card's last line: until when, and who sees each showing. */
+.incoming-note {
+  margin-top: var(--sp-3);
 }
 
 .incoming-meter {
