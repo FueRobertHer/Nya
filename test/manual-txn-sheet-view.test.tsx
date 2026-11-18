@@ -49,18 +49,20 @@ const addedOk =
 const ok = async () => ({ ok: true, status: 200, json: async () => ({ success: true, deleted: true }) });
 const refused = (error: string) => async () => ({ ok: false, status: 400, json: async () => ({ error }) });
 
-async function mount(start: ManualTxnTarget) {
+async function mount(start: ManualTxnTarget, institutions = [WALLET]) {
   const host = dom.document.createElement('div');
   dom.document.body.appendChild(host);
   const root = createRoot(host as unknown as HTMLElement);
   const saved: unknown[] = [];
   let closed = 0;
+  let open: (t: ManualTxnTarget) => void = () => {};
   function Harness() {
     const [target, setTarget] = React.useState<ManualTxnTarget | null>(start);
+    open = setTarget;
     return (
       <ManualTxnSheet
         target={target}
-        institutions={[WALLET]}
+        institutions={institutions}
         txns={[]}
         onClose={() => {
           closed++;
@@ -84,7 +86,12 @@ async function mount(start: ManualTxnTarget) {
     act(() => type(field('Amount'), '12.50'));
     act(() => type(field('Paid to'), 'Corner Store'));
   };
-  return { saved, closed: () => closed, dialog, button, field, footer, footerButtons, doneLine, fill, unmount: () => act(() => root.unmount()) };
+  const footNote = () => footer()?.findAll((e) => (e.getAttribute('class') ?? '') === 'sheet-footer-note')[0] ?? null;
+  const reopen = async (t: ManualTxnTarget) => {
+    act(() => open(t));
+    await pass(5);
+  };
+  return { saved, closed: () => closed, dialog, button, field, footer, footerButtons, footNote, doneLine, fill, reopen, unmount: () => act(() => root.unmount()) };
 }
 
 describe('after Add, from an account’s sheet', () => {
@@ -162,11 +169,26 @@ describe('after Add, from an account’s sheet', () => {
     expect(v.doneLine()).not.toBeNull();
     act(() => click(v.button('Done')!));
     await pass(400);
+    expect(v.dialog()).toBeNull();
+    await v.reopen({ mode: 'add', account_id: 'acc_wallet' });
+    expect(v.doneLine()).toBeNull();
+    expect(v.footerButtons()).toEqual(['Cancel', 'Add']);
+    expect(v.field('Amount').value).toBe('');
     v.unmount();
-    const again = await mount({ mode: 'add', account_id: 'acc_wallet' });
-    expect(again.doneLine()).toBeNull();
-    expect(again.footerButtons()).toEqual(['Cancel', 'Add']);
-    again.unmount();
+  });
+
+  test('the server moved the balance though the form could not say from what: no Undo', async () => {
+    answer = addedOk({ balance_updated: true });
+    const unknown = { ...WALLET, accounts: [{ ...WALLET.accounts[0], balance: null }] };
+    const v = await mount({ mode: 'add', account_id: 'acc_wallet' }, [unknown as unknown as typeof WALLET]);
+    v.fill();
+    act(() => click(v.button('Add $12.50')!));
+    await pass(5);
+    expect(v.doneLine()!.textContent).toContain('Added $12.50 spent at Corner Store to Wallet.');
+    expect(v.doneLine()!.textContent).not.toContain('moved from');
+    expect(v.button('Undo')).toBeNull();
+    expect(v.dialog()!.textContent).toContain('Deleting it leaves the balance as it is now: update that from the account.');
+    v.unmount();
   });
 });
 
@@ -180,6 +202,19 @@ describe('after Add from Activity, Save and Delete', () => {
     expect(v.closed()).toBe(1);
     expect(v.dialog()).toBeNull();
     expect((v.saved.at(-1) as { transaction: { name: string } }).transaction.name).toBe('Corner Store');
+    v.unmount();
+  });
+
+  test('saved from an edit: it closes on the list, which shows it', async () => {
+    answer = async (s) => ({ ok: true, status: 200, json: async () => ({ transaction: { transaction_id: s.body.id, account_id: 'acc_wallet', name: s.body.name } }) });
+    const txn = { transaction_id: 'manual_t1', account_id: 'acc_wallet', name: 'Corner Store', amount: 12.5, date: '2026-11-10', iso_currency_code: 'USD' } as unknown as Txn;
+    const v = await mount({ mode: 'edit', txn });
+    act(() => type(v.field('Paid to'), 'Corner Shop'));
+    act(() => click(v.button('Save')!));
+    await pass(400);
+    expect(sent.at(-1)!.method).toBe('PATCH');
+    expect(v.closed()).toBe(1);
+    expect(v.dialog()).toBeNull();
     v.unmount();
   });
 
@@ -204,16 +239,34 @@ describe('after Add from Activity, Save and Delete', () => {
     expect(v.footerButtons()).toEqual(['Cancel', 'Save']);
     const row = v.dialog()!.findAll((e) => e.tagName === 'BUTTON' && (e.getAttribute('class') ?? '') === 'list-row neg')[0]!;
     expect(row.textContent).toContain('Delete transaction');
+    expect(row.getAttribute('aria-haspopup')).toBe('dialog');
     act(() => click(row));
     await pass(5);
+    // A level: its own title, a way back, and none of the form.
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Delete transaction');
+    expect(v.dialog()!.findAll((e) => e.getAttribute('aria-label') === 'Back').length).toBe(1);
+    expect(v.dialog()!.findAll((e) => e.tagName === 'INPUT')).toEqual([]);
     expect(v.dialog()!.textContent).toContain('Delete this transaction? It can');
     expect(v.footerButtons()).toEqual(['Keep it', 'Delete']);
     answer = refused('Failed to delete the transaction');
     act(() => click(v.button('Delete')!));
     await pass(5);
-    const note = v.footer()!.findAll((e) => (e.getAttribute('class') ?? '') === 'sheet-footer-note')[0]!;
+    let note = v.footNote()!;
     expect(note.textContent).toContain('Failed to delete the transaction');
     expect(v.button('Delete')!.getAttribute('aria-describedby')).toBe(note.getAttribute('id'));
+    // Back to the form, the refusal stays with Delete, not with Save.
+    act(() => click(v.button('Keep it')!));
+    await pass(5);
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Edit transaction');
+    expect(v.footNote()).toBeNull();
+    expect(v.button('Save')!.getAttribute('aria-describedby')).toBeNull();
+    act(() => click(v.dialog()!.findAll((e) => e.tagName === 'BUTTON' && (e.getAttribute('class') ?? '') === 'list-row neg')[0]!));
+    await pass(5);
+    expect(v.footNote()).toBeNull();
+    act(() => click(v.button('Delete')!));
+    await pass(5);
+    note = v.footNote()!;
+    expect(note.textContent).toContain('Failed to delete the transaction');
     answer = ok;
     act(() => click(v.button('Delete')!));
     await pass(400);

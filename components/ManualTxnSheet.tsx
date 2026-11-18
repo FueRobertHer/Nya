@@ -82,13 +82,16 @@ export type SheetInstitution = {
 type Account = SheetInstitution['accounts'][number] & { institution_name: string };
 
 /** What an add from an account's sheet saved, said once it has: the row,
- *  where it went, and the balance's move when it moved too (then no Undo). */
+ *  where it went, and the balance's move when it moved too (then no Undo).
+ *  `moved` is the server's word that it did; `balance` how far, when the
+ *  form knew where it started. */
 type Added = {
   id: string;
   account_id: string;
   account: string;
   owed: boolean;
   what: { amount: number; currency: string; direction: 'out' | 'in'; name: string };
+  moved: boolean;
   balance: { from: number; to: number; currency: string } | null;
   undone: boolean;
 };
@@ -423,6 +426,7 @@ export default function ManualTxnSheet({
             account: on?.name ?? 'the account',
             owed: on ? isOwedType(on.type) : false,
             what: { amount: amount!, currency, direction: draft!.direction, name: fields.name },
+            moved: data?.balance_updated === true,
             balance:
               data?.balance_updated === true && balance !== null ? { from: balance, to: typeof data?.balance === 'number' ? data.balance : after!, currency: keptIn } : null,
             undone: false,
@@ -472,6 +476,7 @@ export default function ManualTxnSheet({
   /** Asked to delete: the files on it read first, to offer deleting them. */
   function askDelete() {
     setConfirmDelete(true);
+    setError('');
     setFiles(null);
     setAlsoFiles(false);
     if (!edit || edit.attached !== true) return;
@@ -479,6 +484,13 @@ export default function ManualTxnSheet({
     void filesOn([id]).then((out) => {
       if (!('error' in out)) setFiles(out.files.filter((f) => f.place.on === 'transaction' && f.place.transaction_id === id).map((f) => f.id));
     });
+  }
+
+  /** Back from deleting, to the form. */
+  function keepIt() {
+    if (saving) return;
+    setConfirmDelete(false);
+    setError('');
   }
 
   async function remove() {
@@ -542,10 +554,13 @@ export default function ManualTxnSheet({
           <Notice level="done" role="status" ref={doneLine} tabIndex={-1}>
             <Masked>{added.undone ? `Undone: ${what} is no longer on ${added.account}.` : `Added ${what} to ${added.account}.${moved}`}</Masked>
           </Notice>
-          {!added.undone && !added.balance && (
-            <button type="button" className="btn ghost" onClick={() => void undo()} disabled={saving} aria-describedby={undoError ? errorId : undefined}>
-              {saving ? 'Undoing…' : 'Undo'}
-            </button>
+          {!added.undone && !added.moved && (
+            // In a row of its own: a .stack would stretch the button to its width.
+            <div>
+              <button type="button" className="btn ghost" onClick={() => void undo()} disabled={saving} aria-describedby={undoError ? errorId : undefined}>
+                {saving ? 'Undoing…' : 'Undo'}
+              </button>
+            </div>
           )}
           {undoError && (
             <div id={errorId}>
@@ -556,7 +571,7 @@ export default function ManualTxnSheet({
           )}
           {!added.undone && (
             <p className="helper">
-              {added.balance
+              {added.moved
                 ? `It’s in Activity, where you can edit or delete it. Deleting it leaves the ${kept} as it is now: update that from the account.`
                 : 'It’s in Activity, where you can edit or delete it.'}
             </p>
@@ -585,7 +600,7 @@ export default function ManualTxnSheet({
       )}
       {confirmDelete ? (
         <>
-          <button type="button" className="btn secondary" onClick={() => setConfirmDelete(false)} disabled={saving}>
+          <button type="button" className="btn secondary" onClick={keepIt} disabled={saving}>
             Keep it
           </button>
           <button type="button" className="btn danger" onClick={remove} disabled={saving} aria-describedby={failed}>
@@ -604,6 +619,42 @@ export default function ManualTxnSheet({
       )}
     </>
   );
+
+  if (confirmDelete) {
+    return (
+      <Sheet
+        open={!!target}
+        title="Delete transaction"
+        level="delete"
+        // Once deleted there is no form to go back to.
+        onBack={done ? undefined : keepIt}
+        onClose={() => !saving && onClose()}
+        footer={footer}
+      >
+        <div className="stack">
+          {/* Deleted, but with something to read first: its files. */}
+          {error && done ? (
+            <Notice level="critical" role="alert">
+              <Masked>{hideAmountsIn(error)}</Masked>
+            </Notice>
+          ) : (
+            <>
+              <p className="helper">Delete this transaction? It can&apos;t be brought back.</p>
+              {files && files.length > 0 && (
+                <>
+                  <label className="quick-add-check">
+                    <input type="checkbox" checked={alsoFiles} onChange={(e) => setAlsoFiles(e.target.checked)} disabled={saving} />
+                    <span>{files.length === 1 ? 'Also delete the receipt or document on it' : `Also delete the ${files.length} receipts and documents on it`}</span>
+                  </label>
+                  {!alsoFiles && <p className="helper">Kept, they stay under Receipts and documents in Settings, Your data and privacy, not on a transaction.</p>}
+                </>
+              )}
+            </>
+          )}
+        </div>
+      </Sheet>
+    );
+  }
 
   return (
     <Sheet open={!!target} title={edit ? 'Edit transaction' : 'Add a transaction'} onClose={() => !saving && onClose()} footer={footer}>
@@ -766,24 +817,9 @@ export default function ManualTxnSheet({
         </Notice>
       )}
 
-      {done ? null : confirmDelete ? (
-        <>
-          <p className="panel-note">Delete this transaction? It can&apos;t be brought back.</p>
-          {files && files.length > 0 && (
-            <>
-              <label className="quick-add-check">
-                <input type="checkbox" checked={alsoFiles} onChange={(e) => setAlsoFiles(e.target.checked)} disabled={saving} />
-                <span>{files.length === 1 ? 'Also delete the receipt or document on it' : `Also delete the ${files.length} receipts and documents on it`}</span>
-              </label>
-              {!alsoFiles && <p className="panel-note">Kept, they stay under Receipts and documents in Settings, Your data and privacy, not on a transaction.</p>}
-            </>
-          )}
-        </>
-      ) : (
-        edit && (
-          // Deleting it, from its actions: last, asking first (ActionRows).
-          <ActionRows rows={[{ key: 'delete', title: 'Delete transaction', sub: 'Asks first.', opens: true, neg: true, onSelect: () => !saving && askDelete() }]} />
-        )
+      {!done && edit && (
+        // Deleting it, from its actions: last, opening a level that asks (ActionRows).
+        <ActionRows rows={[{ key: 'delete', title: 'Delete transaction', sub: 'Asks first.', opens: true, neg: true, onSelect: () => !saving && askDelete() }]} />
       )}
     </Sheet>
   );
