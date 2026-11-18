@@ -60,7 +60,7 @@ import { noTransactionsView, quietItemIds, unallowedItemIds, NO_CONNECTIONS_WITH
 import { unreadNotesOf } from '@/lib/fire/inputs';
 import type { PathRange } from '@/lib/fire/path';
 import { historyPausedSince } from '@/lib/history-status';
-import MonthBreakdown, { nameForRules, type Txn } from './MonthBreakdown';
+import MonthBreakdown, { findTxnRow, nameForRules, type Txn } from './MonthBreakdown';
 import DisconnectSheet from './DisconnectSheet';
 import ManualTxnSheet from './ManualTxnSheet';
 import type { ImportTarget } from './ImportSheet';
@@ -592,6 +592,9 @@ export default function Dashboard({
       const named = settingsOpener.current;
       settingsOpener.current = null;
       const opener = typeof named === 'function' ? named() : named;
+      // Found again on a list drawn anew, perhaps below the fold (Settings
+      // opened at the top): scrolled to, so focus is seen where it lands.
+      if (typeof named === 'function') opener?.scrollIntoView?.({ block: 'center' });
       // What opened it may be gone (a row on the tab, drawn anew as Settings
       // closes): then where Settings always opens from, the avatar or the gear.
       const target = opener?.isConnected ? opener : (avatarButton() ?? document.querySelector<HTMLElement>('.top-actions [aria-label="Settings"]'));
@@ -604,11 +607,16 @@ export default function Dashboard({
   const clearTagsFocus = useCallback(() => setTagsFocus(false), []);
   const openTags = useCallback(
     (transaction_id: string) => {
-      enterSettings('transactions', () => document.querySelectorAll<HTMLElement>(`button[data-txn-row="${transaction_id.replace(/["\\]/g, '')}"]`)[0] ?? null);
+      enterSettings('transactions', () => findTxnRow(transaction_id));
       setTagsFocus(true);
     },
     [enterSettings]
   );
+  // Asked for once: gone with Settings > Transactions, so a later visit
+  // never opens the drawer by itself (a card that hadn't loaded yet).
+  useEffect(() => {
+    if (settings !== 'transactions') setTagsFocus(false);
+  }, [settings]);
   // The Currency card is in Settings > Preferences.
   const openCurrency = useCallback(
     (rateFor: string | null = null) => {

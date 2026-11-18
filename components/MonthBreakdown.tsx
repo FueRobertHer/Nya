@@ -189,6 +189,14 @@ export type Txn = {
  * looked for; the search, or more than one, says nothing matches them; none,
  * that the month (or the cash flow's pick) has nothing.
  */
+/** A transaction's row on the list, by its id (`data-txn-row`): for focus
+ *  to come back to once the list is drawn anew. None for an id a selector
+ *  can't hold as it is. */
+export function findTxnRow(id: string): HTMLElement | null {
+  if (/["\\\n]/.test(id)) return null;
+  return document.querySelectorAll<HTMLElement>(`button[data-txn-row="${id}"]`)[0] ?? null;
+}
+
 export function emptyListWords(on: { query: boolean; tag: boolean; review: boolean; unsure?: boolean; receipt: ReceiptChoice; pick: boolean }): string {
   const count = [on.query, on.tag, on.review, !!on.unsure, on.receipt !== ""].filter(Boolean).length;
   if (count === 0) return on.pick ? "Nothing to list." : "No transactions this month.";

@@ -38,7 +38,7 @@ const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
 const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
-const { default: MonthBreakdown } = await import('@/components/MonthBreakdown');
+const { default: MonthBreakdown, findTxnRow } = await import('@/components/MonthBreakdown');
 const { useTransactionEdits } = await import('@/components/transaction-edits');
 const { expandSplitsAndGroups } = await import('@/lib/split-rows');
 const { indexTaxonomy } = await import('@/lib/categories');
@@ -1176,8 +1176,21 @@ describe('a transaction’s sheet', () => {
       expect(v.dialog()).toBeNull();
       expect(opened).toEqual(['Whole Foods']);
       // Each row says whose it is, for focus to come back to it once Settings closes.
-      expect(v.row('Whole Foods')!.getAttribute('data-txn-row')).toBe('Whole Foods');
+      expect(findTxnRow('Whole Foods') as unknown).toBe(v.row('Whole Foods')!);
       v.unmount();
+    });
+
+    test('a row is found again by its id once the list is drawn anew; an id a selector can’t hold finds none', async () => {
+      const v = mount();
+      const before = v.row('Cash market')!;
+      v.unmount();
+      const again = mount();
+      expect(findTxnRow('Cash market') as unknown).toBe(again.row('Cash market')!);
+      expect(findTxnRow('Cash market') as unknown).not.toBe(before);
+      expect(findTxnRow('Nowhere')).toBeNull();
+      expect(findTxnRow('a"b')).toBeNull();
+      expect(findTxnRow('a\nb')).toBeNull();
+      again.unmount();
     });
 
     test('not offered with no tags to rename, nor without a way there', async () => {
