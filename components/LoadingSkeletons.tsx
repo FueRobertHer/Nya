@@ -212,29 +212,18 @@ export function SharedWithMeSkeleton() {
   );
 }
 
-/** A "Shared by" card (components/Sharing.tsx SharedCard) with two accounts
- *  still to come: its head (the sharer's name a placeholder, or "you" in
- *  Sharing's preview of what someone sees) over the accounts' rows. */
+/** A "Shared by" card (components/SharedWithMe.tsx SharedCard) with two
+ *  accounts still to come: its header (the sharer's name a placeholder, or
+ *  "you" in Sharing's preview of what someone sees) over the accounts' rows. */
 function SharedCardSkeleton({ id, you = false }: { id?: string; you?: boolean }) {
   return (
     <div id={id} className="card" aria-hidden="true">
-      <div className="incoming-head">
+      <div className="card-header">
         {you ? <span className="avatar small">Y</span> : <span className="skeleton block avatar small" />}
         <h3>{you ? 'Shared by you' : <span className="skeleton shared-skeleton-name" />}</h3>
-        <span className="pill">Read-only</span>
+        <span className="badge">Read-only</span>
       </div>
-      {[0, 1].map((i) => (
-        <div className="incoming-account" key={i}>
-          <div className="peer-row">
-            <span>
-              <span className="skeleton rows-skeleton-title" />
-            </span>
-            <span className="incoming-account-value">
-              <span className="skeleton rows-skeleton-value" />
-            </span>
-          </div>
-        </div>
-      ))}
+      <RowsSkeleton count={2} />
     </div>
   );
 }

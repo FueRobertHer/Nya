@@ -7,20 +7,41 @@
 // and where to sign out, which is the account menu's alone. In password mode:
 // Sign out, and Sign out everywhere.
 //
+// A shared demo account (lib/demo.ts) shows no email and no Manage account:
+// Clerk's window would show its sign-in details and, on Security, every
+// visitor's device with its address, as the account menu explains
+// (components/ClerkAccount.tsx). The server says which it is; until it has,
+// the row waits in placeholders and Manage account isn't offered, so a demo
+// account never shows either first. When it can't say, neither is shown,
+// and the card says to load the page again.
+//
 // Only Clerk's data is drawn here, never its UI: Clerk lays its profile out by
 // the window's width, so it stays in its own window (ProfileWindow.tsx). The
 // picture is Clerk's, as the avatar's is (its default is set in Clerk's
 // dashboard).
 
 import { useUser } from '@clerk/nextjs';
+import { useSignInDetails } from './ClerkAccount';
 import { useProfileWindow } from './ProfileWindow';
+import { Notice } from './TotalCaveats';
+
+/** Said where Manage account is for a demo account, as its Data & privacy
+ *  page said it (lib/account-deletion.ts). */
+export const DEMO_ACCOUNT_LINE = 'This is a demo account, shared by everyone who tries the app. It can’t be deleted.';
+
+/** Said in their place when the server couldn't say whether this is a demo
+ *  account. */
+export const ACCOUNT_UNSURE = 'Your email and Manage account couldn’t be shown just now. Load the page again.';
 
 /** Who is signed in: their picture, their name (full, else their username,
  *  else their email), and their email under it when that isn't the name.
- *  The same row in placeholders while Clerk loads; nothing without a user. */
-export function Identity() {
+ *  Without its sign-in details (a demo account), the picture and the name
+ *  alone, never the email. The same row in placeholders while Clerk loads,
+ *  or while whether to show them isn't known (null); nothing without a
+ *  user. */
+export function Identity({ details }: { details: boolean | null }) {
   const { isLoaded, user } = useUser();
-  if (!isLoaded)
+  if (!isLoaded || (user && details === null))
     return (
       <ul className="list-rows" aria-hidden="true">
         <li>
@@ -39,7 +60,7 @@ export function Identity() {
       </ul>
     );
   if (!user) return null;
-  const email = user.primaryEmailAddress?.emailAddress ?? null;
+  const email = details ? (user.primaryEmailAddress?.emailAddress ?? null) : null;
   const name = user.fullName || user.username || email;
   if (!name) return null;
   return (
@@ -58,16 +79,22 @@ export function Identity() {
 }
 
 function ClerkCard({ clearDevice }: { clearDevice: () => void }) {
+  const { user } = useUser();
+  const details = useSignInDetails(user?.id);
   const profile = useProfileWindow(clearDevice);
   return (
     <div className="card stack">
-      <Identity />
+      <Identity details={details === null ? null : details === 'shown'} />
       <p className="helper">Sign out is in the account menu, under your picture or initial at the top right.</p>
-      <div className="btn-row">
-        <button className="btn secondary" onClick={profile.open}>
-          Manage account
-        </button>
-      </div>
+      {details === 'demo' && <p className="helper">{DEMO_ACCOUNT_LINE}</p>}
+      {details === 'unsure' && <Notice level="caution">{ACCOUNT_UNSURE}</Notice>}
+      {details === 'shown' && (
+        <div className="btn-row">
+          <button className="btn secondary" onClick={profile.open}>
+            Manage account
+          </button>
+        </div>
+      )}
       {profile.portals}
     </div>
   );

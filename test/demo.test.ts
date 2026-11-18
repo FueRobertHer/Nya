@@ -21,6 +21,8 @@ const { demoUsers, isDemoUser, demoEnvironment, DEMO_SIGN_INS_PER_WINDOW, DEMO_U
 const { clerkUserAllowed } = await import('@/lib/auth-mode');
 const { deletionCheck } = await import('@/lib/account-deletion');
 const { POST } = await import('@/app/api/demo/sign-in/route');
+const demoMe = await import('@/app/api/demo/me/route');
+const { config } = await import('@/proxy');
 
 const saved = { ...process.env };
 beforeEach(async () => {
@@ -169,5 +171,40 @@ describe('the demo sign-in', () => {
     ticketFails = false;
     for (let i = 0; i < 19; i++) expect((await signIn('user_alex', '1.2.3.4', 'application/json')).status).toBe(200);
     expect((await signIn('user_alex', '1.2.3.4', 'application/json')).status).toBe(429);
+  });
+});
+
+// Whether the signed-in account is a demo (app/api/demo/me), which the
+// account menu asks before it draws Clerk's button (components/ClerkAccount.tsx).
+describe('whether the signed-in account is a demo', () => {
+  const ask = async () => {
+    const res = await demoMe.GET();
+    return { status: res.status, cache: res.headers.get('cache-control'), body: await res.json() };
+  };
+
+  test('the server says, from DEMO_USER_IDS, naming the account it answers for', async () => {
+    clerk.signedIn = 'user_alex';
+    expect(await ask()).toEqual({ status: 200, cache: 'no-store', body: { user: 'user_alex', demo: true } });
+    clerk.signedIn = 'user_owner';
+    expect(await ask()).toEqual({ status: 200, cache: 'no-store', body: { user: 'user_owner', demo: false } });
+    // Listed but not as Alex or Sam: no demo.
+    clerk.signedIn = 'user_jordan';
+    expect((await ask()).body).toEqual({ user: 'user_jordan', demo: false });
+  });
+
+  test('on Production nobody is a demo', async () => {
+    (process.env as any).VERCEL_ENV = 'production';
+    clerk.signedIn = 'user_alex';
+    expect((await ask()).body).toEqual({ user: 'user_alex', demo: false });
+  });
+
+  test('signed out, or without Clerk, no answer; and the proxy asks for a session first', async () => {
+    clerk.signedIn = null;
+    expect((await ask()).status).toBe(401);
+    delete process.env.CLERK_SECRET_KEY;
+    clerk.signedIn = 'user_alex';
+    expect((await ask()).status).toBe(404);
+    const gated = (path: string) => new RegExp(`^${config.matcher[0]}$`).test(path);
+    expect(gated('/api/demo/me')).toBe(true);
   });
 });

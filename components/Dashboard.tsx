@@ -1671,9 +1671,11 @@ export default function Dashboard({
       .sort((a, b) => a.account.name.localeCompare(b.account.name));
   }, [institutions, hiddenMeta]);
 
-  const toggleHidden = useCallback(
-    async (account_id: string, hidden: boolean) => {
-      setError('');
+  // Hides or unhides one account, then reads the accounts again: the words
+  // of a refusal, or null once done. The account sheet says them itself
+  // (components/AccountSheet.tsx); `toggleHidden` says them on the page.
+  const writeHidden = useCallback(
+    async (account_id: string, hidden: boolean): Promise<string | null> => {
       // Guarded like the adjacent manual-account actions: each toggle triggers
       // a full refresh, so repeated taps would queue several of them.
       setTogglingHidden(account_id);
@@ -1684,10 +1686,7 @@ export default function Dashboard({
           body: JSON.stringify({ account_id, hidden }),
         });
         const data = await res.json().catch(() => null);
-        if (!res.ok) {
-          setError(data?.error ?? 'Could not update hidden accounts.');
-          return;
-        }
+        if (!res.ok) return data?.error ?? 'Could not update hidden accounts.';
         await loadNetWorth(true);
         // Hidden accounts' transactions must leave the Activity tab too. Guarded
         // like every other refresh here, so this can't kick off a first-ever
@@ -1698,13 +1697,22 @@ export default function Dashboard({
         // seam. The server cleared the backfill flag; running the recompute is on
         // us, since the automatic one only fires when history is thin.
         if (data?.recompute) requestBackfill(() => loadNetWorth());
+        return null;
       } catch {
-        setError('Could not update hidden accounts.');
+        return 'Could not update hidden accounts.';
       } finally {
         setTogglingHidden(null);
       }
     },
     [loadNetWorth, loadTransactions, requestBackfill, txns]
+  );
+  const toggleHidden = useCallback(
+    async (account_id: string, hidden: boolean) => {
+      setError('');
+      const refused = await writeHidden(account_id, hidden);
+      if (refused) setError(refused);
+    },
+    [writeHidden]
   );
 
   // One currency to label summed account figures (net worth, deltas). Accounts
@@ -2877,7 +2885,8 @@ export default function Dashboard({
         hiding={togglingHidden !== null}
         lifecycleBusy={lifecycle.busy}
         onDismiss={() => setAccountOpen(null)}
-        onHide={(account_id) => toggleHidden(account_id, true)}
+        onHide={(account_id) => writeHidden(account_id, true)}
+        onUnhide={(account_id) => writeHidden(account_id, false)}
         onEnd={lifecycle.open}
         onUpdate={manualAccounts.startEdit}
         onAddTransaction={(account_id) => txnEdits.openAdd(account_id)}

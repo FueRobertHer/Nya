@@ -144,7 +144,7 @@ A full screen with a list of sections; each opens its own view with a back butto
 | **Connections** | Connections with no card (all accounts hidden, orphaned SimpleFIN or Lunch Flow) with Disconnect; reconnected accounts (link history, unlink, link by hand); earlier accounts and Forget | AccountLinks, the all-hidden filter (Manage) |
 | **Sharing** | In place: invite, people and blocked, as cards; each person in a sheet of their own (what they see and for how long, both records, Remove and Block) with What they see as its second level (since the screen review) | SharingDrawer (avatar menu, Accounts button), now SharingSettings |
 | **Your data and privacy** | Download my data; Your data (what Nya keeps); Bring back a download (a demo account: reset to a scenario instead); Receipts and documents; API tokens and their changes | DownloadMyData, InventoryEntry, RestoreCard (DemoDataCard on a demo account), ReceiptsCard, ApiTokens (Manage) |
-| **Account** | Profile (Clerk), Forget this device, Delete my account; with Clerk, who is signed in (Clerk's picture, name and email, read from Clerk and drawn in place since the screen review: Clerk's own profile stays in its window, which it lays out by the window's width), then **Manage account**, opening Clerk's account window with its Data & privacy page as the avatar menu's does (look and feel step 2c), while Sign out is the avatar menu's alone and this section points to it; Sign out and Sign out everywhere in password mode | AccountSettings (ProfileWindow), ClerkAccount menu, DeleteAccount, ForgetDevice, password-mode header buttons |
+| **Account** | Profile (Clerk), Forget this device, Delete my account; with Clerk, who is signed in (Clerk's picture, name and email, read from Clerk and drawn in place since the screen review: Clerk's own profile stays in its window, which it lays out by the window's width), then **Manage account**, opening Clerk's account window with its Data & privacy page as the avatar menu's does (look and feel step 2c), while Sign out is the avatar menu's alone and this section points to it; for a shared demo account, its picture and name without the email, and that it is a demo that can't be deleted in place of Manage account; Sign out and Sign out everywhere in password mode | AccountSettings (ProfileWindow), ClerkAccount menu, DeleteAccount, ForgetDevice, password-mode header buttons |
 | **Admin** | The deployment's admin only (decided on the server), last (tax plan F2): one row, **Admin page**, to `/admin` | Unused connections (Connections), Storage across accounts and Nightly jobs (links in Your data), now on the admin page; AdminEntry |
 
 Everyone but the admin sees six sections (five without Clerk, which has no Sharing); the admin sees Admin too, and `?settings=admin` opens the list for anyone else.
@@ -217,7 +217,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 |---|---|---|
 | Dashboard (shell) | Header, five tabs, all sheets | Header, five tabs, Settings screen, sheets |
 | Brand, HideAmounts | Header | Header |
-| ClerkAccount | Avatar menu (Sharing, Manage account, Sign out) | Avatar menu: Settings, Sharing (opening Settings > Sharing), Sign out |
+| ClerkAccount | Avatar menu (Sharing, Manage account, Sign out) | Avatar menu: Settings, Sharing (opening Settings > Sharing), Manage account, Sign out; for a shared demo account, Nya's own menu under its picture instead (Settings, Sharing, Sign out: no email, no Manage account), as the server says (`app/api/demo/me`) |
 | Settings (SettingsScreen) | New in phase 1, replacing Manage | Full screen from the avatar menu or the gear: the six sections (Admin a seventh, for the admin, since F2), each a view with a back button; kept in the address beside the tab (`?settings=`, lib/dashboard-tab.ts) since the screen review |
 | RestoreBanner | Every tab while a restore is unfinished | Every tab (unchanged); "Go to it" opens Settings > Your data |
 | TrustLinks | Foot of every tab | Foot of every tab and of Settings, at the bottom of the screen when the tab is shorter than it (`.app-page`) |
@@ -259,7 +259,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | DebtPayoff | Accounts top card button | Budgets > Goals (6a1): a Debt payoff card holding a Payoff plan row, shown when a card or loan that isn't hidden is on screen; the sheet stays mounted once, outside the tabs |
 | Sharing (SharingSettings with SharingListView and ConnectionView, SharedViews, ShareKinds, SharingDates) | Avatar menu, Accounts button | Settings > Sharing, in place, each person in a sheet; the avatar menu's Sharing opens it |
 | Sharing (SharedWithMe) | Bottom of Accounts; empty state | Bottom of Accounts; empty state |
-| AcceptInvite | Invite link page | Unchanged |
+| AcceptInvite | Invite link page | Unchanged (`/connect/<token>`); once connected, or already, it links to Settings > Sharing over Accounts |
 | DownloadMyData, DownloadOptions | Manage | Settings > Your data |
 | InventoryEntry, DataInventory | Manage, `/your-data` | Settings > Your data, `/your-data`; the admin's links to Storage across accounts and Nightly jobs moved to the admin page in F2 |
 | RestoreCard, RestoreAnswers | Manage; empty state | Settings > Your data; empty state |
