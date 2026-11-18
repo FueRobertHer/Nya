@@ -102,6 +102,9 @@ export type BackupOptions = {
   /** Told how long each step took as it finishes, so the log shows where the
    *  time went even when a later step fails. */
   onStep?: (step: BackupStep, ms: number) => void;
+  /** Told as each step starts, so the run log says where a run that never
+   *  ended got to (runNightlyBackup). */
+  onStepStart?: (step: BackupStep) => void;
   /** Tests shorten these. */
   limits?: Partial<Record<BackupStep, number>>;
   /** How long to wait for the key archives' lock (lib/key-archive.ts). */
@@ -373,6 +376,7 @@ export async function runBackup(
   const days = keepDays(); // before anything is written: a bad setting fails loudly first
   const at = <T>(name: BackupStep, run: (signal: AbortSignal) => Promise<T>): Promise<T> => {
     progress.step = name;
+    opts.onStepStart?.(name);
     return step(name, opts, run);
   };
   progress.exported ??= await at('export', async () => {
@@ -474,10 +478,13 @@ export type ReadUrl = (url: string, headers: Record<string, string>, signal: Abo
 
 /** Vercel Blob, private, with the token Vercel sets when a store is connected
  *  to the project (BLOB_READ_WRITE_TOKEN). Null when there isn't one. */
-export async function vercelBlobStore(readUrl: ReadUrl = nodeText): Promise<BackupStore | null> {
+/** `onResend`: told each time a call is sent again on a new request
+ *  (lib/blob-attempts.ts), so a run can say how many were (its run log). */
+export async function vercelBlobStore(readUrl: ReadUrl = nodeText, hooks: { onResend?: () => void } = {}): Promise<BackupStore | null> {
   const token = process.env.BLOB_READ_WRITE_TOKEN;
   if (!token) return null;
   const blob = await import('@vercel/blob');
+  const again = <T>(what: string, signal: AbortSignal | undefined, run: (signal: AbortSignal) => Promise<T>) => retryStalled(what, signal, run, undefined, hooks.onResend);
   return {
     async put(pathname, body, signal, opts) {
       await blob.put(pathname, body, {
@@ -501,7 +508,7 @@ export async function vercelBlobStore(readUrl: ReadUrl = nodeText): Promise<Back
       // that is what is compared.
       // The lookup and the read together, sent again if they stall
       // (lib/blob-attempts.ts).
-      return retryStalled('a read', signal, async (s) => {
+      return again('a read', signal, async (s) => {
         const res = await blob.get(pathname, { access: 'private', useCache: false, abortSignal: s });
         if (!res || res.statusCode !== 200) return null;
         res.stream.cancel().catch(() => {});
@@ -517,14 +524,14 @@ export async function vercelBlobStore(readUrl: ReadUrl = nodeText): Promise<Back
       const out: { pathname: string; uploadedAt: Date }[] = [];
       let cursor: string | undefined;
       do {
-        const page = await retryStalled('a listing', signal, (s) => blob.list({ prefix, cursor, abortSignal: s }));
+        const page = await again('a listing', signal, (s) => blob.list({ prefix, cursor, abortSignal: s }));
         for (const b of page.blobs) out.push({ pathname: b.pathname, uploadedAt: new Date(b.uploadedAt) });
         cursor = page.hasMore ? page.cursor : undefined;
       } while (cursor);
       return out;
     },
     async del(pathnames, signal) {
-      if (pathnames.length > 0) await retryStalled('a delete', signal, (s) => blob.del(pathnames, { abortSignal: s }));
+      if (pathnames.length > 0) await again('a delete', signal, (s) => blob.del(pathnames, { abortSignal: s }));
     },
   };
 }
@@ -725,19 +732,25 @@ export function setRetryPausesForTests(pauses: readonly number[] | null): void {
  * all the same, a few times at most, at the step it failed. The outcome says
  * how many attempts it took; the log names each failure and its step.
  */
-export async function runNightlyBackup(now: Date = new Date(), opts: { waitedMs?: number; budgetMs?: number } = {}): Promise<RunAnswer> {
-  const store = await vercelBlobStore();
+export async function runNightlyBackup(now: Date = new Date(), opts: { waitedMs?: number; budgetMs?: number; log?: RunLog } = {}): Promise<RunAnswer> {
+  const { log } = opts;
+  const store = await vercelBlobStore(nodeText, { onResend: () => log?.resend() });
   if (!store) {
     console.error('Backup skipped: no blob store is connected (BLOB_READ_WRITE_TOKEN is not set)');
-    await recordOutcome({ ok: false, reason: 'No blob store is connected.' });
+    await Promise.all([recordOutcome({ ok: false, reason: 'No blob store is connected.' }), log?.end('failed', 'No blob store is connected.')]);
     return { status: 500, body: { error: 'No blob store is connected (BLOB_READ_WRITE_TOKEN is not set).' } };
   }
   // Timed so the headroom under maxDuration shows in the log, step by step as
   // each finishes: when one fails, the lines before it show where time went.
   const started = Date.now();
   const deadline = started + (opts.budgetMs ?? BACKUP_BUDGET_MS) - (opts.waitedMs ?? 0);
-  const onStep = (step: string, ms: number) => console.log(`Backup ${step} took ${(ms / 1000).toFixed(1)}s`);
+  const onStep = (step: string, ms: number) => {
+    console.log(`Backup ${step} took ${(ms / 1000).toFixed(1)}s`);
+    log?.step(step, ms);
+  };
+  const onStepStart = (step: string) => log?.phase(step);
   try {
+    log?.phase('sweep of deleted accounts');
     // Loaded here: lib/account-deletion.ts imports this module.
     const { sweepDestroyedContainers } = await import('./account-deletion');
     const swept = await sweepDestroyedContainers(now);
@@ -749,7 +762,7 @@ export async function runNightlyBackup(now: Date = new Date(), opts: { waitedMs?
   const progress: BackupProgress = {};
   for (let attempt = 1; ; attempt++) {
     try {
-      const result = await runBackup(rawRedis(), store, now, { onStep, deadline, keepBadCopy: true }, progress);
+      const result = await runBackup(rawRedis(), store, now, { onStep, onStepStart, deadline, keepBadCopy: true }, progress);
       // Logged before the outcome is recorded, so the line survives even if that
       // write is what stalls.
       const seconds = ((Date.now() - started) / 1000).toFixed(1);
@@ -764,11 +777,13 @@ export async function runNightlyBackup(now: Date = new Date(), opts: { waitedMs?
         `${seconds}s`,
         ...(attempt > 1 ? [`on attempt ${attempt}`] : [])
       );
-      await recordOutcome({ ok: true });
+      // The run log's end beside the outcome, in the same few seconds.
+      await Promise.all([recordOutcome({ ok: true }), log?.end('worked', null)]);
       return { status: 200, body: { ...result, ...(attempt > 1 ? { attempts: attempt, failed_attempts: failures } : {}) } };
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       failures.push(reason);
+      log?.attempt(progress.step ?? null, reason);
       const pause = retryPauses[attempt - 1];
       const again = pause !== undefined && Date.now() + pause + MIN_ATTEMPT_MS <= deadline;
       const where = progress.step ? ` at its ${progress.step} step` : '';
@@ -780,7 +795,7 @@ export async function runNightlyBackup(now: Date = new Date(), opts: { waitedMs?
         if (bad) await step('discard', { onStep, deadline }, (signal) => store.del([bad], signal)).catch(() => {});
         // The count first: the record keeps 200 characters of a reason.
         const said = attempt > 1 ? `After ${attempt} attempts: ${reason}` : reason;
-        await recordOutcome({ ok: false, reason: said });
+        await Promise.all([recordOutcome({ ok: false, reason: said }), log?.end('failed', said)]);
         return { status: 500, body: { error: said } };
       }
       await new Promise((r) => setTimeout(r, pause));
@@ -1046,6 +1061,261 @@ export async function takeRunLock(job: NightlyJob, by: RunHolder['by'], waitMs =
     if (Date.now() >= until) return { busy: holderOf(now) };
     await new Promise((r) => setTimeout(r, Math.min(1000, Math.max(0, until - Date.now()))));
   }
+}
+
+// ---- The nightly jobs' run log ----
+//
+// The last RUN_LOG_CAP runs of either job, for the Nightly jobs page: Vercel
+// keeps a function's log about an hour on this plan, and the backups' record
+// keeps only each job's last outcome, so a night that failed was usually past
+// explaining by the time anyone looked. One hash beside the record, a field
+// per run by its id (its start time, then random hex, so ids sort by start):
+// written when the run starts (HSETNX, so a start that lands late never covers
+// its end), where it has got to as it goes (a field of its own, `<id>:at`,
+// sent without waiting, so a late one does no harm), and once when it ends
+// (runNightlyBackup beside its outcome, runNightlySweep after its own, and
+// lib/nightly-run-limit.ts for a run that threw). Every write is by id, so the
+// cron's "Not run" entry, written without the run lock, never meets a run's.
+// Best effort and bounded (RUN_LOG_LIMIT_MS): a write that fails or stalls is
+// logged and never fails a run. An entry that still says running once the run
+// lock would have let it go stopped before it could say how it went: Vercel's
+// 300 s limit, or storage it couldn't reach. It holds the job, who started it,
+// times, step names and timings, counts and reasons, ids masked (logReason):
+// no account and no person. Never in an archive (lib/export.ts leaves the
+// backups: family out), and kept by a restore (lib/restore.ts).
+
+const RUN_LOG = () => kEnv('backups:runs');
+
+/** How many runs the log keeps, of both jobs together (Fue, 2026-11-18):
+ *  about a month of nights, with room for runs by hand. */
+export const RUN_LOG_CAP = 60;
+
+/** How long one write to the log may take. */
+export const RUN_LOG_LIMIT_MS = 5_000;
+
+export type RunOutcome = 'running' | 'worked' | 'failed' | 'not-run' | 'paused';
+
+export type RunEntry = {
+  job: NightlyJob;
+  by: RunHolder['by'];
+  started: string;
+  ended: string | null;
+  outcome: RunOutcome;
+  /** Why it failed, didn't run or was paused. */
+  reason: string | null;
+  /** The backup: each attempt that failed, the step it failed at, and why. */
+  attempts?: { step: string | null; reason: string }[];
+  /** The backup: each step that finished, of every attempt in order, with
+   *  how long it took (ms). */
+  steps?: [string, number][];
+  /** The backup: Vercel Blob calls sent again on a new request. */
+  resends?: number;
+  /** The clean-up: its counts (lib/attachment-sweep.ts SweepResult), never an
+   *  account. */
+  counts?: Record<string, number | boolean>;
+};
+
+/** A run as the page shows it. `at`: where a run with no end last said it
+ *  was. `silent`: its entry says running, though the run lock would have let
+ *  it go (RUN_LOCK_MS): it stopped before it could say how it went. */
+export type RunView = RunEntry & { id: string; at: { phase: string; at: string } | null; silent: boolean };
+
+/** A reason as the log keeps it: cut where Upstash names the command (its
+ *  arguments can hold stored values), every id masked (a few of the key
+ *  store's messages name an account's container), at most 200 characters. */
+export function logReason(text: string): string {
+  return text
+    .split(', command was')[0]
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '[id]')
+    .slice(0, 200);
+}
+
+/** Runs a write to the log, bounded: a failure or a stall is logged, never
+ *  thrown. */
+async function boundedLogWrite(what: string, write: () => Promise<unknown>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`took longer than ${RUN_LOG_LIMIT_MS / 1000}s`)), RUN_LOG_LIMIT_MS);
+    });
+    await Promise.race([write(), timeout]);
+  } catch (err) {
+    console.error(`Run log: ${what} not written`, err instanceof Error ? logReason(err.message) : typeof err);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const AT = ':at';
+
+/** Keeps the newest RUN_LOG_CAP runs: drops older runs with their `:at`, and
+ *  any `:at` whose run is gone. Two at once drop the same fields. */
+async function trimRunLog(): Promise<void> {
+  const fields = ((await redis().hkeys(RUN_LOG())) ?? []) as string[];
+  const runs = fields.filter((f) => !f.endsWith(AT)).sort().reverse();
+  const keep = new Set(runs.slice(0, RUN_LOG_CAP));
+  const drop = fields.filter((f) => !keep.has(f.endsWith(AT) ? f.slice(0, -AT.length) : f));
+  if (drop.length > 0) await redis().hdel(RUN_LOG(), ...drop);
+}
+
+const runId = (started: string) => `${started}.${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
+
+/** A run's entry in the log, kept while it runs: what it finished and what
+ *  failed are held here and written once, at its end. */
+export type RunLog = {
+  readonly id: string;
+  /** Says where the run has got to, without waiting for the write. */
+  phase(name: string): void;
+  step(name: string, ms: number): void;
+  attempt(step: string | null, reason: string): void;
+  resend(): void;
+  /** Ends its entry, once: later calls do nothing. Never throws. */
+  end(outcome: 'worked' | 'failed' | 'paused', reason: string | null, counts?: Record<string, number | boolean>): Promise<void>;
+  readonly ended: boolean;
+};
+
+/**
+ * Starts a run's entry, once the run holds the run lock (lib/nightly-run-limit.ts
+ * runAsCron, app/api/admin/jobs), and drops the oldest past RUN_LOG_CAP.
+ * Never throws: a log that can't be written leaves the run as it was.
+ */
+export async function startRun(job: NightlyJob, by: RunHolder['by'], now: Date = new Date()): Promise<RunLog> {
+  const started = now.toISOString();
+  const id = runId(started);
+  const entry: RunEntry = { job, by, started, ended: null, outcome: 'running', reason: null };
+  const steps: [string, number][] = [];
+  const attempts: { step: string | null; reason: string }[] = [];
+  let resends = 0;
+  let ended = false;
+  await boundedLogWrite('the start of a run', async () => {
+    await redis().hsetnx(RUN_LOG(), id, JSON.stringify(entry));
+    await trimRunLog();
+  });
+  return {
+    id,
+    get ended() {
+      return ended;
+    },
+    phase(name) {
+      if (ended) return;
+      redis()
+        .hset(RUN_LOG(), { [`${id}${AT}`]: JSON.stringify({ phase: name, at: new Date().toISOString() }) })
+        .catch(() => {});
+    },
+    step(name, ms) {
+      steps.push([name, Math.round(ms)]);
+    },
+    attempt(step, reason) {
+      attempts.push({ step, reason: logReason(reason) });
+    },
+    resend() {
+      resends++;
+    },
+    async end(outcome, reason, counts) {
+      if (ended) return;
+      ended = true;
+      const done: RunEntry = {
+        ...entry,
+        ended: new Date().toISOString(),
+        outcome,
+        reason: reason === null ? null : logReason(reason),
+        ...(attempts.length > 0 ? { attempts } : {}),
+        ...(steps.length > 0 ? { steps } : {}),
+        ...(resends > 0 ? { resends } : {}),
+        ...(counts ? { counts } : {}),
+      };
+      await boundedLogWrite('the end of a run', async () => {
+        await redis().hset(RUN_LOG(), { [id]: JSON.stringify(done) });
+        await redis().hdel(RUN_LOG(), `${id}${AT}`);
+      });
+    },
+  };
+}
+
+/** Logs a cron's run that didn't happen: another run was still going, or the
+ *  run lock couldn't be taken (lib/nightly-run-limit.ts runAsCron). Never
+ *  throws. */
+export async function logNotRun(job: NightlyJob, reason: string, now: Date = new Date()): Promise<void> {
+  const at = now.toISOString();
+  const entry: RunEntry = { job, by: 'cron', started: at, ended: at, outcome: 'not-run', reason: logReason(reason) };
+  await boundedLogWrite('a run that didn’t happen', async () => {
+    await redis().hset(RUN_LOG(), { [runId(at)]: JSON.stringify(entry) });
+    await trimRunLog();
+  });
+}
+
+const OUTCOMES: readonly RunOutcome[] = ['running', 'worked', 'failed', 'not-run', 'paused'];
+
+/** An entry as stored, or null when it can't be used. Its optional parts are
+ *  kept only when they have their shape. */
+function entryOf(v: unknown): RunEntry | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const e = v as Record<string, unknown>;
+  if ((e.job !== 'backup' && e.job !== 'files') || (e.by !== 'cron' && e.by !== 'hand') || !isIsoTime(e.started)) return null;
+  if (!(e.ended === null || isIsoTime(e.ended)) || !OUTCOMES.includes(e.outcome as RunOutcome)) return null;
+  if (!(e.reason === null || typeof e.reason === 'string')) return null;
+  const attempts = (Array.isArray(e.attempts) ? e.attempts : []).filter(
+    (a): a is { step: string | null; reason: string } => !!a && typeof a === 'object' && (a.step === null || typeof a.step === 'string') && typeof a.reason === 'string'
+  );
+  const steps = (Array.isArray(e.steps) ? e.steps : []).filter(
+    (s): s is [string, number] => Array.isArray(s) && s.length === 2 && typeof s[0] === 'string' && Number.isFinite(s[1])
+  );
+  const counts = e.counts && typeof e.counts === 'object' && !Array.isArray(e.counts) ? Object.entries(e.counts).filter(([, n]) => typeof n === 'boolean' || Number.isFinite(n)) : [];
+  return {
+    job: e.job,
+    by: e.by,
+    started: e.started,
+    ended: e.ended,
+    outcome: e.outcome as RunOutcome,
+    reason: e.reason,
+    ...(attempts.length > 0 ? { attempts: attempts.map((a) => ({ step: a.step, reason: a.reason })) } : {}),
+    ...(steps.length > 0 ? { steps: steps.map((s): [string, number] => [s[0], s[1]]) } : {}),
+    ...(Number.isInteger(e.resends) && (e.resends as number) > 0 ? { resends: e.resends as number } : {}),
+    ...(counts.length > 0 ? { counts: Object.fromEntries(counts) as Record<string, number | boolean> } : {}),
+  };
+}
+
+function phaseOf(v: unknown): { phase: string; at: string } | null {
+  if (!v || typeof v !== 'object') return null;
+  const p = v as Record<string, unknown>;
+  return typeof p.phase === 'string' && isIsoTime(p.at) ? { phase: p.phase.slice(0, 60), at: p.at } : null;
+}
+
+/** The log, newest first, for the Nightly jobs page; null when it can't be
+ *  read (the page says so). An entry that can't be used is left out. Read
+ *  only there: never by the dashboard, nor while a run holds the lock. */
+export async function recentRuns(now: Date = new Date()): Promise<RunView[] | null> {
+  let stored: Record<string, unknown>;
+  try {
+    // Through the deserializing client: the raw one answers HGETALL as Upstash's
+    // REST API does, a flat list of fields and values, not an object.
+    stored = ((await redis().hgetall<Record<string, unknown>>(RUN_LOG())) ?? {}) as Record<string, unknown>;
+  } catch (err) {
+    console.error('Run log not read', err instanceof Error ? logReason(err.message) : typeof err);
+    return null;
+  }
+  const parse = (v: unknown): unknown => {
+    if (typeof v !== 'string') return v;
+    try {
+      return JSON.parse(v);
+    } catch {
+      return null;
+    }
+  };
+  const views: RunView[] = [];
+  for (const [id, value] of Object.entries(stored)) {
+    if (id.endsWith(AT)) continue;
+    const entry = entryOf(parse(value));
+    if (!entry) continue;
+    const going = entry.outcome === 'running';
+    views.push({
+      ...entry,
+      id,
+      at: going ? phaseOf(parse(stored[`${id}${AT}`])) : null,
+      silent: going && now.getTime() - Date.parse(entry.started) > RUN_LOCK_MS,
+    });
+  }
+  return views.sort((a, b) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)).slice(0, RUN_LOG_CAP);
 }
 
 // ---- Running a job again by hand ----

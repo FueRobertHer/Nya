@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { containerUnavailable } from '@/lib/data-ctx';
 import { adminCtx, notAdmin } from '@/lib/admin-items';
-import { nightlyJobs, runNightlyBackup, takeRunLock } from '@/lib/backup';
-import { runNightlySweep } from '@/lib/attachment-sweep';
-import { runWords } from '@/lib/nightly-run-limit';
+import { nightlyJobs, recentRuns, runNightlyBackup, startRun, takeRunLock, type RunLog } from '@/lib/backup';
+import { runNightlySweep, SWEEP_BUDGET_MS } from '@/lib/attachment-sweep';
+import { endingLog, runWords } from '@/lib/nightly-run-limit';
 
 // The admin's Nightly jobs page (/admin/jobs, app/admin-view/jobs): the
 // backup (lib/backup.ts runNightlyBackup) and the clean-up of receipts and
@@ -31,7 +31,18 @@ import { runWords } from '@/lib/nightly-run-limit';
 // As the crons' own routes: a run takes up to their limit.
 export const maxDuration = 300;
 
-const JOBS = { backup: runNightlyBackup, files: runNightlySweep } as const;
+/** Each job's run, told how long the request took before it, as a cron's
+ *  wait is (lib/nightly-run-limit.ts), so its time budget takes it off. */
+const JOBS = {
+  backup: (now: Date, waitedMs: number, log: RunLog) => runNightlyBackup(now, { waitedMs, log }),
+  files: (now: Date, waitedMs: number, log: RunLog) => runNightlySweep(now, { budgetMs: SWEEP_BUDGET_MS - waitedMs, log }),
+} as const;
+
+/** Both jobs, and the run log (null when it can't be read). */
+const both = async () => {
+  const [jobs, runs] = await Promise.all([nightlyJobs(), recentRuns()]);
+  return { jobs, runs };
+};
 
 async function fail(err: unknown): Promise<Response> {
   const unavailable = containerUnavailable(err);
@@ -43,7 +54,7 @@ async function fail(err: unknown): Promise<Response> {
 export async function GET() {
   try {
     if (!(await adminCtx())) return notAdmin();
-    return NextResponse.json({ jobs: await nightlyJobs() });
+    return NextResponse.json(await both());
   } catch (err) {
     return fail(err);
   }
@@ -57,6 +68,7 @@ const tryIn = (ms: number) => {
 const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export async function POST(req: Request) {
+  const received = Date.now();
   try {
     const admin = await adminCtx();
     if (!admin) return notAdmin();
@@ -68,7 +80,7 @@ export async function POST(req: Request) {
     // and what decides whether to run is read with no other run going.
     const taken = await takeRunLock(job, 'hand');
     if ('busy' in taken) {
-      return NextResponse.json({ error: `${capital(runWords(taken.busy))} is running now. Try again once it finishes.`, jobs: await nightlyJobs() }, { status: 409 });
+      return NextResponse.json({ error: `${capital(runWords(taken.busy))} is running now. Try again once it finishes.`, ...(await both()) }, { status: 409 });
     }
     let answer: { status: number; error?: string };
     try {
@@ -77,14 +89,16 @@ export async function POST(req: Request) {
       if (again) {
         answer = { status: 409, error: `It worked a few minutes ago. ${tryIn(Date.parse(again) - now.getTime())}` };
       } else {
-        const run = await JOBS[job](now);
+        // Logged only once it runs: a click that waits isn't a run.
+        const log = await startRun(job, 'hand', now);
+        const run = await endingLog(log, () => JOBS[job](now, Date.now() - received, log));
         answer = run.status === 200 ? { status: 200 } : { status: run.status, error: typeof run.body.error === 'string' ? run.body.error : 'The run failed.' };
       }
     } finally {
       await taken.lock.release();
     }
     // Read once the lock is released, so the page shows nothing running.
-    return NextResponse.json({ ...(answer.error !== undefined ? { error: answer.error } : {}), jobs: await nightlyJobs() }, { status: answer.status });
+    return NextResponse.json({ ...(answer.error !== undefined ? { error: answer.error } : {}), ...(await both()) }, { status: answer.status });
   } catch (err) {
     return fail(err);
   }

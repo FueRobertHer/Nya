@@ -31,11 +31,14 @@ export const FIRST_ATTEMPT_MS = 5_000;
 /** Attempts at most, whatever time the caller has left. */
 export const MAX_ATTEMPTS = 3;
 
+/** `onResend`: told each time an attempt is sent again (the backup counts
+ *  them in its run log, lib/backup.ts). */
 export async function retryStalled<T>(
   what: string,
   signal: AbortSignal | undefined,
   run: (signal: AbortSignal) => Promise<T>,
-  firstMs = FIRST_ATTEMPT_MS
+  firstMs = FIRST_ATTEMPT_MS,
+  onResend?: () => void
 ): Promise<T> {
   for (let attempt = 1, ms = firstMs; ; attempt++, ms *= 2) {
     signal?.throwIfAborted();
@@ -57,6 +60,7 @@ export async function retryStalled<T>(
     } catch (err) {
       if (!stalled || signal?.aborted || attempt >= MAX_ATTEMPTS) throw err;
       console.warn(`Vercel Blob didn't finish ${what} within ${ms / 1000}s; sent again on a new request`);
+      onResend?.();
     } finally {
       clearTimeout(timer);
     }

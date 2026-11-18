@@ -1060,12 +1060,28 @@ export function ctxKey(key: string, ctx: { container: string } = TEST_CTX): stri
  * a stub without it fails the whole run with "Export named 'getItems' not
  * found" from a file that never mocked anything.
  */
+/** The fake as rawRedis() sees it: HGETALL answers a flat list, as Upstash's
+ *  client does with automaticDeserialization off; everything else is the fake. */
+function rawView(fake: FakeRedis): FakeRedis {
+  return new Proxy(fake, {
+    get(target, prop, receiver) {
+      if (prop !== 'hgetall') return Reflect.get(target, prop, receiver);
+      return async (key: string) => {
+        const h = await target.hgetall<Record<string, string>>(key);
+        return h === null ? null : Object.entries(h).flat();
+      };
+    },
+  });
+}
+
 export function storageMock(fake: FakeRedis) {
   return {
     redis: () => fake,
-    // The fake already stores and returns plain strings, which is exactly what
-    // the raw client promises, so one instance serves both.
-    rawRedis: () => fake,
+    // The fake already stores and returns plain strings, which is what the raw
+    // client promises, so one instance serves both, but for HGETALL: without
+    // its deserializer, Upstash's client hands back the REST API's flat list
+    // of fields and values, never an object (lib/backup.ts recentRuns).
+    rawRedis: () => rawView(fake),
     envPrefix: () => testKey(''),
     kEnv: testKey,
     kc: (ctx: { container: string }, key: string) => ctxKey(key, ctx),

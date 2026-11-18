@@ -1213,6 +1213,7 @@ const OUTSIDE: Readonly<Record<string, Outside>> = {
   'backups:': {
     group: 'machinery',
     name: 'How the nightly backup last went',
+    about: 'Each nightly job’s last outcome, and the last 60 runs of either: when, how long, each step and why one failed, with any account’s id masked.',
     unit: RECORD,
     kept: 'Nightly backups',
     plain: ALL_PLAIN,
