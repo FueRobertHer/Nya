@@ -230,12 +230,26 @@ export class FakeElement extends FakeNode {
   style = styleObject();
   dataset: Record<string, string> = {};
   private typed = '';
+  /** Whether its value was set (typed, or by a script), as a browser's
+   *  dirty flag: until then it shows its default value. */
+  private dirty = false;
+  private initial = '';
   /** A field's value; an option's is its value attribute, else its text. */
   get value(): string {
     return this.tagName === 'OPTION' ? (this.getAttribute('value') ?? this.textContent) : this.typed;
   }
   set value(v: string) {
     this.typed = String(v);
+    this.dirty = true;
+  }
+  /** What a field shows until its value is set: how React fills a textarea
+   *  it mounts, so one never drawn again still shows its text. */
+  get defaultValue(): string {
+    return this.initial;
+  }
+  set defaultValue(v: string) {
+    this.initial = String(v);
+    if (!this.dirty) this.typed = this.initial;
   }
   /** A select's options, as React reads and marks them. */
   get options(): FakeElement[] {

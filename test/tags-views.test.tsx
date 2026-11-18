@@ -190,7 +190,7 @@ describe('on the Activity tab', () => {
   });
 
   test('the editor waits for a pending row to post, and says tags and notes are never shared', () => {
-    const props = { tags: TAGS, onChangeTags: () => {}, onSaveNote: () => {} };
+    const props = { tags: TAGS, onChangeTags: async () => true, onSaveNote: async () => true };
     expect(text(renderToStaticMarkup(<TxnTagsNote t={{ transaction_id: 'p', name: 'Pending', pending: true }} {...props} />))).toBe(
       'Once it posts, it can be tagged and given a note.'
     );
