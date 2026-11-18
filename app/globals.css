@@ -3694,6 +3694,16 @@ button.danger-outline {
   max-width: 400px;
 }
 
+/* An invite link's page (app/connect/[token], components/AcceptInvite.tsx):
+   its one card, as wide as the sign-in form, its words at the body size. */
+.connect-card {
+  width: 100%;
+  max-width: 400px;
+  margin: 0;
+  font-size: var(--fs-3);
+  line-height: var(--lh-body);
+}
+
 /* --- demo accounts on the sign-in page (Preview only, lib/demo.ts) --- */
 
 .demo-panel {
