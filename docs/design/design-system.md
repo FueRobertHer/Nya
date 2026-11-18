@@ -294,7 +294,7 @@ Built as `components/Menu.tsx`: a 44px `.icon-btn` (⋯) with `aria-haspopup="me
 
 An item can be a link to a file to save (a report's **Download as CSV**): a real `<a download>` with `role="menuitem"`, drawn as the other items are, so it saves with no script and keeps the browser's own "save link as". As a link it is chosen with Enter, not Space.
 
-Clerk's account menu (the avatar's) takes the same row metrics through `CLERK_APPEARANCE` in `lib/theme.ts` (look and feel step 2c), and Clerk's corners are `--r-sm`.
+Clerk's account menu (the avatar's) takes the same row metrics through `CLERK_APPEARANCE` in `lib/theme.ts` (look and feel step 2c), and Clerk's corners are `--r-sm`. The rest of Clerk's screens (its sign-in form and its account window) take the app's type scale the same way, step for step: its body at 15px, its badges at the 12px floor, its titles at `--fs-4` and `--fs-5`; each control it was measured drawing under 44px is a 44px target (fields, Continue, the window's nav rows, section buttons, tabs, ⋯, its menus' rows and close), a link inside a sentence ("Sign up") keeping its line with a 44px box over it; and its field focus ring is `--focus`, a 4px band the app's own 2px ring falls inside. Clerk's device icons, fixed fills its appearance can't reach, are recolored in `app/globals.css`. The guard test holds these.
 
 A shared demo account's menu is this menu, not Clerk's (`components/ClerkAccount.tsx`): its button is the account's picture, 34px and round, in a 44px `.icon-btn` with no padding and round corners (`.account-menu-btn`), and its items are Settings, Sharing and Sign out.
 
