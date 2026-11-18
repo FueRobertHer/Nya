@@ -3942,6 +3942,20 @@ button.danger-outline {
   border-radius: var(--r-pill);
 }
 
+/* A demo account's own account menu (components/ClerkAccount.tsx): its
+   picture, the size Clerk's button draws it, in a 44px target. */
+.account-menu-btn {
+  padding: 0;
+}
+
+.account-menu-btn img {
+  display: block;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--r-pill);
+  object-fit: cover;
+}
+
 /* Clerk's sign-in form while it loads: its card's width (25rem, and 40px
    less than the screen on a phone) and about its height, with its title,
    field, button and footer. */

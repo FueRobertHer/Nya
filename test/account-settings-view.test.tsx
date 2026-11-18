@@ -7,11 +7,11 @@ import { mockForFile } from './scoped-mock';
 // Clerk on, Manage account opens Clerk's account window with Nya's Data &
 // privacy page (components/ProfileWindow.tsx); Clerk is stubbed, and what its
 // window does with the page (draw it into an element, take it away) is played
-// back here. The avatar menu's window carries the same page.
+// back here. The avatar menu's window carries the same page
+// (test/clerk-account-view.test.tsx).
 
 type Page = { label: string; url: string; mount: (el: HTMLDivElement) => void; unmount: () => void; mountIcon: (el: HTMLDivElement) => void; unmountIcon: () => void };
 const opened: { customPages: Page[] }[] = [];
-const menuPages: { label: string; url: string }[] = [];
 // Who Clerk says is signed in, as its useUser() answers: set per test.
 type User = { fullName: string | null; username: string | null; imageUrl: string; primaryEmailAddress: { emailAddress: string } | null };
 let signedIn: { isLoaded: boolean; user: User | null } = { isLoaded: true, user: null };
@@ -21,10 +21,7 @@ await mockForFile('@clerk/nextjs', () => ({
   UserButton: Object.assign(({ children }: { children: unknown }) => children, {
     MenuItems: () => null,
     Action: () => null,
-    UserProfilePage: ({ label, url }: { label: string; url: string }) => {
-      menuPages.push({ label, url });
-      return null;
-    },
+    UserProfilePage: () => null,
   }),
 }));
 
@@ -44,8 +41,6 @@ const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
 const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: AccountSettings } = await import('@/components/AccountSettings');
-const { default: ClerkAccount } = await import('@/components/ClerkAccount');
-const { DATA_PAGE } = await import('@/components/ProfileWindow');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -139,13 +134,6 @@ describe('Settings > Account', () => {
     expect(row(null, false)).toMatchObject({ list: false, skeleton: 3, manage: true });
     expect(row(null)).toMatchObject({ list: false, skeleton: 0, first: 'P', manage: true });
     signedIn = { isLoaded: true, user: null };
-  });
-
-  test('the avatar menu’s window carries the same page', () => {
-    menuPages.length = 0;
-    const v = mount(<ClerkAccount clearDevice={() => {}} onOpenSettings={() => {}} onOpenSharing={() => {}} />);
-    expect(menuPages).toEqual([{ ...DATA_PAGE }]);
-    v.unmount();
   });
 
   test('in password mode, Sign out and Sign out everywhere, and no Manage account', () => {

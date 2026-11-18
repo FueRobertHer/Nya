@@ -217,7 +217,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 |---|---|---|
 | Dashboard (shell) | Header, five tabs, all sheets | Header, five tabs, Settings screen, sheets |
 | Brand, HideAmounts | Header | Header |
-| ClerkAccount | Avatar menu (Sharing, Manage account, Sign out) | Avatar menu: Settings, Sharing (opening Settings > Sharing), Sign out |
+| ClerkAccount | Avatar menu (Sharing, Manage account, Sign out) | Avatar menu: Settings, Sharing (opening Settings > Sharing), Manage account, Sign out; for a shared demo account, Nya's own menu under its picture instead (Settings, Sharing, Sign out: no email, no Manage account), as the server says (`app/api/demo/me`) |
 | Settings (SettingsScreen) | New in phase 1, replacing Manage | Full screen from the avatar menu or the gear: the six sections (Admin a seventh, for the admin, since F2), each a view with a back button; kept in the address beside the tab (`?settings=`, lib/dashboard-tab.ts) since the screen review |
 | RestoreBanner | Every tab while a restore is unfinished | Every tab (unchanged); "Go to it" opens Settings > Your data |
 | TrustLinks | Foot of every tab | Foot of every tab and of Settings, at the bottom of the screen when the tab is shorter than it (`.app-page`) |
