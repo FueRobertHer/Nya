@@ -6990,14 +6990,12 @@ button.tag-color.chosen {
   margin: -6px 0 12px;
 }
 
-.lifecycle-reopen {
-  margin-top: 20px;
+/* Last in the form's .stack (12px apart): 20px above its rule, as before
+   the form's buttons moved to the footer. */
+.stack > .lifecycle-reopen {
+  margin-top: var(--sp-2);
   padding-top: 12px;
   border-top: 1px solid var(--line);
-}
-
-.lifecycle-reopen button {
-  margin-top: 8px;
 }
 
 /* A question about an account, on its institution's card and in connection

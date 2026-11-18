@@ -2,9 +2,6 @@
   "app/globals.css": {
     "smallFonts": 2
   },
-  "components/AccountLifecycle.tsx": {
-    "inlineLayoutStyles": 2
-  },
   "components/AdminUnusedItems.tsx": {
     "inlineLayoutStyles": 3
   },
@@ -52,9 +49,6 @@
   },
   "components/HistoryImportSheet.tsx": {
     "inlineLayoutStyles": 17
-  },
-  "components/HoldingsRecorded.tsx": {
-    "inlineLayoutStyles": 1
   },
   "components/ImportSheet.tsx": {
     "inlineLayoutStyles": 31
