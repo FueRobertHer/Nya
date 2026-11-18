@@ -14,11 +14,13 @@
 // What qualifies a figure is said under it, at the level the owner's own
 // screens give the same fact (design-system.md "Status and honesty"),
 // gathered as Home's total gathers its caveats (components/TotalCaveats.tsx):
-// a currency left out for want of a public rate is critical, as on Home
-// (components/CurrencyNotes.tsx); totals not converted, accounts with no
-// balance yet, a month that may be short, what holdings don't count and how
-// they file that couldn't be read are cautions; what is converted, or left
-// out by their own choice, is information.
+// an account left out of net worth for want of a public rate is critical,
+// as on Home (components/CurrencyNotes.tsx); totals not converted, accounts
+// with no balance yet, a month that may be short, what holdings don't count
+// and how they file that couldn't be read are cautions; what is converted,
+// what spending and budgets leave out in other currencies (as the owner's
+// Activity and Budgets say it), and whether exclusions could be read, are
+// information.
 //
 // Class names avoid "share" (see components/Sharing.tsx).
 
@@ -207,8 +209,9 @@ const filingCaveat = (unread: boolean | undefined): Caveat[] =>
 /** What may make a month's spending off, under its total: the same for each
  *  month but whether its exclusions could all be read. That a month may be
  *  short is a caution, as the owner's Activity says what may be missing;
- *  what they left out, and what couldn't be read of it, information, as
- *  Activity says them in its note. */
+ *  what is left out in other currencies, and whether exclusions could be
+ *  read, information, as Activity says them in its note. With no month
+ *  (`m` undefined) there is no figure to be converted, so that isn't said. */
 function spendingCaveats(v: SpendingView, m: SpendingView['months'][number] | undefined): Caveat[] {
   return [
     ...(v.may_be_incomplete ? [{ key: 'may-be-short', severity: 'caution' as const, summary: 'a month may be short', body: 'Some transactions aren’t all in yet, so a month may be short.' }] : []),
@@ -217,7 +220,7 @@ function spendingCaveats(v: SpendingView, m: SpendingView['months'][number] | un
     ...(m?.exclusions_unknown || v.exclusions_unread
       ? [{ key: 'exclusions', severity: 'info' as const, summary: 'exclusions that couldn’t be read', body: 'Whether they left some transactions out of their totals couldn’t be read, so those are counted here.' }]
       : []),
-    ...convertedCaveat(v.currency, v.converted),
+    ...(m ? convertedCaveat(v.currency, v.converted) : []),
   ];
 }
 
@@ -311,7 +314,17 @@ function HoldingsTable({ title, lines, currency, amounts }: { title: string; lin
 const HOLDINGS_INFO = [/^Unclassified is money /, /^No investment accounts to show\./];
 const holdingsInfo = (n: string) => HOLDINGS_INFO.some((r) => r.test(n));
 const holdingsSummary = (n: string) =>
-  /^What is held in /.test(n) ? 'other currencies left out' : /with no value/.test(n) ? 'positions with no value' : /no balance yet/.test(n) ? 'accounts with no balance' : 'something not counted';
+  /^What is held in /.test(n)
+    ? 'other currencies left out'
+    : /with no value/.test(n)
+      ? /^A position /.test(n)
+        ? 'a position with no value'
+        : 'positions with no value'
+      : /no balance yet/.test(n)
+        ? /^1 /.test(n)
+          ? 'an account with no balance'
+          : 'accounts with no balance'
+        : 'something not counted';
 
 /** What the figures don't count, under them, and that they are converted. */
 function holdingsCaveats(v: HoldingsView): Caveat[] {

@@ -148,10 +148,12 @@ const card = (views: SharedViews = VIEWS) =>
  *  the page. */
 const notices = (html: string) =>
   [...html.matchAll(/<div class="notice (critical|caution|info|done)"[^>]*>([\s\S]*?)<\/div><\/div>/g)].map((m) => ({ level: m[1], words: text(m[2]).trim() }));
-/** The level of the one notice that says `words`: it must be said once. */
+/** The level of the one notice that says `words`: it must be said once,
+ *  on the whole card too, so no grey copy is left behind. */
 const levelOf = (html: string, words: string) => {
   const found = notices(html).filter((n) => n.words.includes(words));
   expect(found.map((n) => n.words)).toHaveLength(1);
+  expect(text(html).split(words)).toHaveLength(2);
   return found[0].level;
 };
 /** Whether `first` is drawn before `then`: a caveat under its figure comes
@@ -352,6 +354,7 @@ describe('each caveat at the level the owner’s own screens give it, under its 
     // Said in full, never folded into a count.
     expect(html).not.toContain('notice-summary');
     // Under the total, above the chart.
+    expect(before(html, '$321,480.00', 'there is no public rate for it')).toBe(true);
     expect(before(html, 'there is no public rate for it', 'One point a week')).toBe(true);
   });
 
@@ -376,12 +379,16 @@ describe('each caveat at the level the owner’s own screens give it, under its 
     expect(levelOf(html, 'What went out in EUR isn’t in these totals, which are in USD.')).toBe('info');
     expect(levelOf(html, 'Whether they left some transactions out of their totals couldn’t be read, so those are counted here.')).toBe('info');
     expect(text(html)).toContain('5 notes: a month may be short, categories that couldn’t be read, other currencies left out');
-    // On the number: before the first category, not after every row.
+    // On the number: under the month's total, before the first category,
+    // not after every row.
+    expect(before(html, '$1,357.50', 'a month may be short')).toBe(true);
     expect(before(html, 'a month may be short', 'Housing')).toBe(true);
     expect(before(html, 'What went out in EUR', 'Housing')).toBe(true);
     // With no month to show, said all the same, at the same level.
-    const none = card({ spending: { ...sp, months: [], may_be_incomplete: true } });
+    const none = card({ spending: { ...sp, months: [], may_be_incomplete: true, converted: { rates: 'ecb' } } });
     expect(levelOf(none, 'Some transactions aren’t all in yet, so a month may be short.')).toBe('caution');
+    // With no figure, nothing is said to be converted.
+    expect(text(none)).not.toContain('Converted into');
     // What is counted stays helper text, not a notice.
     expect(notices(html).some((n) => n.words.includes('by their own categories'))).toBe(false);
   });
@@ -407,7 +414,11 @@ describe('each caveat at the level the owner’s own screens give it, under its 
     expect(levelOf(html, 'Converted into USD at the European Central Bank’s daily rates.')).toBe('info');
     expect(notices(html).some((n) => n.words.includes('Unclassified is money'))).toBe(false);
     expect(text(html)).toContain('Unclassified is money Nya can’t place');
+    expect(before(html, '$20,500.00', 'What is held in EUR')).toBe(true);
     expect(before(html, 'What is held in EUR', 'By asset class')).toBe(true);
+    // A gathered line names one in the singular.
+    const one = card({ holdings: { ...ho, notes: ['A position with no value isn’t counted.', '1 investment account has no balance yet and no position, so it isn’t counted.'] } });
+    expect(text(one)).toContain('2 notes: a position with no value and an account with no balance');
     const empty = card({ holdings: { ...ho, classes: [], buckets: [], positions: [], notes: ['No investment accounts to show.'] } });
     expect(notices(empty)).toEqual([]);
     expect(text(empty)).toContain('No investment accounts to show.');
@@ -418,8 +429,11 @@ describe('each caveat at the level the owner’s own screens give it, under its 
     expect(levelOf(html, 'What is spent in October 2026 may be off')).toBe('caution');
     expect(levelOf(html, 'What went out in EUR isn’t in these budgets.')).toBe('info');
     expect(levelOf(html, 'Spending in other currencies counts converted into USD')).toBe('info');
-    // Under the month's total, above its budgets.
+    // Under the month's total, above its budgets; what bears on both months
+    // once, above them.
+    expect(before(html, '$1,242.50 of $1,800.00', 'What is spent in October 2026 may be off')).toBe(true);
     expect(before(html, 'What is spent in October 2026 may be off', 'Food and drink')).toBe(true);
+    expect(before(html, 'Spending in other currencies counts converted into USD', 'This month, October 2026')).toBe(true);
   });
 
   test('a kind that couldn’t be read is a caution', () => {
