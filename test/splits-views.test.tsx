@@ -398,9 +398,9 @@ describe('the disconnect confirmation', () => {
     expect(disconnectSplitsText(null)).toBe('Splits of its transactions, and their places in groups, go with it, and adding it back later doesn’t bring them back.');
   });
 
-  test('the dashboard asks for the connection being disconnected', () => {
-    const dashboard = readFileSync(new URL('../components/Dashboard.tsx', import.meta.url), 'utf8');
-    expect(dashboard).toContain('<DisconnectSplitsNote itemId={shownDisconnectTarget.item_id} />');
+  test('the disconnect sheet asks for the connection being disconnected', () => {
+    const sheet = readFileSync(new URL('../components/DisconnectSheet.tsx', import.meta.url), 'utf8');
+    expect(sheet).toContain('<DisconnectSplitsNote itemId={target.item_id} />');
   });
 });
 

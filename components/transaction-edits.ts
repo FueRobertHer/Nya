@@ -12,6 +12,8 @@
 // server's cache of Plaid's rows stays), and the list is then read again
 // quietly in the background, kept only if nothing else changed meanwhile. A
 // change that fails puts the list back as the server has it, and says why.
+// A vendor's name (app/api/rename) is the exception: its sheet waits for the
+// write and shows the name once saved, or says in the sheet why it wasn't.
 
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type { Txn } from './MonthBreakdown';
@@ -415,5 +417,37 @@ export function useTransactionEdits({
     [setTxns, undo]
   );
 
-  return { sheet, openAdd, openEdit, closeSheet, onSaved, recategorize, toggleExcluded, changeTags, saveNote, error, refresh: refreshQuietly };
+  /** Renames a vendor on every transaction from it (app/api/rename), or with
+   *  an empty name clears the rename back to the bank's. Shown only once the
+   *  server has it, so a refusal leaves nothing to put back. Resolves null once
+   *  saved, else what went wrong, for the Rename vendor sheet to say while it
+   *  is still open (docs/design/guidelines.md#after-save). */
+  const rename = useCallback(
+    async (vendor_key: string, name: string): Promise<string | null> => {
+      let res: Response;
+      try {
+        res = await fetch('/api/rename', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vendor_key, name }),
+        });
+      } catch {
+        return 'Could not reach the server.';
+      }
+      if (!res.ok) {
+        // A store that can't be reached says why (lib/data-ctx.ts); the rest are Nya's.
+        const data = res.status === 503 ? await res.json().catch(() => null) : null;
+        return typeof data?.error === 'string' ? data.error : 'Could not rename this vendor. Please try again.';
+      }
+      changes.current++;
+      // The person's name is shown as typed, never reworded as the bank's text
+      // would be. A rename cleared: the bank's names, which only the server has.
+      if (name) setTxns((prev) => (prev ? prev.map((t) => (t.vendor_key === vendor_key ? { ...t, name, name_from_bank: undefined } : t)) : prev));
+      else loadTransactions();
+      return null;
+    },
+    [setTxns, loadTransactions]
+  );
+
+  return { sheet, openAdd, openEdit, closeSheet, onSaved, recategorize, toggleExcluded, changeTags, saveNote, rename, error, refresh: refreshQuietly };
 }

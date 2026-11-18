@@ -350,7 +350,10 @@ export default function MonthBreakdown({
   /** May return a promise that resolves true once the change is saved, so
    *  the sheet says it was kept only then. */
   onRecategorize: (transaction_id: string, choice: CategoryChoice) => unknown;
-  onRename: (vendor_key: string, name: string) => void;
+  /** May return a promise that resolves null once the rename is saved, or
+   *  to what went wrong, which the Rename vendor sheet says while it stays
+   *  open (components/transaction-edits.ts rename). */
+  onRename: (vendor_key: string, name: string) => unknown;
   /** Opens the quick-add form; left out when there is no manual account to
    *  add to, which hides the button. */
   onAddTransaction?: () => void;

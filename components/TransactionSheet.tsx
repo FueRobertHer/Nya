@@ -14,15 +14,18 @@
 // Changes shown at once (a category, an exclusion, tags and a note, a review)
 // leave it open on the row as it now is; after a category, the offer to make
 // a rule of it shows under the field. Changes the list shows only once it is
-// read again (a part's, a group's, a rename) close it, as the editor closed.
+// read again (a part's, a group's) close it, as the editor closed. A rename
+// waits for its write: it closes once saved, the rows behind it renamed, or
+// says beside Rename why it wasn't.
 // Each action that has a sheet of its own closes this one first, so no sheet
 // opens on top of another.
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
 import { Menu, type MenuItem } from './Menu';
 import { Masked } from './HideAmounts';
 import { ALERT, LevelWord } from './ConnectionStatus';
+import { Notice } from './TotalCaveats';
 import CategoryPicker from './CategoryPicker';
 import TxnTagsNote, { type TagChange } from './TxnTagsNote';
 import ReviewNote from './ReviewNote';
@@ -209,7 +212,9 @@ export type TransactionSheetProps = {
   /** May return a promise that resolves true once the change is saved: the
    *  status line says so only then (components/transaction-edits.ts). */
   onRecategorize: (transaction_id: string, choice: CategoryChoice) => unknown;
-  onRename: (vendor_key: string, name: string) => void;
+  /** As onRecategorize, a promise: of null once saved, or of what went
+   *  wrong, which the sheet says beside Rename, staying open. */
+  onRename: (vendor_key: string, name: string) => unknown;
   onEditTransaction?: (t: Txn) => void;
   /** As onRecategorize: a promise of true once saved. */
   onToggleExcluded?: (t: Txn, excluded: boolean) => unknown;
@@ -291,9 +296,13 @@ function TxnSheet({
   // excluded again until it posts): focus goes to the line said in its place.
   const waitRef = useRef<HTMLParagraphElement>(null);
   const focusWait = useRef(false);
-  // Rename vendor, a second level of the sheet, and what is typed there.
+  // Rename vendor, a second level of the sheet, what is typed there, and
+  // its write: out, or what went wrong with it.
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState(t.name);
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const renameErrorId = useId();
   const categoryRef = useRef<HTMLSelectElement>(null);
   const act = (go: () => void) => () => {
     onClose();
@@ -323,26 +332,51 @@ function TxnSheet({
 
   if (renaming && t.vendor_key) {
     const vendor = t.vendor_key;
+    const rename = async () => {
+      setRenameBusy(true);
+      setRenameError(null);
+      let failed: unknown;
+      try {
+        failed = await Promise.resolve(onRename(vendor, draft.trim()));
+      } finally {
+        setRenameBusy(false);
+      }
+      if (typeof failed === 'string') setRenameError(failed);
+      else onClose();
+    };
     return (
       <Sheet
         open={open}
         title="Rename vendor"
-        onClose={onClose}
-        onBack={() => setRenaming(false)}
+        onClose={() => !renameBusy && onClose()}
+        // Kept while it waits, so the level (and focus) stays put: it just
+        // doesn't go back until the answer is in.
+        onBack={() => !renameBusy && setRenaming(false)}
         footer={
-          <button
-            className="btn"
-            disabled={draft.trim() === t.name}
-            onClick={act(() => onRename(vendor, draft.trim()))}
-          >
-            Rename
-          </button>
+          <>
+            {renameError && (
+              <div className="sheet-footer-note" id={renameErrorId}>
+                <Notice level="critical" role="alert">
+                  {renameError}
+                </Notice>
+              </div>
+            )}
+            <button
+              type="button"
+              className="btn"
+              disabled={renameBusy || draft.trim() === t.name}
+              aria-describedby={renameError ? renameErrorId : undefined}
+              onClick={() => void rename()}
+            >
+              {renameBusy ? 'Renaming…' : 'Rename'}
+            </button>
+          </>
         }
       >
         <div className="stack">
           <label className="field">
             Name
-            <input className="text-input" value={draft} maxLength={100} onChange={(e) => setDraft(e.target.value)} />
+            <input className="text-input" value={draft} maxLength={100} onChange={(e) => setDraft(e.target.value)} disabled={renameBusy} />
           </label>
           <p className="helper">Applies to this vendor&apos;s transactions; older ones may update later.</p>
         </div>
@@ -357,6 +391,7 @@ function TxnSheet({
             label: 'Rename vendor',
             onSelect: () => {
               setDraft(t.name);
+              setRenameError(null);
               setRenaming(true);
             },
           },
