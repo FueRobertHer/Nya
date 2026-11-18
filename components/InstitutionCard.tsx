@@ -203,7 +203,7 @@ export default function InstitutionCard({
             const sub = overdue || !!liabLine || !!kind || !!held || !!day || (!!cash && cash.cash > 0);
             return (
               <li key={a.account_id}>
-                <button className="list-row" onClick={() => onOpenAccount(a.account_id)}>
+                <button className="list-row" data-account-row={a.account_id} onClick={() => onOpenAccount(a.account_id)}>
                   <span className="list-row-text">
                     <span className="list-row-title">
                       {a.name}
