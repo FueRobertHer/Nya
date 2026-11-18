@@ -19,6 +19,7 @@
 // upgradePlan fills in a field added since a plan was saved. Imports no data
 // and no storage, so the route and the browser can both use it.
 
+import { planGrowth } from './account-growth';
 import { baristaFiNumber, coastFiNumber, fiNumber, projectBalance, projectionShort, yearsToTarget } from './fi';
 import { vpwExpectedReturn, type RuleKind, type RuleSpec } from './rules';
 import { CASH_REAL_RETURN, MAX_YEARS, type Method, type Rebalance, type SimPlan } from './simulate';
@@ -48,6 +49,13 @@ export type PlanExpense = {
  *  or "bank", so none is (the transfers that paid for them already count as
  *  saved). */
 export type PlanFunding = { account_id: string; paidFrom: 'payroll' | 'bank' };
+
+/** An account's own rates in one plan (version 2's `accounts`, lib/fire/plan-v2.ts):
+ *  its growth after inflation, a fraction a year, in place of the plan's
+ *  `realReturn`, and the dividends and interest a taxable account pays, a
+ *  fraction a year. Null is the plan's. lib/fire/account-growth.ts works out the
+ *  rate a plan runs at from them. */
+export type AccountRate = { account_id: string; growth: number | null; yield: number | null };
 
 export type FirePlan = {
   version: 1;
@@ -122,7 +130,7 @@ export const DEFAULT_PLAN: FirePlan = {
  *  everything but its version and its lists (lib/fire/compile.ts places a
  *  plan's items), with version 2's stop at FI and own FI number when it has
  *  them. */
-export type PlanCore = Omit<FirePlan, 'version' | 'income' | 'expenses'> & { stopAtFi?: boolean; fiNumber?: number | null; partnerAge?: number | null };
+export type PlanCore = Omit<FirePlan, 'version' | 'income' | 'expenses'> & { stopAtFi?: boolean; fiNumber?: number | null; partnerAge?: number | null; accounts?: readonly AccountRate[] };
 
 /** The age the plan stops working at: the one typed, or under "stop when I
  *  reach FI" the search's answer (lib/fire/steady.ts), null when there is
@@ -160,6 +168,10 @@ export const LIMITS = {
   label: 60,
   id: 40,
   planFunding: 20,
+  /** Accounts with their own rates in one plan. */
+  accountRates: 50,
+  /** An account's dividends and interest a year (tax choices' MAX_RATE, lib/fire/tax-choices.ts). */
+  accountYield: [0, 0.2],
 } as const;
 
 const METHODS: readonly Method[] = ['historical', 'monte-carlo'];
@@ -444,6 +456,10 @@ export type Measured = {
   savings: number | null;
   assets: number | null;
   unmeasured?: readonly ('spending' | 'savings' | 'assets')[];
+  /** The accounts measured `assets` sums, each with what it adds to it, for
+   *  their own growth rates (lib/fire/account-growth.ts). Absent: none, as
+   *  with `assets` null or not measured. */
+  accounts?: readonly { id: string; value: number }[];
 };
 
 /** Where an input came from, for the label beside it: `unmeasured` is there
@@ -478,7 +494,15 @@ export type FiView = {
   workedOut: number | null;
   /** Invested assets as a share of the FI number. */
   progress: number | null;
-  /** Years until the FI number, at the plan's real return: 0 when already
+  /** The growth after inflation the plan runs at until the stop: the plan's
+   *  `realReturn`, or with accounts' own rates their blend
+   *  (lib/fire/account-growth.ts planGrowth). Every figure reads this, never
+   *  the plan's field (test/plan-growth-source.test.ts). */
+  growth: number;
+  /** How many counted accounts grow at their own rate in `growth` (0 where it
+   *  is the plan's). */
+  ownRates: number;
+  /** Years until the FI number, at `growth`: 0 when already
    *  there, Infinity when never, null without the inputs. */
   yearsToFi: number | null;
   /** The age then, when the age is known and it ever happens. */
@@ -495,10 +519,12 @@ export type FiView = {
 
 const within = (v: number, min: number, max: number) => Number.isFinite(v) && v >= min && v <= max;
 
-/** Whether the FI formulas (lib/fire/fi.ts) take the plan's rates. Every plan
- *  parsePlan accepts does; a stored plan read leniently may not. */
+/** Whether the FI formulas (lib/fire/fi.ts) take the plan's rates, an
+ *  account's own growth included (their blend is then within the same range).
+ *  Every plan parsePlan accepts does; a stored plan read leniently may not. */
 export function formulasTake(plan: PlanCore): boolean {
-  return within(plan.withdrawalRate, 1e-6, 1) && within(plan.taxRate, 0, 0.99) && within(plan.realReturn, -0.99, 1);
+  const own = plan.accounts ?? [];
+  return within(plan.withdrawalRate, 1e-6, 1) && within(plan.taxRate, 0, 0.99) && within(plan.realReturn, -0.99, 1) && own.every((x) => x.growth === null || within(x.growth, -0.99, 1));
 }
 
 /** What a detailed plan brings to its FI number (lib/fire/plan-figures.ts): tax's
@@ -517,8 +543,9 @@ export function fiView(plan: PlanCore, measured: Measured, stop: number | null =
   const spending = input(plan.spending, measured.spending, off.has('spending'));
   const savings = input(plan.savings, measured.savings, off.has('savings'));
   const assets = input(plan.assets, measured.assets, off.has('assets'));
+  const { growth, own: ownRates } = planGrowth(plan, measured);
   if (!formulasTake(plan)) {
-    return { spending, savings, assets, stopAge: stop, fiNumber: null, workedOut: null, progress: null, yearsToFi: null, fiAge: null, coast: null, barista: null, atTargetAge: null };
+    return { spending, savings, assets, stopAge: stop, fiNumber: null, workedOut: null, growth, ownRates, progress: null, yearsToFi: null, fiAge: null, coast: null, barista: null, atTargetAge: null };
   }
   const living = (value: number) => (worked ? Math.max(0, value - worked.paid) : value);
   const workedOut = spending.value === null ? null : worked ? fiNumber(living(spending.value) + worked.h, plan.withdrawalRate, worked.t) : fiNumber(spending.value, plan.withdrawalRate, plan.taxRate);
@@ -532,16 +559,16 @@ export function fiView(plan: PlanCore, measured: Measured, stop: number | null =
   const a = assets.value ?? 0;
   const c = savings.value ?? 0;
   const neither = assets.value === null && savings.value === null;
-  const yearsToFi = fi === null || blocked || neither ? null : yearsToTarget(a, c, plan.realReturn, fi);
+  const yearsToFi = fi === null || blocked || neither ? null : yearsToTarget(a, c, growth, fi);
   const fiAge = yearsToFi !== null && Number.isFinite(yearsToFi) && plan.age !== null ? plan.age + yearsToFi : null;
   const span = plan.age !== null && stop !== null ? stop - plan.age : null;
-  const coastNumber = fi !== null && span !== null ? coastFiNumber(fi, plan.realReturn, span) : null;
+  const coastNumber = fi !== null && span !== null ? coastFiNumber(fi, growth, span) : null;
   let barista: FiView['barista'] = null;
   // Worked out from spending, it could sit above your own number: not shown
   // while one is typed.
   if (plan.partTimeIncome > 0 && spending.value !== null && own === null) {
     const number = worked ? fiNumber(Math.max(0, living(spending.value) - plan.partTimeIncome) + worked.h, plan.withdrawalRate, worked.t) : baristaFiNumber(spending.value, plan.partTimeIncome, plan.withdrawalRate, plan.taxRate);
-    barista = { number, yearsTo: blocked || neither ? null : yearsToTarget(a, c, plan.realReturn, number) };
+    barista = { number, yearsTo: blocked || neither ? null : yearsToTarget(a, c, growth, number) };
   }
   const from = projectFrom(plan, { savings, assets, stopAge: stop });
   return {
@@ -551,6 +578,8 @@ export function fiView(plan: PlanCore, measured: Measured, stop: number | null =
     stopAge: stop,
     fiNumber: fi,
     workedOut,
+    growth,
+    ownRates,
     progress: fi !== null && fi > 0 && assets.value !== null ? assets.value / fi : null,
     yearsToFi,
     fiAge,
@@ -558,7 +587,7 @@ export function fiView(plan: PlanCore, measured: Measured, stop: number | null =
     barista,
     // None where the projection would go below zero before then (it says
     // where, lib/fire/path.ts), never a balance below zero.
-    atTargetAge: from === null || projectionShort(from.assets, from.savings, plan.realReturn, from.years) !== null ? null : projectBalance(from.assets, from.savings, plan.realReturn, from.years),
+    atTargetAge: from === null || projectionShort(from.assets, from.savings, growth, from.years) !== null ? null : projectBalance(from.assets, from.savings, growth, from.years),
   };
 }
 

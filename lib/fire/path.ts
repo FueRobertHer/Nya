@@ -157,7 +157,7 @@ export function planPath(f: PlanFigures, years?: number): PlanPath | null {
   if (from === null) return null;
   const age = f.plan.age as number;
   const n = years ?? from.years;
-  const g = f.plan.realReturn;
+  const g = f.view.growth;
   const walk = hasWalk(f.walk) ? f.walk : null;
   let balances: number[];
   let short: Shortfall | null = null;
@@ -243,7 +243,7 @@ function afterStop(f: PlanFigures, from: PathPoint): PathAfter | null {
   const whole = f.detail !== null && 'whole' in f.detail ? f.detail.whole : null;
   let steady: ReturnType<typeof steadyRun>;
   try {
-    steady = whole ? drawnBalances(whole) : steadyRun(sim, plan.realReturn);
+    steady = whole ? drawnBalances(whole) : steadyRun(sim, f.view.growth);
   } catch (e) {
     // The figures are worked out in the Plan's render: a plan the engine
     // refuses leaves the years after the stop out, never the tab.

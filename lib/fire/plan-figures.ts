@@ -48,7 +48,7 @@ import { enginePlan, fiView, formulasTake, planYears, projectFrom, startAge, unm
 import { planOf, type FirePlanV2 } from './plan-v2';
 import type { Drawdown } from './drawdown';
 import type { DetailRun, DetailWork, PlanDetail } from './plan-detail';
-import type { SavedItems, SavedPlan } from './saved-plan';
+import { savedGrowth, type SavedItems, type SavedPlan } from './saved-plan';
 import { planPath } from './path';
 import { resolveAt, resolveItems, type PerRun, type Resolution, type SteadyWorld } from './steady';
 
@@ -210,8 +210,8 @@ function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], 
   // The balance at the stop is the walk's whenever it changes, with an FI
   // number or without one (the path, lib/fire/path.ts, is the same walk).
   const from = projectFrom(plan, core);
-  if (detailed && from !== null) walk = detailed.taxWalk(plan, walk, from);
-  const walkAtStop = from !== null && hasWalk(walk) ? walkBalanceAt(from.assets, from.savings, plan.realReturn, walk, from.years) : null;
+  if (detailed && from !== null) walk = detailed.taxWalk(plan, walk, from, core.growth);
+  const walkAtStop = from !== null && hasWalk(walk) ? walkBalanceAt(from.assets, from.savings, core.growth, walk, from.years) : null;
   const atStop = walkAtStop === null ? core.atTargetAge : 'balance' in walkAtStop ? walkAtStop.balance : null;
   // Built from retirement spending; the items' parts of the simulation added.
   const built = enginePlan(runPlan, { ...core, atTargetAge: atStop });
@@ -239,7 +239,7 @@ function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], 
   if (walked) {
     const a = core.assets.value ?? 0;
     const c = core.savings.value ?? 0;
-    const w = walkToFi(a, c, plan.realReturn, core.fiNumber as number, walk);
+    const w = walkToFi(a, c, core.growth, core.fiNumber as number, walk);
     walkedSavings = savingsIn(walk, c, lastChange(walk) + 1);
     if ('short' in w) {
       short = w.short;
@@ -366,11 +366,13 @@ const savedKept = new Map<string, SavedItems | null>();
  * the walk, so the line is a steady one, as before items. Kept per saved
  * copy, start, spending and count, so the month points only evaluate.
  */
-export function resolveSaved(saved: Pick<SavedPlan, 'plan' | 'savings' | 'day' | 'rev'>, start: { day: string; total: number }, spending: number | null, count: Count): SavedItems | null {
+export function resolveSaved(saved: Pick<SavedPlan, 'plan' | 'savings' | 'day' | 'rev' | 'growth'>, start: { day: string; total: number }, spending: number | null, count: Count): SavedItems | null {
   const key = JSON.stringify([saved.rev, saved.day, start.day, start.total, spending, count.planInWalk]);
   const kept = savedKept.get(key);
   if (kept !== undefined) return kept;
-  const plan = planOf(saved.plan);
+  // At the growth it was saved with: its accounts' rates are that day's blend,
+  // and the start is a total, not accounts.
+  const { accounts: _accounts, ...plan } = { ...planOf(saved.plan), realReturn: savedGrowth(saved) };
   let out: SavedItems | null = null;
   if (plan.age !== null && plan.items.length > 0) {
     const f = planFigures({ ...plan, savings: saved.savings, assets: start.total }, { spending, savings: saved.savings, assets: start.total }, { count });
@@ -395,12 +397,12 @@ function startsWith(plan: FirePlanV2, view: FiView, engine: EnginePlan | { missi
   if (!hasWalk(walk)) {
     // Never a projection below zero: where it would go there, it never gets
     // that far, as the walk says.
-    const short = projectionShort(a, c, plan.realReturn, years);
+    const short = projectionShort(a, c, view.growth, years);
     if (short) return { ...base, short, more: true };
-    const projected = projectBalance(a, c, plan.realReturn, years);
+    const projected = projectBalance(a, c, view.growth, years);
     return { ...base, projected, more: balance > projected + 0.5 };
   }
-  const at = walkBalanceAt(a, c, plan.realReturn, walk, years);
+  const at = walkBalanceAt(a, c, view.growth, walk, years);
   if ('short' in at) return { ...base, short: at.short, more: true };
   return { ...base, projected: at.balance, more: balance > at.balance + 0.5 };
 }

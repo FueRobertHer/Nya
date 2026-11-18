@@ -292,7 +292,7 @@ describe('Tax after you stop', () => {
   });
 
   test('its last line names what it rests on', () => {
-    const line = (over: Partial<Parameters<typeof taxHypothetical>[0]>) => taxHypothetical({ lawYear: 2026, state: null, stateRate: 0, stateTaxes: null, converts: false, realReturn: 0.05, healthGrowth: 0.021, ...over });
+    const line = (over: Partial<Parameters<typeof taxHypothetical>[0]>) => taxHypothetical({ lawYear: 2026, state: null, stateRate: 0, stateTaxes: null, converts: false, growth: 0.05, healthGrowth: 0.021, ...over });
     expect(line({})).toContain('2026 federal tax law');
     expect(line({})).toContain('no state tax counted');
     expect(line({})).toContain('no conversions');

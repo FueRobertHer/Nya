@@ -27,7 +27,7 @@ const props = (over: Partial<PathChartProps> = {}): PathChartProps => ({
   stopAge: 65,
   fiNumber: 1_000_000,
   fiAge: 52.9,
-  realReturn: 0.05,
+  growth: 0.05,
   currency: 'USD',
   ...over,
 });
@@ -352,7 +352,7 @@ describe('Whole path', () => {
       stopAge: p.targetAge,
       fiNumber: f.view.fiNumber,
       fiAge: f.view.fiAge,
-      realReturn: p.realReturn,
+      growth: f.view.growth,
       currency: 'USD',
       after: path.after,
       range: 'whole',

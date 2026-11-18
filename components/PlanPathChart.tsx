@@ -79,7 +79,8 @@ export type PathChartProps = {
    *  `lastsIn`): the marker is that stop, on the line at its age, and where
    *  the line crosses the FI number is worked out from the points. */
   lasting?: boolean;
-  realReturn: number;
+  /** The growth after inflation the plan runs at (FiView's). */
+  growth: number;
   currency: string | null;
   /** The points are the walk's, with the plan's life events. */
   withEvents?: boolean;
@@ -351,15 +352,15 @@ function summary(p: PathChartProps, stopped: boolean, after: PathAfter | null): 
   const tail = after ? (after.runsOutAt !== null ? `run out at ${after.runsOutAt}` : `about ${wholeMoney((last as PathPoint).balance, currency)} at ${after.endAge}`) : '';
   if (after && points.length < 2) {
     const went = after.runsOutAt !== null ? `and ${tail}` : `to ${tail}`;
-    return wrap(`Invested assets go from ${wholeMoney(start.balance, currency)} at ${start.age}, drawing your spending, ${went}, at a steady ${pct(p.realReturn)} a year after inflation${events}.`);
+    return wrap(`Invested assets go from ${wholeMoney(start.balance, currency)} at ${start.age}, drawing your spending, ${went}, at a steady ${pct(p.growth)} a year after inflation${events}.`);
   }
   const parts = [`Invested assets ${end.balance >= start.balance ? 'grow' : 'fall'} from ${wholeMoney(start.balance, currency)} at ${start.age}`];
   if (fiNumber !== null && start.balance >= fiNumber) parts.push(`already above the ${wholeMoney(fiNumber, currency)} FI number`);
   else if (fiNumber !== null && fiAge !== null && fiAge <= end.age) parts.push(`reach the ${wholeMoney(fiNumber, currency)} FI number around ${Math.round(fiAge)}`);
   else if (fiNumber !== null && points.every((q) => q.balance < fiNumber)) parts.push(`stay under the ${wholeMoney(fiNumber, currency)} FI number`);
   parts.push(stopped ? `and the projection stops at ${end.age}, before ${stopAge}` : `and are about ${wholeMoney(end.balance, currency)} at ${stopAge}`);
-  if (after) return wrap(`${parts.join(', ')}, then, drawing your spending, ${tail}, at a steady ${pct(p.realReturn)} a year after inflation${events}.`);
-  return wrap(`${parts.join(', ')}, growing a steady ${pct(p.realReturn)} a year after inflation${events}.`);
+  if (after) return wrap(`${parts.join(', ')}, then, drawing your spending, ${tail}, at a steady ${pct(p.growth)} a year after inflation${events}.`);
+  return wrap(`${parts.join(', ')}, growing a steady ${pct(p.growth)} a year after inflation${events}.`);
 }
 
 /** The lines before today, in words: from the start to the newest day
@@ -372,7 +373,7 @@ function recordedWords(r: ProgressOverlay, currency: string | null): string {
 }
 
 export default function PlanPathChart(props: PathChartProps) {
-  const { points, today, stopAge, fiNumber, fiAge, lasting = false, realReturn, currency, withEvents = false, walkWords = null, recorded = null, range, onRange } = props;
+  const { points, today, stopAge, fiNumber, fiAge, lasting = false, growth, currency, withEvents = false, walkWords = null, recorded = null, range, onRange } = props;
   const whole = wholeShown(points, props.after, range);
   const after = whole ? (props.after as PathAfter) : null;
   const [drawnRef, W] = useDrawnWidth<SVGSVGElement>();
@@ -444,7 +445,7 @@ export default function PlanPathChart(props: PathChartProps) {
         />
       )}
       <div className="as-of">
-        {`At a steady ${pct(realReturn)} a year after inflation${walkWords ? `, with ${walkWords}` : withEvents || after?.withEvents ? ', with this plan’s items' : ''}. Real markets don’t move steadily; Drawdown shows how much that matters.`}
+        {`At a steady ${pct(growth)} a year after inflation${walkWords ? `, with ${walkWords}` : withEvents || after?.withEvents ? ', with this plan’s items' : ''}. Real markets don’t move steadily; Drawdown shows how much that matters.`}
       </div>
       {leftOut && <div className="as-of">{leftOut}</div>}
       {after && after.runsOutAt !== null && <div className="as-of">{`On this steady path your invested assets run out at ${after.runsOutAt}.`}</div>}

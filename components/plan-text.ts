@@ -24,6 +24,12 @@ export function wholeMoney(n: number, currency: string | null): string {
   return (value < 0 ? `${MINUS}$` : '$') + Math.abs(value).toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
+/** How many accounts grow at their own rate in a plan's growth (FiView
+ *  ownRates), said after the rate: ", 2 accounts at their own"; nothing for none. */
+export function ownRatesText(n: number): string {
+  return n === 0 ? '' : n === 1 ? ', 1 account at its own' : `, ${n} accounts at their own`;
+}
+
 /** A fraction as a percent with no trailing zeros: 0.04 "4%", 0.035 "3.5%", 0.0425 "4.25%". */
 export function pct(f: number, maxDigits = 2): string {
   return `${Number((f * 100).toFixed(maxDigits))}%`;

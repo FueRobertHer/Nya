@@ -19,7 +19,7 @@
 // Plan's, through lib/format.ts), and each text is drawn through Masked.
 
 import { KIND_WORDS } from './budget-notes';
-import { PAYROLL_NOTE, dayName, pct, savingsRateText } from './plan-text';
+import { PAYROLL_NOTE, dayName, ownRatesText, pct, savingsRateText } from './plan-text';
 import { formatInstantDay, onDay } from '@/lib/format';
 import { missingFigureItems, type NoTransactionsView } from '@/lib/no-transactions';
 import type { AssetCaveat, ChildSavings, InvestedAssets, TrailingFlows, UnreadTransactions, WorkplaceSavings } from '@/lib/fire/inputs';
@@ -314,7 +314,7 @@ export function figureNotes(a: FigureArgs): FigureNotes {
       []
     ),
     assumptions: said(
-      `${pct(a.plan.withdrawalRate)} withdrawal · ${pct(a.plan.realReturn)} growth after inflation until FI · ${pct(a.plan.taxRate)} tax${a.plan.partTimeIncome > 0 ? ` · ${a.money(a.plan.partTimeIncome)} part-time` : ''}`,
+      `${pct(a.plan.withdrawalRate)} withdrawal · ${pct(a.view.growth)} growth after inflation until FI${ownRatesText(a.view.ownRates)} · ${pct(a.plan.taxRate)} tax${a.plan.partTimeIncome > 0 ? ` · ${a.money(a.plan.partTimeIncome)} part-time` : ''}`,
       a.taxOnHold ? [{ key: 'assumptions:tax-on-hold', level: 'caution', kind: NOTE_KINDS.taxOnHold, text: taxOnHoldText(a.plan.taxRate) }] : []
     ),
   };

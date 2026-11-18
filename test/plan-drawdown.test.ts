@@ -44,7 +44,7 @@ const run = (over: Partial<DrawdownInput> = {}): Drawdown => {
 };
 
 const money = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`;
-const CONTEXT: YearContext = { money, realReturn: 0.05, healthGrowth: 0.021, acaLaw: '2026', lawYear: 2026, state: 'NV', stateTaxes: false, rmdAge: 75, gainsZeroTo: 98_900, medicaid: { through: null } };
+const CONTEXT: YearContext = { money, growth: 0.05, healthGrowth: 0.021, acaLaw: '2026', lawYear: 2026, state: 'NV', stateTaxes: false, rmdAge: 75, gainsZeroTo: 98_900, medicaid: { through: null } };
 const yearAt = (d: Drawdown, age: number): DrawdownYear => d.years.find((y) => y.age === age)!;
 const titles = (y: DrawdownYear, c = CONTEXT) => yearSections(y, c).map((s) => s.title);
 const lines = (y: DrawdownYear, title: string, c = CONTEXT) => yearSections(y, c).find((s) => s.title === title)!;
@@ -302,10 +302,11 @@ describe('what a detailed plan says it can’t know', () => {
   });
 
   test('the Assumptions row: its rate and growth, what prices and health do, no tax of its own', () => {
-    const plan = { withdrawalRate: 0.04, realReturn: 0.05, partTimeIncome: 0 };
-    expect(assumptionsWorked(plan, { inflation: 0.03 }, 0.021, money)).toBe('4% withdrawal · 5% growth · 3% inflation · health costs 2.1 points above inflation');
-    expect(assumptionsWorked({ ...plan, partTimeIncome: 12_000 }, { inflation: 0.03 }, 0.021, money)).toContain('$12,000 part-time');
-    expect(assumptionsWorked(plan, { inflation: 0.03 }, 0.021, money)).not.toContain('tax');
+    const plan = { withdrawalRate: 0.04, partTimeIncome: 0 };
+    const rate = { growth: 0.05, ownRates: 0 };
+    expect(assumptionsWorked(plan, rate, { inflation: 0.03 }, 0.021, money)).toBe('4% withdrawal · 5% growth · 3% inflation · health costs 2.1 points above inflation');
+    expect(assumptionsWorked({ ...plan, partTimeIncome: 12_000 }, rate, { inflation: 0.03 }, 0.021, money)).toContain('$12,000 part-time');
+    expect(assumptionsWorked(plan, rate, { inflation: 0.03 }, 0.021, money)).not.toContain('tax');
   });
 
   test('the small lines', () => {
@@ -494,7 +495,7 @@ describe('what a stage’s row and sheet say', () => {
     expect(healthPace(0.021)).toBe('2.1 points a year faster than prices');
     expect(healthPace(-0.01)).toBe('1 point a year slower than prices');
     const plan = { withdrawalRate: 0.04, realReturn: 0.05, partTimeIncome: 0 };
-    expect(assumptionsWorked(plan, { inflation: 0.03 }, -0.01, money)).toContain('health costs 1 point below inflation');
+    expect(assumptionsWorked(plan, { growth: 0.05, ownRates: 0 }, { inflation: 0.03 }, -0.01, money)).toContain('health costs 1 point below inflation');
   });
 });
 

@@ -624,7 +624,7 @@ export function FiNumberForm(
             </p>
           </>
         ) : (
-          <p className="helper">The age your invested assets reach this number, growing a steady {pct(plan.realReturn)} a year after inflation.</p>
+          <p className="helper">The age your invested assets reach this number, growing a steady {pct(view.growth)} a year after inflation.</p>
         )}
       </div>
       <div className="sheet-form">
