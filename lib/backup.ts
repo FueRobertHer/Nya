@@ -104,6 +104,11 @@ export type BackupOptions = {
   limits?: Partial<Record<BackupStep, number>>;
   /** How long to wait for the key archives' lock (lib/key-archive.ts). */
   keysLockWaitMs?: number;
+  /** When the run must be over (ms since the epoch): each step's limit is cut
+   *  to whole seconds left before it, and a step with less than one left fails
+   *  before it starts. So an attempt tried again late in a run still ends, and
+   *  is recorded, before Vercel ends the function (runNightlyBackup). */
+  deadline?: number;
 };
 
 /**
@@ -114,7 +119,12 @@ export type BackupOptions = {
  * retries 5xx and network errors up to 10 times with a doubling backoff.
  */
 async function step<T>(name: BackupStep, opts: BackupOptions, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
-  const limit = opts.limits?.[name] ?? STEP_LIMITS_MS[name];
+  let limit = opts.limits?.[name] ?? STEP_LIMITS_MS[name];
+  if (opts.deadline !== undefined) {
+    const left = Math.floor((opts.deadline - Date.now()) / 1000) * 1000;
+    if (left < 1000) throw new Error(`The backup ran out of time before its ${name} step`);
+    limit = Math.min(limit, left);
+  }
   const started = Date.now();
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -621,11 +631,42 @@ export async function recordOutcome(
 export type RunAnswer = { status: number; body: Record<string, unknown> };
 
 /**
+ * How long a run's attempts may take in all, from when the run starts: the
+ * routes' maxDuration of 300 s, less recording the outcome (RECORD_LIMIT_MS)
+ * and a margin for what comes before and after. A cron that waited for the
+ * run lock (lib/nightly-run-limit.ts) takes its wait off.
+ */
+export const BACKUP_BUDGET_MS = 270_000;
+
+/** The pauses before each attempt after the first: a failure is most often a
+ *  call that stalled (lib/blob-attempts.ts), which a new attempt seconds later
+ *  gets through. One more attempt each, while the run's time lasts. */
+export const RETRY_PAUSES_MS: readonly number[] = [5_000, 15_000, 30_000, 60_000, 60_000];
+
+/** An attempt is started only with this long left: a backup takes seconds. */
+export const MIN_ATTEMPT_MS = 30_000;
+
+let retryPauses: readonly number[] = RETRY_PAUSES_MS;
+/** Tests shorten the pauses, or take them away (null puts them back). */
+export function setRetryPausesForTests(pauses: readonly number[] | null): void {
+  retryPauses = pauses ?? RETRY_PAUSES_MS;
+}
+
+/**
  * One nightly backup, as the cron runs it (app/api/backup/route.ts explains
  * the order): the read-write token checked, the deleted containers swept once
  * more, the backup, its outcome recorded.
+ *
+ * A backup that fails is tried again in the same run, after a pause
+ * (RETRY_PAUSES_MS), as a new copy under a new name, until one works or the
+ * run's time (BACKUP_BUDGET_MS) is nearly up: every attempt's steps are cut to
+ * end before it, so the outcome is always recorded. A failure that would fail
+ * again (a setting, a key a value names that no archive holds) is tried again
+ * all the same, a few times at most; an attempt that failed after its upload
+ * leaves its copy, pruned with the rest by age. The outcome says how many
+ * attempts it took; the log names each failure.
  */
-export async function runNightlyBackup(now: Date = new Date()): Promise<RunAnswer> {
+export async function runNightlyBackup(now: Date = new Date(), opts: { waitedMs?: number; budgetMs?: number } = {}): Promise<RunAnswer> {
   const store = await vercelBlobStore();
   if (!store) {
     console.error('Backup skipped: no blob store is connected (BLOB_READ_WRITE_TOKEN is not set)');
@@ -635,6 +676,7 @@ export async function runNightlyBackup(now: Date = new Date()): Promise<RunAnswe
   // Timed so the headroom under maxDuration shows in the log, step by step as
   // each finishes: when one fails, the lines before it show where time went.
   const started = Date.now();
+  const deadline = started + (opts.budgetMs ?? BACKUP_BUDGET_MS) - (opts.waitedMs ?? 0);
   const onStep = (step: string, ms: number) => console.log(`Backup ${step} took ${(ms / 1000).toFixed(1)}s`);
   try {
     // Loaded here: lib/account-deletion.ts imports this module.
@@ -644,28 +686,43 @@ export async function runNightlyBackup(now: Date = new Date()): Promise<RunAnswe
   } catch (err) {
     console.error('The sweep of deleted containers failed; it runs again tomorrow', err instanceof Error ? err.name : typeof err);
   }
-  try {
-    const result = await runBackup(rawRedis(), store, now, { onStep });
-    // Logged before the outcome is recorded, so the line survives even if that
-    // write is what stalls.
-    const seconds = ((Date.now() - started) / 1000).toFixed(1);
-    console.log(
-      'Backup written',
-      result.pathname,
-      `${result.bytes} bytes`,
-      `${result.keys} keys`,
-      `${result.pruned.length} pruned`,
-      `key archive ${result.key_archive.pathname} (${result.key_archive.keys} keys, ${result.key_archive.carried.length} carried forward, ${result.key_archive.rewritten.length} rewritten, ${result.key_archive.pruned.length} pruned${result.key_archive.dropped.length > 0 ? `, ${result.key_archive.dropped.length} that didn't read back deleted` : ''})`,
-      `${result.shared_in.length} container(s) under a shared key`,
-      `${seconds}s`
-    );
-    await recordOutcome({ ok: true });
-    return { status: 200, body: result };
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    console.error('Backup failed', reason);
-    await recordOutcome({ ok: false, reason });
-    return { status: 500, body: { error: reason } };
+  const failures: string[] = [];
+  for (let attempt = 1; ; attempt++) {
+    // The first attempt is taken at the run's own time; each after it at its
+    // own, so its copy has a name of its own.
+    const takenAt = attempt === 1 ? now : new Date();
+    try {
+      const result = await runBackup(rawRedis(), store, takenAt, { onStep, deadline });
+      // Logged before the outcome is recorded, so the line survives even if that
+      // write is what stalls.
+      const seconds = ((Date.now() - started) / 1000).toFixed(1);
+      console.log(
+        'Backup written',
+        result.pathname,
+        `${result.bytes} bytes`,
+        `${result.keys} keys`,
+        `${result.pruned.length} pruned`,
+        `key archive ${result.key_archive.pathname} (${result.key_archive.keys} keys, ${result.key_archive.carried.length} carried forward, ${result.key_archive.rewritten.length} rewritten, ${result.key_archive.pruned.length} pruned${result.key_archive.dropped.length > 0 ? `, ${result.key_archive.dropped.length} that didn't read back deleted` : ''})`,
+        `${result.shared_in.length} container(s) under a shared key`,
+        `${seconds}s`,
+        ...(attempt > 1 ? [`on attempt ${attempt}`] : [])
+      );
+      await recordOutcome({ ok: true });
+      return { status: 200, body: { ...result, ...(attempt > 1 ? { attempts: attempt, failed_attempts: failures } : {}) } };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      failures.push(reason);
+      const pause = retryPauses[attempt - 1];
+      const again = pause !== undefined && Date.now() + pause + MIN_ATTEMPT_MS <= deadline;
+      console.error(`Backup attempt ${attempt} failed${again ? `; trying again in ${pause / 1000}s` : ''}`, reason);
+      if (!again) {
+        // The count first: the record keeps 200 characters of a reason.
+        const said = attempt > 1 ? `After ${attempt} attempts: ${reason}` : reason;
+        await recordOutcome({ ok: false, reason: said });
+        return { status: 500, body: { error: said } };
+      }
+      await new Promise((r) => setTimeout(r, pause));
+    }
   }
 }
 

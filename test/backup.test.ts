@@ -25,10 +25,16 @@ const urlReads: { url: string; headers: Record<string, string> }[] = [];
 const signals: Record<string, AbortSignal | undefined> = {};
 /** Called at each upload, to see what holds while the backup runs. */
 let onPut: (() => Promise<void>) | null = null;
+/** Uploads still to fail, as a store that is briefly down fails them. */
+let failPuts = 0;
 await mockForFile('@vercel/blob', () => ({
   put: async (pathname: string, body: string, options: any) => {
     signals.put = options.abortSignal;
     await onPut?.();
+    if (failPuts > 0) {
+      failPuts--;
+      throw new Error('Vercel Blob: the service is unavailable');
+    }
     if (blobs.has(pathname) && !options.allowOverwrite) throw new Error('exists');
     blobs.set(pathname, { body, uploadedAt: clock, options });
     return { pathname, url: `https://blob/${pathname}` };
@@ -85,7 +91,7 @@ const fakeGet = (url: string, options: any, cb: (res: any) => void) => {
 };
 await mockForFile('node:https', () => ({ ...realHttps, default: { ...(realHttps as any).default, get: fakeGet }, get: fakeGet }));
 
-const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention, againAt, AGAIN_AFTER_OK_MS, CRON_SCHEDULES, recordAttachmentSweep, nightlyJobs, runningNow, takeRunLock } = await import('@/lib/backup');
+const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention, againAt, AGAIN_AFTER_OK_MS, CRON_SCHEDULES, recordAttachmentSweep, nightlyJobs, runningNow, takeRunLock, runNightlyBackup, setRetryPausesForTests, RETRY_PAUSES_MS, MIN_ATTEMPT_MS, BACKUP_BUDGET_MS } = await import('@/lib/backup');
 const { verifyArchive } = await import('@/lib/restore');
 const { keyArchiveFolder, verifyKeyArchive, KEY_GENERATIONS } = await import('@/lib/key-archive');
 /** The data archives kept, and the key archives (lib/key-archive.ts). */
@@ -103,6 +109,9 @@ beforeEach(async () => {
   blobHost = 'store.blob.vercel-storage.com';
   sdkStreamCancelled = false;
   onPut = null;
+  failPuts = 0;
+  // No second attempt unless a test asks for one, so a failure answers at once.
+  setRetryPausesForTests([]);
   urlReads.length = 0;
   clock = new Date('2026-06-15T16:00:00.000Z');
   process.env.BLOB_READ_WRITE_TOKEN = 'token';
@@ -113,6 +122,7 @@ beforeEach(async () => {
 });
 afterEach(() => {
   process.env = { ...saved };
+  setRetryPausesForTests(null);
 });
 
 const store = async () => (await vercelBlobStore())!;
@@ -585,6 +595,67 @@ describe('how long a backup outlasts a deletion', () => {
     expect(backupRetention()).toBeNull();
     process.env.BACKUP_KEEP_DAYS = '45';
     expect(backupRetention()).toEqual({ kept: true, keep_days: 45, min_kept: MIN_KEPT, max_days: 46 });
+  });
+});
+
+describe('trying a failed backup again in the same run', () => {
+  /** A run, without its log lines; what it said to console.error. */
+  const quietRun = async (opts: Parameters<typeof runNightlyBackup>[1] = {}) => {
+    const [log, error] = [console.log, console.error];
+    const errors: string[] = [];
+    console.log = () => {};
+    console.error = (...args: unknown[]) => void errors.push(args.join(' '));
+    try {
+      return { answer: await runNightlyBackup(new Date(), opts), errors };
+    } finally {
+      console.log = log;
+      console.error = error;
+    }
+  };
+
+  test('fits in the routes’ limit: tries again for 270 s at most, and starts an attempt only with 30 s left', () => {
+    expect(BACKUP_BUDGET_MS + 15_000).toBeLessThan(300_000);
+    expect(MIN_ATTEMPT_MS).toBe(30_000);
+    expect(RETRY_PAUSES_MS).toEqual([5_000, 15_000, 30_000, 60_000, 60_000]);
+  });
+
+  test('a failed attempt is tried again after a pause, and the night is recorded as worked, saying so', async () => {
+    setRetryPausesForTests([10, 10]);
+    failPuts = 1;
+    const { answer, errors } = await quietRun();
+    expect(answer.status).toBe(200);
+    expect(answer.body).toMatchObject({ attempts: 2, failed_attempts: ['Vercel Blob: the service is unavailable'] });
+    expect(errors).toEqual(['Backup attempt 1 failed; trying again in 0.01s Vercel Blob: the service is unavailable']);
+    expect(blobs.has(answer.body.pathname as string)).toBe(true);
+    expect(await backupProblem()).toBeNull();
+  });
+
+  test('when every attempt fails: the last reason recorded, with how many attempts, once the pauses run out', async () => {
+    setRetryPausesForTests([10, 10]);
+    corruptReads = true;
+    const { answer, errors } = await quietRun();
+    const said = 'After 3 attempts: The backup ' + backupFolder();
+    expect(answer.status).toBe(500);
+    expect(String(answer.body.error)).toStartWith(said);
+    expect(String(answer.body.error)).toEndWith('did not read back as written');
+    expect(errors.length).toBe(3);
+    expect((await backupProblem())?.reason).toStartWith(said);
+  });
+
+  test('never starts an attempt without the time to finish it, counting a cron’s wait for the lock', async () => {
+    setRetryPausesForTests([10, 10]);
+    corruptReads = true;
+    // 40 s for the run, 30 of them spent waiting for the lock: no time for a second.
+    const { answer } = await quietRun({ budgetMs: 40_000, waitedMs: 30_000 });
+    expect(answer.status).toBe(500);
+    expect(String(answer.body.error)).toEndWith('did not read back as written');
+    expect(String(answer.body.error)).not.toContain('attempts');
+  });
+
+  test('each step’s limit is cut to the whole seconds left, so an attempt ends in time', async () => {
+    hangReads = true;
+    await expect(runBackup(fake as any, await store(), clock, { deadline: Date.now() + 1_900 })).rejects.toThrow("The backup's read-back step took longer than 1s");
+    await expect(runBackup(fake as any, await store(), clock, { deadline: Date.now() + 500 })).rejects.toThrow('The backup ran out of time before its export step');
   });
 });
 
