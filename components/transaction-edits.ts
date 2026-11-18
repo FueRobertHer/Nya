@@ -327,9 +327,9 @@ export function useTransactionEdits({
 
   /** Puts tags on a transaction or takes them off (by id), or one typed by
    *  name, made if no tag has it: shown at once, a new tag once the server
-   *  has made it. */
+   *  has made it. Resolves true once the server has it. */
   const changeTags = useCallback(
-    async (t: Txn, change: TagChange) => {
+    async (t: Txn, change: TagChange): Promise<boolean> => {
       setError(null);
       changes.current++;
       const add = change.add ?? [];
@@ -371,12 +371,13 @@ export function useTransactionEdits({
                 : prev
             );
           }
-          return;
+          return true;
         }
       } catch {
         res = null;
       }
       await undo(res, 'Could not change its tags. Please try again.');
+      return false;
     },
     [setTxns, undo, onTagMade]
   );
@@ -384,9 +385,9 @@ export function useTransactionEdits({
   /** Saves a transaction's note, or clears it: one entered by hand or
    *  imported into a manual account, on the row itself; any other (a bank's,
    *  one SimpleFIN brought, one imported into a linked account), beside it.
-   *  Shown at once. */
+   *  Shown at once. Resolves true once the server has it. */
   const saveNote = useCallback(
-    async (t: Txn, note: string) => {
+    async (t: Txn, note: string): Promise<boolean> => {
       setError(null);
       changes.current++;
       // A split transaction's note is its own, kept beside its parts' (split_parent).
@@ -408,11 +409,12 @@ export function useTransactionEdits({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...target(t), note }),
         });
-        if (res.ok) return;
+        if (res.ok) return true;
       } catch {
         res = null;
       }
       await undo(res, 'Could not save the note. Please try again.');
+      return false;
     },
     [setTxns, undo]
   );
