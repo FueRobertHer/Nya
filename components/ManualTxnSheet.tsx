@@ -31,9 +31,19 @@
 // the name or the category only when the person changed it (changedFields):
 // saving a note on a row a rule files never makes the rule's category the
 // row's, which turning the rule off would then no longer undo.
+//
+// AFTER SAVE (docs/design/guidelines.md#after-save). Its buttons sit in the
+// sheet's footer, a refusal beside them. Added from Activity, edited or
+// deleted, it closes on the list, which shows the change. Added from an
+// account's sheet, the screen behind doesn't list it, so the sheet says what
+// it added, with focus on the line, and where it is changed or deleted. Its
+// Undo deletes it, which puts back exactly what was there, so it is offered
+// only when the balance didn't move with it: deleting never moves a balance
+// back, so that one is said to be updated from the account instead.
 
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
+import ActionRows from './ActionRows';
 import { Masked } from './HideAmounts';
 import { deleteFile, filesOn } from './attachment-client';
 import { categoryOptions, nameForRules, type Txn } from './MonthBreakdown';
@@ -70,6 +80,21 @@ export type SheetInstitution = {
 };
 
 type Account = SheetInstitution['accounts'][number] & { institution_name: string };
+
+/** What an add from an account's sheet saved, said once it has: the row,
+ *  where it went, and the balance's move when it moved too (then no Undo). */
+type Added = {
+  id: string;
+  account_id: string;
+  account: string;
+  owed: boolean;
+  what: { amount: number; currency: string; direction: 'out' | 'in'; name: string };
+  balance: { from: number; to: number; currency: string } | null;
+  undone: boolean;
+};
+
+/** "$12.50 spent at Corner Store", "$40.00 received from Sam". */
+const addedText = (w: Added['what']) => `${formatMoney(w.amount, w.currency)} ${w.direction === 'out' ? 'spent at' : 'received from'} ${w.name}`;
 
 type Draft = {
   /** A new row's id, made when the form opened; null when editing. */
@@ -226,6 +251,11 @@ export default function ManualTxnSheet({
   const [alsoFiles, setAlsoFiles] = useState(false);
   // Saved, but with something to read first (the balance didn't update).
   const [done, setDone] = useState(false);
+  // Added from an account's sheet: said, with its Undo when there is one.
+  const [added, setAdded] = useState<Added | null>(null);
+  const [undoError, setUndoError] = useState('');
+  const doneLine = useRef<HTMLDivElement>(null);
+  const errorId = useId();
 
   // A fresh draft each time it opens. Only on opening: balances reloading in
   // the background must not reset what is being typed.
@@ -237,6 +267,8 @@ export default function ManualTxnSheet({
     setFiles(null);
     setAlsoFiles(false);
     setDone(false);
+    setAdded(null);
+    setUndoError('');
     setSaving(false);
     if (target.mode === 'edit') {
       const t = target.txn;
@@ -277,6 +309,10 @@ export default function ManualTxnSheet({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target]);
+  // What it added, and then its undoing, said with focus on the line.
+  useEffect(() => {
+    if (added) doneLine.current?.focus();
+  }, [added]);
 
   const edit = shown?.mode === 'edit' ? shown.txn : null;
   // An edited row's own account is always offered, so the form can never move
@@ -378,6 +414,21 @@ export default function ManualTxnSheet({
         }
         rememberAccount(draft!.account_id);
         onSaved({ balanceChanged: data?.balance_updated === true, transaction });
+        // Added from an account's sheet: nothing behind lists it, so say so here.
+        if (!edit && shown?.mode === 'add' && shown.account_id !== null && transaction) {
+          const on = options.find((a) => a.account_id === transaction!.account_id) ?? account;
+          setAdded({
+            id: transaction.transaction_id,
+            account_id: transaction.account_id ?? draft!.account_id,
+            account: on?.name ?? 'the account',
+            owed: on ? isOwedType(on.type) : false,
+            what: { amount: amount!, currency, direction: draft!.direction, name: fields.name },
+            balance:
+              data?.balance_updated === true && balance !== null ? { from: balance, to: typeof data?.balance === 'number' ? data.balance : after!, currency: keptIn } : null,
+            undone: false,
+          });
+          return;
+        }
         onClose();
         return;
       }
@@ -393,6 +444,26 @@ export default function ManualTxnSheet({
       if (res.status === 409 && data?.balance_updated !== true && (typeof data?.balance === 'number' || data?.saved === true)) onBalanceStale();
     } catch {
       setError('Could not reach the server.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /** Takes back what it just added: deleted, as if never added. */
+  async function undo() {
+    if (!added || saving) return;
+    setSaving(true);
+    setUndoError('');
+    try {
+      const { res, data } = await send('DELETE', { id: added.id, account_id: added.account_id });
+      if (res.ok) {
+        onSaved({ balanceChanged: false, removed: added.id });
+        setAdded({ ...added, undone: true });
+        return;
+      }
+      setUndoError(data?.error ?? 'Could not undo it. Please try again.');
+    } catch {
+      setUndoError('Could not reach the server.');
     } finally {
       setSaving(false);
     }
@@ -450,8 +521,92 @@ export default function ManualTxnSheet({
     balanceNote = `${name}'s balance is kept in ${keptIn}, so a transaction in ${currency} leaves it as it is.`;
   else balanceNote = `Adding a transaction doesn't change ${name}'s balance, which stays what you typed${after !== null ? '. Tick the box to update it too.' : '.'}`;
 
+  if (added) {
+    const what = addedText(added.what);
+    const kept = added.owed ? 'amount owed' : 'balance';
+    const moved = added.balance
+      ? ` ${added.account}’s ${kept} moved from ${formatMoney(added.balance.from, added.balance.currency)} to ${formatMoney(added.balance.to, added.balance.currency)} with it.`
+      : '';
+    return (
+      <Sheet
+        open={!!target}
+        title="Add a transaction"
+        onClose={() => !saving && onClose()}
+        footer={
+          <button type="button" className="btn" onClick={onClose} disabled={saving}>
+            Done
+          </button>
+        }
+      >
+        <div className="stack">
+          <Notice level="done" role="status" ref={doneLine} tabIndex={-1}>
+            <Masked>{added.undone ? `Undone: ${what} is no longer on ${added.account}.` : `Added ${what} to ${added.account}.${moved}`}</Masked>
+          </Notice>
+          {!added.undone && !added.balance && (
+            <button type="button" className="btn ghost" onClick={() => void undo()} disabled={saving} aria-describedby={undoError ? errorId : undefined}>
+              {saving ? 'Undoing…' : 'Undo'}
+            </button>
+          )}
+          {undoError && (
+            <div id={errorId}>
+              <Notice level="critical" role="alert">
+                <Masked>{hideAmountsIn(undoError)}</Masked>
+              </Notice>
+            </div>
+          )}
+          {!added.undone && (
+            <p className="helper">
+              {added.balance
+                ? `It’s in Activity, where you can edit or delete it. Deleting it leaves the ${kept} as it is now: update that from the account.`
+                : 'It’s in Activity, where you can edit or delete it.'}
+            </p>
+          )}
+        </div>
+      </Sheet>
+    );
+  }
+
+  // A refusal, beside the buttons it came from; once saved with something to
+  // read first, it stays in the body as what came of it.
+  const failed = error && !done ? errorId : undefined;
+  const footer = done ? (
+    <button type="button" className="btn" onClick={onClose}>
+      Close
+    </button>
+  ) : (
+    <>
+      {failed && (
+        <div className="sheet-footer-note" id={errorId}>
+          {/* The server's words can name a balance (one changed since the form opened). */}
+          <Notice level="critical" role="alert">
+            <Masked>{hideAmountsIn(error)}</Masked>
+          </Notice>
+        </div>
+      )}
+      {confirmDelete ? (
+        <>
+          <button type="button" className="btn secondary" onClick={() => setConfirmDelete(false)} disabled={saving}>
+            Keep it
+          </button>
+          <button type="button" className="btn danger" onClick={remove} disabled={saving} aria-describedby={failed}>
+            {saving ? 'Deleting…' : 'Delete'}
+          </button>
+        </>
+      ) : (
+        <>
+          <button type="button" className="btn secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button type="button" className="btn" onClick={save} disabled={!ready || saving} aria-describedby={failed}>
+            <Masked>{saving ? 'Saving…' : edit ? 'Save' : amount !== null ? `Add ${formatMoney(amount, isCurrencyCode(currency) ? currency : null)}` : 'Add'}</Masked>
+          </button>
+        </>
+      )}
+    </>
+  );
+
   return (
-    <Sheet open={!!target} title={edit ? 'Edit transaction' : 'Add a transaction'} onClose={() => !saving && onClose()}>
+    <Sheet open={!!target} title={edit ? 'Edit transaction' : 'Add a transaction'} onClose={() => !saving && onClose()} footer={footer}>
       <div className="button-pair quick-add-choice" role="group" aria-label="Money out or in" style={{ marginTop: 0 }}>
         <button className="secondary" aria-pressed={draft.direction === 'out'} disabled={busy} onClick={() => set({ direction: 'out' })}>
           Spent
@@ -603,18 +758,15 @@ export default function ManualTxnSheet({
         <Masked>{balanceNote}</Masked>
       </p>
 
-      {/* The server's words can name a balance (one changed since the form opened). */}
-      {error && (
+      {/* Saved, but with something to read first: what came of it. Its
+          words can name a balance (one changed since the form opened). */}
+      {error && done && (
         <Notice level="critical" role="alert">
           <Masked>{hideAmountsIn(error)}</Masked>
         </Notice>
       )}
 
-      {done ? (
-        <div className="button-pair" style={{ marginTop: 16 }}>
-          <button onClick={onClose}>Close</button>
-        </div>
-      ) : confirmDelete ? (
+      {done ? null : confirmDelete ? (
         <>
           <p className="panel-note">Delete this transaction? It can&apos;t be brought back.</p>
           {files && files.length > 0 && (
@@ -626,31 +778,12 @@ export default function ManualTxnSheet({
               {!alsoFiles && <p className="panel-note">Kept, they stay under Receipts and documents in Settings, Your data and privacy, not on a transaction.</p>}
             </>
           )}
-          <div className="button-pair" style={{ marginTop: 12 }}>
-            <button className="secondary" onClick={() => setConfirmDelete(false)} disabled={saving}>
-              Keep it
-            </button>
-            <button className="danger" onClick={remove} disabled={saving}>
-              {saving ? 'Deleting…' : 'Delete'}
-            </button>
-          </div>
         </>
       ) : (
-        <>
-          <div className="button-pair" style={{ marginTop: 16 }}>
-            <button className="secondary" onClick={onClose} disabled={saving}>
-              Cancel
-            </button>
-            <button onClick={save} disabled={!ready || saving}>
-              <Masked>{saving ? 'Saving…' : edit ? 'Save' : amount !== null ? `Add ${formatMoney(amount, isCurrencyCode(currency) ? currency : null)}` : 'Add'}</Masked>
-            </button>
-          </div>
-          {edit && (
-            <button className="danger-outline" style={{ marginTop: 12 }} onClick={askDelete} disabled={saving}>
-              Delete transaction
-            </button>
-          )}
-        </>
+        edit && (
+          // Deleting it, from its actions: last, asking first (ActionRows).
+          <ActionRows rows={[{ key: 'delete', title: 'Delete transaction', sub: 'Asks first.', opens: true, neg: true, onSelect: () => !saving && askDelete() }]} />
+        )
       )}
     </Sheet>
   );

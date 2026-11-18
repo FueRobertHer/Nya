@@ -72,7 +72,7 @@
     "inlineLayoutStyles": 2
   },
   "components/ManualTxnSheet.tsx": {
-    "inlineLayoutStyles": 8
+    "inlineLayoutStyles": 4
   },
   "components/MigrationSheet.tsx": {
     "inlineLayoutStyles": 21
