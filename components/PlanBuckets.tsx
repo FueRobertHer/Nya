@@ -82,6 +82,11 @@ export type SheetRates = {
   typed: boolean;
   /** The sheet can't save, so nothing is handed to it. */
   off: boolean;
+  /** Why it can't, when there is more to say than a moment's save. */
+  why: string | null;
+  /** The accounts listed with their own growth fill what a plan keeps
+   *  (LIMITS.accountRates): another can't be given one. */
+  full: boolean;
   /** A copy is open: its rates are its own, its facts every plan's. */
   copy: boolean;
 };
@@ -252,7 +257,8 @@ function readAmount(text: string, what: string): { amount: number | null } | { p
  *  or the problem. */
 function readGrowth(text: string): { rate: number } | { problem: string } {
   const t = text.trim();
-  const n = t === '' ? NaN : Number(t);
+  if (t === '') return { problem: 'Its growth is needed.' };
+  const n = Number(t);
   const [min, max] = LIMITS.realReturn;
   if (!Number.isFinite(n) || n * 0.01 < min - 1e-12 || n * 0.01 > max + 1e-12) return { problem: `Its growth must be from ${pct(min)} to ${pct(max)}.` };
   return { rate: Number((n * 0.01).toFixed(6)) };
@@ -323,7 +329,7 @@ function AccountLevel({
   const showsCount = isChildAccount(subtype);
   const save = async () => {
     const read = !locked && showsBasis ? readAmount(basis, 'Cost basis') : { amount: typed };
-    const rate = settable && own ? readGrowth(rateText) : { rate: null };
+    const rate = !settable || !own ? { rate: null } : rates.full && !rates.rates.has(id) ? { problem: `A plan keeps its own growth for ${LIMITS.accountRates} accounts at most: set one of them back to the plan’s first.` } : readGrowth(rateText);
     setWrong('problem' in read ? read.problem : '');
     setRateWrong('problem' in rate ? rate.problem : '');
     if ('problem' in read || 'problem' in rate) return;
@@ -387,7 +393,7 @@ function AccountLevel({
           <p className="helper">{basisNote(account)}</p>
         </div>
       )}
-      {locked && <p className="helper">{rates?.copy ? `${locked} Its growth is this copy’s own.` : locked}</p>}
+      {locked && <p className="helper">{rates?.copy ? `${locked} Its growth is this copy’s own.` : settable ? `${locked} Its growth in this plan can still be changed.` : locked}</p>}
       {account && growth && (
         <div className="stack tight">
           <h3 className="section-label">Growth after inflation</h3>
@@ -400,7 +406,10 @@ function AccountLevel({
                   ['own', 'Its own'],
                 ]}
                 value={own ? 'own' : 'plan'}
-                onChange={(v) => setOwn(v === 'own')}
+                onChange={(v) => {
+                  setOwn(v === 'own');
+                  setRateWrong('');
+                }}
                 disabled={saving || rates.off}
               />
               {own && (
@@ -410,6 +419,7 @@ function AccountLevel({
                 </label>
               )}
               {rateWrong && <FieldError id={rateId}>{rateWrong}</FieldError>}
+              {rates.off && rates.why && <p className="helper">{rates.why}</p>}
             </>
           ) : (
             <p className="helper">With your own figure for invested assets, every account grows at the plan&rsquo;s {pct(growth.plan)} after inflation.</p>

@@ -803,6 +803,8 @@ export function FigureForm(
             }),
           typed: mode === 'typed',
           off: s.disabled,
+          why: props.paused ?? null,
+          full: [...rates.keys()].filter((id) => listed.has(id)).length >= LIMITS.accountRates,
           copy: !!props.copy,
         }
       : null;
