@@ -1058,6 +1058,102 @@ describe('a transaction’s sheet', () => {
       expect(doneLine(v)).toBeNull();
       v.unmount();
     });
+
+    /** The list read again, held until the test lets it land. */
+    const heldReread = () => {
+      let land: () => void = () => {};
+      const reread = () => new Promise<void>((r) => (land = r));
+      return { reread, land: () => land() };
+    };
+
+    test('saved, it waits for the list read again: Saving… until then, then the line', async () => {
+      const answer = held();
+      const r = heldReread();
+      let v: ReturnType<typeof mount> | null = null;
+      const props: Props = { onSplitsChanged: r.reread };
+      v = mount(props);
+      await v.open('Dinner');
+      const field = v.field('Category')!;
+      field.focus();
+      act(() => type(field, cat('groceries')));
+      await settle();
+      answer(true);
+      await settle(20);
+      expect(field.getAttribute('aria-describedby')).not.toBeNull();
+      expect(doneLine(v)).toBeNull();
+      act(() => v!.render({ ...props, txns: refiled(cat('groceries'), 'groceries') }));
+      r.land();
+      await settle(20);
+      expect(doneLine(v)!.textContent).toContain('Category saved: the group counts under Groceries.');
+      expect(field.getAttribute('aria-describedby')).toBeNull();
+      v.unmount();
+    });
+
+    test('saved, but the list isn’t read again: the field keeps the choice and the line says it, never a silent undo', async () => {
+      splitAnswer = null;
+      const v = mount({ onSplitsChanged: async () => {} });
+      await v.open('Dinner');
+      const field = v.field('Category')!;
+      field.focus();
+      act(() => type(field, cat('groceries')));
+      await settle(20);
+      expect(v.chosen(v.field('Category'))).toBe(cat('groceries'));
+      expect(doneLine(v)!.textContent).toContain('Category saved: the group counts under Groceries.');
+      expect(field.getAttribute('aria-describedby')).toBeNull();
+      expect(dom.document.activeElement).toBe(field);
+      v.unmount();
+    });
+
+    test('refused: the field is back at once, not saving, while the list is read again', async () => {
+      const answer = held();
+      const r = heldReread();
+      const v = mount({ onSplitsChanged: r.reread });
+      await v.open('Dinner');
+      const field = v.field('Category')!;
+      field.focus();
+      act(() => type(field, cat('groceries')));
+      await settle();
+      answer(false);
+      await settle(20);
+      expect(v.chosen(v.field('Category'))).toBe(cat('restaurants'));
+      expect(alert(v)!.textContent).toContain(REFUSED);
+      expect(v.dialog()!.textContent).not.toContain('Saving…');
+      r.land();
+      await settle(20);
+      v.unmount();
+    });
+
+    test('refused again in the same words as one already said on the list: said in the sheet too', async () => {
+      splitAnswer = async () => ({ ok: false, status: 409, json: async () => ({ error: REFUSED }) });
+      const v = mount({ onSplitsChanged: async () => {} });
+      await v.open('Dinner');
+      act(() => type(v.field('Category')!, cat('groceries')));
+      await settle(20);
+      expect(alert(v)!.textContent).toContain(REFUSED);
+      act(() => click(v.button('Close', v.dialog()!)!));
+      await settle(400);
+      await v.open('Dinner');
+      const field = v.field('Category')!;
+      field.focus();
+      act(() => type(field, cat('groceries')));
+      await settle(20);
+      expect(alert(v)!.textContent).toContain(REFUSED);
+      expect(field.getAttribute('aria-describedby')).not.toBeNull();
+      v.unmount();
+    });
+
+    test('Ungroup saved, but the list isn’t read again: the line still says it', async () => {
+      splitAnswer = null;
+      const v = mount({ txns: [...served(), stale()], onSplitsChanged: async () => {} });
+      await v.open('Delta');
+      const row = v.button('Ungroup “Ski trip”', v.dialog()!)!;
+      row.focus();
+      act(() => click(row));
+      await settle(20);
+      expect(doneLine(v)!.textContent).toContain('Ungrouped “Ski trip”');
+      expect(dom.document.activeElement).toBe(doneLine(v));
+      v.unmount();
+    });
   });
 
   describe('a note and tags, written through the tab’s edits', () => {

@@ -11,7 +11,6 @@
 // Edit group); the sheets that make them are components/SplitSheet.tsx and
 // components/GroupSheet.tsx.
 
-import type { Ref } from 'react';
 import type { Txn } from './MonthBreakdown';
 import type { SheetTarget } from './TransactionSheet';
 import type { SheetAction } from './ActionRows';
@@ -135,7 +134,6 @@ export function splitActions(
     onGroup,
     onUngroup,
     ungrouping = false,
-    ungroupRef,
   }: {
     onSplit: (t: Txn) => void;
     onGroup: (t: Txn) => void;
@@ -143,8 +141,6 @@ export function splitActions(
     onUngroup: (id: string, name: string) => void;
     /** Its Ungroup is out: the row says so. */
     ungrouping?: boolean;
-    /** Ungroup's row, for focus to come back to when it is refused. */
-    ungroupRef?: Ref<HTMLButtonElement>;
   }
 ): { rows: SheetAction[]; said: string | null } {
   const none = (said: string | null = null) => ({ rows: [], said });
@@ -153,7 +149,7 @@ export function splitActions(
   const listless = t.group_unapplied ?? t.group_outside;
   if (listless) {
     return {
-      rows: [{ key: 'ungroup', title: ungrouping ? 'Ungrouping…' : `Ungroup “${listless.name}”`, ref: ungroupRef, onSelect: () => onUngroup(listless.id, listless.name) }],
+      rows: [{ key: 'ungroup', title: ungrouping ? 'Ungrouping…' : `Ungroup “${listless.name}”`, onSelect: () => onUngroup(listless.id, listless.name) }],
       said: null,
     };
   }

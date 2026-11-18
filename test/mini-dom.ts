@@ -264,7 +264,8 @@ export class FakeElement extends FakeNode {
     if (v && this.tagName === 'OPTION') {
       let select = this.parentNode;
       while (select && (select as FakeElement).tagName !== 'SELECT') select = select.parentNode;
-      if (select && !(select as FakeElement).hasAttribute('multiple')) for (const o of (select as FakeElement).options) o.picked = false;
+      const many = select && ((select as FakeElement & { multiple?: boolean }).multiple === true || (select as FakeElement).hasAttribute('multiple'));
+      if (select && !many) for (const o of (select as FakeElement).options) o.picked = false;
     }
     this.picked = !!v;
   }
