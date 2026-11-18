@@ -567,14 +567,16 @@ export default function Dashboard({
   // gear, a Needs attention row, a currency note, the restore banner, the
   // Accounts tab's pill or notice), and kept while it moves between its own
   // levels.
-  const settingsOpener = useRef<HTMLElement | null>(null);
+  // Or how to find it again, when it is drawn anew as Settings closes (a
+  // transaction's row, by its id).
+  const settingsOpener = useRef<HTMLElement | (() => HTMLElement | null) | null>(null);
   const settingsShown = useRef(initialSettings !== null);
   useEffect(() => {
     settingsShown.current = settings !== null;
   }, [settings]);
   /** Opens Settings at `view`. `opener` is what focus goes back to when it
    *  closes: by default whatever has focus now. */
-  const enterSettings = useCallback((view: SettingsView, opener: HTMLElement | null = document.activeElement as HTMLElement | null) => {
+  const enterSettings = useCallback((view: SettingsView, opener: HTMLElement | (() => HTMLElement | null) | null = document.activeElement as HTMLElement | null) => {
     if (!settingsShown.current) settingsOpener.current = opener;
     settingsShown.current = true;
     window.scrollTo(0, 0);
@@ -587,14 +589,26 @@ export default function Dashboard({
   const closeSettings = useCallback(() => {
     setSettings(null);
     requestAnimationFrame(() => {
-      const opener = settingsOpener.current;
+      const named = settingsOpener.current;
       settingsOpener.current = null;
+      const opener = typeof named === 'function' ? named() : named;
       // What opened it may be gone (a row on the tab, drawn anew as Settings
       // closes): then where Settings always opens from, the avatar or the gear.
       const target = opener?.isConnected ? opener : (avatarButton() ?? document.querySelector<HTMLElement>('.top-actions [aria-label="Settings"]'));
       target?.focus({ preventScroll: true });
     });
   }, []);
+  // The Tags card is in Settings > Transactions: opened from a transaction's
+  // sheet, on its drawer's list; closing Settings comes back to the row.
+  const [tagsFocus, setTagsFocus] = useState(false);
+  const clearTagsFocus = useCallback(() => setTagsFocus(false), []);
+  const openTags = useCallback(
+    (transaction_id: string) => {
+      enterSettings('transactions', () => document.querySelectorAll<HTMLElement>(`button[data-txn-row="${transaction_id.replace(/["\\]/g, '')}"]`)[0] ?? null);
+      setTagsFocus(true);
+    },
+    [enterSettings]
+  );
   // The Currency card is in Settings > Preferences.
   const openCurrency = useCallback(
     (rateFor: string | null = null) => {
@@ -1880,7 +1894,7 @@ export default function Dashboard({
           />
           {/* Your tags (components/TagsCard.tsx): applied after the
               server's cache, so a change shows on the next read. */}
-          <TagsCard tags={tagList.tags} ruleUses={ruleUses} onChanged={acceptTags} />
+          <TagsCard tags={tagList.tags} ruleUses={ruleUses} onChanged={acceptTags} focus={tagsFocus} onFocused={clearTagsFocus} />
           {/* Your rules (components/RulesCard.tsx): applied on every
               read, so a change shows when the transactions are read again. */}
           <RulesCard rules={rules} taxonomy={categories.taxonomy} tags={tagList.tags} accounts={ruleAccounts} onChanged={() => loadTransactions()} />
@@ -2659,6 +2673,8 @@ export default function Dashboard({
                   shared={sharedRows}
                   // Receipts and documents (#47), where the file store is connected.
                   onAttachmentsChanged={filesMode?.connected ? txnEdits.refresh : undefined}
+                  // Rename or delete tags, from a transaction's sheet.
+                  onManageTags={(t) => openTags(t.transaction_id)}
                   actionError={txnEdits.error}
                   incomplete={txnIncomplete}
                   stopped={stoppedTxns}

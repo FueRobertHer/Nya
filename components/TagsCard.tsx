@@ -7,9 +7,11 @@
 // undone. Deleting a tag takes it off every transaction it is on and out of
 // every rule that adds it (lib/tag-delete.ts), which the drawer says first.
 // Tags are put on a transaction from its detail on the Activity tab, or by a
-// rule.
+// rule. That detail's Rename or delete tags opens Settings here (`focus`),
+// scrolled to this card with the drawer open on the list; closing it leaves
+// focus on Edit tags, as when it was pressed.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import TagChips from './TagChips';
 import { TAG_COLORS, TAG_NAME_MAX, shownColor, type Tag } from '@/lib/tags';
@@ -42,14 +44,34 @@ export default function TagsCard({
   tags,
   ruleUses = {},
   onChanged,
+  focus = false,
+  onFocused,
 }: {
   tags: readonly Tag[];
   /** How many rules add each tag, by id, where known. */
   ruleUses?: Readonly<Record<string, number>>;
   /** A change made: the tags as the server answered them. */
   onChanged: (set: unknown) => void;
+  /** Opened from elsewhere (a transaction's Rename or delete tags): the
+   *  drawer opens on the list, then `onFocused`. */
+  focus?: boolean;
+  onFocused?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const card = useRef<HTMLDivElement>(null);
+  const editTags = useRef<HTMLButtonElement>(null);
+  // A frame later, once Settings has put focus on its heading: on Edit tags,
+  // which the drawer gives focus back to as it closes, then the drawer.
+  useEffect(() => {
+    if (!focus) return;
+    const frame = requestAnimationFrame(() => {
+      card.current?.scrollIntoView?.({ block: 'start' });
+      editTags.current?.focus({ preventScroll: true });
+      setOpen(true);
+      onFocused?.();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focus, onFocused]);
   const [level, setLevel] = useState<Level>({ at: 'list' });
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
@@ -250,7 +272,7 @@ export default function TagsCard({
   }
 
   return (
-    <div className="card">
+    <div className="card" ref={card}>
       <div className="inst-header">
         <div className="inst-name">Tags</div>
       </div>
@@ -259,7 +281,7 @@ export default function TagsCard({
           ? 'Tags cut across categories: "reimbursable", "vacation 2026", "tax deductible". A transaction can carry several.'
           : `${tags.length} tag${tags.length === 1 ? '' : 's'}. A transaction can carry several; spending by tag is on the Activity tab.`}
       </p>
-      <button className="secondary" style={{ marginTop: 12 }} onClick={() => setOpen(true)}>
+      <button className="secondary" ref={editTags} style={{ marginTop: 12 }} onClick={() => setOpen(true)}>
         {tags.length === 0 ? 'Add tags' : 'Edit tags'}
       </button>
       <Sheet

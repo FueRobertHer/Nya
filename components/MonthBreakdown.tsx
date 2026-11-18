@@ -328,6 +328,7 @@ export default function MonthBreakdown({
   review,
   shared,
   onAttachmentsChanged,
+  onManageTags,
   segment: segmentShown,
   onSegment,
   sharedSegment = null,
@@ -407,6 +408,9 @@ export default function MonthBreakdown({
    *  read again, for its paperclips. Without it (no file store connected),
    *  no receipt is shown, offered or filtered by. */
   onAttachmentsChanged?: () => void;
+  /** From a transaction's sheet: the tags themselves (Settings), to rename
+   *  or delete one. Without it, no way there is offered. */
+  onManageTags?: (t: Txn) => void;
   /** The segment shown (components/ActivityBar.tsx) and how to choose
    *  another, when the caller keeps it: the dashboard does, so the tab
    *  comes back on the last one chosen. Left out, it keeps its own,
@@ -1334,6 +1338,7 @@ export default function MonthBreakdown({
                                   type="button"
                                   className="list-row txn-row"
                                   aria-haspopup="dialog"
+                                  data-txn-row={t.transaction_id}
                                   onClick={() => (iou ? shared?.onIou(iou.item) : openSheet({ kind: "txn", id: t.transaction_id }))}
                                 >
                                   {body}
@@ -1395,6 +1400,7 @@ export default function MonthBreakdown({
         onGroup={(start, group) => setGrouping({ start, group })}
         onSplitError={setSplitError}
         onAttachmentsChanged={onAttachmentsChanged}
+        onManageTags={onManageTags}
       />
 
       {/* Card Mode, over the tab: its Split and Group open the sheets below, over it. */}

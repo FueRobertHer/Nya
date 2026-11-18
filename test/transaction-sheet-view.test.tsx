@@ -1156,6 +1156,40 @@ describe('a transaction’s sheet', () => {
     });
   });
 
+  // The follow-up to the sheets review: no way to rename or delete a tag
+  // from where tags are put on.
+  describe('Rename or delete tags', () => {
+    const editing = { onChangeTags: async () => true, onSaveNote: async () => true };
+
+    test('under the tag field, a ghost button: it closes the sheet, then the tags open, for the row it was on', async () => {
+      const opened: string[] = [];
+      const v = mount({ ...editing, onManageTags: (t) => opened.push(t.transaction_id) });
+      await v.open('Whole Foods');
+      const link = v.button('Rename or delete tags', v.dialog()!)!;
+      expect(link.getAttribute('class')).toBe('btn ghost');
+      expect(link.getAttribute('aria-haspopup')).toBe('dialog');
+      // After the tag field and its suggestions, before the note.
+      const order = v.dialog()!.findAll((e) => e === link || e.getAttribute('aria-label') === 'Add a tag to Whole Foods' || e.tagName === 'TEXTAREA');
+      expect(order.map((e) => e.tagName)).toEqual(['INPUT', 'BUTTON', 'TEXTAREA']);
+      act(() => click(link));
+      await settle(400);
+      expect(v.dialog()).toBeNull();
+      expect(opened).toEqual(['Whole Foods']);
+      // Each row says whose it is, for focus to come back to it once Settings closes.
+      expect(v.row('Whole Foods')!.getAttribute('data-txn-row')).toBe('Whole Foods');
+      v.unmount();
+    });
+
+    test('not offered with no tags to rename, nor without a way there', async () => {
+      for (const props of [{ ...editing, tags: [], onManageTags: () => {} }, editing]) {
+        const v = mount(props);
+        await v.open('Whole Foods');
+        expect(v.button('Rename or delete tags', v.dialog()!)).toBeNull();
+        v.unmount();
+      }
+    });
+  });
+
   describe('a note and tags, written through the tab’s edits', () => {
     const status = (v: ReturnType<typeof mount>) => v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent;
     const note = (v: ReturnType<typeof mount>) => v.dialog()!.findAll((e) => e.tagName === 'TEXTAREA')[0]!;
