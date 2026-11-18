@@ -40,14 +40,16 @@ const PERSON = 'M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 
 
 /** Whether this account may be shown its sign-in details: its email, and
  *  Clerk's account window with its password, connected accounts and
- *  devices. True only once the server has said, for this account, that it
- *  isn't a demo account (app/api/demo/me). Null until it has answered for
- *  this account; false for a demo account, and when it couldn't answer or
- *  answered for another one. Asked again whenever the account changes (a
- *  demo sign-in changes it in place, components/demo-sign-in.ts), and an
- *  answer for the one before is never used. */
-export function useShowsSignInDetails(userId: string | null | undefined): boolean | null {
-  const [answer, setAnswer] = useState<{ user: string; shown: boolean } | null>(null);
+ *  devices. 'shown' only once the server has said, for this account, that
+ *  it isn't a demo account (app/api/demo/me); 'demo' when it has said it is
+ *  one; 'unsure' when it couldn't say, or answered for another account,
+ *  which shows them no more than 'demo' does. Null until it has answered
+ *  for this account. Asked again whenever the account changes (a demo
+ *  sign-in changes it in place, components/demo-sign-in.ts), and an answer
+ *  for the one before is never used. */
+export type SignInDetails = 'shown' | 'demo' | 'unsure';
+export function useSignInDetails(userId: string | null | undefined): SignInDetails | null {
+  const [answer, setAnswer] = useState<{ user: string; details: SignInDetails } | null>(null);
   useEffect(() => {
     if (!userId) return;
     let live = true;
@@ -55,13 +57,14 @@ export function useShowsSignInDetails(userId: string | null | undefined): boolea
       .then((res) => (res.ok ? res.json() : null))
       .catch(() => null)
       .then((body: { user?: unknown; demo?: unknown } | null) => {
-        if (live) setAnswer({ user: userId, shown: body?.user === userId && body.demo === false });
+        const said = body?.user === userId ? body.demo : undefined;
+        if (live) setAnswer({ user: userId, details: said === false ? 'shown' : said === true ? 'demo' : 'unsure' });
       });
     return () => {
       live = false;
     };
   }, [userId]);
-  return userId && answer?.user === userId ? answer.shown : null;
+  return userId && answer?.user === userId ? answer.details : null;
 }
 
 /** Nya's account menu, for a demo account: its picture as the button, and
@@ -182,7 +185,7 @@ export default function ClerkAccount({
 }) {
   const clerk = useClerk();
   const { user } = useUser();
-  const shown = useShowsSignInDetails(user?.id);
+  const details = useSignInDetails(user?.id);
   useEffect(() => {
     // Only a session that was there and went: not the first report, nor a
     // moment without one before Clerk has loaded.
@@ -208,9 +211,9 @@ export default function ClerkAccount({
           is, the circle the app loading drew in its place
           (components/LoadingSkeletons.tsx), so the dashboard taking over
           leaves it as it was. */}
-      {shown === null ? (
+      {details === null ? (
         <span className="skeleton user-button-skeleton" aria-hidden="true" />
-      ) : shown ? (
+      ) : details === 'shown' ? (
         <UserButton
           appearance={{ elements: { avatarBox: { width: 34, height: 34 } } }}
           fallback={<span className="skeleton user-button-skeleton" aria-hidden="true" />}
