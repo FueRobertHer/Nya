@@ -3626,23 +3626,27 @@ button.danger-outline {
   padding: 0;
 }
 
-.incoming-account-name {
-  font-size: var(--fs-3);
-}
-
-.incoming-account-date {
-  color: var(--text-2);
-  font-size: var(--fs-1);
-}
-
 .incoming-account-value {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   white-space: nowrap;
 }
 
-.incoming-account .link-btn {
-  margin-top: 6px;
+/* Under an account's row: its transactions' toggle and list, or why there
+   are none, set in as the row's words are. The ghost button's own padding
+   sits in the margin, so its words line up with the row's. */
+.incoming-account-more {
+  padding: 0 var(--inset) var(--sp-3);
+}
+
+.incoming-account-more > .btn.ghost {
+  margin-inline-start: calc(-1 * var(--sp-2));
+}
+
+.incoming-txns {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .incoming-txn {
@@ -8063,34 +8067,55 @@ button.review-keys-toggle {
   color: var(--text-2);
 }
 
-/* What qualifies a figure, under it (components/TotalCaveats.tsx's stack,
-   or one Notice), as far from it as a note under it was. */
-.incoming-kind > :is(.notice, .stack.tight),
-.incoming-kind-lines > .stack.tight {
-  margin-top: var(--sp-2);
+/* A kind's figure, on the line under its name: what it is as of, or the
+   month chosen, on the left; the figure on the right. */
+.incoming-figure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
 }
 
-.incoming-kind .peer-row {
-  padding: 6px 0;
+.incoming-figure > :first-child {
+  min-width: 0;
 }
 
-.incoming-kind .peer-row + .peer-row {
-  border-top: none;
+.incoming-figure > .field {
+  margin-bottom: 0;
 }
 
-.incoming-kind .peer-row select {
-  max-width: 70%;
+.incoming-figure-name,
+.incoming-figure-value {
+  font-weight: var(--fw-semibold);
 }
 
-.incoming-line + .incoming-line {
-  margin-top: 6px;
+.incoming-figure-value {
+  white-space: nowrap;
 }
 
-/* A category under its group, or a goal's lesser line. */
-.incoming-sub {
-  padding-left: 12px;
-  font-size: var(--fs-2);
-  color: var(--text-2);
+/* A kind's rows run to the card's edges, as the card's own rows do. */
+.incoming-kind > .list-rows,
+.incoming-kind > .stack > .list-rows {
+  margin-inline: calc(-1 * var(--inset));
+}
+
+/* A category under its group, set in, as Budgets sets its categories in
+   (.budget-sub-rows). */
+.incoming-sub-rows {
+  border-top: 1px solid var(--border-subtle);
+}
+
+.incoming-sub-rows .list-row {
+  padding-left: calc(var(--inset) + var(--sp-4));
+}
+
+.incoming-sub-rows .list-row-title {
+  font-weight: var(--fw-regular);
+}
+
+/* The card's last line: until when, and who sees each showing. */
+.incoming-note {
+  margin-top: var(--sp-3);
 }
 
 .incoming-meter {

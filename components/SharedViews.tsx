@@ -24,7 +24,7 @@
 //
 // Class names avoid "share" (see components/Sharing.tsx).
 
-import { useState } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { formatDay, formatMoney, onDay } from '@/lib/format';
 import { readableName } from '@/lib/merchant-name';
 import { monthLabel } from '@/lib/goal-text';
@@ -32,6 +32,7 @@ import {
   isUnreadable,
   KIND_NAME,
   VIEW_KINDS,
+  type BudgetGroup,
   type BudgetLine,
   type BudgetsView,
   type GoalLine,
@@ -53,11 +54,11 @@ import TotalCaveats, { Notice, type Caveat } from './TotalCaveats';
  *  warn (hatched amber) from near a budget's limit and past it, as the
  *  Budgets tab's own meters are since rollout 6a2, never red; done for a
  *  goal reached. A meter named for its line (`label`), its share in
- *  percent. */
+ *  percent. Spans, as it sits in a row's text. */
 function Bar({ pct, state = '', label }: { pct: number | null; state?: '' | ' warn' | ' done'; label: string }) {
   const width = pct === null ? 0 : Math.max(0, Math.min(pct, 100));
   return (
-    <div
+    <span
       className={`meter-track incoming-meter${state === ' done' ? '' : state}`}
       role="meter"
       aria-label={label}
@@ -65,7 +66,35 @@ function Bar({ pct, state = '', label }: { pct: number | null; state?: '' | ' wa
       aria-valuemax={100}
       aria-valuenow={pct === null ? undefined : Math.round(width)}
     >
-      <div className={`meter-fill${state}`} style={{ width: `${width}%` }} />
+      <span className={`meter-fill${state}`} style={{ width: `${width}%` }} />
+    </span>
+  );
+}
+
+/** One line of a kind, a row in its list (`.list-row`, read-only): its name,
+ *  what is under it (a meter, a meta line), and its figure. */
+function Line({ title, value, children, sub }: { title: ReactNode; value: ReactNode; children?: ReactNode; sub?: ReactNode }) {
+  return (
+    <li>
+      <div className="list-row">
+        <span className="list-row-text">
+          <span className="list-row-title">{title}</span>
+          {children}
+          {sub && <span className="list-row-sub">{sub}</span>}
+        </span>
+        <span className="list-row-value money">{value}</span>
+      </div>
+    </li>
+  );
+}
+
+/** A kind's figure, on the line under its name: what it is as of (or the
+ *  month it is for) on the left, the figure on the right. */
+function Figure({ lead, value }: { lead: ReactNode; value: ReactNode }) {
+  return (
+    <div className="incoming-figure">
+      {lead}
+      {value !== null && <span className="incoming-figure-value money">{value}</span>}
     </div>
   );
 }
@@ -79,9 +108,10 @@ const unreadableText: Record<ViewKind, string> = {
 };
 
 /**
- * Each kind shared, in the order kinds are listed everywhere. `whose` is
- * whose they are, as the card says it: "Sam’s", or "Your" in the sharer's
- * own preview.
+ * Each kind shared, in the order kinds are listed everywhere, each under its
+ * name as a heading (the card's own is an <h2>; the parts inside a kind are
+ * <h4>s). `whose` is whose they are, as the card says it: "Sam’s", or
+ * "Your" in the sharer's own preview.
  */
 export function SharedViewsList({ views, whose }: { views: SharedViews; whose: string }) {
   return (
@@ -90,8 +120,8 @@ export function SharedViewsList({ views, whose }: { views: SharedViews; whose: s
         const v = views[kind];
         if (!v) return null;
         return (
-          <section key={kind} className="incoming-kind" aria-label={KIND_NAME[kind]}>
-            <p className="incoming-kind-name">{KIND_NAME[kind]}</p>
+          <div key={kind} className="incoming-kind stack tight">
+            <h3 className="incoming-kind-name">{KIND_NAME[kind]}</h3>
             {isUnreadable(v) ? (
               <Notice level="caution">{`${whose} ${unreadableText[kind]} couldn’t be read just now, so none of it is shown.`}</Notice>
             ) : kind === 'net_worth' ? (
@@ -105,7 +135,7 @@ export function SharedViewsList({ views, whose }: { views: SharedViews; whose: s
             ) : (
               <GoalsKind v={v as GoalsView} />
             )}
-          </section>
+          </div>
         );
       })}
     </>
@@ -158,40 +188,30 @@ function NetWorthKind({ v }: { v: NetWorthView }) {
   const history = v.history ?? [];
   return (
     <>
-      <div className="peer-row">
-        <span className="incoming-account-date">{v.as_of ? `As of ${shortDate(v.as_of)}${v.from && v.from !== v.as_of ? `, balances from ${shortDate(v.from)} on` : ''}` : ''}</span>
-        <span className="incoming-account-value">{v.total === null ? 'No balance yet' : <Masked>{formatMoney(v.total, v.currency)}</Masked>}</span>
-      </div>
+      <Figure
+        lead={<span className="helper">{v.as_of ? `As of ${shortDate(v.as_of)}${v.from && v.from !== v.as_of ? `, balances from ${shortDate(v.from)} on` : ''}` : ''}</span>}
+        value={v.total === null ? 'No balance yet' : <Masked>{formatMoney(v.total, v.currency)}</Masked>}
+      />
       <TotalCaveats items={netWorthCaveats(v)} />
       {v.detail === 'history' &&
         (history.length >= 2 ? (
           <>
             <NetWorthChart points={history} label="Net worth" currency={v.currency} rangeSet="balance" />
-            <p className="panel-note">
+            <p className="helper">
               One point a week. Dashed stretches are estimates, worked out from transactions rather than recorded.
               {v.history_mixed ? ' It adds accounts in other currencies as they are, unconverted, as their own chart does.' : ''}
             </p>
           </>
         ) : (
-          <p className="panel-note">{history.length === 1 ? `Its history begins ${shortDate(history[0].date)}; a point is added each week.` : 'No history recorded yet.'}</p>
+          <p className="helper">{history.length === 1 ? `Its history begins ${shortDate(history[0].date)}; a point is added each week.` : 'No history recorded yet.'}</p>
         ))}
-      {v.accounts && (
-        <p className="panel-note">Only the accounts whose balances are shared are listed.</p>
-      )}
+      {v.accounts && <p className="helper">Only the accounts whose balances are shared are listed.</p>}
       {v.accounts && v.accounts.length > 0 && (
-        <div className="incoming-kind-lines">
+        <ul className="list-rows">
           {v.accounts.map((a, i) => (
-            <div key={`${a.label}-${i}`} className="peer-row">
-              <span>
-                <span className="incoming-account-name">{a.label}</span>
-                {a.as_of && <span className="incoming-account-date"> · {shortDate(a.as_of)}</span>}
-              </span>
-              <span className="incoming-account-value">
-                <Masked>{`${formatMoney(a.balance, a.currency)}${a.debt ? ' owed' : ''}`}</Masked>
-              </span>
-            </div>
+            <Line key={`${a.label}-${i}`} title={a.label} sub={a.as_of && shortDate(a.as_of, undefined, true)} value={<Masked>{`${formatMoney(a.balance, a.currency)}${a.debt ? ' owed' : ''}`}</Masked>} />
           ))}
-        </div>
+        </ul>
       )}
     </>
   );
@@ -224,8 +244,15 @@ function spendingCaveats(v: SpendingView, m: SpendingView['months'][number] | un
   ];
 }
 
+/** A share of spending, in words: the amount and its share at "amounts",
+ *  else the share alone. */
+function spentText(l: { amount?: number; label: string | null }, currency: string | null, amounts: boolean): ReactNode {
+  return amounts && l.amount !== undefined ? <Masked>{`${formatMoney(l.amount, currency)} · ${l.label ?? ''}`}</Masked> : l.label;
+}
+
 function SpendingKind({ v }: { v: SpendingView }) {
   const [at, setAt] = useState(0);
+  const monthId = useId();
   if (v.months.length === 0) {
     return (
       <>
@@ -239,43 +266,47 @@ function SpendingKind({ v }: { v: SpendingView }) {
   const name = (month: string, soFar: boolean) => `${monthLabel(month)}${soFar ? ', so far' : ''}`;
   return (
     <>
-      <div className="peer-row">
-        <select value={at} onChange={(e) => setAt(Number(e.target.value))} aria-label="Month">
-          {v.months.map((x, i) => (
-            <option key={x.month} value={i}>
-              {name(x.month, x.so_far)}
-            </option>
-          ))}
-        </select>
-        {amounts && m.total !== undefined && (
-          <span className="incoming-account-value">
-            <Masked>{formatMoney(m.total, v.currency)}</Masked>
-          </span>
-        )}
-      </div>
+      <Figure
+        lead={
+          <div className="field">
+            <label htmlFor={monthId}>Month</label>
+            <select id={monthId} value={at} onChange={(e) => setAt(Number(e.target.value))}>
+              {v.months.map((x, i) => (
+                <option key={x.month} value={i}>
+                  {name(x.month, x.so_far)}
+                </option>
+              ))}
+            </select>
+          </div>
+        }
+        value={amounts && m.total !== undefined ? <Masked>{formatMoney(m.total, v.currency)}</Masked> : null}
+      />
       <TotalCaveats items={spendingCaveats(v, m)} />
       {m.groups.length === 0 ? (
         <p className="empty-note">Nothing spent in {name(m.month, m.so_far)}.</p>
       ) : (
-        <div className="incoming-kind-lines">
+        <ul className="list-rows">
           {m.groups.map((g, i) => (
-            <div key={`${g.name}-${i}`} className="incoming-line">
-              <div className="peer-row">
-                <span className="incoming-account-name">{g.name}</span>
-                <span className="incoming-account-value">{amounts && g.amount !== undefined ? <Masked>{`${formatMoney(g.amount, v.currency)} · ${g.label ?? ''}`}</Masked> : g.label}</span>
+            <li key={`${g.name}-${i}`}>
+              <div className="list-row">
+                <span className="list-row-text">
+                  <span className="list-row-title">{g.name}</span>
+                  <Bar pct={g.pct} label={g.name} />
+                </span>
+                <span className="list-row-value money">{spentText(g, v.currency, amounts)}</span>
               </div>
-              <Bar pct={g.pct} label={g.name} />
-              {g.categories?.map((c, j) => (
-                <div key={`${c.name}-${j}`} className="peer-row incoming-sub">
-                  <span>{c.name}</span>
-                  <span className="incoming-account-value">{amounts && c.amount !== undefined ? <Masked>{`${formatMoney(c.amount, v.currency)} · ${c.label ?? ''}`}</Masked> : c.label}</span>
-                </div>
-              ))}
-            </div>
+              {g.categories && g.categories.length > 0 && (
+                <ul className="list-rows incoming-sub-rows">
+                  {g.categories.map((c, j) => (
+                    <Line key={`${c.name}-${j}`} title={c.name} value={spentText(c, v.currency, amounts)} />
+                  ))}
+                </ul>
+              )}
+            </li>
           ))}
-        </div>
+        </ul>
       )}
-      <p className="panel-note">
+      <p className="helper">
         {amounts ? 'What went out, by their own categories' : 'Each part’s share of what went out, by their own categories'}: never transfers, cash taken out, loan
         payments, or what they left out of their totals, and never the transactions themselves.
       </p>
@@ -287,20 +318,16 @@ function SpendingKind({ v }: { v: SpendingView }) {
 
 function HoldingsTable({ title, lines, currency, amounts }: { title: string; lines: HoldingsLine[]; currency: string | null; amounts: boolean }) {
   return (
-    <div className="incoming-kind-lines">
-      <p className="incoming-kind-sub">{title}</p>
-      {lines.map((l) => (
-        <div key={l.slot} className="incoming-line">
-          <div className="peer-row">
-            <span className="incoming-account-name">{l.name}</span>
-            <span className="incoming-account-value">
-              {amounts && l.amount !== undefined ? <Masked>{`${formatMoney(l.amount, currency)} · ${l.label ?? ''}`}</Masked> : l.label}
-            </span>
-          </div>
-          <Bar pct={l.pct} label={l.name} />
-        </div>
-      ))}
-    </div>
+    <>
+      <h4 className="incoming-kind-sub">{title}</h4>
+      <ul className="list-rows">
+        {lines.map((l) => (
+          <Line key={l.slot} title={l.name} value={spentText(l, currency, amounts)}>
+            <Bar pct={l.pct} label={l.name} />
+          </Line>
+        ))}
+      </ul>
+    </>
   );
 }
 
@@ -338,35 +365,34 @@ function HoldingsKind({ v }: { v: HoldingsView }) {
   const amounts = v.detail === 'amounts';
   return (
     <>
-      <div className="peer-row">
-        <span className="incoming-account-date">
-          {v.as_of ? `As of ${shortDate(v.as_of)}${v.from && v.from !== v.as_of ? `, positions and balances from ${shortDate(v.from)} on` : ''}` : 'Nothing recorded yet'}
-        </span>
-        {amounts && v.total !== undefined && (
-          <span className="incoming-account-value">
-            <Masked>{formatMoney(v.total, v.currency)}</Masked>
+      <Figure
+        lead={
+          <span className="helper">
+            {v.as_of ? `As of ${shortDate(v.as_of)}${v.from && v.from !== v.as_of ? `, positions and balances from ${shortDate(v.from)} on` : ''}` : 'Nothing recorded yet'}
           </span>
-        )}
-      </div>
+        }
+        value={amounts && v.total !== undefined ? <Masked>{formatMoney(v.total, v.currency)}</Masked> : null}
+      />
       <TotalCaveats items={holdingsCaveats(v)} />
       {v.classes.length > 0 && <HoldingsTable title="By asset class" lines={v.classes} currency={v.currency} amounts={amounts} />}
       {v.buckets.length > 0 && <HoldingsTable title="By tax bucket" lines={v.buckets} currency={v.currency} amounts={amounts} />}
       {v.positions && v.positions.length > 0 && (
-        <div className="incoming-kind-lines">
-          <p className="incoming-kind-sub">Positions</p>
-          {v.positions.map((p, i) => (
-            <div key={`${p.ticker ?? p.name ?? ''}-${i}`} className="peer-row">
-              <span>
-                <span className="incoming-account-name">{p.ticker ?? (p.name ? readableName(p.name) : 'A holding')}</span>
-                <span className="incoming-account-date"> · {p.ticker && p.name ? `${readableName(p.name)}, ` : ''}{p.class}</span>
-              </span>
-              <span className="incoming-account-value">{amounts && p.amount !== undefined ? <Masked>{formatMoney(p.amount, v.currency)}</Masked> : p.label}</span>
-            </div>
-          ))}
-        </div>
+        <>
+          <h4 className="incoming-kind-sub">Positions</h4>
+          <ul className="list-rows">
+            {v.positions.map((p, i) => (
+              <Line
+                key={`${p.ticker ?? p.name ?? ''}-${i}`}
+                title={p.ticker ?? (p.name ? readableName(p.name) : 'A holding')}
+                sub={`${p.ticker && p.name ? `${readableName(p.name)}, ` : ''}${p.class}`}
+                value={amounts && p.amount !== undefined ? <Masked>{formatMoney(p.amount, v.currency)}</Masked> : p.label}
+              />
+            ))}
+          </ul>
+        </>
       )}
       {v.notes.filter(holdingsInfo).map((n) => (
-        <p key={n} className="panel-note">
+        <p key={n} className="helper">
           {n}
         </p>
       ))}
@@ -393,28 +419,48 @@ function budgetText(b: BudgetLine, currency: string | null): string {
  *  red, and its Over badge says it in a word. */
 const meterOf = (b: BudgetLine): '' | ' warn' => (b.over || (b.pct !== null && b.pct >= 85) ? ' warn' : '');
 
-function BudgetRow({ b, currency, sub = false }: { b: BudgetLine; currency: string | null; sub?: boolean }) {
+/** A budget's name with Over in a word beside it, as the Budgets tab says
+ *  it: not by the meter's color alone, and never masked, as it says no
+ *  amount. */
+function budgetName(b: BudgetLine): ReactNode {
   return (
-    <div className={`incoming-line${sub ? ' incoming-sub' : ''}`}>
-      <div className="peer-row">
-        <span className={sub ? undefined : 'incoming-account-name'}>
-          {b.name}
-          {/* Over in a word beside its name, as the Budgets tab says it: not
-              by the meter's color alone, and never masked, as it says no
-              amount. */}
-          {b.over && (
-            <>
-              {' '}
-              <span className="badge warn">Over</span>
-            </>
-          )}
+    <>
+      {b.name}
+      {b.over && (
+        <>
+          {' '}
+          <span className="badge warn">Over</span>
+        </>
+      )}
+    </>
+  );
+}
+
+const budgetBar = (b: BudgetLine) => <Bar pct={b.pct ?? (b.over ? 100 : 0)} state={meterOf(b)} label={b.name} />;
+
+/** A budget, a row in its month's list, and its categories, set in under it. */
+function BudgetRow({ b, currency }: { b: BudgetGroup; currency: string | null }) {
+  return (
+    <li>
+      <div className="list-row">
+        <span className="list-row-text">
+          <span className="list-row-title">{budgetName(b)}</span>
+          {budgetBar(b)}
         </span>
-        <span className="incoming-account-value">
+        <span className="list-row-value money">
           <Masked>{budgetText(b, currency)}</Masked>
         </span>
       </div>
-      <Bar pct={b.pct ?? (b.over ? 100 : 0)} state={meterOf(b)} label={b.name} />
-    </div>
+      {b.categories && b.categories.length > 0 && (
+        <ul className="list-rows incoming-sub-rows">
+          {b.categories.map((c, j) => (
+            <Line key={`${c.name}-${j}`} title={budgetName(c)} value={<Masked>{budgetText(c, currency)}</Masked>}>
+              {budgetBar(c)}
+            </Line>
+          ))}
+        </ul>
+      )}
+    </li>
   );
 }
 
@@ -444,8 +490,8 @@ function BudgetsKind({ v }: { v: BudgetsView }) {
           that couldn't be read, and that spending is converted. */}
       <TotalCaveats items={[...filingCaveat(v.filing_unread), ...convertedCaveat(v.currency, v.converted, 'Spending in other currencies counts converted into')]} />
       {v.months.map((m, i) => (
-        <div key={m.month} className="incoming-kind-lines">
-          <p className="incoming-kind-sub">{`${i === 0 ? 'This month' : 'Last month'}, ${monthLabel(m.month)}`}</p>
+        <div key={m.month} className="stack tight">
+          <h4 className="incoming-kind-sub">{`${i === 0 ? 'This month' : 'Last month'}, ${monthLabel(m.month)}`}</h4>
           {m.groups.length === 0 ? (
             <>
               <p className="empty-note">No budgets.</p>
@@ -453,21 +499,22 @@ function BudgetsKind({ v }: { v: BudgetsView }) {
             </>
           ) : (
             <>
-              <BudgetRow b={m.total} currency={v.currency} />
+              {/* The month's total as its figure, its meter under it. */}
+              <div>
+                <Figure lead={<span className="incoming-figure-name">{budgetName(m.total)}</span>} value={<Masked>{budgetText(m.total, v.currency)}</Masked>} />
+                {budgetBar(m.total)}
+              </div>
               <TotalCaveats items={budgetMonthCaveats(m)} />
-              {m.groups.map((g, i) => (
-                <div key={`${g.name}-${i}`}>
-                  <BudgetRow b={g} currency={v.currency} />
-                  {g.categories?.map((c, j) => (
-                    <BudgetRow key={`${c.name}-${j}`} b={c} currency={v.currency} sub />
-                  ))}
-                </div>
-              ))}
+              <ul className="list-rows">
+                {m.groups.map((g, j) => (
+                  <BudgetRow key={`${g.name}-${j}`} b={g} currency={v.currency} />
+                ))}
+              </ul>
             </>
           )}
         </div>
       ))}
-      <p className="panel-note">Spent against what is available, with what rolled over, by their own budgets.</p>
+      <p className="helper">Spent against what is available, with what rolled over, by their own budgets.</p>
     </>
   );
 }
@@ -520,28 +567,24 @@ function goalState(g: GoalLine): string | null {
 function GoalsKind({ v }: { v: GoalsView }) {
   if (v.goals.length === 0) return <p className="empty-note">No goals to show.</p>;
   return (
-    <div className="incoming-kind-lines">
+    <ul className="list-rows">
       {v.goals.map((g, i) => {
         const why = goalState(g);
         const outlook = outlookWords(g);
         const amounts = g.saved !== undefined && g.target !== undefined;
         return (
-          <div key={`${g.name}-${i}`} className="incoming-line">
-            <div className="peer-row">
-              <span className="incoming-account-name">{g.name}</span>
-              <span className="incoming-account-value">
-                {amounts ? <Masked>{`${formatMoney(g.saved!, g.currency)} of ${formatMoney(g.target!, g.currency)}`}</Masked> : g.target !== undefined ? <Masked>{`Target ${formatMoney(g.target, g.currency)}`}</Masked> : g.label}
-              </span>
-            </div>
+          <Line
+            key={`${g.name}-${i}`}
+            title={g.name}
+            value={amounts ? <Masked>{`${formatMoney(g.saved!, g.currency)} of ${formatMoney(g.target!, g.currency)}`}</Masked> : g.target !== undefined ? <Masked>{`Target ${formatMoney(g.target, g.currency)}`}</Masked> : g.label}
+            sub={[why, outlook, g.label !== null && amounts ? `${g.label} of the way` : null, g.target_date && !outlook ? `Its date: ${formatDay(g.target_date, { sentence: true })}` : null, g.as_of ? `as of ${shortDate(g.as_of)}` : null]
+              .filter(Boolean)
+              .join(' · ')}
+          >
             {g.pct !== null && <Bar pct={g.pct} state={g.pct >= 100 ? ' done' : ''} label={g.name} />}
-            <div className="incoming-account-date">
-              {[why, outlook, g.label !== null && amounts ? `${g.label} of the way` : null, g.target_date && !outlook ? `Its date: ${formatDay(g.target_date, { sentence: true })}` : null, g.as_of ? `as of ${shortDate(g.as_of)}` : null]
-                .filter(Boolean)
-                .join(' · ')}
-            </div>
-          </div>
+          </Line>
         );
       })}
-    </div>
+    </ul>
   );
 }

@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MASK, setAmountsHidden } from '@/lib/format';
-import { ConnectionView, SharingListView, SharedWithMeView, PreviewView, sharedProblem, readSharedWithMe, rememberShares, rememberedShares, sharedSeenKey, type Choice } from '@/components/Sharing';
+import { ConnectionView, SharingListView, SharedWithMeView, SharedAccountItem, PreviewView, sharedProblem, readSharedWithMe, rememberShares, rememberedShares, sharedSeenKey, type Choice } from '@/components/Sharing';
 import { LOCAL_CACHE_KEY } from '@/components/device-cache';
 import { SharedViewsList, outlookWords } from '@/components/SharedViews';
 import { seenText, kindsText, viewsToSave, sameViews } from '@/components/ShareKinds';
@@ -282,7 +282,8 @@ describe('on the card of the one it is shared with', () => {
     );
     expect(page).toContain('All budgets <1% spent');
     expect(page).toContain('Fun 0% spent');
-    expect(page).toContain('New fund 0%');
+    // A goal's share at the end of its row, after its meta line.
+    expect(page).toMatch(/New fund [^%]*· as of yesterday 0%/);
     expect(page).toContain('US stocks >99%');
     expect(page).toContain('Cash <1%');
     expect(page).toContain('Bonds >-1%');
@@ -446,7 +447,7 @@ describe('each caveat at the level the owner’s own screens give it, under its 
     const views: SharedViews = { budgets: { ...bu, months: [{ ...bu.months[0], may_be_incomplete: false, groups: [over, near] }, bu.months[1]] } };
     for (const html of [card(views), hidden(() => card(views))]) {
       expect(html).not.toMatch(/meter-(track|fill)[^"]* over/);
-      const meter = (name: string) => html.match(new RegExp(`<div class="(meter-track[^"]*)" role="meter" aria-label="${name}"[^>]*><div class="(meter-fill[^"]*)"`))?.slice(1);
+      const meter = (name: string) => html.match(new RegExp(`<span class="(meter-track[^"]*)" role="meter" aria-label="${name}"[^>]*><span class="(meter-fill[^"]*)"`))?.slice(1);
       expect(meter('Fun')).toEqual(['meter-track incoming-meter warn', 'meter-fill warn']);
       expect(meter('Food')).toEqual(['meter-track incoming-meter warn', 'meter-fill warn']);
       expect(meter('All budgets')).toEqual(['meter-track incoming-meter', 'meter-fill']);
@@ -456,6 +457,91 @@ describe('each caveat at the level the owner’s own screens give it, under its 
       expect(html).toContain('<span class="badge warn">Over</span>');
     }
     expect(text(card(views))).toContain('Fun Over $350.00 of $300.00');
+  });
+});
+
+// The review of 2026-11-18: the card was on legacy classes. It is now on
+// the primitives (docs/design/guidelines.md "Which class to use").
+describe('the card on the primitives', () => {
+  const account = {
+    id: 'a',
+    label: 'Joint ••1111',
+    level: 'transactions' as const,
+    balance: 500,
+    currency: 'USD',
+    as_of: '2026-10-19',
+    debt: false,
+    transactions: [{ date: '2026-10-18', name: 'Blue Bottle', amount: 12, pending: true, currency: 'USD' }],
+  };
+  const full = (accounts: any[] = [account]) =>
+    renderToStaticMarkup(<SharedWithMeView data={{ shared: [{ connection: 'c1', label: 'Sam', accounts, expires_at: null, views: VIEWS }] }} />);
+
+  test('its title row is a card header with an h2, Read-only a badge, and nothing is left on the classes it replaces', () => {
+    const html = full();
+    expect(html).toContain('<div class="card-header"><span class="avatar small">S</span><h2>Shared by Sam</h2><span class="badge">Read-only</span></div>');
+    for (const legacy of ['incoming-head', 'peer-row', 'link-btn', 'panel-note', 'stale-note', 'class="pill"', 'incoming-account-value', '<section aria-label', '<h3>Shared by']) {
+      expect(html).not.toContain(legacy);
+    }
+    // The cards and the note above them stacked, the note after the cards a helper.
+    expect(html).toContain('<div id="shared-with-me" class="stack">');
+    expect(html).toContain('<p class="helper incoming-note">Sam sees each time this is shown to you, and so do you, in Sharing.</p>');
+  });
+
+  test('accounts and each kind’s lines are rows in lists, their figures lined up as money', () => {
+    const html = full();
+    expect(html).toContain(
+      '<ul class="list-rows"><li><div class="list-row"><span class="list-row-text"><span class="list-row-title">Joint ••1111</span><span class="list-row-sub">Yesterday</span></span><span class="list-row-value money">$500.00</span></div>'
+    );
+    // A spending group's categories set in under it, in a list of their own.
+    const housing = html.indexOf('<span class="list-row-title">Housing</span>');
+    const sub = html.indexOf('<ul class="list-rows incoming-sub-rows"><li><div class="list-row"><span class="list-row-text"><span class="list-row-title">Rent</span>');
+    expect(housing).toBeGreaterThan(0);
+    expect(sub).toBeGreaterThan(housing);
+    expect(html.slice(housing, sub)).not.toContain('</li>');
+    // Every figure on a row is money, so the digits line up.
+    expect([...html.matchAll(/<span class="list-row-value( money)?">/g)].every((m) => m[1] === ' money')).toBe(true);
+    // A kind's own figure too.
+    expect(html).toContain('<span class="incoming-figure-value money">$321,480.00</span>');
+  });
+
+  test('each kind is under a heading, below the card’s, and the parts inside it under lesser ones; no kind is a region of its own', () => {
+    const html = full();
+    for (const k of ['Net worth', 'Spending', 'Holdings', 'Budgets', 'Goals']) expect(html).toContain(`<h3 class="incoming-kind-name">${k}</h3>`);
+    for (const p of ['By asset class', 'By tax bucket', 'Positions', 'This month, October 2026', 'Last month, September 2026']) {
+      expect(html).toContain(`<h4 class="incoming-kind-sub">${p}</h4>`);
+    }
+    // The card holds no region: only the part's own section, around it.
+    const cardOnly = html.slice(html.indexOf('<div class="card">'));
+    expect(cardOnly).not.toContain('<section');
+  });
+
+  test('spending’s month is a field with a label one can see', () => {
+    const m = full().match(new RegExp('<div class="field"><label for="([^"]+)">Month</label><select id="([^"]+)"'));
+    expect(m?.[1]).toBeTruthy();
+    expect(m![1]).toBe(m![2]);
+  });
+
+  test('Recent transactions is a ghost button (.btn, 44px tall) that says whether it is open and names the list it opens', () => {
+    const closed = renderToStaticMarkup(<SharedAccountItem a={account} open={false} onToggle={() => {}} />);
+    const b = closed.match(new RegExp('<button type="button" class="btn ghost" aria-expanded="false" aria-controls="([^"]+)">Recent transactions [(]1[)]</button>'));
+    expect(b?.[1]).toBeTruthy();
+    const open = renderToStaticMarkup(<SharedAccountItem a={account} open onToggle={() => {}} />);
+    const o = open.match(new RegExp('<button type="button" class="btn ghost" aria-expanded="true" aria-controls="([^"]+)">Hide transactions</button>'));
+    expect(open).toContain(`<ul id="${o![1]}" class="incoming-txns">`);
+    // Pending a badge on its line, the amount money.
+    expect(open).toContain('Blue Bottle <span class="badge">Pending</span>');
+    expect(text(open)).not.toContain('(pending)');
+    expect(open).toContain('<span class="money">−$12.00</span>');
+  });
+
+  test('transactions that can’t be read say so as a caution; none in the window, as helper text', () => {
+    const unreadable = renderToStaticMarkup(<SharedAccountItem a={{ ...account, transactions: undefined, transactions_unreadable: true }} open={false} onToggle={() => {}} />);
+    expect(levelOf(unreadable, "Its transactions can't be read, so they aren't shown.")).toBe('caution');
+    const none = renderToStaticMarkup(<SharedAccountItem a={{ ...account, transactions: [] }} open={false} onToggle={() => {}} />);
+    expect(none).toContain('<p class="helper">No transactions in the last');
+    expect(notices(none)).toEqual([]);
+    // A balance-only account has nothing under its row.
+    expect(renderToStaticMarkup(<SharedAccountItem a={{ ...account, level: 'balance', transactions: undefined }} open={false} onToggle={() => {}} />)).not.toContain('incoming-account-more');
   });
 });
 
@@ -672,6 +758,11 @@ describe('a read of what is shared turned away or failing', () => {
     const problem = sharedProblem(429, { error: 'What is shared can be read 60 times in 10 minutes. Try again in 7 minutes.' }, '420');
     const page = text(renderToStaticMarkup(<SharedWithMeView data={shown} problem={problem} />));
     expect(page).toContain('This is what was last shown: it couldn’t be refreshed. What is shared can be read 60 times in 10 minutes. Try again in 7 minutes.');
+    // A caution, as what is shown is real but may be dated, and announced, as
+    // it comes after a read, a refresh among them.
+    const html = renderToStaticMarkup(<SharedWithMeView data={shown} problem={problem} />);
+    expect(levelOf(html, 'This is what was last shown: it couldn’t be refreshed.')).toBe('caution');
+    expect(html).toContain('<div class="notice caution" role="status">');
     expect(page).toContain('Shared by Sam');
     expect(page).toContain('Rainy day');
     // And with nothing wrong, nothing is said.
@@ -716,7 +807,10 @@ describe('a read of what is shared turned away or failing', () => {
     // A later page on this device, turned away before anything loaded.
     const turned = await readSharedWithMe('user_a', answer(429, null, { 'Retry-After': '120' }), storage);
     expect(turned).toEqual({ data: null, problem: 'Try again in 2 minutes.', hadShares: true });
-    expect(text(cards(turned))).toBe(' What is shared with you couldn’t be shown just now. Try again in 2 minutes. ');
+    // Critical, as none of it could be shown, and said at once: never the
+    // caution of what was last shown.
+    expect(notices(cards(turned))).toEqual([{ level: 'critical', words: 'Critical: What is shared with you couldn’t be shown just now. Try again in 2 minutes.' }]);
+    expect(cards(turned)).toContain('role="alert"');
     // Someone else on the same device never hears of the first one's shares.
     expect(cards(await readSharedWithMe('user_b', offline, storage))).toBe('');
     // Once a good read has nothing, it is forgotten.
