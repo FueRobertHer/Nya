@@ -251,15 +251,18 @@ function MoneyInOutForm({ open, target, onClose, onDone }: { open: boolean; targ
         )}
         {totals && (
           <div className="stack tight">
-            <button
-              type="button"
-              className="btn ghost"
-              onClick={() => void finish({ account_id: target.account_id, clear: true }, 'clear')}
-              disabled={busy}
-              aria-describedby={error?.from === 'clear' ? `${id}-clear-error` : undefined}
-            >
-              Clear deposits and withdrawals
-            </button>
+            {/* Its own row, so the button sizes itself rather than the stack's width. */}
+            <div>
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => void finish({ account_id: target.account_id, clear: true }, 'clear')}
+                disabled={busy}
+                aria-describedby={error?.from === 'clear' ? `${id}-clear-error` : undefined}
+              >
+                Clear deposits and withdrawals
+              </button>
+            </div>
             {error?.from === 'clear' && (
               <div id={`${id}-clear-error`}>
                 <Notice level="critical" role="alert">
