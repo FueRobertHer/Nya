@@ -322,7 +322,7 @@ describe('the screens, for a keyboard and a screen reader', () => {
 
   test('the tag editor’s suggestions are a named group', () => {
     const html = renderToStaticMarkup(
-      <TxnTagsNote t={{ transaction_id: 'x', name: 'Taxi', pending: false, tags: [], note: null } as any} tags={TAGS} onChangeTags={() => {}} onSaveNote={() => {}} />
+      <TxnTagsNote t={{ transaction_id: 'x', name: 'Taxi', pending: false, tags: [], note: null } as any} tags={TAGS} onChangeTags={async () => true} onSaveNote={async () => true} />
     );
     expect(html).toContain('class="chip-row tag-suggestions" role="group" aria-label="Your tags"');
   });

@@ -279,11 +279,14 @@ export type TransactionSheetProps = {
 
 export default function TransactionSheet(props: TransactionSheetProps) {
   const { open, rows, onClose, errors } = props;
+  // What went wrong, at the top, announced; a field whose change it refused
+  // points at it (TxnTagsNote).
+  const saidId = useId();
   if (!rows) return null;
   const said = errors.length > 0 && (
-    <>
+    <div className="stack" id={saidId}>
       {errors.map((e) => (
-        <div className="notice critical" key={e}>
+        <div className="notice critical" role="alert" key={e}>
           {ALERT}
           <p>
             <LevelWord level="critical" />
@@ -291,14 +294,14 @@ export default function TransactionSheet(props: TransactionSheetProps) {
           </p>
         </div>
       ))}
-    </>
+    </div>
   );
   if (rows.kind === 'part') return <PartSheet {...props} parent={rows.parent} part={rows.part} said={said} />;
   if (rows.kind === 'member') return <MemberSheet {...props} group={rows.group} member={rows.member} said={said} />;
   // The rules' sentences hold amounts: passed by name, so the hide-amounts
   // scan (test/amount-sources.ts) traces them to the dashboard, which a
   // spread hides from it.
-  return <TxnSheet {...props} t={rows.t} said={said} open={open} onClose={onClose} ruleSentenceOf={props.ruleSentenceOf} />;
+  return <TxnSheet {...props} t={rows.t} said={said} saidId={said ? saidId : undefined} open={open} onClose={onClose} ruleSentenceOf={props.ruleSentenceOf} />;
 }
 
 type Inner = TransactionSheetProps & { said: ReactNode };
@@ -329,7 +332,8 @@ function TxnSheet({
   onGroup,
   onSplitError,
   onAttachmentsChanged,
-}: Inner & { t: Txn }) {
+  saidId,
+}: Inner & { t: Txn; saidId?: string }) {
   // The category just chosen, while the offer to make a rule of it stands.
   const [offer, setOffer] = useState<string | null>(null);
   // What the done line says: the last change saved (Looks right, Exclude or
@@ -714,20 +718,27 @@ function TxnSheet({
 
         {onChangeTags && onSaveNote && !t.group_members && (
           <TxnTagsNote
-            key={`${t.transaction_id}:${t.note ?? ''}`}
+            key={t.transaction_id}
             t={t}
             tags={tags}
+            refusedBy={saidId}
             onChangeTags={(change) => {
               const n = begin();
               const id = t.transaction_id;
               // On, or off, while the row still has it so.
               const holds = (x: Txn) => (change.add ?? []).every((g) => x.tags?.includes(g)) && !(change.remove ?? []).some((g) => x.tags?.includes(g));
-              void Promise.resolve(onChangeTags(t, change)).then((saved) => sayOnce(n, saved === true, id, tagsSaid(change, tags), holds, true));
+              return Promise.resolve(onChangeTags(t, change)).then((saved) => {
+                sayOnce(n, saved === true, id, tagsSaid(change, tags), holds, true);
+                return saved === true;
+              });
             }}
             onSaveNote={(note) => {
               const n = begin();
               const id = t.transaction_id;
-              void Promise.resolve(onSaveNote(t, note)).then((saved) => sayOnce(n, saved === true, id, note ? 'Note saved.' : 'Note cleared.', (x) => (x.note ?? '') === note, true));
+              return Promise.resolve(onSaveNote(t, note)).then((saved) => {
+                sayOnce(n, saved === true, id, note ? 'Note saved.' : 'Note cleared.', (x) => (x.note ?? '') === note, true);
+                return saved === true;
+              });
             }}
           />
         )}
