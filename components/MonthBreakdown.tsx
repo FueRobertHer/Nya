@@ -38,7 +38,7 @@ import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNE
 import { importedRowsNote } from "@/lib/history-import/view";
 import { displayName, filedId, indexTaxonomy, type CategoryKind, type Taxonomy } from "@/lib/categories";
 import CategoryRollup from "./CategoryRollup";
-import type { CategoryChoice } from "./transaction-edits";
+import type { CategoryChoice, ExclusionSaved } from "./transaction-edits";
 import type { Tag } from "@/lib/tags";
 import TagChips from "./TagChips";
 import TagFilter from "./TagFilter";
@@ -314,6 +314,7 @@ export default function MonthBreakdown({
   onImport,
   onEditTransaction,
   onToggleExcluded,
+  onUndoExcluded,
   actionError = null,
   incomplete = NO_GAPS,
   stopped = NO_STOPPED,
@@ -364,6 +365,8 @@ export default function MonthBreakdown({
   onEditTransaction?: (t: Txn) => void;
   /** Leaves a transaction out of budgets and reports, or puts it back. */
   onToggleExcluded?: (t: Txn, excluded: boolean) => unknown;
+  /** Undoes an exclusion or an include exactly, as it stood before. */
+  onUndoExcluded?: (saved: ExclusionSaved) => Promise<string | null>;
   /** Why the last change to a transaction didn't save. */
   actionError?: string | null;
   /** Connections that bring in no transactions (lib/no-transactions.ts): an
@@ -1383,6 +1386,7 @@ export default function MonthBreakdown({
         onRename={onRename}
         onEditTransaction={onEditTransaction}
         onToggleExcluded={onToggleExcluded}
+        onUndoExcluded={onUndoExcluded}
         onChangeTags={onChangeTags}
         onSaveNote={onSaveNote}
         onCreateRule={onCreateRule}

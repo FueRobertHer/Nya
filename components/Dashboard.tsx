@@ -2636,6 +2636,7 @@ export default function Dashboard({
                   onImport={() => setImportTarget({ account_id: null })}
                   onEditTransaction={txnEdits.openEdit}
                   onToggleExcluded={txnEdits.toggleExcluded}
+                  onUndoExcluded={txnEdits.undoExcluded}
                   tags={tagList.tags}
                   onChangeTags={txnEdits.changeTags}
                   onSaveNote={txnEdits.saveNote}

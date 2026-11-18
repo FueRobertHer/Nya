@@ -31,6 +31,12 @@
 // cleared on a bank row is kept as an empty note, so a note carried across a
 // re-link doesn't come back.
 //
+// AN UNDO PUTS BACK THE RECORD, not the opposite tap. The Undo after Exclude
+// or Include (undoExclusion) writes back the record as it was before the tap,
+// or removes it when there was none, so a rule's hide that applied before
+// applies again; writing the opposite would record an include that beats the
+// rule from then on.
+//
 // NOTES. A bank row's note is kept here, and so is one on a row that stays as
 // its source gave it: one SimpleFIN brought, or one imported into a linked
 // account (whose file's memo shows until the person writes one, and an empty
@@ -242,6 +248,55 @@ export async function restoreAnnotation(ctx: Ctx, transaction_id: string, value:
   await txnAnnotationStore.update(ctx, transaction_id, (current) => {
     expect(current);
     return value;
+  });
+}
+
+/** What an exclusion or an include wrote over, which the screen keeps for its
+ *  Undo (app/api/transaction-annotations, PUT): the record before it (null:
+ *  nothing was said about the transaction) and the record it saved. */
+export type ExclusionUndo = { before: TxnAnnotation | null; after: TxnAnnotation };
+
+/** An Undo refused because the record changed since the change it undoes. */
+export class ExclusionChangedError extends Error {
+  constructor() {
+    super('What’s said about this transaction changed since, on another device or in another tab, so it wasn’t undone. Exclude or include it from its row instead.');
+    this.name = 'ExclusionChangedError';
+  }
+}
+
+/** A value as JSON with every object's keys in order, so two records written
+ *  with their fields in different orders compare as the same. */
+const canonical = (v: unknown): string =>
+  JSON.stringify(v ?? null, (_key, x: unknown) => (isRecord(x) ? Object.fromEntries(Object.entries(x).sort(([p], [q]) => (p < q ? -1 : p > q ? 1 : 0))) : x));
+
+/** Whether two records say the same, field for field (null: nothing said). */
+export function sameAnnotation(a: TxnAnnotation | null, b: TxnAnnotation | null): boolean {
+  return canonical(a) === canonical(b);
+}
+
+/** Whether two records differ in nothing but what an exclusion change
+ *  writes: whether it is excluded, and when it changed. */
+function onlyExclusionDiffers(before: TxnAnnotation | null, after: TxnAnnotation): boolean {
+  const rest = (r: TxnAnnotation | null) => Object.fromEntries(Object.entries(r ?? {}).filter(([k]) => k !== 'excluded' && k !== 'updated_at'));
+  return canonical(rest(before)) === canonical(rest(after));
+}
+
+/**
+ * Undoes an exclusion or an include exactly, for the screen's Undo: the
+ * record goes back to what it was before (`before`; null removes it, as
+ * nothing was said), so a rule's hide or a carried exclusion that applied
+ * before applies again, where writing the opposite (`excluded: false`) would
+ * beat them from then on. One compare-and-set: refused
+ * (ExclusionChangedError) when the record isn't the one the change saved any
+ * more, so a change made since is never written over; a record already put
+ * back (an Undo sent again after its answer was lost) is left as it is.
+ * Refused (AnnotationError) when the two records differ in more than the
+ * exclusion: this puts back an exclusion and nothing else.
+ */
+export async function undoExclusion(ctx: Ctx, transaction_id: string, undo: ExclusionUndo): Promise<void> {
+  if (!onlyExclusionDiffers(undo.before, undo.after)) throw new AnnotationError('That isn’t an exclusion to undo.');
+  await restoreAnnotation(ctx, transaction_id, undo.before, (current) => {
+    if (!sameAnnotation(current, undo.after) && !sameAnnotation(current, undo.before)) throw new ExclusionChangedError();
   });
 }
 

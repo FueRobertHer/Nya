@@ -26,6 +26,16 @@ import type { Tag } from '@/lib/tags';
 import type { TagChange } from './TxnTagsNote';
 import { isVendorKey, MAX_VENDOR_NAME } from '@/lib/vendor-defaults';
 import { localDate } from '@/lib/local-date';
+import type { ExclusionUndo } from '@/lib/txn-annotations';
+
+/** An exclusion or an include saved, for its Undo: what the server wrote over
+ *  (lib/txn-annotations.ts ExclusionUndo), and how the rows it changed showed
+ *  before, put back at once when it is undone. */
+export type ExclusionSaved = {
+  transaction_id: string;
+  undo: ExclusionUndo;
+  shown: ReadonlyMap<string, Pick<Txn, 'excluded' | 'excluded_by_rule' | 'split_parent'>>;
+};
 
 /** A category chosen for a transaction: one of the person's, by id, or, with
  *  no categories loaded, words (as before categories had ids). */
@@ -280,12 +290,20 @@ export function useTransactionEdits({
   );
 
   /** Leaves a transaction out of budgets and reports, or puts it back: shown at
-   *  once, so every total follows (lib/spending.ts). Resolves true once the
-   *  server has it. */
+   *  once, so every total follows (lib/spending.ts). Resolves once the server
+   *  has it: with what its Undo needs (undoExcluded), or true when it changed
+   *  nothing to undo; false when refused. */
   const toggleExcluded = useCallback(
-    async (t: Txn, excluded: boolean): Promise<boolean> => {
+    async (t: Txn, excluded: boolean): Promise<ExclusionSaved | boolean> => {
       setError(null);
       changes.current++;
+      // How the rows it changes show now, for its Undo.
+      const shown = new Map<string, Pick<Txn, 'excluded' | 'excluded_by_rule' | 'split_parent'>>();
+      for (const x of current.current ?? []) {
+        if (x.transaction_id === t.transaction_id || (x.split_of === t.transaction_id && x.split_parent)) {
+          shown.set(x.transaction_id, { excluded: x.excluded, excluded_by_rule: x.excluded_by_rule, split_parent: x.split_parent });
+        }
+      }
       // The person's choice now decides, over a rule's hide either way; on a
       // split transaction, every part (one left out on its own stays out).
       setTxns((prev) =>
@@ -311,7 +329,11 @@ export function useTransactionEdits({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ transaction_id: t.transaction_id, excluded }),
         });
-        if (res.ok) return true;
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          const u = data?.undo;
+          return u && typeof u === 'object' && 'after' in u && 'before' in u ? { transaction_id: t.transaction_id, undo: u as ExclusionUndo, shown } : true;
+        }
       } catch {
         res = null;
       }
@@ -319,6 +341,49 @@ export function useTransactionEdits({
       return false;
     },
     [setTxns, undo]
+  );
+
+  /** Undoes an exclusion or an include exactly (app/api/transaction-annotations,
+   *  PUT). Once the server has it, its rows show as they did before, and the
+   *  list is read again, where a rule's hide applies once more; it resolves
+   *  null then. Refused, it resolves what went wrong, for the sheet to say
+   *  beside its Undo, and the list is read again as the server has it. */
+  const undoExcluded = useCallback(
+    async (saved: ExclusionSaved): Promise<string | null> => {
+      setError(null);
+      changes.current++;
+      let res: Response | null = null;
+      try {
+        res = await fetch('/api/transaction-annotations', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transaction_id: saved.transaction_id, undo: saved.undo }),
+        });
+        if (res.ok) {
+          changes.current++;
+          setTxns((prev) =>
+            prev
+              ? prev.map((x) => {
+                  const was = saved.shown.get(x.transaction_id);
+                  if (!was) return x;
+                  const row: Txn = { ...x, ...was };
+                  for (const k of ['excluded', 'excluded_by_rule', 'split_parent'] as const) if (row[k] === undefined) delete row[k];
+                  return row;
+                })
+              : prev
+          );
+          void refreshQuietly();
+          return null;
+        }
+      } catch {
+        res = null;
+      }
+      const data = res ? await res.json().catch(() => null) : null;
+      loadTransactions();
+      if (!res) return 'Could not reach the server. Check your connection and press Undo again.';
+      return typeof data?.error === 'string' ? data.error : 'Could not undo that. Please try again.';
+    },
+    [setTxns, refreshQuietly, loadTransactions]
   );
 
   /** What a change to a row's record sends: a manual row's account, so the
@@ -451,5 +516,5 @@ export function useTransactionEdits({
     [setTxns, loadTransactions]
   );
 
-  return { sheet, openAdd, openEdit, closeSheet, onSaved, recategorize, toggleExcluded, changeTags, saveNote, rename, error, refresh: refreshQuietly };
+  return { sheet, openAdd, openEdit, closeSheet, onSaved, recategorize, toggleExcluded, undoExcluded, changeTags, saveNote, rename, error, refresh: refreshQuietly };
 }

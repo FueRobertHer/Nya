@@ -32,7 +32,19 @@ export type AnnotationAsk = {
 /** What annotateTransaction answers: the record as it now reads, or why
  *  nothing was changed. */
 export type Annotated =
-  | { ok: true; excluded: boolean; tags: string[]; untagged: string[]; note: string | null; created_tag: Tag | null; record: TxnAnnotation | null; changed: boolean }
+  | {
+      ok: true;
+      excluded: boolean;
+      tags: string[];
+      untagged: string[];
+      note: string | null;
+      created_tag: Tag | null;
+      record: TxnAnnotation | null;
+      /** The record as it was before this change (null: none), for an Undo
+       *  that puts it back exactly (lib/txn-annotations.ts undoExclusion). */
+      before: TxnAnnotation | null;
+      changed: boolean;
+    }
   | { ok: false; status: 404; message: string };
 
 const MOVED = 'That transaction was deleted or moved since this page loaded. Reload to see it.';
@@ -100,9 +112,16 @@ export async function annotateTransaction(
   };
   const changing = Object.keys(change).length > 0;
   let saved: TxnAnnotation | null;
-  if (changing) saved = await changeAnnotation(ctx, transaction_id, { ...change, ...(gone?.size ? { gone } : {}) }, opts.now, opts.expect);
-  else {
+  // What the change wrote over: the record its compare-and-set last read.
+  let before = null as TxnAnnotation | null;
+  if (changing) {
+    saved = await changeAnnotation(ctx, transaction_id, { ...change, ...(gone?.size ? { gone } : {}) }, opts.now, (current) => {
+      before = current;
+      opts.expect?.(current);
+    });
+  } else {
     saved = await txnAnnotationStore.get(ctx, transaction_id);
+    before = saved;
     opts.expect?.(saved);
   }
   // A tag deleted while this was saved: taken back off.
@@ -119,6 +138,7 @@ export async function annotateTransaction(
     note: rowNote !== undefined ? rowNote : (saved?.note ?? null),
     created_tag: created,
     record: saved,
+    before,
     changed: changing || rowNote !== undefined,
   };
 }
