@@ -267,9 +267,10 @@ export type TransactionSheetProps = {
   /** As onRecategorize: a promise of true once saved (empty clears it). */
   onSaveNote?: (t: Txn, note: string) => unknown;
   onCreateRule?: (t: Txn, category_id?: string) => void;
-  /** Splits and groups (#39): the list read again after one changes;
+  /** Splits and groups (#39): the list read again after one changes, a
+   *  promise of it read (without a spinner, so the sheet stays open);
    *  without it, nothing is offered to split or group. */
-  onSplitsChanged?: () => void;
+  onSplitsChanged?: () => void | Promise<void>;
   onSplit: (t: Txn) => void;
   onGroup: (start: Txn | null, group: Txn | null) => void;
   /** What went wrong with a split or group change, or null once one is made. */
@@ -371,18 +372,6 @@ function TxnSheet({
   // Looks right keeps its own.
   const doneRef = useRef<HTMLDivElement>(null);
   const focusDone = useRef<FocusFrom>(false);
-  useEffect(() => {
-    const from = focusDone.current;
-    if (!done || from === false) return;
-    focusDone.current = false;
-    const at = document.activeElement;
-    const gone = !at || at === document.body || !at.isConnected || at.getAttribute('disabled') !== null;
-    if (gone || at === from || at === waitRef.current) {
-      // Said before its row went: the line said in its place doesn't take it.
-      focusWait.current = false;
-      doneRef.current?.focus();
-    }
-  }, [done]);
   // Include on a pending row takes its row away (exclusionOffer: it can't be
   // excluded again until it posts): focus goes to the line said in its place
   // while it saves, then to the done line.
@@ -420,6 +409,20 @@ function TxnSheet({
   const [renameError, setRenameError] = useState<string | null>(null);
   const renameErrorId = useId();
   const categoryRef = useRef<HTMLSelectElement>(null);
+  // A group's category while it saves: the field holds the choice, and a
+  // change made meanwhile isn't taken. Refused, the field is back on the
+  // category it had and points at why, said at the top.
+  const [groupCategory, setGroupCategory] = useState<string | null>(null);
+  const [categoryRefused, setCategoryRefused] = useState(false);
+  const savingId = useId();
+  // Ungroup, while it is out: its row says so, and isn't taken again.
+  const [ungrouping, setUngrouping] = useState(false);
+  const ungroupRef = useRef<HTMLButtonElement>(null);
+  /** Back on what was pressed, if focus has gone with nothing else taking it. */
+  const refocus = (el: HTMLElement | null) => {
+    const at = document.activeElement;
+    if (!at || at === document.body || !at.isConnected || at === el) el?.focus();
+  };
   const act = (go: () => void) => () => {
     onClose();
     go();
@@ -448,6 +451,21 @@ function TxnSheet({
   // The done line, when it is shown: about this row, while the row holds what
   // it says, or while its Undo is out or was refused.
   const shown = done && done.id === t.transaction_id && (undoing || undoRefused !== null || done.holds(t)) ? done : null;
+  // Once it shows (a group's change is said once the list is read again,
+  // which can be after it is said): focus to the line, unless it has moved
+  // on to something else meanwhile.
+  useEffect(() => {
+    const from = focusDone.current;
+    if (!shown || from === false) return;
+    focusDone.current = false;
+    const at = document.activeElement;
+    const gone = !at || at === document.body || !at.isConnected || at.getAttribute('disabled') !== null;
+    if (gone || at === from || at === waitRef.current) {
+      // Said before its row went: the line said in its place doesn't take it.
+      focusWait.current = false;
+      doneRef.current?.focus();
+    }
+  }, [shown]);
 
   if (renaming && t.vendor_key) {
     const vendor = t.vendor_key;
@@ -524,28 +542,48 @@ function TxnSheet({
   // files the group's net; the list shows that once it is read again.
   const category =
     t.split_parts || t.group_outside ? null : taxonomy ? (
-      <label className="field">
-        Category
-        <CategoryPicker
-          ref={categoryRef}
-          taxonomy={taxonomy}
-          value={t.category_id ?? taxonomy.uncategorized}
-          onChange={(id) => {
-            if (!id || id === t.category_id) return;
-            begin();
-            if (t.group_members) {
-              onClose();
-              void sendChange('/api/transaction-groups', 'PATCH', { id: t.group_id, category_id: id }).then((failed) => {
-                onSplitError(failed);
-                onSplitsChanged?.();
-              });
-              return;
-            }
-            onRecategorize(t.transaction_id, { category_id: id });
-            setOffer(id);
-          }}
-        />
-      </label>
+      <div className="stack tight">
+        <label className="field">
+          Category
+          <CategoryPicker
+            ref={categoryRef}
+            taxonomy={taxonomy}
+            value={groupCategory ?? t.category_id ?? taxonomy.uncategorized}
+            describedBy={groupCategory ? savingId : categoryRefused ? saidId : undefined}
+            onChange={(id) => {
+              if (groupCategory || !id || id === t.category_id) return;
+              const n = begin();
+              setCategoryRefused(false);
+              if (t.group_members) {
+                // Shown once the list is read again, so it is said then: the
+                // sheet stays open on the group, focus staying on the field.
+                const row = t.transaction_id;
+                const name = displayName(taxonomy.categories.find((c) => c.id === id)?.name ?? 'uncategorized');
+                setGroupCategory(id);
+                void sendChange('/api/transaction-groups', 'PATCH', { id: t.group_id, category_id: id }).then(async (failed) => {
+                  onSplitError(failed);
+                  await onSplitsChanged?.();
+                  setGroupCategory(null);
+                  if (failed) {
+                    setCategoryRefused(true);
+                    refocus(categoryRef.current);
+                    return;
+                  }
+                  sayOnce(n, true, row, `Category saved: the group counts under ${name}.`, (x) => x.category_id === id);
+                });
+                return;
+              }
+              onRecategorize(t.transaction_id, { category_id: id });
+              setOffer(id);
+            }}
+          />
+        </label>
+        {groupCategory && (
+          <p className="helper" id={savingId} role="status">
+            Saving…
+          </p>
+        )}
+      </div>
     ) : t.group_members ? null : (
       <label className="field">
         Category
@@ -576,13 +614,34 @@ function TxnSheet({
     ? splitActions(t, {
         onSplit: act(() => onSplit(t)),
         onGroup: act(() => (t.group_members ? onGroup(null, t) : onGroup(t, null))),
-        onUngroup: (id) => {
-          onClose();
-          void sendChange('/api/transaction-groups', 'DELETE', { id }).then((failed) => {
+        // Shown once the list is read again: the sheet stays open, and the
+        // done line says what moved, focus on it, as its row goes. None
+        // undoes it (Fue, 2026-11-18): grouping them again is Group with
+        // others, offered in its place. Refused, said at the top, focus
+        // back on its row.
+        onUngroup: (id, name) => {
+          if (ungrouping) return;
+          const n = begin();
+          const row = t.transaction_id;
+          const from = document.activeElement;
+          setUngrouping(true);
+          void sendChange('/api/transaction-groups', 'DELETE', { id }).then(async (failed) => {
             onSplitError(failed);
-            onSplitsChanged();
+            await onSplitsChanged();
+            setUngrouping(false);
+            if (failed) return refocus(ungroupRef.current);
+            sayOnce(
+              n,
+              true,
+              row,
+              `Ungrouped “${name}”: its transactions count on their own again, each on its own day and in its own category.`,
+              (x) => (x.group_unapplied ?? x.group_outside)?.id !== id,
+              from
+            );
           });
         },
+        ungrouping,
+        ungroupRef,
       })
     : null;
   const actions: SheetAction[] = [

@@ -928,9 +928,136 @@ describe('a transaction’s sheet', () => {
     act(() => type(v.field('Category')!, cat('groceries')));
     await settle();
     expect(sent).toEqual([{ url: '/api/transaction-groups', method: 'PATCH', body: { id: 'g1', category_id: cat('groceries') } }]);
-    // A group's category shows once the list is read again: closed, and no rule offered.
-    expect(v.dialog()).toBeNull();
+    // Open on the group, and no rule offered for a group's category.
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Dinner');
+    expect(v.dialog()!.textContent).not.toContain('Make a rule');
     v.unmount();
+  });
+
+  // The follow-up to the sheets review: a group's category and Ungroup
+  // closed the sheet first, and a refusal was said on the list behind. Each
+  // shows once the list is read again, so the sheet stays open and says it
+  // then (docs/design/guidelines.md#after-save).
+  describe('a group’s category and Ungroup, said in the sheet', () => {
+    const doneLine = (v: ReturnType<typeof mount>) => v.dialog()!.findAll((e) => e.getAttribute('class') === 'notice done')[0] ?? null;
+    const alert = (v: ReturnType<typeof mount>) => v.dialog()!.findAll((e) => e.getAttribute('role') === 'alert')[0] ?? null;
+    const REFUSED = 'Could not save that. Please try again.';
+    /** The group's write, held until the test answers it. */
+    const held = () => {
+      let answer: (r: unknown) => void = () => {};
+      splitAnswer = () => new Promise((r) => (answer = r));
+      return (ok: boolean) => answer(ok ? { ok: true, json: async () => ({}) } : { ok: false, status: 409, json: async () => ({ error: REFUSED }) });
+    };
+    afterEach(() => {
+      splitAnswer = null;
+    });
+    /** The list read again with the group filed under another category. */
+    const refiled = (id: string, name: string) =>
+      served().map((t) => (t.group_members ? { ...t, category_id: id, category: name, category_name: name } : t));
+    /** A transaction in a group that no longer applies, before and after Ungroup. */
+    const stale = () => txn('Delta', { amount: 318, group_unapplied: { id: 'g9', name: 'Ski trip' } });
+    const alone = () => txn('Delta', { amount: 318 });
+
+    test('a group’s category: open, the field holding it while it saves, then the line says it, focus staying on the field', async () => {
+      sent.length = 0;
+      const answer = held();
+      let v: ReturnType<typeof mount> | null = null;
+      const props: Props = { onSplitsChanged: async () => v!.render({ ...props, txns: refiled(cat('groceries'), 'groceries') }) };
+      v = mount(props);
+      await v.open('Dinner');
+      const field = v.field('Category')!;
+      field.focus();
+      act(() => type(field, cat('groceries')));
+      await settle();
+      expect(sent).toEqual([{ url: '/api/transaction-groups', method: 'PATCH', body: { id: 'g1', category_id: cat('groceries') } }]);
+      expect(v.dialog()!.getAttribute('aria-label')).toBe('Dinner');
+      expect(v.chosen(v.field('Category'))).toBe(cat('groceries'));
+      const saying = v.dialog()!.findAll((e) => e.getAttribute('id') === field.getAttribute('aria-describedby'))[0]!;
+      expect(saying.textContent).toBe('Saving…');
+      expect(saying.getAttribute('role')).toBe('status');
+      // Another chosen meanwhile isn't taken: one write, the field on the first.
+      act(() => type(field, cat('auto')));
+      await settle();
+      expect(sent).toHaveLength(1);
+      expect(v.chosen(v.field('Category'))).toBe(cat('groceries'));
+      answer(true);
+      await settle(20);
+      expect(doneLine(v)!.textContent).toContain('Category saved: the group counts under Groceries.');
+      expect(v.chosen(v.field('Category'))).toBe(cat('groceries'));
+      expect(field.getAttribute('aria-describedby')).toBeNull();
+      expect(dom.document.activeElement).toBe(field);
+      expect(v.dialog()!.textContent).not.toContain('Make a rule');
+      v.unmount();
+    });
+
+    test('a group’s category refused: said at the top, the field back on what it had, focus on it, pointing at why', async () => {
+      const answer = held();
+      const v = mount({ onSplitsChanged: async () => {} });
+      await v.open('Dinner');
+      const field = v.field('Category')!;
+      field.focus();
+      act(() => type(field, cat('groceries')));
+      await settle();
+      answer(false);
+      await settle(20);
+      expect(v.dialog()!.getAttribute('aria-label')).toBe('Dinner');
+      expect(alert(v)!.textContent).toContain(REFUSED);
+      expect(v.chosen(v.field('Category'))).toBe(cat('restaurants'));
+      expect(dom.document.activeElement).toBe(field);
+      const why = v.dialog()!.findAll((e) => e.getAttribute('id') === field.getAttribute('aria-describedby'))[0]!;
+      expect(why.textContent).toContain(REFUSED);
+      expect(doneLine(v)).toBeNull();
+      v.unmount();
+    });
+
+    test('Ungroup: open, its row saying Ungrouping…, then the line says what moved, focus on it, and no Undo', async () => {
+      sent.length = 0;
+      const answer = held();
+      let v: ReturnType<typeof mount> | null = null;
+      const props: Props = { txns: [...served(), stale()], onSplitsChanged: async () => v!.render({ ...props, txns: [...served(), alone()] }) };
+      v = mount(props);
+      await v.open('Delta');
+      const row = v.button('Ungroup “Ski trip”', v.dialog()!)!;
+      row.focus();
+      act(() => click(row));
+      await settle();
+      expect(sent).toEqual([{ url: '/api/transaction-groups', method: 'DELETE', body: { id: 'g9' } }]);
+      expect(v.dialog()!.getAttribute('aria-label')).toBe('Delta');
+      expect(v.button('Ungrouping…', v.dialog()!)).toBe(row);
+      // Pressed again while it is out: not sent again.
+      act(() => click(row));
+      await settle();
+      expect(sent).toHaveLength(1);
+      answer(true);
+      await settle(20);
+      const line = doneLine(v)!;
+      expect(line.textContent).toContain('Ungrouped “Ski trip”: its transactions count on their own again, each on its own day and in its own category.');
+      expect(dom.document.activeElement).toBe(line);
+      expect(v.button('Undo', v.dialog()!)).toBeNull();
+      // Its row gone, what it can do now offered in its place.
+      expect(v.button('Ungroup “Ski trip”', v.dialog()!)).toBeNull();
+      expect(v.button('Split', v.dialog()!)).not.toBeNull();
+      expect(v.button('Group with others', v.dialog()!)).not.toBeNull();
+      v.unmount();
+    });
+
+    test('Ungroup refused: said at the top, its row still there, focus on it', async () => {
+      const answer = held();
+      const v = mount({ txns: [...served(), stale()], onSplitsChanged: async () => {} });
+      await v.open('Delta');
+      const row = v.button('Ungroup “Ski trip”', v.dialog()!)!;
+      row.focus();
+      act(() => click(row));
+      await settle();
+      answer(false);
+      await settle(20);
+      expect(v.dialog()!.getAttribute('aria-label')).toBe('Delta');
+      expect(alert(v)!.textContent).toContain(REFUSED);
+      expect(v.button('Ungroup “Ski trip”', v.dialog()!)).toBe(row);
+      expect(dom.document.activeElement).toBe(row);
+      expect(doneLine(v)).toBeNull();
+      v.unmount();
+    });
   });
 
   describe('a note and tags, written through the tab’s edits', () => {

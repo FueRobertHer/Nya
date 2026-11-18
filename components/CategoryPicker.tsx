@@ -29,6 +29,7 @@ export default function CategoryPicker({
   className = 'text-input',
   label,
   disabled,
+  describedBy,
   ref,
 }: {
   taxonomy: Taxonomy;
@@ -40,11 +41,13 @@ export default function CategoryPicker({
   /** For a list with no visible label of its own. */
   label?: string;
   disabled?: boolean;
+  /** The id of what it points at: a line under it, or why it was refused. */
+  describedBy?: string;
   /** The select itself, to give focus to. */
   ref?: Ref<HTMLSelectElement>;
 }) {
   return (
-    <select ref={ref} className={className} value={value ?? ''} onChange={(e) => onChange(e.target.value)} aria-label={label} disabled={disabled}>
+    <select ref={ref} className={className} value={value ?? ''} onChange={(e) => onChange(e.target.value)} aria-label={label} aria-describedby={describedBy} disabled={disabled}>
       {none !== undefined && <option value="">{none}</option>}
       {pickerOptions(taxonomy, value).map((g) => (
         <optgroup key={g.group} label={g.group}>
