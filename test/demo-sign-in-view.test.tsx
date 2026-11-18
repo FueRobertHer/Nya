@@ -50,9 +50,9 @@ describe('the demo card', () => {
     );
   });
 
-  test('a demo that couldn’t sign in says so, as an alert', () => {
+  test('a demo that couldn’t sign in says so, as an alert that can take focus (test/demo-sign-in-flow-view.test.tsx)', () => {
     expect(html()).not.toContain('role="alert"');
-    expect(html(true)).toContain('<div class="notice critical" role="alert">');
+    expect(html(true)).toContain('<div class="notice critical" role="alert" tabindex="-1">');
     expect(html(true)).toContain(`<span class="visually-hidden">Critical: </span>${DEMO_UNAVAILABLE}</div></div>`);
   });
 });

@@ -12,9 +12,14 @@ export const DEMO_WAIT_MS = 12_000;
  *  and what may be in its way. */
 export const FORM_WAIT_MS = 15_000;
 
-/** A demo sign-in: on its way or not, and which press it is, so each press
- *  waits DEMO_WAIT_MS of its own. */
-export type DemoState = { pending: boolean; attempt: number };
+/** What the demo card says when the page came back after DEMO_WAIT_MS with
+ *  nothing else said, as the password login does after its own wait. */
+export const DEMO_LATE = 'Nya didn’t open. Try again, or reload the page.';
+
+/** A demo sign-in: on its way or not, which press it is, so each press
+ *  waits DEMO_WAIT_MS of its own, and whether the page is back because that
+ *  wait ran out (late), which the demo card says. */
+export type DemoState = { pending: boolean; attempt: number; late: boolean };
 
 export type DemoEvent =
   | { type: 'press' }
@@ -30,18 +35,19 @@ export type DemoEvent =
  *  refreshes the page as it signs in, and that render, without the ticket,
  *  must not show the sign-in page again. */
 export function demoStart(ticket: boolean): DemoState {
-  return { pending: ticket, attempt: 0 };
+  return { pending: ticket, attempt: 0, late: false };
 }
 
 export function demoStep(s: DemoState, e: DemoEvent): DemoState {
   switch (e.type) {
     case 'press':
-      return { pending: true, attempt: s.attempt + 1 };
+      return { pending: true, attempt: s.attempt + 1, late: false };
     case 'waited':
-      // A wait from an earlier press ends nothing.
-      return e.attempt === s.attempt ? { ...s, pending: false } : s;
+      // A wait from an earlier press, or one that outlived its sign-in, ends nothing.
+      return e.attempt === s.attempt && s.pending ? { ...s, pending: false, late: true } : s;
     case 'failed':
     case 'back':
-      return { ...s, pending: false };
+      // The demo card says why it failed; back from the cache, nothing went wrong.
+      return { ...s, pending: false, late: false };
   }
 }

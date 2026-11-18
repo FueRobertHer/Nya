@@ -5,9 +5,6 @@
   "app/globals.css": {
     "smallFonts": 2
   },
-  "app/not-allowed/page.tsx": {
-    "inlineLayoutStyles": 1
-  },
   "components/AccountLifecycle.tsx": {
     "inlineLayoutStyles": 2
   },

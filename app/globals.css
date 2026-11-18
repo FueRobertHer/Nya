@@ -3745,6 +3745,18 @@ button.danger-outline {
   max-width: calc(100vw - 40px);
 }
 
+/* Not allowed yet (app/not-allowed): its one card, as wide as the sign-in
+   form, its words at the body size. The account's id is one long word,
+   which breaks rather than run past a phone's edge. */
+.not-allowed-card {
+  width: 100%;
+  max-width: 400px;
+  margin: 0;
+  font-size: var(--fs-3);
+  line-height: var(--lh-body);
+  overflow-wrap: anywhere;
+}
+
 /* --- loading placeholders (components/LoadingSkeletons.tsx) --- */
 
 /* Home's hero: each placeholder about as wide as what it stands for, in
@@ -4616,8 +4628,17 @@ button.danger-outline {
 }
 
 .trust-links a {
+  position: relative;
   color: var(--text-2);
   text-decoration: none;
+}
+
+/* Each link a finger's target, 44px each way, through a box over it: the
+   links keep their one quiet line, and the page around them doesn't move. */
+.trust-links a::after {
+  content: "";
+  position: absolute;
+  inset: min(0px, calc((100% - var(--tap)) / 2));
 }
 
 .trust-links a[aria-current="page"] {
