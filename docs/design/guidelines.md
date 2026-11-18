@@ -139,7 +139,7 @@ Nya shows its gaps on purpose ([features.md](../features.md)). A new feature tha
 - A footer's note is one or two short lines. Anything longer stays in the body, so the footer never squeezes it in a sheet at 320px.
 - **Preview, apply, undo.** A change that can be taken back first says what it will move. Once done, a done notice (`Notice` with `done`) says what moved, and an Undo under it puts back exactly what was there before. [After Save](#after-save) says when a sheet owes one.
 - Rare actions on an object go in its ⋯; urgent ones (Reconnect) stay as visible buttons.
-- A number field keeps its value as a string while it is typed (see `ManualDraft` in `Dashboard.tsx`), so a minus sign survives.
+- A number field keeps its value as a string while it is typed (see `ManualDraft` in `ManualAccountSheet.tsx`), so a minus sign survives.
 
 ### After Save
 

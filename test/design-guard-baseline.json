@@ -41,9 +41,6 @@
   "components/Connectors.tsx": {
     "inlineLayoutStyles": 7
   },
-  "components/Dashboard.tsx": {
-    "inlineLayoutStyles": 3
-  },
   "components/DebtPayoff.tsx": {
     "inlineLayoutStyles": 1
   },
