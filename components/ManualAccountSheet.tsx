@@ -24,6 +24,8 @@ import { CASH_SUBTYPE, isCashOnHand, isOwedType } from '@/lib/balance';
 import { zeroExample } from '@/lib/format';
 import { minorDigits } from '@/lib/manual-txn-input';
 
+// The form's working copy. `balance` is a STRING, as in BudgetsTab and GoalsCard:
+// an <input type="number"> reports '' for a partly typed value like "-", and
 // Number('') is 0, so a number would erase the minus sign as you type it. It's
 // parsed once on submit. `account_id` is null while adding; the server mints it.
 // `currency` is the one chosen; `stored` the one the account is in now, so the
@@ -340,24 +342,28 @@ export function useManualAccountSheets(opts: {
                   disabled={saving}
                 />
               )}
-              <p className="helper">
-                {isOwedType(shown.type) ? 'Enter what you owe as a positive number. It subtracts from net worth.' : 'Negative balances are allowed (e.g. an overdrawn account).'}
-              </p>
-              <OwedFlipNote
-                crossing={crossing}
-                toOwed={isOwedType(shown.type)}
-                disabled={saving || hiding}
-                onClose={() => {
-                  const a = shown.kept!;
-                  setDraft(null);
-                  onEnd(a);
-                }}
-                onHide={() => {
-                  const a = shown.kept!;
-                  setDraft(null);
-                  onHide(a.account_id);
-                }}
-              />
+              {/* One child of the stack: the note's live region is there
+                  while it says nothing, and would add a gap of its own. */}
+              <div>
+                <p className="helper">
+                  {isOwedType(shown.type) ? 'Enter what you owe as a positive number. It subtracts from net worth.' : 'Negative balances are allowed (e.g. an overdrawn account).'}
+                </p>
+                <OwedFlipNote
+                  crossing={crossing}
+                  toOwed={isOwedType(shown.type)}
+                  disabled={saving || hiding}
+                  onClose={() => {
+                    const a = shown.kept!;
+                    setDraft(null);
+                    onEnd(a);
+                  }}
+                  onHide={() => {
+                    const a = shown.kept!;
+                    setDraft(null);
+                    onHide(a.account_id);
+                  }}
+                />
+              </div>
               {editingShown && shown.account_id && (
                 <p className="helper manual-id">
                   Account ID for scripted updates: <code>{shown.account_id}</code>

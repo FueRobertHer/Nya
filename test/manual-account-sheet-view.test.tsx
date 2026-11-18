@@ -218,6 +218,8 @@ describe('updating a manual account', () => {
     expect(text).toContain('1 stays in USD');
     expect(v.button('Save')).toBeNull();
     expect(v.button('Cancel')).toBeNull();
+    // The list behind read the save, as for any other.
+    expect(v.said).toEqual(['saved']);
     act(() => click(v.button('Done')!));
     await pass(5);
     expect(v.dialog()).toBeNull();
@@ -236,6 +238,22 @@ describe('updating a manual account', () => {
     act(() => type(v.selects()[0], 'credit'));
     expect(v.button('Save')!.getAttribute('aria-describedby')).toBeNull();
     expect(v.selects()[0].getAttribute('aria-describedby')).toBeNull();
+  });
+
+  test('its two ways instead each close the form and hand the account on', async () => {
+    const v = await mount();
+    await v.open((s) => s.startEdit(CARD));
+    act(() => type(v.selects()[0], 'depository'));
+    act(() => click(v.button('Close this account…')!));
+    await pass(5);
+    expect(v.dialog()).toBeNull();
+    await v.open((s) => s.startEdit(CARD));
+    act(() => type(v.selects()[0], 'depository'));
+    act(() => click(v.button('Hide this account')!));
+    await pass(5);
+    expect(v.dialog()).toBeNull();
+    expect(v.said).toEqual(['end manual_2', 'hide manual_2']);
+    expect(sent).toEqual([]);
   });
 
   test('a refused update is said beside Save, which points at it', async () => {
@@ -287,6 +305,17 @@ describe('deleting a manual account', () => {
     act(() => click(v.button('Cancel')!));
     await pass(5);
     await v.open((s) => s.startEdit(CARD));
+    expect(v.footNote()).toBeNull();
+    act(() => click(v.button('Save')!));
+    await pass(20);
+    expect(v.footNote()).not.toBeNull();
+    act(() => click(v.button('Cancel')!));
+    await pass(5);
+    await v.open((s) => s.startAdd('USD'));
+    expect(v.footNote()).toBeNull();
+    act(() => click(v.button('Cancel')!));
+    await pass(5);
+    await v.open((s) => s.startDelete(CARD));
     expect(v.footNote()).toBeNull();
   });
 });
