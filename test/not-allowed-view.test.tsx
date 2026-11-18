@@ -30,7 +30,7 @@ describe('Not allowed yet', () => {
     expect(html).not.toContain('style=');
   });
 
-  test('says what to do, with the account’s own id and nothing else about it', async () => {
+  test('says what to do, with the account’s own id', async () => {
     const html = renderToStaticMarkup(await NotAllowedPage());
     expect(html).toContain('You&#x27;re signed in, but this account can&#x27;t open Nya yet. Ask to be added by your email, or by this account&#x27;s id:');
     expect(html).toContain('<code>user_2notallowedyet</code>');

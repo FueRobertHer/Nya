@@ -38,20 +38,21 @@ const demos = [
   { id: 'user_sam', label: 'Sam' },
 ];
 
-function mount(demoTicket = false) {
+function mount(demoTicket = false, unavailable = false) {
   const host = dom.document.createElement('div');
   dom.document.body.appendChild(host);
   const root = createRoot(host as unknown as HTMLElement);
   act(() =>
     root.render(
       <SignInFlow demoTicket={demoTicket}>
-        <DemoSignIn demos={demos} unavailable={false} />
+        <DemoSignIn demos={demos} unavailable={unavailable} />
       </SignInFlow>
     )
   );
   return {
     page: () => host.findAll((e) => e.tagName === 'MAIN' && e.getAttribute('class') === 'auth-wrap')[0],
     notice: () => host.findAll((e) => e.getAttribute('role') === 'alert')[0],
+    button: (name: string) => host.findAll((e) => e.tagName === 'BUTTON').find((b) => words(b) === name)!,
     press: async (name: string) => {
       const form = host.findAll((e) => e.tagName === 'FORM').find((f) => words(f) === name)!;
       await act(async () => {
@@ -94,5 +95,30 @@ describe('a demo sign-in that doesn’t open the app', () => {
     expect(view.page().getAttribute('hidden')).toBe('');
     await pass(DEMO_WAIT_MS);
     expect(words(view.notice())).toBe('Critical: Nya didn’t open. Try again, or reload the page.');
+    expect(dom.document.activeElement).toBe(view.notice());
+  });
+
+  test('a failure said once the page is back is read in place: focus stays where the person put it', async () => {
+    let fail: (e: Error) => void = () => {};
+    signIn = () => new Promise((_, reject) => (fail = reject));
+    const view = mount();
+    await view.press('Alex');
+    await pass(DEMO_WAIT_MS);
+    expect(dom.document.activeElement).toBe(view.notice());
+    act(() => view.button('Sam').focus());
+    await act(async () => fail(new Error('ticket refused')));
+    await pass(50);
+    expect(words(view.notice())).toBe(`Critical: ${DEMO_UNAVAILABLE}`);
+    expect(dom.document.activeElement).toBe(view.button('Sam'));
+  });
+});
+
+describe('a demo card that says something as the page loads', () => {
+  test('the demo unavailable (?demo=unavailable): said, and focus left alone, since nothing was hidden', async () => {
+    const before = dom.document.activeElement;
+    const view = mount(false, true);
+    await pass(50);
+    expect(words(view.notice())).toBe(`Critical: ${DEMO_UNAVAILABLE}`);
+    expect(dom.document.activeElement).toBe(before);
   });
 });

@@ -45,7 +45,9 @@ function mount() {
     field: () => all('INPUT')[0],
     button: () => all('BUTTON').find((b) => b.getAttribute('type') === 'submit'),
     errorUnder: () => host.findAll((e) => e.getAttribute('class') === 'field-error')[0],
-    notice: () => host.findAll((e) => e.getAttribute('role') === 'alert')[0],
+    notice: () => host.findAll((e) => (e.getAttribute('class') ?? '').startsWith('notice'))[0],
+    // Where a click leaves focus: on the button, not in the field (autoFocus puts it there).
+    clickFocus: () => act(() => host.findAll((e) => e.tagName === 'BUTTON')[0].focus()),
     type: (value: string) => act(() => type(all('INPUT')[0], value)),
     submit: async () => {
       await act(async () => {
@@ -73,13 +75,16 @@ describe('the password login', () => {
     expect(page.host.textContent).not.toContain('Log In');
   });
 
-  test('a wrong password is said under the field, with what to do, and focus goes back to it', async () => {
+  test('a wrong password is said under the field, with what to do, as an alert, and focus goes back to it', async () => {
     const page = mount();
     answer = respond(401, { error: 'Incorrect password' });
     page.type('hunter2');
+    page.clickFocus();
+    expect(dom.document.activeElement).toBe(page.button());
     await page.submit();
     const error = page.errorUnder();
     expect(words(error)).toBe('That password isn’t right. Check it and try again.');
+    expect((error.parentNode as FakeElement).getAttribute('role')).toBe('alert');
     expect(page.field().getAttribute('aria-invalid')).toBe('true');
     expect(page.field().getAttribute('aria-describedby')).toBe(error.getAttribute('id'));
     expect(page.notice()).toBeUndefined();
@@ -91,21 +96,32 @@ describe('the password login', () => {
     expect(page.field().hasAttribute('aria-invalid')).toBe(false);
   });
 
-  test('too many tries, or the server, in a critical notice with its own words, the field left as it is', async () => {
+  test('too many tries, or a server that fails, in a critical notice with the server’s words, the field left as it is', async () => {
     const page = mount();
     answer = respond(429, { error: 'Too many attempts. Try again in a few minutes.' });
     page.type('hunter2');
     await page.submit();
     expect(page.notice().getAttribute('class')).toBe('notice critical');
+    expect(page.notice().getAttribute('role')).toBe('alert');
     expect(words(page.notice())).toBe('Critical: Too many attempts. Try again in a few minutes.');
     expect(page.errorUnder()).toBeUndefined();
     expect(page.field().hasAttribute('aria-invalid')).toBe(false);
+  });
+
+  test('a server that fails with no words of its own: the notice says what to do', async () => {
+    const page = mount();
+    answer = () => Promise.resolve(new Response('<html>Bad gateway</html>', { status: 502 }));
+    page.type('hunter2');
+    await page.submit();
+    expect(words(page.notice())).toBe('Critical: Nya couldn’t sign you in just now. Try again.');
+    expect(page.errorUnder()).toBeUndefined();
   });
 
   test('no connection: said so, and the button is back, not left on Checking…', async () => {
     const page = mount();
     answer = () => Promise.reject(new TypeError('Failed to fetch'));
     page.type('hunter2');
+    page.clickFocus();
     await page.submit();
     expect(words(page.notice())).toBe('Critical: Nya couldn’t be reached. Check your connection and try again.');
     expect(words(page.button()!)).toBe('Sign in');

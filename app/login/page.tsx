@@ -123,7 +123,13 @@ export default function LoginPage() {
               autoFocus
             />
           </label>
-          {wrong && <FieldError id={ERROR_ID}>{WRONG_PASSWORD}</FieldError>}
+          {/* An alert, so it is heard when it comes: after Enter, focus is
+              already on the field, and moving it there again says nothing. */}
+          {wrong && (
+            <div role="alert">
+              <FieldError id={ERROR_ID}>{WRONG_PASSWORD}</FieldError>
+            </div>
+          )}
           <button type="submit" className="btn btn-block" disabled={loading || password.length === 0}>
             {loading ? 'Checking…' : 'Sign in'}
           </button>

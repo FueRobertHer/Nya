@@ -11,7 +11,8 @@
 // the page comes back with the ticket, which Clerk's form signs in with.
 // When a sign-in fails, or the app hasn't opened in the page's wait
 // (components/SignInFlow.tsx), the card says so under the buttons, and focus
-// goes there: the press hid the whole page, the button with it.
+// goes there as the page comes back: the press hid the whole page, the
+// button with it.
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useClerk } from '@clerk/nextjs';
@@ -27,9 +28,15 @@ export default function DemoSignIn({ demos, unavailable }: { demos: DemoUser[]; 
   const [error, setError] = useState<string | null>(unavailable ? DEMO_UNAVAILABLE : null);
   const said = error ?? (hold.late ? DEMO_LATE : null);
   const notice = useRef<HTMLDivElement>(null);
+  // Focus goes to what the card says only as the page comes back from the
+  // app loading. What it says when the page loads, or a failure said once
+  // the page is back, is read in place, and focus stays where it is.
+  const hidden = useRef(hold.pending);
   useEffect(() => {
-    if (said) notice.current?.focus();
-  }, [said]);
+    const was = hidden.current;
+    hidden.current = hold.pending;
+    if (was && !hold.pending && said) notice.current?.focus();
+  }, [hold.pending, said]);
 
   const onSubmit = (e: FormEvent<HTMLFormElement>) => {
     setError(null);
