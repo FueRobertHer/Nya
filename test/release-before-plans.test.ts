@@ -286,6 +286,11 @@ describe('the release before reads every plan this release writes', () => {
     const put = async (saved: object) => (await call(savedRoute.PUT, 'saved-plan', 'PUT', { saved, based_on: (await savedPlanStore.get(ctx))?.rev ?? null })).status;
     expect(await put({ plan: rated, savings: 20_000, currency: 'USD', inflation: 0.03, growth: 0.061 })).toBe(200);
     expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(false);
+    // Either alone is refused: the plan's rates, or the growth.
+    expect(await put({ plan: rated, savings: 20_000, currency: 'USD', inflation: 0.03 })).toBe(200);
+    expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(false);
+    expect(await put({ plan: TYPED, savings: 20_000, currency: 'USD', inflation: 0.03, growth: 0.061 })).toBe(200);
+    expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(false);
     // The plan's own rate sent as its growth isn't kept.
     expect(await put({ plan: TYPED, savings: 20_000, currency: 'USD', inflation: 0.03, growth: TYPED.realReturn })).toBe(200);
     const stored = await savedPlanStore.get(ctx);

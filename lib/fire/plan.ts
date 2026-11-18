@@ -494,7 +494,7 @@ export type FiView = {
   workedOut: number | null;
   /** Invested assets as a share of the FI number. */
   progress: number | null;
-  /** The growth after inflation the plan runs at until the stop: the plan's
+  /** The growth after inflation the plan runs at on its steady path, before the stop and after: the plan's
    *  `realReturn`, or with accounts' own rates their blend
    *  (lib/fire/account-growth.ts planGrowth). Every figure reads this, never
    *  the plan's field (test/plan-growth-source.test.ts). */
@@ -520,7 +520,8 @@ export type FiView = {
 const within = (v: number, min: number, max: number) => Number.isFinite(v) && v >= min && v <= max;
 
 /** Whether the FI formulas (lib/fire/fi.ts) take the plan's rates, an
- *  account's own growth included (their blend is then within the same range).
+ *  account's own growth included (their blend is held within them,
+ *  lib/fire/account-growth.ts).
  *  Every plan parsePlan accepts does; a stored plan read leniently may not. */
 export function formulasTake(plan: PlanCore): boolean {
   const own = plan.accounts ?? [];

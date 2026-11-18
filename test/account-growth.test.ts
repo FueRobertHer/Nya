@@ -61,6 +61,25 @@ describe('the growth a plan runs at', () => {
     }
   });
 
+  test('held within the rates it blends, never a last digit past the plan’s range', () => {
+    // 0.05 + (0.15 - 0.05) rounds to 0.15000000000000002 unheld.
+    expect(planGrowth({ ...PLAN, accounts: [rate('a', 0.15)] }, measured([{ id: 'a', value: 100_000 }]))).toEqual({ growth: 0.15, own: 1 });
+    expect(planGrowth({ ...PLAN, accounts: [rate('a', -0.05), rate('b', -0.05)] }, measured([{ id: 'a', value: 13_640.32 }, { id: 'b', value: 662_817.26 }]))).toEqual({ growth: -0.05, own: 2 });
+    for (let i = 1; i < 400; i++) {
+      const g = planGrowth({ ...PLAN, accounts: [rate('a', 0.15)] }, measured([{ id: 'a', value: i * 1_234.56 }])).growth;
+      expect(g).toBe(0.15);
+      const mixed = planGrowth({ ...PLAN, accounts: [rate('a', 0.15)] }, measured([{ id: 'a', value: i * 1_234.56 }, { id: 'b', value: 50_000 }])).growth;
+      expect(mixed >= 0.05 && mixed <= 0.15).toBe(true);
+    }
+    const draft = { plan: { ...PLAN, accounts: [rate('a', 0.15)] }, savings: 20_000, currency: 'USD', inflation: 0.03 };
+    expect('ok' in parseSavedDraft({ ...draft, growth: planGrowth(draft.plan, measured([{ id: 'a', value: 100_000 }])).growth })).toBe(true);
+  });
+
+  test('an account with its own rate and nothing in it isn’t one at its own', () => {
+    expect(planGrowth({ ...PLAN, accounts: [rate('a', 0.09)] }, measured([{ id: 'a', value: 0 }, { id: 'b', value: 100_000 }]))).toEqual({ growth: PLAN.realReturn, own: 0 });
+    expect(planGrowth({ ...PLAN, accounts: [rate('a', 0.09), rate('b', 0.07)] }, measured([{ id: 'a', value: -1 }, { id: 'b', value: 100_000 }])).own).toBe(1);
+  });
+
   test('a balance below zero weighs nothing, and the order accounts arrive in moves no digit', () => {
     const plan = { ...PLAN, accounts: [rate('a', 0.08), rate('c', 0.02)] };
     const accounts = [

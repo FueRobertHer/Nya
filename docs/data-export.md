@@ -672,7 +672,7 @@ The plan you said is your plan, with **This is my plan** on the Plan tab ([progr
 | `day` | The UTC day you saved it (`YYYY-MM-DD`), the days balances are recorded by. |
 | `savedAt` | When you saved it. |
 | `rev` | A random id, new on every save: the version a change is made to. |
-| `growth` | Only where it differs from the plan's `realReturn`: the growth after inflation your plan ran at that day, a fraction, the blend of your accounts' own rates and the plan's, weighted by each account's balance then. Where it has you grows at it. |
+| `growth` | Only where it differs from the plan's `realReturn`: the growth after inflation your plan ran at that day, a fraction, the blend of your accounts' own rates and the plan's, weighted by each account's balance then. Progress grows the saved plan at it to say where it has you. |
 
 #### `fire-plans`
 

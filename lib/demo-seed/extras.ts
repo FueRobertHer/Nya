@@ -75,8 +75,8 @@ export type SeedImport = {
 };
 
 /** A copy of your plan, as Duplicate makes one: your plan with `set` over it,
- *  the items `drop` names taken out and `add` put in. */
-/** A copy of the profile's plan: its settings, items it drops and adds, and accounts' own growth in it, by mask. */
+ *  the items `drop` names taken out and `add` put in, and accounts' own growth
+ *  in it, by mask. */
 export type SeedCopy = { name: string; set?: Partial<FirePlanV2>; drop?: string[]; add?: PlanItem[]; growth?: { mask: string; growth: number }[] };
 
 export type SeedExtras = {
