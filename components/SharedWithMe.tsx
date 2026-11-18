@@ -230,7 +230,7 @@ export function SharedCard({ name, view, note }: { name: string; view: SharedVie
     <div className="card">
       <div className="card-header">
         <span className="avatar small">{initial(name)}</span>
-        <h2>Shared by {name}</h2>
+        <h3>Shared by {name}</h3>
         <span className="badge">Read-only</span>
       </div>
       {view.accounts.length > 0 && (
@@ -269,7 +269,7 @@ export function SharedAccountItem({ a, open, onToggle }: { a: SharedAccount; ope
             <p className="helper">No transactions in the last {SHARED_TXN_DAYS} days.</p>
           ) : (
             <>
-              <button type="button" className="btn ghost" aria-expanded={open} aria-controls={txnsId} onClick={onToggle}>
+              <button type="button" className="btn ghost" aria-expanded={open} aria-controls={open ? txnsId : undefined} onClick={onToggle}>
                 {open ? 'Hide transactions' : `Recent transactions (${a.transactions!.length})`}
               </button>
               {open && (

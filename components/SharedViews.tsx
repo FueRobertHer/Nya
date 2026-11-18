@@ -109,9 +109,9 @@ const unreadableText: Record<ViewKind, string> = {
 
 /**
  * Each kind shared, in the order kinds are listed everywhere, each under its
- * name as a heading (the card's own is an <h2>; the parts inside a kind are
- * <h4>s). `whose` is whose they are, as the card says it: "Sam’s", or
- * "Your" in the sharer's own preview.
+ * name as a heading (the card's own is an <h3>, under its section's or its
+ * sheet's <h2>; the parts inside a kind are <h5>s). `whose` is whose they
+ * are, as the card says it: "Sam’s", or "Your" in the sharer's own preview.
  */
 export function SharedViewsList({ views, whose }: { views: SharedViews; whose: string }) {
   return (
@@ -121,7 +121,7 @@ export function SharedViewsList({ views, whose }: { views: SharedViews; whose: s
         if (!v) return null;
         return (
           <div key={kind} className="incoming-kind stack tight">
-            <h3 className="incoming-kind-name">{KIND_NAME[kind]}</h3>
+            <h4 className="incoming-kind-name">{KIND_NAME[kind]}</h4>
             {isUnreadable(v) ? (
               <Notice level="caution">{`${whose} ${unreadableText[kind]} couldn’t be read just now, so none of it is shown.`}</Notice>
             ) : kind === 'net_worth' ? (
@@ -319,7 +319,7 @@ function SpendingKind({ v }: { v: SpendingView }) {
 function HoldingsTable({ title, lines, currency, amounts }: { title: string; lines: HoldingsLine[]; currency: string | null; amounts: boolean }) {
   return (
     <>
-      <h4 className="incoming-kind-sub">{title}</h4>
+      <h5 className="incoming-kind-sub">{title}</h5>
       <ul className="list-rows">
         {lines.map((l) => (
           <Line key={l.slot} title={l.name} value={spentText(l, currency, amounts)}>
@@ -378,7 +378,7 @@ function HoldingsKind({ v }: { v: HoldingsView }) {
       {v.buckets.length > 0 && <HoldingsTable title="By tax bucket" lines={v.buckets} currency={v.currency} amounts={amounts} />}
       {v.positions && v.positions.length > 0 && (
         <>
-          <h4 className="incoming-kind-sub">Positions</h4>
+          <h5 className="incoming-kind-sub">Positions</h5>
           <ul className="list-rows">
             {v.positions.map((p, i) => (
               <Line
@@ -491,7 +491,7 @@ function BudgetsKind({ v }: { v: BudgetsView }) {
       <TotalCaveats items={[...filingCaveat(v.filing_unread), ...convertedCaveat(v.currency, v.converted, 'Spending in other currencies counts converted into')]} />
       {v.months.map((m, i) => (
         <div key={m.month} className="stack tight">
-          <h4 className="incoming-kind-sub">{`${i === 0 ? 'This month' : 'Last month'}, ${monthLabel(m.month)}`}</h4>
+          <h5 className="incoming-kind-sub">{`${i === 0 ? 'This month' : 'Last month'}, ${monthLabel(m.month)}`}</h5>
           {m.groups.length === 0 ? (
             <>
               <p className="empty-note">No budgets.</p>

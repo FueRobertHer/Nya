@@ -422,7 +422,7 @@ describe('the waits inside cards, sheets and reports', () => {
   test('no plan rows held when none is listed; Sharing’s preview is their card, “Shared by you”', () => {
     expect(renderToStaticMarkup(<PlanRowsSkeleton count={0} status="Loading your plans" />)).not.toContain('list-row');
     expect(renderToStaticMarkup(<PlanRowsSkeleton count={3} status="Loading your plans" />).match(/class="list-row"/g)?.length).toBe(3);
-    expect(renderToStaticMarkup(<SharePreviewSkeleton who="Sam" />)).toContain('<div class="card-header"><span class="avatar small">Y</span><h2>Shared by you</h2><span class="badge">Read-only</span></div><ul class="list-rows"');
+    expect(renderToStaticMarkup(<SharePreviewSkeleton who="Sam" />)).toContain('<div class="card-header"><span class="avatar small">Y</span><h3>Shared by you</h3><span class="badge">Read-only</span></div><ul class="list-rows"');
   });
 
   test('they are drawn in place of the spinners those waits had; an account’s history and the waits for an action keep theirs', () => {

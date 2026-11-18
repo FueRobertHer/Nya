@@ -220,7 +220,7 @@ function SharedCardSkeleton({ id, you = false }: { id?: string; you?: boolean })
     <div id={id} className="card" aria-hidden="true">
       <div className="card-header">
         {you ? <span className="avatar small">Y</span> : <span className="skeleton block avatar small" />}
-        <h2>{you ? 'Shared by you' : <span className="skeleton shared-skeleton-name" />}</h2>
+        <h3>{you ? 'Shared by you' : <span className="skeleton shared-skeleton-name" />}</h3>
         <span className="badge">Read-only</span>
       </div>
       <RowsSkeleton count={2} />

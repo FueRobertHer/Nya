@@ -476,10 +476,10 @@ describe('the card on the primitives', () => {
   const full = (accounts: any[] = [account]) =>
     renderToStaticMarkup(<SharedWithMeView data={{ shared: [{ connection: 'c1', label: 'Sam', accounts, expires_at: null, views: VIEWS }] }} />);
 
-  test('its title row is a card header with an h2, Read-only a badge, and nothing is left on the classes it replaces', () => {
+  test('its title row is a card header with an h3 (under its section’s h2), Read-only a badge, and nothing is left on the classes it replaces', () => {
     const html = full();
-    expect(html).toContain('<div class="card-header"><span class="avatar small">S</span><h2>Shared by Sam</h2><span class="badge">Read-only</span></div>');
-    for (const legacy of ['incoming-head', 'peer-row', 'link-btn', 'panel-note', 'stale-note', 'class="pill"', 'incoming-account-value', '<section aria-label', '<h3>Shared by']) {
+    expect(html).toContain('<div class="card-header"><span class="avatar small">S</span><h3>Shared by Sam</h3><span class="badge">Read-only</span></div>');
+    for (const legacy of ['incoming-head', 'peer-row', 'link-btn', 'panel-note', 'stale-note', 'class="pill"', 'incoming-account-value', '<section aria-label']) {
       expect(html).not.toContain(legacy);
     }
     // The cards and the note above them stacked, the note after the cards a helper.
@@ -506,9 +506,9 @@ describe('the card on the primitives', () => {
 
   test('each kind is under a heading, below the card’s, and the parts inside it under lesser ones; no kind is a region of its own', () => {
     const html = full();
-    for (const k of ['Net worth', 'Spending', 'Holdings', 'Budgets', 'Goals']) expect(html).toContain(`<h3 class="incoming-kind-name">${k}</h3>`);
+    for (const k of ['Net worth', 'Spending', 'Holdings', 'Budgets', 'Goals']) expect(html).toContain(`<h4 class="incoming-kind-name">${k}</h4>`);
     for (const p of ['By asset class', 'By tax bucket', 'Positions', 'This month, October 2026', 'Last month, September 2026']) {
-      expect(html).toContain(`<h4 class="incoming-kind-sub">${p}</h4>`);
+      expect(html).toContain(`<h5 class="incoming-kind-sub">${p}</h5>`);
     }
     // The card holds no region: only the part's own section, around it.
     const cardOnly = html.slice(html.indexOf('<div class="card">'));
@@ -521,10 +521,11 @@ describe('the card on the primitives', () => {
     expect(m![1]).toBe(m![2]);
   });
 
-  test('Recent transactions is a ghost button (.btn, 44px tall) that says whether it is open and names the list it opens', () => {
+  test('Recent transactions is a ghost button (.btn, 44px tall) that says whether it is open and, open, names the list it opens', () => {
+    // Closed, the list isn't drawn, so the button names nothing (as Collapsible's).
     const closed = renderToStaticMarkup(<SharedAccountItem a={account} open={false} onToggle={() => {}} />);
-    const b = closed.match(new RegExp('<button type="button" class="btn ghost" aria-expanded="false" aria-controls="([^"]+)">Recent transactions [(]1[)]</button>'));
-    expect(b?.[1]).toBeTruthy();
+    expect(closed).toContain('<button type="button" class="btn ghost" aria-expanded="false">Recent transactions (1)</button>');
+    expect(closed).not.toContain('incoming-txns');
     const open = renderToStaticMarkup(<SharedAccountItem a={account} open onToggle={() => {}} />);
     const o = open.match(new RegExp('<button type="button" class="btn ghost" aria-expanded="true" aria-controls="([^"]+)">Hide transactions</button>'));
     expect(open).toContain(`<ul id="${o![1]}" class="incoming-txns">`);
