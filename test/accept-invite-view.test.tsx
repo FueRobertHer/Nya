@@ -42,7 +42,7 @@ const { createInvite, UNUSABLE, OWN_LINK } = await import('@/lib/sharing');
 const { ownerContainer } = await import('@/lib/owners');
 
 const UNCHECKED = 'Nya couldn’t check this invite link just now. Try again in a few minutes.';
-const FAILED = 'Nya couldn’t connect you just now. Try again in a few minutes.';
+const FAILED = 'Nya couldn’t connect you just now. Try again in a few minutes, and if the link no longer works, ask for a new one.';
 const DONE = 'Connected. Nothing is shared yet: what they share with you will show at the bottom of Accounts, and you choose what you share with them in Settings, Sharing.';
 const SHARING_HREF = '/?tab=accounts&amp;settings=sharing';
 
@@ -182,8 +182,10 @@ describe('Connect, used as a person would', () => {
     expect(notice.getAttribute('class')).toBe('notice done');
     expect(notice.getAttribute('role')).toBe('status');
     expect(notice.textContent).toBe(`Done: ${DONE}`);
-    // Connect went with the form, so focus is on what replaced it, not the page.
+    // Connect went with the form, so focus is on what replaced it, not the
+    // page; a browser focuses a div only with a tabindex.
     expect(view.focused()).toBe(notice);
+    expect(notice.getAttribute('tabindex')).toBe('-1');
     expect(view.inputs()).toHaveLength(0);
     expect(view.connect()).toBeUndefined();
     expect(view.sharingLink().getAttribute('class')).toBe('btn btn-block');
@@ -201,6 +203,7 @@ describe('Connect, used as a person would', () => {
     expect(notice.getAttribute('role')).toBe('status');
     expect(notice.textContent).toContain(UNUSABLE);
     expect(view.focused()).toBe(notice);
+    expect(notice.getAttribute('tabindex')).toBe('-1');
     expect(view.inputs()).toHaveLength(0);
     expect(view.sharingLink()).toBeUndefined();
   });
@@ -214,6 +217,7 @@ describe('Connect, used as a person would', () => {
     expect(notice.getAttribute('class')).toBe('notice info');
     expect(notice.textContent).toContain('You’re already connected.');
     expect(view.focused()).toBe(notice);
+    expect(notice.getAttribute('tabindex')).toBe('-1');
     expect(view.sharingLink().getAttribute('href')).toBe('/?tab=accounts&settings=sharing');
   });
 
@@ -284,5 +288,8 @@ describe('the accept route’s words', () => {
     const { result } = await errorsDuring(() => accept(token));
     expect(result).toEqual({ status: 500, body: { error: FAILED } });
     expect(JSON.stringify(result)).not.toContain(theirs);
+    // That failure came after the link was used up, so trying again finds it
+    // can't be used: the case the words' "if the link no longer works" covers.
+    expect(await accept(token)).toEqual({ status: 409, body: { error: UNUSABLE } });
   });
 });

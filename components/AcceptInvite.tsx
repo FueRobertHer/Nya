@@ -3,8 +3,9 @@
 // The invite link's page (app/connect/[token]): what it says about the link,
 // and accepting it: name the person, connect. Connecting shares nothing by
 // itself; each side then chooses what to share. Once Connect is answered
-// with a connection or a refusal, a retry can't change, the form gives way to
-// the answer and focus goes to it; a failure keeps the form, to try again.
+// with a connection, or with a refusal that a retry can't change, the form
+// gives way to the answer and focus goes to it; a failure keeps the form, to
+// try again.
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { settingsHref, tabHref } from '@/lib/dashboard-tab';

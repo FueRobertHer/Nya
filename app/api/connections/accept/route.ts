@@ -4,8 +4,9 @@ import { acceptInvite, AlreadyConnected, SharingRefused } from '@/lib/sharing';
 
 /** What the invite page shows when accepting fails for a reason of Nya's own.
  *  The same words whatever failed: the sender's side can fail here too, and
- *  only for a real link. */
-const FAILED = 'Nya couldn’t connect you just now. Try again in a few minutes.';
+ *  only for a real link. A failure after the link was used up leaves it
+ *  spent, so a retry may find it can't be used: the words say what then. */
+const FAILED = 'Nya couldn’t connect you just now. Try again in a few minutes, and if the link no longer works, ask for a new one.';
 
 /** { token, label, my_name? } → { id }: uses an invite link and connects me
  *  with its sender. `label` is what I'll call them, `my_name` how I introduce
