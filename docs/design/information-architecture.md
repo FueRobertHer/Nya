@@ -267,7 +267,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | ReceiptsCard | Manage (when files are on) | Settings > Your data |
 | ApiTokens, ApiChanges | Manage | Settings > Your data |
 | ReportsEntry | Activity foot; Manage | Activity > Spending |
-| ReportsPage, ReportView, RunwayReport, RunwayChart, YearOverYearReport | `/reports` | Unchanged, but for the runway's first page since the screen review: its months without income are the page's hero (`Hero`, `.runway-hero`) on the page, not a card, with what it can't see right under them (every note a caution: one in full, two or more on one line that opens to each), then the cash and the line with income (`.runway-bottom-line`, two figures), the chart, and the what-if's controls. On paper every note is in the box (`.runway-print-caveats`, hidden on screen), in the same order |
+| ReportsPage, ReportView, RunwayReport, RunwayChart, YearOverYearReport | `/reports` | Unchanged, but for the runway's first page since the screen review: its months without income are the page's hero (`Hero`, `.runway-hero`) on the page, not a card, with what it can't see right under them (every note a caution: one in full, two or more on one line that opens to each), then the cash and the line with income (`.runway-bottom-line`, two figures), the chart, the what-if's controls and, right after them, the saved scenarios (a card of their own, beside Save as a scenario, which makes them). On paper every note is in the box (`.runway-print-caveats`, hidden on screen), in the same order |
 | WeeklySummaryCard | Manage | Settings > Preferences |
 | ThemeCard | New (phase 7) | Settings > Preferences, first |
 | CurrencyCard, CurrencyChoiceSheet | Manage; Home offer | Settings > Preferences; Needs attention |

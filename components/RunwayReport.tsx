@@ -68,7 +68,8 @@ const part = (words: string, amount: number, money: (n: number) => string) => `$
  *  income is the page's hero, on the page rather than in a card, with what it
  *  can't see right under it (one note in full, or a line that opens to each;
  *  every one printed in full), then the cash and the line with income, the
- *  chart, and the what-if's `controls` (for the screen only). */
+ *  chart, and `controls` (the what-if and the saved scenarios, for the screen
+ *  only). */
 export function RunwayView({ runway, projection, controls }: { runway: Runway; projection: RunwayProjection; controls?: ReactNode }) {
   const money = (n: number) => formatMoney(n, runway.currency);
   const w = projection.window;
@@ -446,92 +447,95 @@ export default function RunwayReport() {
     <>
       {/* The what-if under the answer it changes (since the screen review),
           inside the report's first page, so on a phone the months come
-          first; for the screen only. */}
+          first, then the saved scenarios; for the screen only. */}
       <RunwayView
         runway={runway}
         projection={projection}
         controls={
-          <div className="card no-print report-controls runway-controls">
-            {/* The window's name over its switch, as a field's is, so the short
-                items ("6 months") keep their meaning; the group is named the same
-                for a screen reader, which hears it once. */}
-            <div className="field">
-              <span aria-hidden="true">Spending over</span>
-              <Segmented label="Spending over" value={whatIf.months} onChange={(m) => change({ months: m })} options={RUNWAY_WINDOWS.map((m) => [m, `${m} months`] as const)} />
-            </div>
-            <div className="runway-fields">
-              <label className="field">
-                Spending lower by, a month
-                <input
-                  inputMode="decimal"
-                  autoComplete="off"
-                  value={lowerText}
-                  onChange={(e) => setLowerText(e.target.value)}
-                  placeholder="0"
-                  aria-label={`Spending lower by, a month, in ${code}`}
-                  aria-invalid={!lowerOk}
-                  aria-describedby={lowerOk ? undefined : lowerError}
-                />
-              </label>
-              <label className="field">
-                Income stops after
-                <input type="date" min={runway.today} value={whatIf.income_until ?? ''} onChange={(e) => change({ income_until: e.target.value || null })} />
-              </label>
-            </div>
-            {!lowerOk && <FieldError id={lowerError}>Enter an amount, like 250 or 1,299.99.</FieldError>}
-            {otherCurrency && (
-              <div className="stale-note">
-                That scenario’s lower spending was set in {otherCurrency}, and this runway is in {code}, so it isn’t applied. Type it again in {code}.
+          <>
+            <div className="card no-print report-controls runway-controls">
+              {/* The window's name over its switch, as a field's is, so the short
+                  items ("6 months") keep their meaning; the group is named the same
+                  for a screen reader, which hears it once. */}
+              <div className="field">
+                <span aria-hidden="true">Spending over</span>
+                <Segmented label="Spending over" value={whatIf.months} onChange={(m) => change({ months: m })} options={RUNWAY_WINDOWS.map((m) => [m, `${m} months`] as const)} />
               </div>
-            )}
-            <label className="report-mark">
-              <input type="checkbox" checked={whatIf.planned} onChange={(e) => change({ planned: e.target.checked })} />
-              <span>Count what you planned</span>
-            </label>
-            <label className="report-mark">
-              <input type="checkbox" checked={whatIf.leave_out_one_offs && oneOffs} disabled={!oneOffs} onChange={(e) => change({ leave_out_one_offs: e.target.checked })} />
-              <span>Leave out one-offs{oneOffs ? '' : ' (none in these months)'}</span>
-            </label>
-            <label className="report-mark">
-              <input type="checkbox" checked={whatIf.count_moved_out && movedOut} disabled={!movedOut} onChange={(e) => change({ count_moved_out: e.target.checked })} />
-              <span>Count transfers out and cash taken out as spending{movedOut ? '' : ' (none in these months)'}</span>
-            </label>
-            <p className="panel-note">Nothing you change here is saved, unless you save it as a scenario. Empty, income keeps coming.</p>
-            {/* Print, the one filled button, last; whole buttons wrap on a phone,
-                never their labels. */}
-            <div className="btn-row report-actions">
-              <button
-                className="btn ghost"
-                onClick={() => {
-                  setWhatIf(DEFAULT_WHAT_IF);
-                  setLowerText('');
-                  setOtherCurrency(null);
-                }}
-              >
-                Start over
-              </button>
-              <button className="btn secondary" onClick={() => setNaming(true)} disabled={!lowerOk || (saved?.scenarios.length ?? 0) + (saved?.unreadable_ids.length ?? 0) + (saved?.unrecognised_ids.length ?? 0) >= MAX_SCENARIOS}>
-                Save as a scenario
-              </button>
-              <button className="btn" onClick={() => window.print()}>
-                Print or save as PDF
-              </button>
+              <div className="runway-fields">
+                <label className="field">
+                  Spending lower by, a month
+                  <input
+                    inputMode="decimal"
+                    autoComplete="off"
+                    value={lowerText}
+                    onChange={(e) => setLowerText(e.target.value)}
+                    placeholder="0"
+                    aria-label={`Spending lower by, a month, in ${code}`}
+                    aria-invalid={!lowerOk}
+                    aria-describedby={lowerOk ? undefined : lowerError}
+                  />
+                </label>
+                <label className="field">
+                  Income stops after
+                  <input type="date" min={runway.today} value={whatIf.income_until ?? ''} onChange={(e) => change({ income_until: e.target.value || null })} />
+                </label>
+              </div>
+              {!lowerOk && <FieldError id={lowerError}>Enter an amount, like 250 or 1,299.99.</FieldError>}
+              {otherCurrency && (
+                <div className="stale-note">
+                  That scenario’s lower spending was set in {otherCurrency}, and this runway is in {code}, so it isn’t applied. Type it again in {code}.
+                </div>
+              )}
+              <label className="report-mark">
+                <input type="checkbox" checked={whatIf.planned} onChange={(e) => change({ planned: e.target.checked })} />
+                <span>Count what you planned</span>
+              </label>
+              <label className="report-mark">
+                <input type="checkbox" checked={whatIf.leave_out_one_offs && oneOffs} disabled={!oneOffs} onChange={(e) => change({ leave_out_one_offs: e.target.checked })} />
+                <span>Leave out one-offs{oneOffs ? '' : ' (none in these months)'}</span>
+              </label>
+              <label className="report-mark">
+                <input type="checkbox" checked={whatIf.count_moved_out && movedOut} disabled={!movedOut} onChange={(e) => change({ count_moved_out: e.target.checked })} />
+                <span>Count transfers out and cash taken out as spending{movedOut ? '' : ' (none in these months)'}</span>
+              </label>
+              <p className="panel-note">Nothing you change here is saved, unless you save it as a scenario. Empty, income keeps coming.</p>
+              {/* Print, the one filled button, last; whole buttons wrap on a phone,
+                  never their labels. */}
+              <div className="btn-row report-actions">
+                <button
+                  className="btn ghost"
+                  onClick={() => {
+                    setWhatIf(DEFAULT_WHAT_IF);
+                    setLowerText('');
+                    setOtherCurrency(null);
+                  }}
+                >
+                  Start over
+                </button>
+                <button className="btn secondary" onClick={() => setNaming(true)} disabled={!lowerOk || (saved?.scenarios.length ?? 0) + (saved?.unreadable_ids.length ?? 0) + (saved?.unrecognised_ids.length ?? 0) >= MAX_SCENARIOS}>
+                  Save as a scenario
+                </button>
+                <button className="btn" onClick={() => window.print()}>
+                  Print or save as PDF
+                </button>
+              </div>
             </div>
-          </div>
+            {/* The saved scenarios right after the what-if: beside "Save as a
+                scenario", which makes them, and the fields Apply sets. */}
+            <div className="card no-print stack">
+              <div className="inst-header">
+                <div className="inst-name">Saved scenarios</div>
+              </div>
+              <SavedScenarios list={saved} currency={runway.currency} busy={busy} onApply={apply} onDelete={(id, label, unreadable) => void remove(id, label, unreadable)} />
+              {savedError && !naming && (
+                <Notice level="critical" role="alert">
+                  {savedError}
+                </Notice>
+              )}
+            </div>
+          </>
         }
       />
-
-      <div className="card no-print stack">
-        <div className="inst-header">
-          <div className="inst-name">Saved scenarios</div>
-        </div>
-        <SavedScenarios list={saved} currency={runway.currency} busy={busy} onApply={apply} onDelete={(id, label, unreadable) => void remove(id, label, unreadable)} />
-        {savedError && !naming && (
-          <Notice level="critical" role="alert">
-            {savedError}
-          </Notice>
-        )}
-      </div>
 
       <Sheet open={naming} title="Save as a scenario" onClose={() => setNaming(false)}>
         <div className="sheet-form">
