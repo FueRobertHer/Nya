@@ -3,11 +3,11 @@
 // The invite link's page (app/connect/[token]): what it says about the link,
 // and accepting it: name the person, connect. Connecting shares nothing by
 // itself; each side then chooses what to share. Once Connect is answered
-// with a connection, or with a refusal that a retry can't change, the form
+// with a connection, or with a refusal that trying again now won't change, the form
 // gives way to the answer and focus goes to it; a failure keeps the form, to
 // try again.
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { settingsHref, tabHref } from '@/lib/dashboard-tab';
 import { Notice } from './TotalCaveats';
 
@@ -32,6 +32,7 @@ export function AcceptInvite({ token, fromName }: { token: string; fromName: str
   const [error, setError] = useState('');
   const [answer, setAnswer] = useState<Answer | null>(null);
   const answerLine = useRef<HTMLDivElement>(null);
+  const labelNote = useId();
   // Connect is gone with the form, so focus goes to what replaced it.
   useEffect(() => {
     if (answer) answerLine.current?.focus();
@@ -48,7 +49,8 @@ export function AcceptInvite({ token, fromName }: { token: string; fromName: str
     const body = res?.ok ? null : await res?.json().catch(() => null);
     setBusy(false);
     if (res?.ok) return setAnswer({ level: 'done', text: DONE, sharing: true });
-    // A refusal (409) is final: the link can't be used, or we already are.
+    // A refusal (409) is final for now: the link can't be used, or we already
+    // are. It may not stay so (a sender let back in), but nothing I do changes it.
     if (res?.status === 409 && typeof body?.error === 'string') {
       return setAnswer(body.connected ? { level: 'info', text: body.error, sharing: true } : { level: 'caution', text: body.error, sharing: false });
     }
@@ -72,12 +74,18 @@ export function AcceptInvite({ token, fromName }: { token: string; fromName: str
     <>
       <p>
         {fromName ? `${fromName} invited you to connect.` : 'Someone invited you to connect.'} Connecting shares nothing by
-        itself: each of you chooses which accounts the other can see, read-only.
+        itself: each of you then chooses what to share with the other, read-only.
       </p>
-      <label className="field">
-        What you call them
-        <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={40} />
-      </label>
+      <div className="stack tight">
+        <label className="field">
+          What you call them
+          <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={40} aria-describedby={labelNote} />
+        </label>
+        {/* What an empty field is saved as (lib/sharing.ts acceptInvite). */}
+        <p className="helper" id={labelNote}>
+          Left empty, you’ll see them as {fromName || 'Someone'}.
+        </p>
+      </div>
       <label className="field">
         Your name, as they’ll see it
         <input value={myName} onChange={(e) => setMyName(e.target.value)} maxLength={40} placeholder="So they know it’s you" />
