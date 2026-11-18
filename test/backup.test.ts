@@ -82,7 +82,7 @@ const fakeGet = (url: string, options: any, cb: (res: any) => void) => {
 };
 await mockForFile('node:https', () => ({ ...realHttps, default: { ...(realHttps as any).default, get: fakeGet }, get: fakeGet }));
 
-const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention, cronHoldUntil, CRON_SCHEDULES, recordAttachmentSweep, nightlyJobs } = await import('@/lib/backup');
+const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention, againAt, AGAIN_AFTER_OK_MS, CRON_SCHEDULES, recordAttachmentSweep, nightlyJobs, runningNow, takeRunLock } = await import('@/lib/backup');
 const { verifyArchive } = await import('@/lib/restore');
 const { keyArchiveFolder, verifyKeyArchive, KEY_GENERATIONS } = await import('@/lib/key-archive');
 /** The data archives kept, and the key archives (lib/key-archive.ts). */
@@ -584,8 +584,18 @@ describe('how long a backup outlasts a deletion', () => {
   });
 });
 
-describe('holding off a run by hand while its cron may be going', () => {
+describe('running a job again by hand', () => {
   const at = (iso: string) => new Date(iso);
+  /** The cron, without its log lines. */
+  const quietly = async (run: () => Promise<Response>) => {
+    const log = console.log;
+    console.log = () => {};
+    try {
+      return await run();
+    } finally {
+      console.log = log;
+    }
+  };
 
   test('the schedules are vercel.json’s', async () => {
     const { crons } = JSON.parse(await Bun.file(`${import.meta.dir}/../vercel.json`).text()) as { crons: { path: string; schedule: string }[] };
@@ -594,45 +604,40 @@ describe('holding off a run by hand while its cron may be going', () => {
     }
   });
 
-  const until = (iso: string) => new Date(iso);
-
-  test('from five minutes before a cron’s hour until five minutes after it, unless it has recorded an outcome since its hour began', async () => {
-    // Before and after both crons: never.
-    expect(await cronHoldUntil(at('2026-06-15T15:54:00Z'))).toBeNull();
-    expect(await cronHoldUntil(at('2026-06-15T18:05:00Z'))).toBeNull();
-    // A run started at 15:56 would still be going at 16:00.
-    expect(await cronHoldUntil(at('2026-06-15T15:56:00Z'))).toEqual(until('2026-06-15T17:05:00Z'));
-    // Inside the backup's hour, nothing recorded: until its hour and its limit end.
-    expect(await cronHoldUntil(at('2026-06-15T16:20:00Z'))).toEqual(until('2026-06-15T17:05:00Z'));
-    // Yesterday's outcome doesn't count; tonight's, a failure too, ends it.
-    await recordOutcome({ ok: true }, at('2026-06-14T16:03:00Z'));
-    expect(await cronHoldUntil(at('2026-06-15T16:20:00Z'))).not.toBeNull();
-    await recordOutcome({ ok: false, reason: 'timeout' }, at('2026-06-15T16:04:00Z'));
-    expect(await cronHoldUntil(at('2026-06-15T16:20:00Z'))).toBeNull();
+  test('a job waits a few minutes after it worked, from its cron or by hand, and never after a failure', () => {
+    const now = at('2026-06-15T16:10:00Z');
+    expect(AGAIN_AFTER_OK_MS).toBe(6 * 60_000);
+    expect(againAt(null, now)).toBeNull();
+    expect(againAt({ last_ok: null, last_failed: '2026-06-15T16:09:00Z' }, now)).toBeNull();
+    // Worked four minutes ago: until six minutes after it did.
+    expect(againAt({ last_ok: '2026-06-15T16:06:00.000Z', last_failed: null }, now)).toEqual(at('2026-06-15T16:12:00Z'));
+    // Worked seven minutes ago, or failed since it worked: at once.
+    expect(againAt({ last_ok: '2026-06-15T16:03:00.000Z', last_failed: null }, now)).toBeNull();
+    expect(againAt({ last_ok: '2026-06-15T16:06:00.000Z', last_failed: '2026-06-15T16:09:00.000Z' }, now)).toBeNull();
   });
 
-  test('either cron holds both jobs, and the clean-up from the top of its hour (Hobby may start it then)', async () => {
-    // The backup still to run and the clean-up's hour near: the later end.
-    expect(await cronHoldUntil(at('2026-06-15T16:58:00Z'))).toEqual(until('2026-06-15T18:05:00Z'));
-    await recordOutcome({ ok: true }, at('2026-06-15T16:04:00Z'));
-    // The backup ran; the clean-up may start any time from 17:00.
-    expect(await cronHoldUntil(at('2026-06-15T16:56:00Z'))).toEqual(until('2026-06-15T18:05:00Z'));
-    expect(await cronHoldUntil(at('2026-06-15T17:10:00Z'))).toEqual(until('2026-06-15T18:05:00Z'));
-    // A clean-up outcome from before its hour (a run started by hand earlier) doesn't end it.
-    await recordAttachmentSweep({ last_ok: null, last_failed: '2026-06-15T16:40:00.000Z', reason: 'listing', cursor: null, listed_at: null });
-    expect(await cronHoldUntil(at('2026-06-15T17:40:00Z'))).toEqual(until('2026-06-15T18:05:00Z'));
-    await recordAttachmentSweep({ last_ok: null, last_failed: '2026-06-15T17:31:00.000Z', reason: 'listing', cursor: null, listed_at: null });
-    expect(await cronHoldUntil(at('2026-06-15T17:40:00Z'))).toBeNull();
-  });
-
-  test('a record that can’t be read holds nothing back', async () => {
-    const get = fake.get;
-    fake.get = () => Promise.reject(new Error('down'));
+  test('the cron runs under the run lock, and lets it go whether the backup worked or failed', async () => {
+    expect((await quietly(cron)).status).toBe(200);
+    expect(await runningNow()).toBeNull();
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    const errors = console.error;
+    console.error = () => {};
     try {
-      expect(await cronHoldUntil(at('2026-06-15T16:20:00Z'))).toBeNull();
+      expect((await cron()).status).toBe(500);
     } finally {
-      fake.get = get;
+      console.error = errors;
     }
+    expect(await runningNow()).toBeNull();
+  });
+
+  test('a cron that finds a run going waits for it, then runs', async () => {
+    const hand = await takeRunLock('files', 'hand');
+    if (!('lock' in hand)) throw new Error('expected the lock');
+    setTimeout(() => void hand.lock.release(), 300);
+    const res = await quietly(cron);
+    expect(res.status).toBe(200);
+    expect(blobs.has((await res.json()).pathname)).toBe(true);
+    expect(await runningNow()).toBeNull();
   });
 });
 
@@ -643,17 +648,25 @@ describe('what the Nightly jobs page shows', () => {
     await recordOutcome({ ok: false, reason: 'timeout' }, new Date('2026-06-15T16:04:00Z'));
     await recordAttachmentSweep({ last_ok: '2026-06-15T17:31:00.000Z', last_failed: null, reason: null, cursor: null, listed_at: null });
     expect(await nightlyJobs(now)).toEqual([
-      { job: 'backup', hour: 16, minute: 0, last_ok: '2026-06-14T16:02:00.000Z', last_failed: '2026-06-15T16:04:00.000Z', reason: 'timeout', problem: { last_ok: '2026-06-14T16:02:00.000Z', reason: 'timeout' }, hold_until: null, runnable: true },
-      { job: 'files', hour: 17, minute: 30, last_ok: '2026-06-15T17:31:00.000Z', last_failed: null, reason: null, problem: null, hold_until: null, runnable: true },
+      { job: 'backup', hour: 16, minute: 0, last_ok: '2026-06-14T16:02:00.000Z', last_failed: '2026-06-15T16:04:00.000Z', reason: 'timeout', problem: { last_ok: '2026-06-14T16:02:00.000Z', reason: 'timeout' }, running_now: null, again_at: null, runnable: true },
+      { job: 'files', hour: 17, minute: 30, last_ok: '2026-06-15T17:31:00.000Z', last_failed: null, reason: null, problem: null, running_now: null, again_at: null, runnable: true },
     ]);
   });
 
-  test('while a cron may be going, until when; a held clean-up, or no file store, can’t be run', async () => {
+  test('the run going, on both jobs; a job that just worked, until when; a held clean-up, or no file store, can’t be run', async () => {
     await recordAttachmentSweep({ last_ok: null, last_failed: null, reason: null, cursor: null, listed_at: null, held: { at: '2026-06-15T17:31:00.000Z', containers: 1 } });
+    await recordOutcome({ ok: true }, new Date('2026-06-15T16:18:00Z'));
+    const cron = await takeRunLock('files', 'cron');
+    if (!('lock' in cron)) throw new Error('expected the lock');
     const [backup, files] = await nightlyJobs(new Date('2026-06-15T16:20:00Z'));
-    expect(backup.hold_until).toBe('2026-06-15T17:05:00.000Z');
+    expect(backup.running_now).toEqual(cron.lock.holder);
+    expect(files.running_now).toEqual(cron.lock.holder);
+    expect(backup.again_at).toBe('2026-06-15T16:24:00.000Z');
+    expect(files.again_at).toBeNull();
     expect(backup.runnable).toBe(true);
     expect(files.runnable).toBe(false);
+    await cron.lock.release();
+    expect((await nightlyJobs(new Date('2026-06-15T16:30:00Z'))).map((j) => [j.running_now, j.again_at])).toEqual([[null, null], [null, null]]);
     delete process.env.BLOB_READ_WRITE_TOKEN;
     expect((await nightlyJobs(new Date('2026-06-15T19:00:00Z'))).map((j) => j.runnable)).toEqual([false, false]);
   });

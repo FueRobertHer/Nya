@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { secretsMatch } from '@/lib/auth';
-import { runNightlyBackup } from '@/lib/backup';
+import { recordOutcome, runNightlyBackup } from '@/lib/backup';
+import { runAsCron } from '@/lib/nightly-run-limit';
 
 // Nightly off-site backup (lib/backup.ts), hit by Vercel Cron (vercel.json)
 // after the snapshot and its catch-up, so the day's point is in it and the
@@ -21,8 +22,9 @@ import { runNightlyBackup } from '@/lib/backup';
 // logged, and the backup goes on.
 //
 // The run itself is lib/backup.ts runNightlyBackup, which the admin can also
-// start from the app (app/api/admin/jobs), which holds off while this cron
-// may be running.
+// start from the app (app/api/admin/jobs). Either way it runs under the one
+// run lock (lib/nightly-run-limit.ts): a run already going is waited for, and
+// one that is still going after that fails tonight's backup, recorded.
 
 export const maxDuration = 300;
 
@@ -31,6 +33,10 @@ export async function GET(req: Request) {
   if (!secret || !(await secretsMatch(req.headers.get('authorization') ?? '', `Bearer ${secret}`))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const { status, body } = await runNightlyBackup();
+  const { status, body } = await runAsCron(
+    'backup',
+    () => runNightlyBackup(),
+    (reason) => recordOutcome({ ok: false, reason })
+  );
   return NextResponse.json(body, { status });
 }

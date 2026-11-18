@@ -612,8 +612,8 @@ export async function recordOutcome(
 // ---- A run, from the cron or from the app ----
 //
 // The backup and the receipts sweep each run nightly from a cron, and the
-// admin can start either again from Home's Admin card (app/api/admin/jobs),
-// which holds off while the job's own cron may be running.
+// admin can start either again from the Nightly jobs page (app/api/admin/jobs).
+// Every run, either way, holds the one run lock (lib/nightly-run-limit.ts).
 
 /** What a run answers its route: the status and the body, as the cron has
  *  always answered (500 with the reason on a failure, so the cron shows red in
@@ -831,9 +831,80 @@ export async function attachmentSweepProblem(now: Date = new Date()): Promise<At
   return null;
 }
 
-// ---- Holding off while a job's cron may be running ----
+// ---- One nightly job at a time ----
+//
+// The run lock (rules and the cron's wait: lib/nightly-run-limit.ts), beside
+// the backups' record: every run of either job, from its cron or from Run now,
+// takes it with NX and lets it go when the run ends, worked or failed. Its
+// expiry, past the routes' maxDuration of 300 s, frees it only after a run
+// Vercel ended before it could. It holds which job, who started it, when, and
+// a random token: no account and no person. Never in an archive (lib/export.ts
+// leaves the backups: family out).
 
 export type NightlyJob = 'backup' | 'files';
+
+const RUN_LOCK = () => kEnv('backups:job-running');
+
+/** Past the routes' maxDuration of 300 s: a run still going is never freed. */
+export const RUN_LOCK_MS = 6 * 60_000;
+
+/** Who holds the run lock: for the page, and for why a run waits. */
+export type RunHolder = { job: NightlyJob; by: 'cron' | 'hand'; started: string };
+
+function holderOf(raw: unknown): RunHolder | null {
+  if (typeof raw !== 'string') return null;
+  let v: { job?: unknown; by?: unknown; started?: unknown } | null;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!v || typeof v !== 'object' || (v.job !== 'backup' && v.job !== 'files') || (v.by !== 'cron' && v.by !== 'hand') || !isIsoTime(v.started)) return null;
+  return { job: v.job, by: v.by, started: v.started };
+}
+
+/** The run going now, or null when none is (or the lock can't be read: a
+ *  notice on a page, never a reason to fail it). */
+export async function runningNow(): Promise<RunHolder | null> {
+  try {
+    return holderOf(await rawRedis().get(RUN_LOCK()));
+  } catch {
+    return null;
+  }
+}
+
+export type RunLock = { holder: RunHolder; release(): Promise<void> };
+
+/**
+ * Takes the run lock for a run of `job`, waiting up to `waitMs` while another
+ * run holds it. The lock, or, when it stays held, who holds it (null when that
+ * can't be read). Throws when storage fails.
+ */
+export async function takeRunLock(job: NightlyJob, by: RunHolder['by'], waitMs = 0): Promise<{ lock: RunLock } | { busy: RunHolder | null }> {
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const holder: RunHolder = { job, by, started: new Date().toISOString() };
+    const raw = JSON.stringify({ ...holder, token: crypto.randomUUID() });
+    if (await redis().set(RUN_LOCK(), raw, { nx: true, px: RUN_LOCK_MS })) {
+      return {
+        lock: {
+          holder,
+          async release() {
+            try {
+              await redis().eval(DELETE_IF_HOLDS, [RUN_LOCK()], [raw]);
+            } catch (err) {
+              console.error('Nightly jobs: the run lock could not be released; it will expire.', err instanceof Error ? err.name : typeof err);
+            }
+          },
+        },
+      };
+    }
+    if (Date.now() >= until) return { busy: await runningNow() };
+    await new Promise((r) => setTimeout(r, Math.min(1000, Math.max(0, until - Date.now()))));
+  }
+}
+
+// ---- Running a job again by hand ----
 
 /** When each job's cron is scheduled, UTC, as vercel.json says (a test holds
  *  the two to the same). */
@@ -842,48 +913,32 @@ export const CRON_SCHEDULES: Record<NightlyJob, { path: string; hour: number; mi
   files: { path: '/api/attachments/sweep', hour: 17, minute: 30 },
 };
 
-/** How long a run takes at most: the routes' maxDuration. */
-const RUN_MS = 5 * 60_000;
+/** How long after a job last worked Run now waits before running it again, so
+ *  a job that just worked isn't run over and over. A failure never waits. */
+export const AGAIN_AFTER_OK_MS = 6 * 60_000;
 
 /**
- * Until when a run started by hand could overlap a nightly cron, or null when
- * it can't. Both jobs count, whichever is to be run: two runs at once, of
- * either job, race over the backups' record, which each reads and writes
- * whole. For each cron, the span runs from five minutes before the top of its
- * hour (a run started then is still going when the hour starts, and Vercel's
- * Hobby plan may start a cron at any point in its hour) until five minutes
- * after that hour ends (its limit), unless it has recorded an outcome since
- * its hour began: then it has run. A run started by hand never records inside
- * that span itself: it is refused there, and one started just before it ends
- * before the hour does. A record that can't be read holds nothing back: the
- * run itself says what is wrong.
+ * Until when Run now holds off a job because its latest outcome, from its cron
+ * or from Run now, is a success less than AGAIN_AFTER_OK_MS old; null when it
+ * doesn't. A failure since that success never holds it: it can be run again at
+ * once.
  */
-export async function cronHoldUntil(now: Date = new Date()): Promise<Date | null> {
-  let status: Status | null;
-  try {
-    status = await readStatus();
-  } catch {
-    return null;
-  }
-  let until: number | null = null;
-  for (const job of ['backup', 'files'] as const) {
-    const hour = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), CRON_SCHEDULES[job].hour);
-    const end = hour + 60 * 60_000 + RUN_MS;
-    if (now.getTime() < hour - RUN_MS || now.getTime() >= end) continue;
-    const record = job === 'backup' ? status : sweepOf(status);
-    const ran = [record?.last_ok, record?.last_failed].some((t) => !!t && Date.parse(t) >= hour);
-    if (!ran) until = Math.max(until ?? 0, end);
-  }
-  return until === null ? null : new Date(until);
+export function againAt(record: { last_ok: string | null; last_failed: string | null } | null, now: Date): Date | null {
+  const ok = record?.last_ok ? Date.parse(record.last_ok) : NaN;
+  if (Number.isNaN(ok)) return null;
+  if (record?.last_failed && Date.parse(record.last_failed) >= ok) return null;
+  const at = ok + AGAIN_AFTER_OK_MS;
+  return at > now.getTime() ? new Date(at) : null;
 }
 
 // ---- What the admin's Nightly jobs page shows (app/admin-view/jobs) ----
 
 /** One job as the page shows it: when it runs, its last outcomes, what the
  *  dashboard says of it (null when nothing), and whether it can be run now:
- *  `hold_until` while a nightly cron may be running (cronHoldUntil), `runnable`
- *  false where a run can't help (no blob store; a clean-up the breaker
- *  held, which would hold again). */
+ *  `running_now`, the run going (of either job, since one runs at a time:
+ *  lib/nightly-run-limit.ts), `again_at` while it worked a moment ago
+ *  (againAt), `runnable` false where a run can't help (no blob store; a
+ *  clean-up the breaker held, which would hold again). */
 export type JobView = {
   job: NightlyJob;
   hour: number;
@@ -892,7 +947,8 @@ export type JobView = {
   last_failed: string | null;
   reason: string | null;
   problem: BackupProblem | AttachmentSweepProblem | null;
-  hold_until: string | null;
+  running_now: RunHolder | null;
+  again_at: string | null;
   runnable: boolean;
 };
 
@@ -901,11 +957,7 @@ export type JobView = {
 export async function nightlyJobs(now: Date = new Date()): Promise<JobView[]> {
   const status = await readStatus().catch(() => null);
   const sweep = sweepOf(status);
-  const [backupNow, filesNow, hold] = await Promise.all([
-    backupNotice(now),
-    attachmentSweepProblem(now),
-    cronHoldUntil(now),
-  ]);
+  const [backupNow, filesNow, running] = await Promise.all([backupNotice(now), attachmentSweepProblem(now), runningNow()]);
   const kept = backupRetention()?.kept === true;
   const jobs: JobView[] = [
     {
@@ -916,7 +968,8 @@ export async function nightlyJobs(now: Date = new Date()): Promise<JobView[]> {
       last_failed: status?.last_failed ?? null,
       reason: status?.last_failed ? status.reason : null,
       problem: backupNow,
-      hold_until: hold?.toISOString() ?? null,
+      running_now: running,
+      again_at: againAt(status, now)?.toISOString() ?? null,
       runnable: kept,
     },
     {
@@ -927,7 +980,8 @@ export async function nightlyJobs(now: Date = new Date()): Promise<JobView[]> {
       last_failed: sweep?.last_failed ?? null,
       reason: sweep?.last_failed ? sweep.reason : null,
       problem: filesNow,
-      hold_until: hold?.toISOString() ?? null,
+      running_now: running,
+      again_at: againAt(sweep, now)?.toISOString() ?? null,
       runnable: kept && !filesNow?.held,
     },
   ];

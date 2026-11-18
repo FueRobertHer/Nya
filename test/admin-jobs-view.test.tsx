@@ -32,7 +32,8 @@ const job = (over: Partial<JobView> & Pick<JobView, 'job'>): JobView => ({
   last_failed: null,
   reason: null,
   problem: null,
-  hold_until: null,
+  running_now: null,
+  again_at: null,
   runnable: true,
   ...over,
 });
@@ -126,18 +127,31 @@ describe('the Nightly jobs page', () => {
     page.unmount();
   });
 
-  test('while its cron may be going, the button waits and says until when; the route’s answer says when too', async () => {
-    listing = [job({ ...failedBackup, hold_until: '2026-10-24T17:05:00Z' }), goodFiles];
+  test('while a run is going, every button waits and says which run; the route’s answer names it too', async () => {
+    const going = { job: 'backup' as const, by: 'cron' as const, started: '2026-10-24T16:01:00Z' };
+    listing = [job({ ...failedBackup, running_now: going }), job({ ...failedFiles, running_now: going })];
     const page = await mount();
     expect(page.button('Nightly backup')?.getAttribute('disabled')).not.toBeNull();
-    expect(page.text('Nightly backup')).toContain('A nightly job may be running now. Run it from here after');
+    expect(page.text('Nightly backup')).toContain('Its nightly cron is running it now. Run now comes back when it finishes.');
+    expect(page.button('Receipts and documents clean-up')?.getAttribute('disabled')).not.toBeNull();
+    expect(page.text('Receipts and documents clean-up')).toContain('The nightly backup is running now. Run this once it finishes.');
     page.unmount();
     listing = [failedBackup, goodFiles];
-    answer = json(409, { error: 'A nightly job may be running now. Try again in 12 minutes.', jobs: listing });
+    answer = json(409, { error: 'The nightly backup (started by its cron) is running now. Try again once it finishes.', jobs: listing });
     const later = await mount();
     await later.press(later.button('Nightly backup')!);
-    expect(later.text('Nightly backup')).toContain('Try again in 12 minutes.');
+    expect(later.text('Nightly backup')).toContain('The nightly backup (started by its cron) is running now.');
     later.unmount();
+  });
+
+  test('a job that worked a few minutes ago waits until when; one that failed never waits', async () => {
+    listing = [job({ ...goodBackup, again_at: '2026-10-24T16:09:00Z' }), failedFiles];
+    const page = await mount();
+    expect(page.button('Nightly backup')?.getAttribute('disabled')).not.toBeNull();
+    expect(page.text('Nightly backup')).toContain('It worked a few minutes ago. Run it again from here after');
+    expect(page.button('Receipts and documents clean-up')?.getAttribute('disabled')).toBeNull();
+    expect(page.text('Receipts and documents clean-up')).not.toContain('Run it again from here after');
+    page.unmount();
   });
 
   test('a clean-up the breaker held, or no file store: no button, and why', async () => {

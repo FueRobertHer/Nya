@@ -484,15 +484,31 @@ export async function runAttachmentSweep(now: Date = new Date(), opts: { budgetM
 
 /** One sweep, as the cron runs it (app/api/attachments/sweep/route.ts), and
  *  as the admin starts it again from the app (app/api/admin/jobs). Logs
- *  counts and account ids, never a file's name or anything in it. */
-export async function runNightlySweep(now: Date = new Date()): Promise<RunAnswer> {
+ *  counts and account ids, never a file's name or anything in it.
+ *  `budgetMs`: less than SWEEP_BUDGET_MS when the cron waited for another run
+ *  first (lib/nightly-run-limit.ts runAsCron). */
+export async function runNightlySweep(now: Date = new Date(), opts: { budgetMs?: number } = {}): Promise<RunAnswer> {
   try {
-    const result = await runAttachmentSweep(now);
+    const result = await runAttachmentSweep(now, opts);
     console.log('Receipts sweep', JSON.stringify(result));
     return { status: 200, body: result };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     console.error('Receipts sweep failed', reason);
     return { status: 500, body: { error: reason } };
+  }
+}
+
+/** Records a sweep that didn't run (its cron found another run still going:
+ *  lib/nightly-run-limit.ts runAsCron), keeping where it got to. Not while a
+ *  restore may be running, as for a run (runAttachmentSweep): that would put
+ *  the backups' record back. Best effort, as recordAttachmentSweep is. */
+export async function recordSweepFailed(reason: string, now: Date = new Date()): Promise<void> {
+  try {
+    if (backupRetention()?.kept === true && !(await backupRecordExists())) return;
+    const before = (await readAttachmentSweep().catch(() => null)) ?? { last_ok: null, last_failed: null, reason: null, cursor: null, listed_at: null };
+    await recordAttachmentSweep({ ...before, last_failed: now.toISOString(), reason });
+  } catch (err) {
+    console.error('Receipts sweep outcome not recorded', loggable(err));
   }
 }
