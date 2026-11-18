@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { benchmarkAt, cellFigure, health, newHealthResult, povertyLine, type HealthInput } from '@/lib/fire/tax/health';
 import { LAW_2026 } from '@/lib/fire/tax/law/2026';
+import { LAW_2027 } from '@/lib/fire/tax/law/2027';
 import type { AcaSchedule, TaxLaw } from '@/lib/fire/tax/law/types';
 import { begin, lin } from '@/lib/fire/tax/piece';
 
@@ -19,7 +20,10 @@ import { begin, lin } from '@/lib/fire/tax/piece';
 //     275% of the poverty line, annual contribution $4,290, monthly $358.
 //   - CMS, Guidance Regarding Age Curves and State Reporting (December 16,
 //     2016), Appendix I; CMS, 2026 Medicare Parts A & B Premiums and
-//     Deductibles (November 14, 2025).
+//     Deductibles (November 14, 2025); CMS, 2027 Medicare Parts A & B
+//     Premiums and Deductibles (November 17, 2026), whose Part B
+//     "Income-Related Monthly Adjustment Amount" column and Part D table
+//     give each 2027 tier's IRMAA.
 //   - 42 CFR 435.552(f): the work rule met by household MAGI of $580 a month.
 
 function input(over: Partial<HealthInput> = {}): HealthInput {
@@ -262,6 +266,48 @@ describe('Medicare from 65', () => {
     expect(h.people[0].partB).toBeCloseTo(2_434.8 * grow, 6);
     expect(h.people[0].extra).toBeCloseTo(1_000 * grow, 6);
     expect(h.hsaEligible).toBeCloseTo(h.people[0].partB + h.people[0].irmaa, 6);
+  });
+});
+
+describe('Medicare from 65, on the 2027 figures', () => {
+  // 2027's table isn't whole yet, so 2026's Medicaid poverty guidelines stand
+  // in; Medicare reads none of them.
+  const law2027: TaxLaw = { ...LAW_2026, ...LAW_2027 };
+  const person = (filing: 'single' | 'joint', magi: number | null) =>
+    run({ calendarYear: 2027, filing, ages: filing === 'single' ? [66, -1] : [66, 67], irmaaMagi: magi }, law2027).people[0];
+
+  // CMS's tiers by their edges, single and joint, with the monthly Part B
+  // adjustment (above the standard premium) and the monthly Part D one, as
+  // printed.
+  const tiers: { single: number; joint: number; partB: number; partD: number }[] = [
+    { single: 112_000, joint: 224_000, partB: 83.7, partD: 15.4 },
+    { single: 141_000, joint: 282_000, partB: 209.4, partD: 39.7 },
+    { single: 177_000, joint: 354_000, partB: 335, partD: 64 },
+    { single: 212_000, joint: 424_000, partB: 460.6, partD: 88.3 },
+  ];
+
+  test("Part B's standard premium is $209.40 a month, $2,512.80 a year", () => {
+    expect(person('single', null).partB).toBeCloseTo(2_512.8, 6);
+    expect(person('joint', null).partB).toBeCloseTo(2_512.8, 6);
+  });
+
+  test('each tier at and $1 over its edge pays the printed adjustments, the top at or above $500,000 ($750,000 joint)', () => {
+    for (const filing of ['single', 'joint'] as const) {
+      expect(person(filing, tiers[0][filing]).irmaaTier).toBe(0);
+      expect(person(filing, tiers[0][filing]).irmaa).toBe(0);
+      tiers.forEach((t, i) => {
+        const over = person(filing, t[filing] + 1);
+        expect(over.irmaaTier).toBe(i + 1);
+        expect(over.irmaa).toBeCloseTo(12 * (t.partB + t.partD), 6);
+        // The tier holds to its upper edge, the next one's start.
+        const next = tiers[i + 1]?.[filing];
+        if (next !== undefined) expect(person(filing, next).irmaaTier).toBe(i + 1);
+      });
+      const top = filing === 'single' ? 500_000 : 750_000;
+      expect(person(filing, top - 1).irmaaTier).toBe(4);
+      expect(person(filing, top).irmaaTier).toBe(5);
+      expect(person(filing, top).irmaa).toBeCloseTo(12 * (502.4 + 96.4), 6);
+    }
   });
 });
 

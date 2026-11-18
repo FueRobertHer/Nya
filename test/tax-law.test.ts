@@ -10,12 +10,14 @@ import { LAW_PARTS, STATE_CODES, type Filing } from '@/lib/fire/tax/law/types';
 // tax-calculator.
 
 describe('which law a plan uses', () => {
-  test('2026 is complete; 2027 lacks the parts not out on 2026-11-07', () => {
+  test('2026 is complete; 2027 lacks the parts not out on 2026-11-18', () => {
     expect(isComplete(LAW_2026)).toBe(true);
     expect(isComplete(LAW_2027)).toBe(false);
-    expect(missingParts(LAW_2027)).toEqual(['medicaidPoverty', 'medicare']);
+    expect(missingParts(LAW_2027)).toEqual(['medicaidPoverty']);
   });
 
+  // Medicaid's 2027 poverty guidelines come out in January 2027, so a plan in
+  // 2027 waits on 2026's law until they are in.
   test("a plan in 2027 uses 2026's law and says it is behind; one in 2026, 2026's", () => {
     expect(lawFor(2026)).toEqual({ law: LAW_2026, behind: false });
     expect(lawFor(2027)).toEqual({ law: LAW_2026, behind: true });
@@ -82,17 +84,27 @@ describe("the tables' shape", () => {
     expect(Object.keys(LAW_2026.stateIncomeTax).length).toBe(STATE_CODES.length);
   });
 
-  test('IRMAA tiers ascend; only the top is "at or above"', () => {
-    for (const filing of ['single', 'joint'] as Filing[]) {
-      const tiers = LAW_2026.medicare.irmaa[filing];
-      for (let i = 1; i < tiers.length; i++) {
-        expect(tiers[i].over).toBeGreaterThan(tiers[i - 1].over);
-        expect(tiers[i].partB).toBeGreaterThan(tiers[i - 1].partB);
+  test('IRMAA tiers ascend; only the top is "at or above", in every year that has them', () => {
+    const years = LAW_YEARS.filter((law) => law.medicare !== undefined);
+    expect(years.map((law) => law.year)).toEqual([2026, 2027]);
+    for (const law of years) {
+      const medicare = law.medicare!;
+      for (const filing of ['single', 'joint'] as Filing[]) {
+        const tiers = medicare.irmaa[filing];
+        expect(tiers[0].partB).toBeGreaterThan(medicare.partB);
+        for (let i = 1; i < tiers.length; i++) {
+          expect(tiers[i].over).toBeGreaterThan(tiers[i - 1].over);
+          expect(tiers[i].partB).toBeGreaterThan(tiers[i - 1].partB);
+          expect(tiers[i].partD).toBeGreaterThan(tiers[i - 1].partD);
+        }
+        expect(tiers.map((t) => t.atLeast)).toEqual([false, false, false, false, true]);
       }
-      expect(tiers.map((t) => t.atLeast)).toEqual([false, false, false, false, true]);
+      // Single and joint share each tier's amounts, and the joint top is
+      // $750,000, not double the single $500,000.
+      expect(medicare.irmaa.joint.map((t) => [t.partB, t.partD])).toEqual(medicare.irmaa.single.map((t) => [t.partB, t.partD]));
+      expect(medicare.irmaa.single.at(-1)!.over).toBe(500_000);
+      expect(medicare.irmaa.joint.at(-1)!.over).toBe(750_000);
     }
-    // The joint top is $750,000, not double the single $500,000.
-    expect(LAW_2026.medicare.irmaa.joint.at(-1)!.over).toBe(750_000);
   });
 
   test('the Uniform Lifetime Table covers 72 to 120 and falls each year', () => {

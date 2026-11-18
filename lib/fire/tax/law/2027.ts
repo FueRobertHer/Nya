@@ -1,6 +1,6 @@
 // lib/fire/tax/law/2027.ts
 //
-// The 2027 law, as far as it is out on 2026-11-07. A plan uses it only once
+// The 2027 law, as far as it is out on 2026-11-18. A plan uses it only once
 // every part is here (lib/fire/tax/law/index.ts); until then, 2026's, with the
 // caution "Uses 2026 tax law, the newest Nya has." (components/plan-drawdown.ts).
 //
@@ -70,6 +70,31 @@ export const LAW_2027: PartialLaw = {
   creditPoverty: LAW_2026.medicaidPoverty,
   medicaidStates: MEDICAID_STATES,
   stateIncomeTax: STATE_INCOME_TAX,
+  // CMS, "2027 Medicare Parts A & B Premiums and Deductibles" (November 17,
+  // 2026): the standard Part B premium and the income-related tiers, total
+  // monthly Part B premium and monthly Part D adjustment, as printed (each
+  // tier above its threshold; the top at or above it). CMS's Part B notice
+  // (CMS-8094-N, on public inspection November 17, 2026, to be printed in
+  // the Federal Register November 19) gives the same Part B table.
+  medicare: {
+    partB: 209.4,
+    irmaa: {
+      single: [
+        { over: 112_000, atLeast: false, partB: 293.1, partD: 15.4 },
+        { over: 141_000, atLeast: false, partB: 418.8, partD: 39.7 },
+        { over: 177_000, atLeast: false, partB: 544.4, partD: 64 },
+        { over: 212_000, atLeast: false, partB: 670, partD: 88.3 },
+        { over: 500_000, atLeast: true, partB: 711.8, partD: 96.4 },
+      ],
+      joint: [
+        { over: 224_000, atLeast: false, partB: 293.1, partD: 15.4 },
+        { over: 282_000, atLeast: false, partB: 418.8, partD: 39.7 },
+        { over: 354_000, atLeast: false, partB: 544.4, partD: 64 },
+        { over: 424_000, atLeast: false, partB: 670, partD: 88.3 },
+        { over: 750_000, atLeast: true, partB: 711.8, partD: 96.4 },
+      ],
+    },
+  },
   // SSA, contribution and benefit base for 2027 (announced October 14, 2026).
   wageBase: 192_300,
   uniform: { firstAge: 72, divisors: UNIFORM_DIVISORS },
@@ -83,7 +108,7 @@ export const LAW_2027: PartialLaw = {
     medicaidPoverty: { source: 'HHS poverty guidelines for 2027', published: null, due: 'January 2027', opens: '2027-01-01' },
     medicaidStates: LAW_2026.sources.medicaidStates,
     stateIncomeTax: LAW_2026.sources.stateIncomeTax,
-    medicare: { source: 'CMS, 2027 Medicare Parts A and B Premiums and Deductibles', published: null, due: 'Mid-November 2026', opens: '2026-11-01' },
+    medicare: { source: 'CMS, 2027 Medicare Parts A and B Premiums and Deductibles', published: '2026-11-17', due: 'Mid-November 2026' },
     wageBase: { source: 'SSA, contribution and benefit base', published: '2026-10-14', due: 'October 2026' },
     uniform: LAW_2026.sources.uniform,
     curve: LAW_2026.sources.curve,
