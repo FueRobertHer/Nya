@@ -666,16 +666,18 @@ describe('editing and deleting a transaction', () => {
 describe('excluding a transaction', () => {
   test('sets the flag on any transaction, Plaid’s or manual, and including it again is recorded too; no cache is dropped', async () => {
     await writeCache(ctx, CacheKey.Transactions, { plaid_only: true, transactions: [], notes: [], as_of: 'then' });
+    // With what its Undo puts back: nothing was said about it before.
+    const after = { excluded: true, updated_at: expect.any(String) };
     expect(await exclude({ transaction_id: 'plaid_txn_1', excluded: true })).toEqual({
       status: 200,
-      body: { transaction_id: 'plaid_txn_1', excluded: true, tags: [], untagged: [], note: null },
+      body: { transaction_id: 'plaid_txn_1', excluded: true, tags: [], untagged: [], note: null, undo: { before: null, after } },
     });
     expect(await txnAnnotationStore.get(ctx, 'plaid_txn_1')).toMatchObject({ excluded: true });
     expect(await readCache(ctx, CacheKey.Transactions)).not.toBeNull();
     // Put back: said, and kept, so it beats an exclusion carried across a re-link (and later a rule).
     expect(await exclude({ transaction_id: 'plaid_txn_1', excluded: false })).toEqual({
       status: 200,
-      body: { transaction_id: 'plaid_txn_1', excluded: false, tags: [], untagged: [], note: null },
+      body: { transaction_id: 'plaid_txn_1', excluded: false, tags: [], untagged: [], note: null, undo: { before: after, after: { excluded: false, updated_at: expect.any(String) } } },
     });
     expect(await txnAnnotationStore.get(ctx, 'plaid_txn_1')).toMatchObject({ excluded: false });
     // A manual row's id is a transaction id like any other.
@@ -726,6 +728,84 @@ describe('excluding a transaction', () => {
   test('each container keeps its own', async () => {
     await exclude({ transaction_id: 'plaid_txn_1', excluded: true });
     expect(await txnAnnotationStore.has(OTHER, 'plaid_txn_1')).toBe(false);
+  });
+});
+
+describe('undoing an exclusion', () => {
+  const undo = (body: unknown) => call(annotations.PUT, 'PUT', body);
+  const NOTED = { excluded: true, note: 'birthday dinner', updated_at: '2026-10-01T00:00:00.000Z' };
+
+  test('puts back no record when there was none, so nothing said beats a rule; sent again, it changes nothing', async () => {
+    const saved = await exclude({ transaction_id: 'plaid_txn_1', excluded: true });
+    expect(saved.body.undo.before).toBeNull();
+    expect(await undo({ transaction_id: 'plaid_txn_1', undo: saved.body.undo })).toEqual({ status: 200, body: { transaction_id: 'plaid_txn_1', excluded: false } });
+    expect(await txnAnnotationStore.has(ctx, 'plaid_txn_1')).toBe(false);
+    // Its answer lost and Undo pressed again: already as it was.
+    expect((await undo({ transaction_id: 'plaid_txn_1', undo: saved.body.undo })).status).toBe(200);
+    expect(await txnAnnotationStore.has(ctx, 'plaid_txn_1')).toBe(false);
+  });
+
+  test('puts back the record exactly, note and when it changed included, not the opposite tap', async () => {
+    await fake.hset(ctxKey('transaction-annotations'), { plaid_txn_1: await encrypt(TEST_CTX, JSON.stringify(NOTED)) });
+    const saved = await exclude({ transaction_id: 'plaid_txn_1', excluded: false });
+    expect(saved.body.undo).toEqual({ before: NOTED, after: { ...NOTED, excluded: false, updated_at: expect.any(String) } });
+    expect(await undo({ transaction_id: 'plaid_txn_1', undo: saved.body.undo })).toEqual({ status: 200, body: { transaction_id: 'plaid_txn_1', excluded: true } });
+    expect(await txnAnnotationStore.get(ctx, 'plaid_txn_1')).toEqual(NOTED);
+  });
+
+  test('on a manual row too', async () => {
+    const id = newManualTxnId();
+    const saved = await exclude({ transaction_id: id, excluded: true });
+    expect((await undo({ transaction_id: id, undo: saved.body.undo })).status).toBe(200);
+    expect(await txnAnnotationStore.has(ctx, id)).toBe(false);
+  });
+
+  test('refused when the record changed since, the change kept', async () => {
+    const saved = await exclude({ transaction_id: 'plaid_txn_1', excluded: true });
+    await exclude({ transaction_id: 'plaid_txn_1', note: 'from the phone' });
+    const r = await undo({ transaction_id: 'plaid_txn_1', undo: saved.body.undo });
+    expect(r.status).toBe(409);
+    expect(r.body.error).toContain('changed since');
+    expect(await txnAnnotationStore.get(ctx, 'plaid_txn_1')).toMatchObject({ excluded: true, note: 'from the phone' });
+  });
+
+  test('a change of more than the exclusion answers no Undo, and one can’t be sent', async () => {
+    const both = await exclude({ transaction_id: 'plaid_txn_1', excluded: true, note: 'gift' });
+    expect(both.status).toBe(200);
+    expect(both.body.undo).toBeUndefined();
+    const noted = await exclude({ transaction_id: 'plaid_txn_2', note: 'gift' });
+    expect(noted.body.undo).toBeUndefined();
+    // An Undo that would take the note off too is refused, the record kept.
+    const after = await txnAnnotationStore.get(ctx, 'plaid_txn_1');
+    const r = await undo({ transaction_id: 'plaid_txn_1', undo: { before: null, after } });
+    expect(r).toEqual({ status: 400, body: { error: 'That isn’t an exclusion to undo.' } });
+    expect(await txnAnnotationStore.get(ctx, 'plaid_txn_1')).toEqual(after);
+  });
+
+  test('refused when malformed', async () => {
+    const after = { excluded: true, updated_at: '2026-10-01T00:00:00.000Z' };
+    const bad: [unknown, string][] = [
+      [{ transaction_id: 'has space', undo: { before: null, after } }, 'Invalid transaction id'],
+      [{ transaction_id: 'plaid_txn_1' }, 'Say what to undo'],
+      [{ transaction_id: 'plaid_txn_1', undo: { before: null } }, 'Say what to undo'],
+      [{ transaction_id: 'plaid_txn_1', undo: { after } }, 'Say what to undo'],
+      [{ transaction_id: 'plaid_txn_1', undo: { before: null, after: { excluded: 'yes', updated_at: after.updated_at } } }, 'Say what to undo'],
+      [{ transaction_id: 'plaid_txn_1', undo: { before: { excluded: true }, after } }, 'Say what to undo'],
+    ];
+    for (const [body, error] of bad) expect([body, await undo(body)]).toEqual([body, { status: 400, body: { error } }]);
+    expect(await call(annotations.PUT, 'PUT', undefined, 'nope')).toEqual({ status: 400, body: { error: 'Invalid request' } });
+    expect(await call(annotations.PUT, 'PUT', undefined, 'x'.repeat(64 * 1024 + 1))).toEqual({ status: 413, body: { error: 'Request too large' } });
+    expect(await txnAnnotationStore.count(ctx)).toBe(0);
+  });
+
+  test('records compare field for field, whatever order their fields were written in', async () => {
+    const { undoExclusion, sameAnnotation } = await import('@/lib/txn-annotations');
+    expect(sameAnnotation({ note: 'a', excluded: true, updated_at: 't' }, { updated_at: 't', excluded: true, note: 'a' })).toBe(true);
+    expect(sameAnnotation(null, { updated_at: 't' })).toBe(false);
+    const saved = await exclude({ transaction_id: 'plaid_txn_1', excluded: true });
+    const { excluded, updated_at } = saved.body.undo.after;
+    await undoExclusion(ctx, 'plaid_txn_1', { before: null, after: { updated_at, excluded } });
+    expect(await txnAnnotationStore.has(ctx, 'plaid_txn_1')).toBe(false);
   });
 });
 

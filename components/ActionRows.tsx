@@ -16,7 +16,7 @@ import { chevron, RIGHT } from './MonthStepper';
 
 export type SheetAction = {
   /** The row's key: stable when its title changes (the exclusion row's
-   *  flips between Exclude and Include), so focus stays on it. */
+   *  flips between Exclude and Include), so it stays the same button. */
   key: string;
   title: string;
   /** One line under the title, for what the action does when that isn't

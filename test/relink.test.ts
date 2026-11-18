@@ -218,7 +218,15 @@ describe('a re-link, end to end', () => {
     await readd();
     await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' });
     expect(await excludedOf('n_a')).toBe(true);
-    expect((await excludeRow('n_a', false)).body).toEqual({ transaction_id: 'n_a', excluded: false, tags: [], untagged: [], note: null });
+    // Its Undo would take the record away, so the carried exclusion applies again.
+    expect((await excludeRow('n_a', false)).body).toEqual({
+      transaction_id: 'n_a',
+      excluded: false,
+      tags: [],
+      untagged: [],
+      note: null,
+      undo: { before: null, after: { excluded: false, updated_at: expect.any(String) } },
+    });
     expect(await excludedOf('n_a')).toBeUndefined();
   });
 
