@@ -36,6 +36,14 @@ describe('a Blob call that stalls', () => {
     expect(warnings).toEqual(["Vercel Blob didn't finish a listing within 0.02s; sent again on a new request"]);
   });
 
+  test('says each time it sends one again, for the backup’s run log', async () => {
+    let resends = 0;
+    let calls = 0;
+    const result = await retryStalled('a listing', undefined, (signal) => (++calls < 3 ? stall(signal) : Promise.resolve('listed')), 20, () => resends++);
+    expect(result).toBe('listed');
+    expect(resends).toBe(2);
+  });
+
   test('a call that fails is not sent again here (the SDK retries its own failures)', async () => {
     let calls = 0;
     const failing = () => {

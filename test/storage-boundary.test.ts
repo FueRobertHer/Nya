@@ -157,7 +157,10 @@ const FROZEN_PREFIXES = [
  * "backups:keys-pending"), beside the backups' own record, under that family,
  * and the nightly jobs' run lock ("backups:job-running", lib/backup.ts takeRunLock),
  * one environment-wide run of either job at a time, which a container can't
- * hold either.
+ * hold either; and their run log ("backups:runs", lib/backup.ts startRun,
+ * approved by Fue 2026-11-18), the last runs of either job, about this copy of
+ * Nya and no one's account, left out of backups as the family is, so no
+ * environment store (lib/repo.ts) can hold it.
  */
 const FROZEN_KEY_NAMES = [
   'account-links in lib/link-core.ts',
@@ -169,6 +172,7 @@ const FROZEN_KEY_NAMES = [
   'backups:job-running in lib/backup.ts',
   'backups:keys-lock in lib/backup.ts',
   'backups:keys-pending in lib/backup.ts',
+  'backups:runs in lib/backup.ts',
   'backups:status in lib/backup.ts',
   'budgets in lib/budgets.ts',
   'cache:inv-activity:v4 in lib/cache.ts',

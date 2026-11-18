@@ -113,7 +113,7 @@ const fakeGet = (url: string, options: any, cb: (res: any) => void) => {
 };
 await mockForFile('node:https', () => ({ ...realHttps, default: { ...(realHttps as any).default, get: fakeGet }, get: fakeGet }));
 
-const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention, againAt, AGAIN_AFTER_OK_MS, CRON_SCHEDULES, recordAttachmentSweep, nightlyJobs, runningNow, takeRunLock, runNightlyBackup, setRetryPausesForTests, RETRY_PAUSES_MS, MIN_ATTEMPT_MS, BACKUP_BUDGET_MS, RECORD_LIMIT_MS } = await import('@/lib/backup');
+const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention, againAt, AGAIN_AFTER_OK_MS, CRON_SCHEDULES, recordAttachmentSweep, nightlyJobs, runningNow, takeRunLock, runNightlyBackup, setRetryPausesForTests, RETRY_PAUSES_MS, MIN_ATTEMPT_MS, BACKUP_BUDGET_MS, RECORD_LIMIT_MS, startRun, recentRuns } = await import('@/lib/backup');
 const { verifyArchive } = await import('@/lib/restore');
 const { keyArchiveFolder, verifyKeyArchive, KEY_GENERATIONS } = await import('@/lib/key-archive');
 /** The data archives kept, and the key archives (lib/key-archive.ts). */
@@ -692,6 +692,28 @@ describe('trying a failed backup again in the same run', () => {
     expect(answer.status).toBe(200);
     for (const p of lateDeletes) blobs.delete(p);
     expect(dataBlobs()).toEqual([answer.body.pathname as string]);
+  });
+
+  test('the run log says each attempt, the step it failed at, every step’s time, and that it worked', async () => {
+    setRetryPausesForTests([10]);
+    failPuts = 1;
+    const log = await startRun('backup', 'cron');
+    const { answer } = await quietRun({ log });
+    expect(answer.status).toBe(200);
+    const [run] = (await recentRuns())!;
+    expect(run).toMatchObject({ outcome: 'worked', reason: null, attempts: [{ step: 'upload', reason: 'Vercel Blob: the service is unavailable' }] });
+    expect(run.steps!.map(([step]) => step)).toEqual(['export', 'upload', 'read-back', 'count', 'list', 'keys']);
+  });
+
+  test('a night that failed is in the run log with the reason recorded', async () => {
+    setRetryPausesForTests([10]);
+    corruptReads = true;
+    const log = await startRun('backup', 'hand');
+    const { answer } = await quietRun({ log });
+    expect(answer.status).toBe(500);
+    const [run] = (await recentRuns())!;
+    expect(run).toMatchObject({ by: 'hand', outcome: 'failed', reason: answer.body.error });
+    expect(run.attempts!.map((a) => a.step)).toEqual(['read-back', 'read-back']);
   });
 
   test('a step after the copy read back carries on from that step: nothing exported, uploaded or counted again', async () => {

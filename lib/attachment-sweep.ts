@@ -62,7 +62,7 @@
 import type { Ctx, ContainerId } from './containers';
 import { isContainerId, listContainers } from './containers';
 import { readContainerEntries, readTombstones, ContainerKeyError } from './crypto';
-import { backupFolder, backupProblem, backupRecordExists, backupRetention, databaseBackupDays, dataArchiveName, readAttachmentSweep, recordAttachmentSweep, type AttachmentSweepStatus, type RunAnswer } from './backup';
+import { backupFolder, backupProblem, backupRecordExists, backupRetention, databaseBackupDays, dataArchiveName, readAttachmentSweep, recordAttachmentSweep, type AttachmentSweepStatus, type RunAnswer, type RunLog } from './backup';
 import { attachmentStore, isAttachmentId, placeStore, sweepStateStore, usageStore, type Attachment, type Place, type SweepState } from './attachment-stores';
 import { attachmentObjects, containerFolder, environmentFolder, parseObjectPath, withLimit, type AttachmentObjects } from './attachment-objects';
 import { discardUpload, finishDelete, fieldOf, usageFromRecords, POSTING_WAIT_MS } from './attachments';
@@ -410,9 +410,10 @@ async function storeWide(store: AttachmentObjects, registry: { id: ContainerId; 
  * One run (see the header): the accounts from where the last run stopped,
  * then, weekly and when it is safe, the store-wide pass. Records its outcome.
  * Throws only for what stops the whole run (no registry, the store's
- * listing), after recording that.
+ * listing), after recording that. `onPhase`: told as each part starts, for
+ * the run log (lib/backup.ts RunLog).
  */
-export async function runAttachmentSweep(now: Date = new Date(), opts: { budgetMs?: number } = {}): Promise<SweepResult> {
+export async function runAttachmentSweep(now: Date = new Date(), opts: { budgetMs?: number; onPhase?: (phase: string) => void } = {}): Promise<SweepResult> {
   const result: SweepResult = { containers: 0, finished: false, uploads_discarded: 0, deletes_finished: 0, placements_moved: 0, listed: false, orphans_deleted: 0, deleted_folders: 0, held: 0, errors: 0 };
   const store = attachmentObjects();
   if (!store) return { ...result, finished: true };
@@ -432,6 +433,7 @@ export async function runAttachmentSweep(now: Date = new Date(), opts: { budgetM
   const before: AttachmentSweepStatus = (await readAttachmentSweep().catch(() => null)) ?? { last_ok: null, last_failed: null, reason: null, cursor: null, listed_at: null };
   let cursor = before.cursor;
   try {
+    opts.onPhase?.('accounts');
     const registry = await listContainers();
     const active = registry.filter((c) => c.status === 'active').map((c) => c.id as string).sort();
     const start = cursor ? active.findIndex((id) => id > cursor!) : 0;
@@ -461,6 +463,7 @@ export async function runAttachmentSweep(now: Date = new Date(), opts: { budgetM
     let listed_at = before.listed_at;
     if (finished && (!listed_at || Date.parse(listed_at) + LIST_EVERY_MS <= now.getTime()) && Date.now() - started <= budget) {
       if (!(await restoreFree())) return { ...result, paused: true };
+      opts.onPhase?.('store-wide pass');
       if (await storeWide(store, registry, now.getTime(), result)) {
         result.listed = true;
         listed_at = now.toISOString();
@@ -487,14 +490,19 @@ export async function runAttachmentSweep(now: Date = new Date(), opts: { budgetM
  *  counts and account ids, never a file's name or anything in it.
  *  `budgetMs`: less than SWEEP_BUDGET_MS when the cron waited for another run
  *  first (lib/nightly-run-limit.ts runAsCron). */
-export async function runNightlySweep(now: Date = new Date(), opts: { budgetMs?: number } = {}): Promise<RunAnswer> {
+export async function runNightlySweep(now: Date = new Date(), opts: { budgetMs?: number; log?: RunLog } = {}): Promise<RunAnswer> {
+  const { log, ...sweepOpts } = opts;
   try {
-    const result = await runAttachmentSweep(now, opts);
+    const result = await runAttachmentSweep(now, { ...sweepOpts, onPhase: (phase) => log?.phase(phase) });
     console.log('Receipts sweep', JSON.stringify(result));
+    // Its counts only: the accounts it names stay in Vercel's log.
+    const { paused, ...counts } = result;
+    await log?.end(paused ? 'paused' : 'worked', paused ? 'The backups’ record isn’t there (a restore may be running), so the clean-up stopped.' : null, counts);
     return { status: 200, body: result };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     console.error('Receipts sweep failed', reason);
+    await log?.end('failed', reason);
     return { status: 500, body: { error: reason } };
   }
 }

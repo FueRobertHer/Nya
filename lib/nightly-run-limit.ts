@@ -17,7 +17,7 @@
 // seconds), then fails and records why rather than skip in silence, so the
 // dashboard and the Nightly jobs page say so, and Run now runs it.
 
-import { takeRunLock, type NightlyJob, type RunAnswer, type RunHolder } from './backup';
+import { logNotRun, startRun, takeRunLock, type NightlyJob, type RunAnswer, type RunHolder, type RunLog } from './backup';
 
 /** How long a cron waits for a run already going. A run takes seconds, and
  *  the backup's step limits (240 s), this wait and recording its outcome
@@ -37,11 +37,13 @@ export function runWords(holder: RunHolder | null): string {
  * after waiting up to `waitMs` for a run already going. `run` is told how long
  * that wait took, so a run with a time budget can take it off. When the lock
  * stays held, or can't be taken, `recordBusy` records why (it never throws),
- * and the cron answers 500 with it, so it shows red in Vercel too.
+ * the run log says it didn't run, and the cron answers 500 with it, so it
+ * shows red in Vercel too. A run that starts has an entry in the run log
+ * (lib/backup.ts startRun), which `run` is handed to fill in and end.
  */
 export async function runAsCron(
   job: NightlyJob,
-  run: (waitedMs: number) => Promise<RunAnswer>,
+  run: (waitedMs: number, log: RunLog) => Promise<RunAnswer>,
   recordBusy: (reason: string) => Promise<void>,
   waitMs = CRON_WAIT_MS
 ): Promise<RunAnswer> {
@@ -54,18 +56,38 @@ export async function runAsCron(
     // so tonight rather than when the job has been missing for days.
     const reason = `Not run: the run lock could not be taken (${err instanceof Error ? err.message : String(err)}). Run it again from the Nightly jobs page.`;
     console.error(`Nightly ${job} not run`, reason);
-    await recordBusy(reason);
+    await Promise.all([recordBusy(reason), logNotRun(job, reason)]);
     return { status: 500, body: { error: reason } };
   }
   if ('busy' in taken) {
     const reason = `Not run: ${runWords(taken.busy)} was still going after ${Math.round(waitMs / 1000)}s. Run it again from the Nightly jobs page.`;
     console.error(`Nightly ${job} not run`, reason);
-    await recordBusy(reason);
+    await Promise.all([recordBusy(reason), logNotRun(job, reason)]);
     return { status: 500, body: { error: reason } };
   }
   try {
-    return await run(Date.now() - started);
+    // Its start written before the wait is counted, so a budget takes it off too.
+    const log = await startRun(job, 'cron');
+    return await endingLog(log, () => run(Date.now() - started, log));
   } finally {
     await taken.lock.release();
   }
+}
+
+/**
+ * Runs `run` and sees that its entry in the run log ends: the runners end it
+ * themselves, beside their own outcome (lib/backup.ts runNightlyBackup,
+ * lib/attachment-sweep.ts runNightlySweep), so this ends only one they
+ * didn't, as the answer says, or as failed with what a run that threw threw.
+ */
+export async function endingLog(log: RunLog, run: () => Promise<RunAnswer>): Promise<RunAnswer> {
+  let answer: RunAnswer;
+  try {
+    answer = await run();
+  } catch (err) {
+    await log.end('failed', err instanceof Error ? err.message : String(err));
+    throw err;
+  }
+  if (!log.ended) await log.end(answer.status === 200 ? 'worked' : 'failed', answer.status === 200 ? null : typeof answer.body.error === 'string' ? answer.body.error : 'The run failed.');
+  return answer;
 }

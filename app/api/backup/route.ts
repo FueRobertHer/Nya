@@ -36,7 +36,7 @@ export async function GET(req: Request) {
   }
   const { status, body } = await runAsCron(
     'backup',
-    (waited) => runNightlyBackup(new Date(), { waitedMs: waited }),
+    (waited, log) => runNightlyBackup(new Date(), { waitedMs: waited, log }),
     (reason) => recordOutcome({ ok: false, reason })
   );
   return NextResponse.json(body, { status });
