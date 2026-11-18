@@ -296,6 +296,8 @@ An item can be a link to a file to save (a report's **Download as CSV**): a real
 
 Clerk's account menu (the avatar's) takes the same row metrics through `CLERK_APPEARANCE` in `lib/theme.ts` (look and feel step 2c), and Clerk's corners are `--r-sm`.
 
+A shared demo account's menu is this menu, not Clerk's (`components/ClerkAccount.tsx`): its button is the account's picture, 34px and round, in a 44px `.icon-btn` with no padding and round corners (`.account-menu-btn`), and its items are Settings, Sharing and Sign out.
+
 ### Empty state
 
 A title, one line of helper text, and one primary action. Replaces the empty-note paragraphs that explain at length ("No recurring charges detected yet; they show up once...").
