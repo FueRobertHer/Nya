@@ -304,6 +304,47 @@ describe('design guard: the tokens (app/globals.css and docs/design/tokens.css)'
     expect(drift).toEqual([]);
   });
 
+  // Clerk draws its own screens (the sign-in form, the account window), so
+  // its appearance is all that sizes them: on the app's type scale, nothing
+  // under 12px, and each control it is given a 44px target.
+  test("Clerk's type, focus ring and targets are the app's (lib/theme.ts)", () => {
+    const { variables, elements } = CLERK_APPEARANCE;
+    expect(variables.fontSize).toEqual({ xs: 'var(--fs-1)', sm: 'var(--fs-2)', md: 'var(--fs-3)', lg: 'var(--fs-4)', xl: 'var(--fs-5)' });
+    expect([app.scales['fs-1'], app.scales.tap]).toEqual(['0.75rem', '44px']);
+    expect(variables.colorRing).toBe('var(--focus)');
+    const sized: [string, unknown][] = Object.entries(elements).filter(([, v]) => typeof v === 'object' && v !== null && 'minHeight' in v);
+    const off = sized.filter(([, v]) => (v as { minHeight: unknown }).minHeight !== 'var(--tap)').map(([k]) => k);
+    expect(off).toEqual([]);
+    // The controls measured under 44px on the Preview demo (2026-11-18), and
+    // the ones the account menu had before.
+    for (const key of [
+      'formButtonPrimary',
+      'formFieldInput',
+      'formButtonReset',
+      'socialButtonsBlockButton',
+      'alternativeMethodsBlockButton',
+      'formFieldInputShowPasswordButton',
+      'navbarButton',
+      'navbarMobileMenuButton',
+      'profileSectionPrimaryButton',
+      'menuButton',
+      'menuButtonEllipsis',
+      'tabButton',
+      'avatarImageActionsUpload',
+      'avatarImageActionsRemove',
+      'modalCloseButton',
+      'userButtonPopoverActionButton',
+      'userButtonPopoverCustomItemButton',
+    ]) {
+      expect(sized.map(([k]) => k)).toContain(key);
+    }
+    // A link inside a sentence keeps its line and reaches 44px through a box over it.
+    for (const key of ['footerActionLink', 'formFieldAction'] as const) {
+      expect(elements[key]['&::after'].inset).toContain('var(--tap)');
+      expect(elements[key].textDecoration).toBe('underline');
+    }
+  });
+
   for (const [name, theme] of [['dark', app.dark], ['light', app.light]] as const) {
     test(`every allowed pairing passes AA in ${name}`, () => {
       const failing: string[] = [];

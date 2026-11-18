@@ -3703,6 +3703,22 @@ button.danger-outline {
   }
 }
 
+/* Clerk's account window, Security: a device's icon is drawn in fixed fills
+   (black, with gray for the screen), a black box on the dark surface, and
+   Clerk's appearance doesn't reach it (lib/theme.ts). Its frame in secondary
+   text and its screen raised, so it reads in both themes. */
+.cl-activeDeviceIcon [fill="#000"] {
+  fill: var(--text-2);
+}
+
+.cl-activeDeviceIcon [stroke="#000"] {
+  stroke: var(--text-2);
+}
+
+.cl-activeDeviceIcon :is([fill="#575757"], [fill="#444"]) {
+  fill: var(--elevated);
+}
+
 .auth-wrap .brand h1 {
   font-size: var(--fs-6);
 }
@@ -3988,8 +4004,9 @@ button.danger-outline {
   height: var(--sp-3);
 }
 
+/* As tall as Clerk's field and Continue, a finger's target (lib/theme.ts). */
 .signin-skeleton-form > :not(:first-child) {
-  height: 36px;
+  height: var(--tap);
 }
 
 .signin-skeleton-form > :last-child {
