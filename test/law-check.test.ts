@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LAW_2026 } from '@/lib/fire/tax/law/2026';
+import { LAW_2027 } from '@/lib/fire/tax/law/2027';
 import { LAW_YEARS } from '@/lib/fire/tax/law/index';
 import type { PartialLaw } from '@/lib/fire/tax/law/types';
 import {
@@ -269,6 +270,15 @@ function fakeWeb(changes: Record<string, string | Error> = {}) {
   return { get, fetched };
 }
 
+/** The tables as the fake web's sources fit them: 2027 without its Medicare,
+ *  which went in from CMS's fact sheet (November 17, 2026) before the Federal
+ *  Register printed CMS's Part B notice. */
+const { medicare: _medicare2027, ...WITHOUT_MEDICARE } = LAW_2027;
+const YEARS: readonly PartialLaw[] = [
+  LAW_2026,
+  { ...WITHOUT_MEDICARE, sources: { ...LAW_2027.sources, medicare: { ...LAW_2027.sources.medicare, published: null, opens: '2026-11-01' } } },
+];
+
 const statuses = (rows: { year: number; part: string; status: string }[]) => rows.map((r) => `${r.year} ${r.part} ${r.status}`);
 
 /** A saved search answer with these entries added to its results. */
@@ -281,7 +291,7 @@ function withResults(search: string, added: { title: string; citation: string; p
 describe('the whole check', () => {
   test('as the sources stood on 2026-11-02: every figure held matches, and the rest is not out', async () => {
     const { get, fetched } = fakeWeb();
-    const rows = await checkLaw(LAW_YEARS, get);
+    const rows = await checkLaw(YEARS, get);
     expect(statuses(rows)).toEqual([
       '2026 creditPoverty match',
       '2026 medicaidPoverty match',
@@ -320,7 +330,7 @@ describe('the whole check', () => {
         irmaa: { ...LAW_2026.medicare.irmaa, joint: LAW_2026.medicare.irmaa.joint.map((t, i) => (i === 1 ? { ...t, over: 276_000 } : t)) },
       },
     };
-    const rows = await checkLaw([law, ...LAW_YEARS.slice(1)], fakeWeb().get);
+    const rows = await checkLaw([law, ...YEARS.slice(1)], fakeWeb().get);
     const differ = rows.filter((r) => r.status === 'differ');
     expect(differ.map((r) => r.part)).toEqual(['medicaidPoverty', 'medicare', 'wageBase']);
     expect(differ[0].detail).toStartWith("HHS's 2026 poverty guidelines (91 FR 1797, 2026-01-15): AK size 2 ours $26,950, official $27,050; AK size 3");
@@ -352,7 +362,7 @@ describe('the whole check', () => {
       [frSearchUrl(POVERTY_TITLE, 2027)]: JSON.stringify(poverty),
       'https://example.test/poverty-2027.xml': POVERTY_2026.replaceAll('2026 Poverty Guidelines', '2027 Poverty Guidelines'),
     });
-    const rows = await checkLaw(LAW_YEARS, get);
+    const rows = await checkLaw(YEARS, get);
     const news = rows.filter((r) => r.status === 'new');
     expect(news.map((r) => `${r.year} ${r.part}`)).toEqual(['2027 medicaidPoverty', '2027 medicare', '2028 creditPoverty']);
     expect(news[0].detail).toBe(
@@ -374,7 +384,7 @@ describe('the whole check', () => {
       // 2026's notice as images too, for the part the tables hold.
       'https://www.federalregister.gov/documents/full_text/xml/2025/11/19/2025-20251.xml': PART_B_IMAGES.replaceAll(partBTitle(2025), partBTitle(2026)),
     });
-    const rows = await checkLaw(LAW_YEARS, get);
+    const rows = await checkLaw(YEARS, get);
     const medicare = rows.filter((r) => r.part === 'medicare');
     expect(medicare.map((r) => `${r.year} ${r.status}: ${r.detail}`)).toEqual([
       "2026 by hand: CMS's Part B notice for 2026 (90 FR 52063, 2025-11-19) prints its tables as images, which this can't read: check the table (Part B $202.90, 5 single and 5 joint IRMAA tiers) against it by hand",
@@ -389,7 +399,7 @@ describe('the whole check', () => {
   test('a correction is new until its citation is in the source, then checked against the notice as first printed', async () => {
     const correction = { title: `Office of the Commissioner; ${ssaTitle(2026)}; Correction`, citation: '91 FR 1234', publication_date: '2026-01-05' };
     const { get } = fakeWeb({ [frSearchUrl(ssaTitle(2026))]: withResults(fixture('fr-ssa-2026.json'), [correction]) });
-    const wageBase = async (law: PartialLaw) => (await checkLaw([law, ...LAW_YEARS.slice(1)], get)).find((r) => r.year === 2026 && r.part === 'wageBase')!;
+    const wageBase = async (law: PartialLaw) => (await checkLaw([law, ...YEARS.slice(1)], get)).find((r) => r.year === 2026 && r.part === 'wageBase')!;
 
     const unread = await wageBase(LAW_2026);
     expect(unread).toMatchObject({
@@ -416,7 +426,7 @@ describe('the whole check', () => {
       'https://www.federalregister.gov/documents/full_text/xml/2025/11/19/2025-20251.xml': '<NOTICE></NOTICE>',
       [frSearchUrl(ssaTitle(2026))]: fixture('fr-partb-2027.json'),
     });
-    const rows = await checkLaw(LAW_YEARS, get);
+    const rows = await checkLaw(YEARS, get);
     const odd = rows.filter((r) => r.status === 'unrecognised');
     expect(odd.map((r) => `${r.year} ${r.part}: ${r.detail}`)).toEqual([
       "2026 medicare: The Part B notice for 2026 doesn't have its title as its subject",
@@ -429,7 +439,7 @@ describe('the whole check', () => {
   test("a poverty notice without a region's table is unrecognised for each part it serves", async () => {
     const noHawaii = POVERTY_2026.replace('2026 Poverty Guidelines for Hawaii', '2026 Poverty Guidelines for Guam');
     const { get, fetched } = fakeWeb({ 'https://www.federalregister.gov/documents/full_text/xml/2026/01/15/2026-00755.xml': noHawaii });
-    const rows = await checkLaw(LAW_YEARS, get);
+    const rows = await checkLaw(YEARS, get);
     const missing = 'The 2026 poverty guidelines notice has 0 tables titled "2026 Poverty Guidelines for Hawaii"';
     expect(rows.filter((r) => r.status === 'unrecognised').map((r) => `${r.year} ${r.part}: ${r.detail}`)).toEqual([
       `2026 medicaidPoverty: ${missing}`,
@@ -441,20 +451,37 @@ describe('the whole check', () => {
 
   test('an unreachable source fails the run but asks for no report', async () => {
     const down = new Unreachable('https://www.federalregister.gov/... answered 503');
-    const rows = await checkLaw(LAW_YEARS, fakeWeb({ [frSearchUrl(ssaTitle(2027))]: down }).get);
+    const rows = await checkLaw(YEARS, fakeWeb({ [frSearchUrl(ssaTitle(2027))]: down }).get);
     expect(rows.find((r) => r.year === 2027 && r.part === 'wageBase')).toMatchObject({ status: 'unreachable', detail: down.message });
     expect(exitCode(rows)).toBe(1);
     expect(needsAttention(rows)).toBe(false);
   });
 
   test('the lines and the report', async () => {
-    const rows = await checkLaw(LAW_YEARS, fakeWeb().get);
+    const rows = await checkLaw(YEARS, fakeWeb().get);
     const lines = formatRows(rows);
     expect(lines[3]).toBe("2026 wageBase        match        SSA's notice for 2026 (90 FR 49047, 2025-11-03): $184,500");
     const report = reportMarkdown(rows);
     expect(report).toContain(['```', ...lines, '```'].join('\n'));
     expect(report).toContain("Part D's IRMAA amounts aren't in CMS's Federal Register notice");
     expect(report).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  test("the real tables hold 2027's Medicare before its notice is printed: it can't be found, which fails the run until then", async () => {
+    // CMS's Part B notice for 2027 went on public inspection November 17,
+    // 2026, to be printed November 19. Once its search answer and XML are
+    // saved here, this row reads match, or by hand if its tables print as
+    // images.
+    expect(LAW_YEARS.map((law) => law.year)).toEqual([2026, 2027]);
+    const rows = await checkLaw(LAW_YEARS, fakeWeb().get);
+    const odd = rows.filter((r) => r.status === 'unrecognised');
+    expect(odd).toEqual([
+      { year: 2027, part: 'medicare', status: 'unrecognised', detail: "CMS's Part B notice for 2027 can't be found, but the table holds Part B $209.40, 5 single and 5 joint IRMAA tiers" },
+    ]);
+    // Everything else reads as the tables as they stood.
+    const rest = (all: typeof rows) => statuses(all.filter((r) => !(r.year === 2027 && r.part === 'medicare')));
+    expect(rest(rows)).toEqual(rest(await checkLaw(YEARS, fakeWeb().get)));
+    expect(exitCode(rows)).toBe(1);
   });
 });
 
