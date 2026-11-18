@@ -11,6 +11,15 @@
 // money that is there, nor "100%" short of the whole). One column, each kind
 // a section of the card.
 //
+// What qualifies a figure is said under it, at the level the owner's own
+// screens give the same fact (design-system.md "Status and honesty"),
+// gathered as Home's total gathers its caveats (components/TotalCaveats.tsx):
+// a currency left out for want of a public rate is critical, as on Home
+// (components/CurrencyNotes.tsx); totals not converted, accounts with no
+// balance yet, a month that may be short, what holdings don't count and how
+// they file that couldn't be read are cautions; what is converted, or left
+// out by their own choice, is information.
+//
 // Class names avoid "share" (see components/Sharing.tsx).
 
 import { useState } from 'react';
@@ -36,12 +45,14 @@ import {
 import { Masked } from './HideAmounts';
 import NetWorthChart from './NetWorthChart';
 import { shortDate } from './SharingDates';
+import TotalCaveats, { Notice, type Caveat } from './TotalCaveats';
 
 /** A bar as long as a share (capped at the whole), in the meter's colors:
- *  warn near the limit, over (red) past it, as a shared budget still shows;
- *  the Budgets tab's own meters stay amber past it (rollout 6a2). A meter
- *  named for its line (`label`), its share in percent. */
-function Bar({ pct, state = '', label }: { pct: number | null; state?: '' | ' warn' | ' over' | ' done'; label: string }) {
+ *  warn (hatched amber) from near a budget's limit and past it, as the
+ *  Budgets tab's own meters are since rollout 6a2, never red; done for a
+ *  goal reached. A meter named for its line (`label`), its share in
+ *  percent. */
+function Bar({ pct, state = '', label }: { pct: number | null; state?: '' | ' warn' | ' done'; label: string }) {
   const width = pct === null ? 0 : Math.max(0, Math.min(pct, 100));
   return (
     <div
@@ -80,7 +91,7 @@ export function SharedViewsList({ views, whose }: { views: SharedViews; whose: s
           <section key={kind} className="incoming-kind" aria-label={KIND_NAME[kind]}>
             <p className="incoming-kind-name">{KIND_NAME[kind]}</p>
             {isUnreadable(v) ? (
-              <p className="stale-note">{`${whose} ${unreadableText[kind]} couldn’t be read just now, so none of it is shown.`}</p>
+              <Notice level="caution">{`${whose} ${unreadableText[kind]} couldn’t be read just now, so none of it is shown.`}</Notice>
             ) : kind === 'net_worth' ? (
               <NetWorthKind v={v as NetWorthView} />
             ) : kind === 'spending' ? (
@@ -107,7 +118,39 @@ export function convertedWords(into: string | null, c: SharedConversion | undefi
   return `${lead} ${into} at the European Central Bank’s daily rates.`;
 }
 
+/** That a figure is converted, as a caveat on it: information. */
+function convertedCaveat(into: string | null, c: SharedConversion | undefined, lead?: string): Caveat[] {
+  const words = convertedWords(into, c, lead);
+  return words ? [{ key: 'converted', severity: 'info', summary: `converted into ${into}`, body: words }] : [];
+}
+
 // ---- Net worth ----
+
+/** What the total leaves out, under it: an account in a currency with no
+ *  public rate, critical, as Home says it (the total is short); in a
+ *  currency their totals don't convert, a caution, as Home says mixed
+ *  currencies; an account with no balance yet, a caution, as Home says a
+ *  connection waiting for its first answer. */
+function netWorthCaveats(v: NetWorthView): Caveat[] {
+  const out: Caveat[] = [];
+  for (const o of v.other_currencies)
+    out.push({
+      key: `other:${o.currency}`,
+      severity: v.converted ? 'critical' : 'caution',
+      summary: v.converted ? 'a currency left out' : 'currencies not converted',
+      body: `${o.accounts === 1 ? '1 account' : `${o.accounts} accounts`} in ${o.currency} ${o.accounts === 1 ? 'isn’t' : 'aren’t'} in this total: ${
+        v.converted ? 'there is no public rate for it' : 'their totals don’t convert currencies'
+      }.`,
+    });
+  if (v.without_balance > 0)
+    out.push({
+      key: 'without-balance',
+      severity: 'caution',
+      summary: v.without_balance === 1 ? 'an account with no balance' : 'accounts with no balance',
+      body: `${v.without_balance === 1 ? '1 account has' : `${v.without_balance} accounts have`} no balance yet, so ${v.without_balance === 1 ? 'it isn’t' : 'they aren’t'} in this total.`,
+    });
+  return [...out, ...convertedCaveat(v.currency, v.converted)];
+}
 
 function NetWorthKind({ v }: { v: NetWorthView }) {
   const history = v.history ?? [];
@@ -117,15 +160,7 @@ function NetWorthKind({ v }: { v: NetWorthView }) {
         <span className="incoming-account-date">{v.as_of ? `As of ${shortDate(v.as_of)}${v.from && v.from !== v.as_of ? `, balances from ${shortDate(v.from)} on` : ''}` : ''}</span>
         <span className="incoming-account-value">{v.total === null ? 'No balance yet' : <Masked>{formatMoney(v.total, v.currency)}</Masked>}</span>
       </div>
-      {v.converted && <p className="panel-note">{convertedWords(v.currency, v.converted)}</p>}
-      {v.other_currencies.map((o) => (
-        <p key={o.currency} className="panel-note">{`${o.accounts === 1 ? '1 account' : `${o.accounts} accounts`} in ${o.currency} ${o.accounts === 1 ? 'isn’t' : 'aren’t'} in this total: ${
-          v.converted ? 'there is no public rate for it' : 'their totals don’t convert currencies'
-        }.`}</p>
-      ))}
-      {v.without_balance > 0 && (
-        <p className="panel-note">{`${v.without_balance === 1 ? '1 account has' : `${v.without_balance} accounts have`} no balance yet, so ${v.without_balance === 1 ? 'it isn’t' : 'they aren’t'} in this total.`}</p>
-      )}
+      <TotalCaveats items={netWorthCaveats(v)} />
       {v.detail === 'history' &&
         (history.length >= 2 ? (
           <>
@@ -163,17 +198,26 @@ function NetWorthKind({ v }: { v: NetWorthView }) {
 // ---- Spending ----
 
 /** Some of how they file their transactions couldn't be read
- *  (lib/share-kinds.ts FilingUnread): said under spending and budgets alike. */
+ *  (lib/share-kinds.ts FilingUnread): said under spending and budgets alike,
+ *  a caution in both. */
 const FILING_UNREAD = 'Some of how they file their transactions couldn’t be read just now, so some of this may be under another category than the one they chose.';
+const filingCaveat = (unread: boolean | undefined): Caveat[] =>
+  unread ? [{ key: 'filing-unread', severity: 'caution', summary: 'categories that couldn’t be read', body: FILING_UNREAD }] : [];
 
-/** What may make a month's spending off, in words: the same for each month
- *  but whether its exclusions could all be read. */
-function spendingNotes(v: SpendingView, m: SpendingView['months'][number] | undefined): string[] {
+/** What may make a month's spending off, under its total: the same for each
+ *  month but whether its exclusions could all be read. That a month may be
+ *  short is a caution, as the owner's Activity says what may be missing;
+ *  what they left out, and what couldn't be read of it, information, as
+ *  Activity says them in its note. */
+function spendingCaveats(v: SpendingView, m: SpendingView['months'][number] | undefined): Caveat[] {
   return [
-    ...(m?.left_out ? [m.left_out] : []),
-    ...(m?.exclusions_unknown || v.exclusions_unread ? ['Whether they left some transactions out of their totals couldn’t be read, so those are counted here.'] : []),
-    ...(v.filing_unread ? [FILING_UNREAD] : []),
-    ...(v.may_be_incomplete ? ['Some transactions aren’t all in yet, so a month may be short.'] : []),
+    ...(v.may_be_incomplete ? [{ key: 'may-be-short', severity: 'caution' as const, summary: 'a month may be short', body: 'Some transactions aren’t all in yet, so a month may be short.' }] : []),
+    ...filingCaveat(v.filing_unread),
+    ...(m?.left_out ? [{ key: 'left-out', severity: 'info' as const, summary: 'other currencies left out', body: m.left_out }] : []),
+    ...(m?.exclusions_unknown || v.exclusions_unread
+      ? [{ key: 'exclusions', severity: 'info' as const, summary: 'exclusions that couldn’t be read', body: 'Whether they left some transactions out of their totals couldn’t be read, so those are counted here.' }]
+      : []),
+    ...convertedCaveat(v.currency, v.converted),
   ];
 }
 
@@ -183,11 +227,7 @@ function SpendingKind({ v }: { v: SpendingView }) {
     return (
       <>
         <p className="empty-note">No spending recorded yet.</p>
-        {spendingNotes(v, undefined).map((n) => (
-          <p key={n} className="panel-note">
-            {n}
-          </p>
-        ))}
+        <TotalCaveats items={spendingCaveats(v, undefined)} />
       </>
     );
   }
@@ -210,6 +250,7 @@ function SpendingKind({ v }: { v: SpendingView }) {
           </span>
         )}
       </div>
+      <TotalCaveats items={spendingCaveats(v, m)} />
       {m.groups.length === 0 ? (
         <p className="empty-note">Nothing spent in {name(m.month, m.so_far)}.</p>
       ) : (
@@ -235,12 +276,6 @@ function SpendingKind({ v }: { v: SpendingView }) {
         {amounts ? 'What went out, by their own categories' : 'Each part’s share of what went out, by their own categories'}: never transfers, cash taken out, loan
         payments, or what they left out of their totals, and never the transactions themselves.
       </p>
-      {v.converted && <p className="panel-note">{convertedWords(v.currency, v.converted)}</p>}
-      {spendingNotes(v, m).map((n) => (
-        <p key={n} className="panel-note">
-          {n}
-        </p>
-      ))}
     </>
   );
 }
@@ -266,6 +301,26 @@ function HoldingsTable({ title, lines, currency, amounts }: { title: string; lin
   );
 }
 
+/** Holdings' notes that are information, as the owner's allocation says
+ *  them: what Unclassified is, and that there is nothing to show. Every
+ *  other note (lib/share-views.ts) says what the figures don't count (a
+ *  currency with no rate, a position with no value, an account with no
+ *  balance), a caution, as the owner's FI progress and allocation say them.
+ *  The server sends them as words alone, so a note not known here is taken
+ *  as a caution: a new one is never drawn lower than it may be. */
+const HOLDINGS_INFO = [/^Unclassified is money /, /^No investment accounts to show\./];
+const holdingsInfo = (n: string) => HOLDINGS_INFO.some((r) => r.test(n));
+const holdingsSummary = (n: string) =>
+  /^What is held in /.test(n) ? 'other currencies left out' : /with no value/.test(n) ? 'positions with no value' : /no balance yet/.test(n) ? 'accounts with no balance' : 'something not counted';
+
+/** What the figures don't count, under them, and that they are converted. */
+function holdingsCaveats(v: HoldingsView): Caveat[] {
+  return [
+    ...v.notes.filter((n) => !holdingsInfo(n)).map((n) => ({ key: `note:${n}`, severity: 'caution' as const, summary: holdingsSummary(n), body: n })),
+    ...convertedCaveat(v.currency, v.converted),
+  ];
+}
+
 function HoldingsKind({ v }: { v: HoldingsView }) {
   const amounts = v.detail === 'amounts';
   return (
@@ -280,6 +335,7 @@ function HoldingsKind({ v }: { v: HoldingsView }) {
           </span>
         )}
       </div>
+      <TotalCaveats items={holdingsCaveats(v)} />
       {v.classes.length > 0 && <HoldingsTable title="By asset class" lines={v.classes} currency={v.currency} amounts={amounts} />}
       {v.buckets.length > 0 && <HoldingsTable title="By tax bucket" lines={v.buckets} currency={v.currency} amounts={amounts} />}
       {v.positions && v.positions.length > 0 && (
@@ -296,8 +352,7 @@ function HoldingsKind({ v }: { v: HoldingsView }) {
           ))}
         </div>
       )}
-      {v.converted && <p className="panel-note">{convertedWords(v.currency, v.converted)}</p>}
-      {v.notes.map((n) => (
+      {v.notes.filter(holdingsInfo).map((n) => (
         <p key={n} className="panel-note">
           {n}
         </p>
@@ -309,23 +364,38 @@ function HoldingsKind({ v }: { v: HoldingsView }) {
 // ---- Budgets ----
 
 /** Spent against what is available, in words: "$80.00 of $300.00", or a
- *  percentage; nothing available is said, never a limit of zero. */
+ *  percentage; nothing available is said, never a limit of zero. Over is
+ *  said by its badge (BudgetRow). */
 function budgetText(b: BudgetLine, currency: string | null): string {
   if (b.spent !== undefined && b.limit !== undefined) {
     if (b.limit <= 0) return `${formatMoney(b.spent, currency)} spent, nothing left`;
     return `${formatMoney(b.spent, currency)} of ${formatMoney(b.limit, currency)}`;
   }
-  if (b.label === null) return b.over ? 'Nothing left, and over' : 'Nothing left';
-  return `${b.label} spent${b.over ? ', over' : ''}`;
+  if (b.label === null) return 'Nothing left';
+  return `${b.label} spent`;
 }
 
-const meterOf = (b: BudgetLine): '' | ' warn' | ' over' => (b.over || (b.pct !== null && b.pct >= 100) ? ' over' : b.pct !== null && b.pct >= 85 ? ' warn' : '');
+/** Amber from 85% of what is available, and past it, as the Budgets tab's
+ *  meters (components/BudgetsCard.tsx): a budget over is a caution, never
+ *  red, and its Over badge says it in a word. */
+const meterOf = (b: BudgetLine): '' | ' warn' => (b.over || (b.pct !== null && b.pct >= 85) ? ' warn' : '');
 
 function BudgetRow({ b, currency, sub = false }: { b: BudgetLine; currency: string | null; sub?: boolean }) {
   return (
     <div className={`incoming-line${sub ? ' incoming-sub' : ''}`}>
       <div className="peer-row">
-        <span className={sub ? undefined : 'incoming-account-name'}>{b.name}</span>
+        <span className={sub ? undefined : 'incoming-account-name'}>
+          {b.name}
+          {/* Over in a word beside its name, as the Budgets tab says it: not
+              by the meter's color alone, and never masked, as it says no
+              amount. */}
+          {b.over && (
+            <>
+              {' '}
+              <span className="badge warn">Over</span>
+            </>
+          )}
+        </span>
         <span className="incoming-account-value">
           <Masked>{budgetText(b, currency)}</Masked>
         </span>
@@ -335,17 +405,43 @@ function BudgetRow({ b, currency, sub = false }: { b: BudgetLine; currency: stri
   );
 }
 
+/** What may make a month's budgets off, under its total: a caution, as the
+ *  owner's Budgets says a month that may be missing transactions; what they
+ *  left out, information. */
+function budgetMonthCaveats(m: BudgetsView['months'][number]): Caveat[] {
+  return [
+    ...(m.may_be_incomplete
+      ? [
+          {
+            key: 'may-be-off',
+            severity: 'caution' as const,
+            summary: 'a month may be off',
+            body: `What is spent in ${monthLabel(m.month)} may be off: some of its transactions may not all be in, or couldn’t all be read.`,
+          },
+        ]
+      : []),
+    ...(m.left_out ? [{ key: 'left-out', severity: 'info' as const, summary: 'other currencies left out', body: m.left_out }] : []),
+  ];
+}
+
 function BudgetsKind({ v }: { v: BudgetsView }) {
   return (
     <>
+      {/* What bears on both months, said once, above them: how they file
+          that couldn't be read, and that spending is converted. */}
+      <TotalCaveats items={[...filingCaveat(v.filing_unread), ...convertedCaveat(v.currency, v.converted, 'Spending in other currencies counts converted into')]} />
       {v.months.map((m, i) => (
         <div key={m.month} className="incoming-kind-lines">
           <p className="incoming-kind-sub">{`${i === 0 ? 'This month' : 'Last month'}, ${monthLabel(m.month)}`}</p>
           {m.groups.length === 0 ? (
-            <p className="empty-note">No budgets.</p>
+            <>
+              <p className="empty-note">No budgets.</p>
+              <TotalCaveats items={budgetMonthCaveats(m)} />
+            </>
           ) : (
             <>
               <BudgetRow b={m.total} currency={v.currency} />
+              <TotalCaveats items={budgetMonthCaveats(m)} />
               {m.groups.map((g, i) => (
                 <div key={`${g.name}-${i}`}>
                   <BudgetRow b={g} currency={v.currency} />
@@ -356,15 +452,9 @@ function BudgetsKind({ v }: { v: BudgetsView }) {
               ))}
             </>
           )}
-          {m.left_out && <p className="panel-note">{m.left_out}</p>}
-          {m.may_be_incomplete && (
-            <p className="stale-note">{`What is spent in ${monthLabel(m.month)} may be off: some of its transactions may not all be in, or couldn’t all be read.`}</p>
-          )}
         </div>
       ))}
       <p className="panel-note">Spent against what is available, with what rolled over, by their own budgets.</p>
-      {v.converted && <p className="panel-note">{convertedWords(v.currency, v.converted, 'Spending in other currencies counts converted into')}</p>}
-      {v.filing_unread && <p className="stale-note">{FILING_UNREAD}</p>}
     </>
   );
 }

@@ -143,6 +143,26 @@ const VIEWS: SharedViews = {
 const card = (views: SharedViews = VIEWS) =>
   renderToStaticMarkup(<SharedWithMeView data={{ shared: [{ connection: 'c1', label: 'Sam', accounts: [], expires_at: null, views }] }} />);
 
+/** Each notice drawn (components/TotalCaveats.tsx Notice), with its level
+ *  and its words, a gathered one's too: a closed <details> keeps them in
+ *  the page. */
+const notices = (html: string) =>
+  [...html.matchAll(/<div class="notice (critical|caution|info|done)"[^>]*>([\s\S]*?)<\/div><\/div>/g)].map((m) => ({ level: m[1], words: text(m[2]).trim() }));
+/** The level of the one notice that says `words`: it must be said once. */
+const levelOf = (html: string, words: string) => {
+  const found = notices(html).filter((n) => n.words.includes(words));
+  expect(found.map((n) => n.words)).toHaveLength(1);
+  return found[0].level;
+};
+/** Whether `first` is drawn before `then`: a caveat under its figure comes
+ *  before the rows under it. */
+const before = (html: string, first: string, then: string) => {
+  const page = text(html);
+  expect(page).toContain(first);
+  expect(page).toContain(then);
+  return page.indexOf(first) < page.indexOf(then);
+};
+
 describe('on the card of the one it is shared with', () => {
   test('each kind, with its as-of day, its figures and its words', () => {
     const page = text(card());
@@ -224,7 +244,8 @@ describe('on the card of the one it is shared with', () => {
     expect(page).not.toMatch(AMOUNT);
     // Money that is there never reads 0%.
     expect(page).toContain('<1%');
-    expect(page).toContain('112% spent, over');
+    // Over said in its word, beside the name.
+    expect(page).toContain('Food Over 112% spent');
     expect(page).toContain('33%');
   });
 
@@ -311,6 +332,116 @@ describe('on the card of the one it is shared with', () => {
     const goals = (VIEWS.goals as GoalsView).goals;
     const twice = text(card({ goals: { detail: 'amounts', goals: [goals[0], goals[0]] } }));
     expect(twice.match(/Rainy day/g)).toHaveLength(2);
+  });
+});
+
+// The review of 2026-11-18: every caveat on a short total was grey helper
+// text, lower than the owner's own screens say the same fact. Each is now a
+// notice at the owner's level (design-system.md "Status and honesty"),
+// under the figure it qualifies, in its words.
+describe('each caveat at the level the owner’s own screens give it, under its figure', () => {
+  const nw = VIEWS.net_worth as any;
+  const sp = VIEWS.spending as any;
+  const ho = VIEWS.holdings as any;
+  const bu = VIEWS.budgets as any;
+
+  test('net worth: a currency with no public rate left out is critical, as on Home; converted is information', () => {
+    const html = card({ net_worth: { ...nw, converted: { rates: 'ecb' } } });
+    expect(levelOf(html, '1 account in EUR isn’t in this total: there is no public rate for it.')).toBe('critical');
+    expect(levelOf(html, 'Converted into USD at the European Central Bank’s daily rates.')).toBe('info');
+    // Said in full, never folded into a count.
+    expect(html).not.toContain('notice-summary');
+    // Under the total, above the chart.
+    expect(before(html, 'there is no public rate for it', 'One point a week')).toBe(true);
+  });
+
+  test('net worth: totals not converted, and accounts with no balance yet, are cautions; two of them are gathered in amber', () => {
+    const html = card({ net_worth: { ...nw, without_balance: 2 } });
+    expect(levelOf(html, '1 account in EUR isn’t in this total: their totals don’t convert currencies.')).toBe('caution');
+    expect(levelOf(html, '2 accounts have no balance yet, so they aren’t in this total.')).toBe('caution');
+    // Gathered as Home gathers them: one line in the worst one's color,
+    // naming each kind, never an amount.
+    expect(html).toContain('<summary class="notice caution">');
+    expect(text(html)).toContain('2 notes: currencies not converted and accounts with no balance');
+    const one = card({ net_worth: { detail: 'total', currency: null, total: null, as_of: null, from: null, other_currencies: [], without_balance: 1 } });
+    expect(levelOf(one, '1 account has no balance yet, so it isn’t in this total.')).toBe('caution');
+  });
+
+  test('spending: that a month may be short and how they file it are cautions; what they left out is information; all under the month’s total', () => {
+    const html = card({
+      spending: { ...sp, converted: { rates: 'ecb' }, may_be_incomplete: true, filing_unread: true, months: [{ ...sp.months[0], exclusions_unknown: true }] },
+    });
+    expect(levelOf(html, 'Some transactions aren’t all in yet, so a month may be short.')).toBe('caution');
+    expect(levelOf(html, 'Some of how they file their transactions couldn’t be read just now')).toBe('caution');
+    expect(levelOf(html, 'What went out in EUR isn’t in these totals, which are in USD.')).toBe('info');
+    expect(levelOf(html, 'Whether they left some transactions out of their totals couldn’t be read, so those are counted here.')).toBe('info');
+    expect(text(html)).toContain('5 notes: a month may be short, categories that couldn’t be read, other currencies left out');
+    // On the number: before the first category, not after every row.
+    expect(before(html, 'a month may be short', 'Housing')).toBe(true);
+    expect(before(html, 'What went out in EUR', 'Housing')).toBe(true);
+    // With no month to show, said all the same, at the same level.
+    const none = card({ spending: { ...sp, months: [], may_be_incomplete: true } });
+    expect(levelOf(none, 'Some transactions aren’t all in yet, so a month may be short.')).toBe('caution');
+    // What is counted stays helper text, not a notice.
+    expect(notices(html).some((n) => n.words.includes('by their own categories'))).toBe(false);
+  });
+
+  test('the unread-filing sentence is one level under spending and budgets alike', () => {
+    const html = card({ spending: { ...sp, filing_unread: true }, budgets: { ...bu, filing_unread: true } });
+    const said = notices(html).filter((n) => n.words.includes('Some of how they file their transactions couldn’t be read just now'));
+    expect(said.map((n) => n.level)).toEqual(['caution', 'caution']);
+    expect(html).not.toContain('stale-note');
+  });
+
+  test('holdings: what isn’t counted is a caution under the total; what Unclassified is stays helper text', () => {
+    const notes = [
+      'Unclassified is money Nya can’t place in a class: a fund it doesn’t know, or money no position explains.',
+      'What is held in EUR isn’t counted here: there is no public rate for it.',
+      '2 positions with no value aren’t counted.',
+      '1 investment account has no balance yet and no position, so it isn’t counted.',
+      // A note this card doesn't know yet: never drawn lower than it may be.
+      'Something new isn’t counted.',
+    ];
+    const html = card({ holdings: { ...ho, converted: { rates: 'ecb' }, notes } });
+    for (const n of notes.slice(1)) expect(levelOf(html, n)).toBe('caution');
+    expect(levelOf(html, 'Converted into USD at the European Central Bank’s daily rates.')).toBe('info');
+    expect(notices(html).some((n) => n.words.includes('Unclassified is money'))).toBe(false);
+    expect(text(html)).toContain('Unclassified is money Nya can’t place');
+    expect(before(html, 'What is held in EUR', 'By asset class')).toBe(true);
+    const empty = card({ holdings: { ...ho, classes: [], buckets: [], positions: [], notes: ['No investment accounts to show.'] } });
+    expect(notices(empty)).toEqual([]);
+    expect(text(empty)).toContain('No investment accounts to show.');
+  });
+
+  test('budgets: a month that may be off is a caution under its total; what they left out is information', () => {
+    const html = card({ budgets: { ...bu, converted: { rates: 'ecb' }, months: [{ ...bu.months[0], left_out: 'What went out in EUR isn’t in these budgets.' }, bu.months[1]] } });
+    expect(levelOf(html, 'What is spent in October 2026 may be off')).toBe('caution');
+    expect(levelOf(html, 'What went out in EUR isn’t in these budgets.')).toBe('info');
+    expect(levelOf(html, 'Spending in other currencies counts converted into USD')).toBe('info');
+    // Under the month's total, above its budgets.
+    expect(before(html, 'What is spent in October 2026 may be off', 'Food and drink')).toBe(true);
+  });
+
+  test('a kind that couldn’t be read is a caution', () => {
+    expect(levelOf(card({ budgets: { unreadable: true } }), 'Sam’s budgets couldn’t be read just now, so none of it is shown.')).toBe('caution');
+  });
+
+  test('a budget past its limit is amber, never red, and says Over in a word, with amounts hidden too', () => {
+    const over = { name: 'Fun', pct: 117, label: '117%', over: true, spent: 350, limit: 300 };
+    const near = { name: 'Food', pct: 90, label: '90%', over: false, spent: 90, limit: 100 };
+    const views: SharedViews = { budgets: { ...bu, months: [{ ...bu.months[0], may_be_incomplete: false, groups: [over, near] }, bu.months[1]] } };
+    for (const html of [card(views), hidden(() => card(views))]) {
+      expect(html).not.toMatch(/meter-(track|fill)[^"]* over/);
+      const meter = (name: string) => html.match(new RegExp(`<div class="(meter-track[^"]*)" role="meter" aria-label="${name}"[^>]*><div class="(meter-fill[^"]*)"`))?.slice(1);
+      expect(meter('Fun')).toEqual(['meter-track incoming-meter warn', 'meter-fill warn']);
+      expect(meter('Food')).toEqual(['meter-track incoming-meter warn', 'meter-fill warn']);
+      expect(meter('All budgets')).toEqual(['meter-track incoming-meter', 'meter-fill']);
+      // Over in its word beside the name, unmasked; the one near its limit has none.
+      expect(text(html)).toContain('Fun Over');
+      expect(text(html)).not.toContain('Food Over');
+      expect(html).toContain('<span class="badge warn">Over</span>');
+    }
+    expect(text(card(views))).toContain('Fun Over $350.00 of $300.00');
   });
 });
 
