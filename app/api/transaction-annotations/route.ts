@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
-import { AnnotationError, checkNote, isTransactionId, TooManyAnnotationsError } from '@/lib/txn-annotations';
+import { AnnotationError, checkNote, ExclusionChangedError, isTransactionId, isTxnAnnotation, TooManyAnnotationsError, undoExclusion } from '@/lib/txn-annotations';
 import { isTagId, MAX_TAGS_PER_TRANSACTION, TagError } from '@/lib/tags';
 import { InvalidTxnError, isManualTxnId, MANUAL_TXN_PREFIX } from '@/lib/manual-txns';
 import { isManualId } from '@/lib/manual';
@@ -40,6 +40,18 @@ import { isSplitOrGroupId } from '@/lib/split-rows';
 // Everything said here about a bank row's record is one compare-and-set, so
 // a change from another device at the same moment is never lost.
 //
+// UNDO OF AN EXCLUSION. A PATCH that asks only to exclude or include answers
+// `undo`: the record before it (null: none) and the record it saved. The
+// screen's Undo sends that back:
+//
+// PUT { transaction_id, undo: { before, after } }
+//
+// which puts `before` back exactly, removing the record when it is null
+// (lib/txn-annotations.ts undoExclusion), so a rule's hide applies again
+// where it had. Refused (409) when the record is no longer `after`, a change
+// made since being kept, and (400) when the two differ in more than the
+// exclusion.
+//
 // TAGS THAT EXIST. Tags put on must exist; tags taken off that no longer do
 // are passed over, and the id of a tag being deleted (noted under
 // `deleting`) is dropped from the record as it changes. Only those: a tag the
@@ -53,6 +65,8 @@ import { isSplitOrGroupId } from '@/lib/split-rows';
 // The change itself is lib/annotate.ts, which the API's writes call too.
 
 const MAX_BODY_CHARS = 8 * 1024;
+/** An Undo carries two whole records, each up to the stored bounds. */
+const MAX_UNDO_CHARS = 64 * 1024;
 
 /** A list of tag ids from the body, or a refusal. */
 function tagIds(v: unknown, what: string): string[] {
@@ -74,14 +88,9 @@ export async function PATCH(req: Request) {
     } catch {
       return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
     }
-    const { transaction_id, excluded, account_id } = body;
-    if (!isTransactionId(transaction_id)) return NextResponse.json({ error: 'Invalid transaction id' }, { status: 400 });
-    // A row the read layer made (a split's part, a group's row, another
-    // person's part, an IOU's row) is no transaction: what is said goes to
-    // the transaction itself, or to the IOU.
-    if (isSplitOrGroupId(transaction_id)) return NextResponse.json({ error: 'That isn’t a transaction of yours but a part of one: open the transaction itself.' }, { status: 400 });
-    const manual = transaction_id.startsWith(MANUAL_TXN_PREFIX);
-    if (manual && !isManualTxnId(transaction_id)) return NextResponse.json({ error: 'Invalid transaction id' }, { status: 400 });
+    const { excluded, account_id } = body;
+    const transaction_id = transactionOf(body);
+    if (typeof transaction_id !== 'string') return transaction_id;
     if (excluded !== undefined && typeof excluded !== 'boolean') return NextResponse.json({ error: 'Say whether to exclude it' }, { status: 400 });
     if (account_id !== undefined && (typeof account_id !== 'string' || account_id.length > 80 || !isManualId(account_id))) {
       return NextResponse.json({ error: 'Invalid account id' }, { status: 400 });
@@ -103,6 +112,8 @@ export async function PATCH(req: Request) {
       account_id: account_id as string | undefined,
     });
     if (!done.ok) return NextResponse.json({ error: done.message }, { status: done.status });
+    // An exclusion or an include alone, saved: what its Undo puts back.
+    const onlyExcluded = excluded !== undefined && add.length === 0 && remove.length === 0 && note === undefined && body.new_tag === undefined;
     return NextResponse.json({
       transaction_id,
       excluded: done.excluded,
@@ -110,10 +121,52 @@ export async function PATCH(req: Request) {
       untagged: done.untagged,
       note: done.note,
       ...(done.created_tag ? { created_tag: done.created_tag } : {}),
+      ...(onlyExcluded && done.changed && done.record ? { undo: { before: done.before, after: done.record } } : {}),
     });
   } catch (err) {
     if (err instanceof TooManyAnnotationsError || err instanceof AnnotationError || err instanceof InvalidTxnError) return NextResponse.json({ error: err.message }, { status: 400 });
     if (err instanceof TagError) return NextResponse.json({ error: err.message }, { status: err.status });
     return storeFailure(err, 'Failed to save that');
+  }
+}
+
+/** The transaction id a body names, or why it can't be one of the person's.
+ *  A row the read layer made (a split's part, a group's row, another
+ *  person's part, an IOU's row) is no transaction: what is said goes to the
+ *  transaction itself, or to the IOU. */
+function transactionOf(body: Record<string, unknown>): string | NextResponse {
+  const { transaction_id } = body;
+  if (!isTransactionId(transaction_id)) return NextResponse.json({ error: 'Invalid transaction id' }, { status: 400 });
+  if (isSplitOrGroupId(transaction_id)) return NextResponse.json({ error: 'That isn’t a transaction of yours but a part of one: open the transaction itself.' }, { status: 400 });
+  if (transaction_id.startsWith(MANUAL_TXN_PREFIX) && !isManualTxnId(transaction_id)) return NextResponse.json({ error: 'Invalid transaction id' }, { status: 400 });
+  return transaction_id;
+}
+
+/** The Undo after Exclude or Include: the record put back as it was (see the header). */
+export async function PUT(req: Request) {
+  try {
+    const ctx = await dataCtx();
+    const text = await req.text();
+    if (text.length > MAX_UNDO_CHARS) return NextResponse.json({ error: 'Request too large' }, { status: 413 });
+    let body: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(text);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw new Error('not an object');
+      body = parsed;
+    } catch {
+      return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+    }
+    const transaction_id = transactionOf(body);
+    if (typeof transaction_id !== 'string') return transaction_id;
+    const undo = body.undo as { before?: unknown; after?: unknown } | undefined;
+    if (typeof undo !== 'object' || undo === null || !(undo.before === null || isTxnAnnotation(undo.before)) || !isTxnAnnotation(undo.after)) {
+      return NextResponse.json({ error: 'Say what to undo' }, { status: 400 });
+    }
+    await undoExclusion(ctx, transaction_id, { before: undo.before, after: undo.after });
+    return NextResponse.json({ transaction_id, excluded: undo.before?.excluded === true });
+  } catch (err) {
+    if (err instanceof ExclusionChangedError) return NextResponse.json({ error: err.message }, { status: 409 });
+    if (err instanceof AnnotationError) return NextResponse.json({ error: err.message }, { status: 400 });
+    return storeFailure(err, 'Failed to undo that');
   }
 }

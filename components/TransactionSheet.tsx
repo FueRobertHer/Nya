@@ -38,7 +38,7 @@ import { sharedActions, SharedRowLine, type SharedRowHooks } from './SharedRows'
 import { bankKept, entryNotice, heldInGroupAs, sendChange, splitActions, splitKeptUnder } from './SplitRows';
 import ActionRows, { type SheetAction } from './ActionRows';
 import type { ReviewControls } from './review-state';
-import type { CategoryChoice } from './transaction-edits';
+import type { CategoryChoice, ExclusionSaved } from './transaction-edits';
 import type { Txn } from './MonthBreakdown';
 import { exclusionOffer, isLowConfidence, nameForRules, pairedWords } from './txn-words';
 import { formatDay, formatMoney, signedMoney } from '@/lib/format';
@@ -54,6 +54,10 @@ import type { Tag } from '@/lib/tags';
 /** What an exclusion saved says; the row's own line says how it stands. */
 const EXCLUDED_SAID = 'Excluded: it stays in this list, out of totals, budgets, insights, bills and the Plan.';
 const INCLUDED_SAID = 'Included again: it counts in totals, budgets, insights, bills and the Plan.';
+/** What its Undo says, by how it stood before. */
+const UNDONE_COUNTS = 'Undone: it counts in totals, budgets, insights, bills and the Plan, as before.';
+const UNDONE_EXCLUDED = 'Undone: it’s excluded again, as before.';
+const UNDONE_BY_RULE = 'Undone: a rule hides it again, as before.';
 
 /** What a change of tags saved says, by the tags' names. */
 export function tagsSaid(change: TagChange, tags: readonly Tag[]): string {
@@ -63,6 +67,24 @@ export function tagsSaid(change: TagChange, tags: readonly Tag[]): string {
   if (added.length > 0) return `${added.length === 1 ? 'Tag' : 'Tags'} added: ${added.join(', ')}.`;
   if (removed.length > 0) return `${removed.length === 1 ? 'Tag' : 'Tags'} removed: ${removed.join(', ')}.`;
   return 'Tags saved.';
+}
+
+/** What the done line says, about which row, while the row holds it; for
+ *  Exclude and Include, what its Undo sends and says once done. */
+type Done = {
+  id: string;
+  text: string;
+  holds: (x: Txn) => boolean;
+  undo?: { saved: ExclusionSaved; text: string; holds: (x: Txn) => boolean };
+};
+/** Where focus goes to the done line from: nowhere (false); from wherever it
+ *  has gone, off the page or onto nothing (true); or from that and from the
+ *  control that was pressed. */
+type FocusFrom = boolean | Element | null;
+
+/** A toggle's answer carrying what its Undo needs. */
+function isExclusionSaved(v: unknown): v is ExclusionSaved {
+  return typeof v === 'object' && v !== null && 'undo' in v && 'shown' in v;
 }
 
 /** What a row opens: a transaction, by its id in the list; a part of a split
@@ -234,8 +256,12 @@ export type TransactionSheetProps = {
    *  wrong, which the sheet says beside Rename, staying open. */
   onRename: (vendor_key: string, name: string) => unknown;
   onEditTransaction?: (t: Txn) => void;
-  /** As onRecategorize: a promise of true once saved. */
+  /** As onRecategorize: a promise, once saved, of what its Undo needs
+   *  (components/transaction-edits.ts ExclusionSaved), or of true. */
   onToggleExcluded?: (t: Txn, excluded: boolean) => unknown;
+  /** Undoes an exclusion or an include exactly: a promise of null once
+   *  undone, or of what went wrong, said beside Undo. */
+  onUndoExcluded?: (saved: ExclusionSaved) => Promise<string | null>;
   /** As onRecategorize: a promise of true once saved. */
   onChangeTags?: (t: Txn, change: TagChange) => unknown;
   /** As onRecategorize: a promise of true once saved (empty clears it). */
@@ -294,6 +320,7 @@ function TxnSheet({
   onRename,
   onEditTransaction,
   onToggleExcluded,
+  onUndoExcluded,
   onChangeTags,
   onSaveNote,
   onCreateRule,
@@ -311,36 +338,76 @@ function TxnSheet({
   // category's id, not its name, which can change on saving). Every change
   // starts by taking the line away, and an answer says something only if no
   // change has started since, so a choice made while a save is out, or after,
-  // never reads as the earlier one saved.
-  const [done, setDone] = useState<{ id: string; text: string; holds: (x: Txn) => boolean } | null>(null);
+  // never reads as the earlier one saved. Exclude and Include carry an Undo
+  // (docs/design/guidelines.md#after-save): what it sends, and what the line
+  // says once it is done, while the row holds that. Tags and a note have
+  // none: a chip's x, or the note field, takes them back where they were made.
+  const [done, setDone] = useState<Done | null>(null);
+  const [undoing, setUndoing] = useState(false);
+  const [undoRefused, setUndoRefused] = useState<string | null>(null);
+  const undoErrorId = useId();
   const changes = useRef(0);
   const begin = () => {
     setDone(null);
+    setUndoRefused(null);
     return ++changes.current;
   };
   /** Said once the server has it (a refusal is said above, and puts the row back). */
-  const sayOnce = (n: number, saved: unknown, id: string, text: string, holds: (x: Txn) => boolean, focus = false) => {
-    if (saved === true && n === changes.current) {
+  const sayOnce = (n: number, saved: boolean, id: string, text: string, holds: (x: Txn) => boolean, focus: FocusFrom = false, undo?: Done['undo']) => {
+    if (saved && n === changes.current) {
       focusDone.current = focus;
-      setDone({ id, text, holds });
+      setDone({ id, text, holds, undo });
     }
   };
-  // A note or tags saved: what was pressed has gone (the editor starts again
-  // on the saved note, a chip goes) or can't be pressed (Add, its field
-  // emptied), so focus goes to the line, unless it has moved on to something
-  // else meanwhile. Exclude and Looks right keep their own.
+  // Focus goes to the line once it says something, unless it has moved on to
+  // something else meanwhile. A note or tags saved: what was pressed has gone
+  // (the editor starts again on the saved note, a chip goes) or can't be
+  // pressed (Add, its field emptied). Exclude or Include saved: from its row,
+  // which stays, to the line with its Undo under it. Undone: Undo has gone.
+  // Looks right keeps its own.
   const doneRef = useRef<HTMLDivElement>(null);
-  const focusDone = useRef(false);
+  const focusDone = useRef<FocusFrom>(false);
   useEffect(() => {
-    if (!done || !focusDone.current) return;
+    const from = focusDone.current;
+    if (!done || from === false) return;
     focusDone.current = false;
     const at = document.activeElement;
-    if (!at || at === document.body || !at.isConnected || at.getAttribute('disabled') !== null) doneRef.current?.focus();
+    const gone = !at || at === document.body || !at.isConnected || at.getAttribute('disabled') !== null;
+    if (gone || at === from || at === waitRef.current) {
+      // Said before its row went: the line said in its place doesn't take it.
+      focusWait.current = false;
+      doneRef.current?.focus();
+    }
   }, [done]);
   // Include on a pending row takes its row away (exclusionOffer: it can't be
-  // excluded again until it posts): focus goes to the line said in its place.
+  // excluded again until it posts): focus goes to the line said in its place
+  // while it saves, then to the done line.
   const waitRef = useRef<HTMLParagraphElement>(null);
   const focusWait = useRef(false);
+  // Refused, Undo is pressable again: focus back on it if it went while it
+  // waited (a disabled control can lose it).
+  const undoRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const at = document.activeElement;
+    if (undoRefused && (!at || at === document.body || at === undoRef.current)) undoRef.current?.focus();
+  }, [undoRefused]);
+  /** Exclude's or Include's Undo: the line says so once it is done, focus on
+   *  it; refused, why is said under Undo, which stays. */
+  const undoExclusion = async () => {
+    const was = done;
+    if (!was?.undo || undoing || !onUndoExcluded) return;
+    const n = ++changes.current;
+    setUndoing(true);
+    setUndoRefused(null);
+    const refused = await onUndoExcluded(was.undo.saved);
+    setUndoing(false);
+    if (n !== changes.current) return;
+    if (refused) setUndoRefused(refused);
+    else {
+      focusDone.current = true;
+      setDone({ id: was.id, text: was.undo.text, holds: was.undo.holds });
+    }
+  };
   // Rename vendor, a second level of the sheet, what is typed there, and
   // its write: out, or what went wrong with it.
   const [renaming, setRenaming] = useState(false);
@@ -374,6 +441,9 @@ function TxnSheet({
           ? { category: t.category }
           : null;
   const countable = !!onToggleExcluded && !t.group_members && !t.group_outside;
+  // The done line, when it is shown: about this row, while the row holds what
+  // it says, or while its Undo is out or was refused.
+  const shown = done && done.id === t.transaction_id && (undoing || undoRefused !== null || done.holds(t)) ? done : null;
 
   if (renaming && t.vendor_key) {
     const vendor = t.vendor_key;
@@ -495,9 +565,9 @@ function TxnSheet({
 
   // Its actions, one list (components/ActionRows.tsx), and "Create a rule
   // from this" in a list of its own after the rules that match it. Each that
-  // opens another sheet closes this one first; Exclude acts in place, so
-  // focus stays on its row (its key holds while its title flips), the way
-  // back, and the done line says what it did once it is saved.
+  // opens another sheet closes this one first; Exclude acts in place: its
+  // row stays (its key holds while its title flips), and once it is saved
+  // the done line says what it did, focus on it, with an Undo under it.
   const split = onSplitsChanged
     ? splitActions(t, {
         onSplit: act(() => onSplit(t)),
@@ -526,11 +596,16 @@ function TxnSheet({
             onSelect: () => {
               const excluded = t.excluded !== true;
               const id = t.transaction_id;
+              // How it stood, for what its Undo says once done.
+              const wasExcluded = t.excluded === true;
+              const undone = !wasExcluded ? UNDONE_COUNTS : t.excluded_by_rule ? UNDONE_BY_RULE : UNDONE_EXCLUDED;
+              const from = document.activeElement;
               focusWait.current = exclusionOffer({ ...t, excluded: excluded ? true : undefined, excluded_by_rule: undefined }) !== 'toggle';
               const n = begin();
-              void Promise.resolve(onToggleExcluded!(t, excluded)).then((saved) =>
-                sayOnce(n, saved, id, excluded ? EXCLUDED_SAID : INCLUDED_SAID, (x) => (x.excluded === true) === excluded)
-              );
+              void Promise.resolve(onToggleExcluded!(t, excluded)).then((saved) => {
+                const undo = isExclusionSaved(saved) && onUndoExcluded ? { saved, text: undone, holds: (x: Txn) => (x.excluded === true) === wasExcluded } : undefined;
+                sayOnce(n, saved === true || isExclusionSaved(saved), id, excluded ? EXCLUDED_SAID : INCLUDED_SAID, (x) => (x.excluded === true) === excluded, from, undo);
+              });
             },
           },
         ]
@@ -566,7 +641,7 @@ function TxnSheet({
                       const kept = filedUnder(t);
                       const n = begin();
                       void Promise.resolve(onRecategorize(id, confirm)).then((saved) =>
-                        sayOnce(n, saved, id, `Category kept: ${t.category_name ?? t.category ?? 'uncategorized'}.`, (x) => stillFiled(kept, x))
+                        sayOnce(n, saved === true, id, `Category kept: ${t.category_name ?? t.category ?? 'uncategorized'}.`, (x) => stillFiled(kept, x))
                       );
                       // The button goes with the mark: focus to the field it was about.
                       categoryRef.current?.focus();
@@ -579,14 +654,31 @@ function TxnSheet({
             </p>
           )}
           {/* What the last change saved, said where focus is: a live region
-              kept on the page, out of the flow while it says nothing. */}
+              kept on the page, out of the flow while it says nothing. Shown
+              while the row holds it, and while its Undo is out or refused. */}
           <div className="txn-sheet-said" role="status">
-            {done && done.id === t.transaction_id && done.holds(t) && (
+            {shown && (
               <Notice level="done" ref={doneRef} tabIndex={-1}>
-                {done.text}
+                {shown.text}
               </Notice>
             )}
           </div>
+          {/* Its Undo, outside the live region; in a row of its own, so the
+              hero's column doesn't stretch it. */}
+          {shown?.undo && (
+            <div>
+              <button type="button" className="btn ghost" ref={undoRef} onClick={() => void undoExclusion()} disabled={undoing} aria-describedby={undoRefused ? undoErrorId : undefined}>
+                {undoing ? 'Undoing…' : 'Undo'}
+              </button>
+            </div>
+          )}
+          {shown && undoRefused && (
+            <div id={undoErrorId}>
+              <Notice level="critical" role="alert">
+                {undoRefused}
+              </Notice>
+            </div>
+          )}
           {t.excluded === true && <p className="helper">{t.excluded_by_rule ? 'Hidden by a rule: out of budgets and reports' : 'Excluded from budgets and reports'}</p>}
           <TxnNotes t={t} whole={t} shared={shared} as="p" />
         </div>
@@ -630,12 +722,12 @@ function TxnSheet({
               const id = t.transaction_id;
               // On, or off, while the row still has it so.
               const holds = (x: Txn) => (change.add ?? []).every((g) => x.tags?.includes(g)) && !(change.remove ?? []).some((g) => x.tags?.includes(g));
-              void Promise.resolve(onChangeTags(t, change)).then((saved) => sayOnce(n, saved, id, tagsSaid(change, tags), holds, true));
+              void Promise.resolve(onChangeTags(t, change)).then((saved) => sayOnce(n, saved === true, id, tagsSaid(change, tags), holds, true));
             }}
             onSaveNote={(note) => {
               const n = begin();
               const id = t.transaction_id;
-              void Promise.resolve(onSaveNote(t, note)).then((saved) => sayOnce(n, saved, id, note ? 'Note saved.' : 'Note cleared.', (x) => (x.note ?? '') === note, true));
+              void Promise.resolve(onSaveNote(t, note)).then((saved) => sayOnce(n, saved === true, id, note ? 'Note saved.' : 'Note cleared.', (x) => (x.note ?? '') === note, true));
             }}
           />
         )}

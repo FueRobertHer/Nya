@@ -147,6 +147,7 @@ What a sheet shows once it has saved depends on whether the person can see the c
 
 - **The change shows behind the sheet** (a row appears or changes, a figure moves): the sheet may close with nothing more.
 - **The change doesn't show behind it, or can be taken back elsewhere** (Hide, Exclude, Archive, Not recurring, a rule, Mark settled, Split, Group, Stop sharing, and the like): the sheet ends on a done notice. A `Notice` with `level="done"` says what moved, an Undo under it (a `.btn.ghost`) puts back exactly what was there before, so an undo loses nothing, and focus goes to the done line.
+- **Unless it is taken back where it was made.** A change undone as easily as it was made, with the control that made it (a tag's chip and its ×, a note's field), needs no Undo: its done line says what was saved, and focus goes to it as for any other.
 - **Where the done notice goes.** Prefer a done level inside the sheet, as `HistoryImportSheet`'s Vanguard import and the Starter sets (`CategoryTemplates`, in `TemplateOffer`) do. A sheet that closes onto the object it changed may put it on that screen instead, as Plan's Tune does.
 - **A save that keeps the sheet open says so in the sheet**: a done line with `role="status"`, never silence.
 - **A save that fails says so where the person is**: in the sheet while it is open, never only on the screen behind it, and never as a silent revert.
