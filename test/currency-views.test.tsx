@@ -335,7 +335,9 @@ describe('the sheet that chooses a home currency', () => {
       'Your net worth will be shown in EUR, with accounts in other currencies converted at the European Central Bank’s daily rates. Your budgets, goals and the Plan stay as they are, in the currencies they’re shown in now.'
     );
     expect(text(body())).toContain(choiceText('EUR'));
-    expect(buttons(body())).toEqual(['Show my net worth in EUR', 'Not now']);
+    // In the sheet's footer, the way out first (components/Sheet.tsx SheetFooter, drawn in place here).
+    expect(buttons(body())).toEqual(['Not now', 'Show my net worth in EUR']);
+    expect(body()).toMatch(/<div class="sheet-footer"><button type="button" class="btn secondary">Not now<\/button><button type="button" class="btn">Show my net worth in EUR<\/button><\/div>/);
   });
 
   test('names the manual accounts that stay in their own currency', () => {
@@ -374,10 +376,13 @@ describe('the sheet that chooses a home currency', () => {
     expect(text(body({ manual: manual.slice(0, 1) }))).toContain('Your manual account is counted in the currency below.');
     // With the home currency already chosen, corrections alone can be saved.
     const home = { ...VIEW, home: 'EUR' };
-    expect(body({ view: home, manual })).toMatch(/<button disabled="">Show my net worth in EUR<\/button>/);
-    expect(text(body({ view: home, manual }))).toContain('It is your home currency now.');
+    // Why it can't be saved, beside the button in the footer, which it describes.
+    const current = body({ view: home, manual });
+    const note = current.match(/<p class="helper sheet-footer-note" id="([^"]+)">It is your home currency now.<\/p>/);
+    expect(note).not.toBeNull();
+    expect(current).toContain(`<button type="button" class="btn" disabled="" aria-describedby="${note![1]}">Show my net worth in EUR</button>`);
     const saving = body({ view: home, manual, fixes: { manual_flat: 'GBP' } });
-    expect(saving).toMatch(/<button>Save the currencies<\/button>/);
+    expect(saving).toMatch(/<button type="button" class="btn">Save the currencies<\/button>/);
     expect(text(saving)).not.toContain('It is your home currency now.');
   });
 
@@ -428,7 +433,15 @@ describe('the sheet that chooses a home currency', () => {
   test('settings that can’t be read are never saved over', () => {
     const html = body({ view: { ...VIEW, problem: 'unreadable', removable: true } });
     expect(text(html)).toContain('Your currency settings couldn’t be read, so nothing can be saved over them.');
-    expect(html).toMatch(/<button disabled="">Show my net worth in EUR<\/button>/);
+    expect(html).toMatch(/<button type="button" class="btn" disabled="">Show my net worth in EUR<\/button>/);
+  });
+
+  test('a refusal is said beside its buttons, in the footer, which Save points at', () => {
+    const html = body({ error: 'It wasn’t saved. Try again.' });
+    const note = html.match(/<div class="sheet-footer-note" id="([^"]+)"><div class="notice critical" role="alert">/);
+    expect(note).not.toBeNull();
+    expect(text(html)).toContain('It wasn’t saved. Try again.');
+    expect(html).toContain(`<button type="button" class="btn" aria-describedby="${note![1]}">Show my net worth in EUR</button>`);
   });
 });
 
