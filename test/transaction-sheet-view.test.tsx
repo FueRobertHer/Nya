@@ -1065,6 +1065,50 @@ describe('a transaction’s sheet', () => {
       v.unmount();
     });
 
+    test('a refusal once focus has moved on leaves focus where it went', async () => {
+      let answer: (r: unknown) => void = () => {};
+      annotationAnswer = () => new Promise((r) => (answer = r));
+      const v = mount({}, { wired: true });
+      await v.open('Whole Foods');
+      press(v.button('Take Reimbursable off', v.dialog()!)!);
+      await settle();
+      note(v).focus();
+      act(() => type(note(v), 'Team'));
+      act(() => answer({ ok: false, status: 500, json: async () => ({ error: 'Could not change its tags. Please try again.' }) }));
+      await settle();
+      expect(v.button('Take Reimbursable off', v.dialog()!)).not.toBeNull();
+      expect(dom.document.activeElement).toBe(note(v));
+      expect(note(v).value).toBe('Team');
+      // Still pointing at why, for when focus comes back to it.
+      expect(pointsAt(v, tagField(v))).not.toBeNull();
+      annotationAnswer = null;
+      v.unmount();
+    });
+
+    test('typed on while a note saves: kept in the editor once it is saved, and Save note pressed again sends it once', async () => {
+      let answer: (r: unknown) => void = () => {};
+      annotationAnswer = () => new Promise((r) => (answer = r));
+      sent.length = 0;
+      const v = mount({}, { wired: true });
+      await v.open('Whole Foods');
+      act(() => type(note(v), 'Team lunch'));
+      press(v.button('Save note', v.dialog()!)!);
+      await settle();
+      press(v.button('Save note', v.dialog()!)!);
+      await settle();
+      expect(sent.filter((x) => x.url === '/api/transaction-annotations')).toHaveLength(1);
+      note(v).focus();
+      act(() => type(note(v), 'Team lunch at noon'));
+      act(() => answer({ ok: true, json: async () => ({}) }));
+      await settle();
+      expect(status(v)).toBe('Done: Note saved.');
+      expect(note(v).value).toBe('Team lunch at noon');
+      expect(dom.document.activeElement).toBe(note(v));
+      expect(v.button('Save note', v.dialog()!)!.getAttribute('disabled')).toBeNull();
+      annotationAnswer = null;
+      v.unmount();
+    });
+
     test('a tag added, then one taken off, each said by its name, with focus on the line', async () => {
       annotationAnswer = null;
       const v = mount({}, { wired: true });

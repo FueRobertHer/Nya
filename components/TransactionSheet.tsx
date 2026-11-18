@@ -718,7 +718,7 @@ function TxnSheet({
 
         {onChangeTags && onSaveNote && !t.group_members && (
           <TxnTagsNote
-            key={`${t.transaction_id}:${t.note ?? ''}`}
+            key={t.transaction_id}
             t={t}
             tags={tags}
             refusedBy={saidId}

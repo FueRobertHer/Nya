@@ -16,8 +16,13 @@
 // Refused, a change leaves the field as it was before it was pressed: the
 // name typed back in the tag field, the note still in its editor (shown on
 // the row only once saved), with focus on that field, which points at why
-// (said at the top of the sheet, `refusedBy`). A chip pressed goes with its
-// press, so a refused chip's change brings focus to the tag field.
+// (said at the top of the sheet, `refusedBy`), unless focus has moved on to
+// something else meanwhile. A chip pressed goes with its press, so a refused
+// chip's change brings focus to the tag field.
+//
+// The editor keeps what is typed in it: a note saved, or read again, is
+// taken into it only while it holds the note the row had, so what is typed
+// while a save is out stays.
 
 import { useMemo, useRef, useState } from 'react';
 import { MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
@@ -30,6 +35,20 @@ export type TagChange = { add?: string[]; remove?: string[]; newTag?: string };
 
 /** How many matching tags are offered under the field. */
 const SUGGESTED = 6;
+
+/** Focus to `field` once its change is refused, if focus was lost (what was
+ *  pressed went, or waits) or is still on what was pressed, and the sheet
+ *  it is in hasn't started closing. */
+function focusBack(field: HTMLElement | null, pressed: Element | null) {
+  if (!field?.isConnected) return;
+  const at = document.activeElement;
+  const lost = !at || at === document.body || !at.isConnected || at.getAttribute('disabled') !== null;
+  if (!lost && at !== pressed) return;
+  for (let n: Element | null = field; n; n = n.parentElement) {
+    if (n.getAttribute('role') === 'dialog' && n.getAttribute('data-open') === 'false') return;
+  }
+  field.focus();
+}
 
 export default function TxnTagsNote({
   t,
@@ -48,18 +67,32 @@ export default function TxnTagsNote({
 }) {
   const [draft, setDraft] = useState('');
   const [note, setNote] = useState(t.note ?? '');
-  // Which field's change was refused last, until the next change.
+  const [rowNote, setRowNote] = useState(t.note ?? '');
+  if ((t.note ?? '') !== rowNote) {
+    setRowNote(t.note ?? '');
+    if (note === rowNote) setNote(t.note ?? '');
+  }
+  // Which field's change was refused last, until the next change, or until
+  // the sheet says nothing went wrong (what it says next is about something
+  // else).
   const [refused, setRefused] = useState<'tag' | 'note' | null>(null);
+  const [saidBy, setSaidBy] = useState(refusedBy);
+  if (refusedBy !== saidBy) {
+    setSaidBy(refusedBy);
+    if (!refusedBy) setRefused(null);
+  }
   const tagField = useRef<HTMLInputElement>(null);
   const noteField = useRef<HTMLTextAreaElement>(null);
+  const noteOut = useRef(false);
   /** A tag change, and, refused, the name typed back and focus on the field. */
   const changeTags = (change: TagChange, typedName = '') => {
     setRefused(null);
+    const pressed = document.activeElement;
     void onChangeTags(change).then((saved) => {
       if (saved) return;
       if (typedName) setDraft((d) => d || typedName);
       setRefused('tag');
-      tagField.current?.focus();
+      focusBack(tagField.current, pressed);
     });
   };
   const on = useMemo(() => new Set(t.tags ?? []), [t.tags]);
@@ -134,11 +167,16 @@ export default function TxnTagsNote({
           className="secondary"
           disabled={note.trim() === (t.note ?? '').trim()}
           onClick={() => {
+            // Pressed again while it saves: sent once.
+            if (noteOut.current) return;
+            noteOut.current = true;
             setRefused(null);
+            const pressed = document.activeElement;
             void onSaveNote(note.trim()).then((saved) => {
+              noteOut.current = false;
               if (saved) return;
               setRefused('note');
-              noteField.current?.focus();
+              focusBack(noteField.current, pressed);
             });
           }}
         >
