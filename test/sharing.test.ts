@@ -328,6 +328,33 @@ describe('connecting by invite link', () => {
     process.env.CLERK_ALLOWED_USER_IDS = 'user_owner,user_partner';
     expect((await accept('user_partner', token)).status).toBe(409);
   });
+
+  test('a refusal over its sender leaves the link as it was', async () => {
+    const token = await invite('user_third');
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_owner,user_partner';
+    expect((await accept('user_partner', token)).status).toBe(409);
+    // Checked before the link is used up: let back in, they can be reached by it.
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_owner,user_partner,user_third';
+    expect((await accept('user_partner', token)).status).toBe(200);
+  });
+
+  test('a failure reading its sender leaves the link to try again', async () => {
+    const token = await invite('user_third');
+    const realHget = fake.hget.bind(fake);
+    (fake as any).hget = async (key: string, field: string) => {
+      if (key === testKey('owners') && field === 'user_third') throw new Error('storage out of reach');
+      return realHget(key, field);
+    };
+    let failed: Awaited<ReturnType<typeof accept>>;
+    try {
+      failed = (await quietly(() => accept('user_partner', token))).result;
+    } finally {
+      delete (fake as any).hget;
+    }
+    expect(failed.status).toBe(500);
+    expect(failed.body.error).toBe('Nya couldn’t connect you just now. Try again in a few minutes, and if the link no longer works, ask for a new one.');
+    expect((await accept('user_partner', token)).status).toBe(200);
+  });
 });
 
 describe('sharing accounts on a connection', () => {

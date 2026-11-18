@@ -72,7 +72,7 @@ export function AcceptInvite({ token, fromName }: { token: string; fromName: str
     <>
       <p>
         {fromName ? `${fromName} invited you to connect.` : 'Someone invited you to connect.'} Connecting shares nothing by
-        itself: each of you chooses which accounts the other can see, read-only.
+        itself: each of you then chooses what to share with the other, read-only.
       </p>
       <label className="field">
         What you call them

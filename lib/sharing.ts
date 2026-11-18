@@ -396,11 +396,13 @@ export async function acceptInvite(me: string, token: string, label: unknown, my
   // so its sender can't tell a block from someone not answering.
   if (existing?.meta.status === 'blocked') throw new SharingRefused(UNUSABLE);
   if (existing) throw new AlreadyConnected('You’re already connected.');
+  // The sender may since have been removed from the app or deleted. Checked
+  // before the link is used up too, so neither this refusal nor a failure to
+  // tell (storage out of reach) spends it.
+  if (!(await clerkUserAllowed(peek.from)) || !(await theirCtx(peek.from))) throw new SharingRefused(UNUSABLE);
   // Single use: whoever takes it first has it.
   const inv = parse<Invite>(await redis().getdel<unknown>(inviteKey(token)));
   if (!inv || inv.from !== peek.from) throw new SharingRefused(UNUSABLE);
-  // The sender may since have been removed from the app or deleted.
-  if (!(await clerkUserAllowed(inv.from)) || !(await theirCtx(inv.from))) throw new SharingRefused(UNUSABLE);
   // Anything left from an earlier connection between the two (a save that
   // landed just after a removal) goes first: a new connection shares nothing,
   // and starts new records under a new log id.

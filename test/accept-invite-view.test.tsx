@@ -106,6 +106,9 @@ describe('the invite page, before Connect', () => {
   test('a link that works: who sent it, two fields and Connect, on the primitives with no inline style', async () => {
     const html = await page(await samsLink());
     expect(html).toContain('Sam invited you to connect.');
+    // Not "which accounts": a share can hold more than accounts, and a new
+    // connection holds nothing yet.
+    expect(html).toContain('Connecting shares nothing by itself: each of you then chooses what to share with the other, read-only.');
     expect(html).toContain('<div class="card connect-card"><div class="card-header"><h2>Connect</h2></div><div class="stack">');
     expect(html.match(/<label class="field">/g)).toHaveLength(2);
     expect(html).toContain('<label class="field">What you call them<input maxLength="40" value="Sam"/></label>');
@@ -284,12 +287,15 @@ describe('the accept route’s words', () => {
     // The sender's registry entry can't be read: a container error, whose own
     // words name their container.
     const theirs = await ownerContainer('user_sender');
+    const entry = await fake.hget<string>(testKey('containers'), theirs);
     await fake.hset(testKey('containers'), { [theirs]: '{' });
     const { result } = await errorsDuring(() => accept(token));
     expect(result).toEqual({ status: 500, body: { error: FAILED } });
     expect(JSON.stringify(result)).not.toContain(theirs);
-    // That failure came after the link was used up, so trying again finds it
-    // can't be used: the case the words' "if the link no longer works" covers.
-    expect(await accept(token)).toEqual({ status: 409, body: { error: UNUSABLE } });
+    // That failure came before the link was used up: trying again says the
+    // same while it lasts, and connects once it's over.
+    expect((await errorsDuring(() => accept(token))).result).toEqual(result);
+    await fake.hset(testKey('containers'), { [theirs]: typeof entry === 'string' ? entry : JSON.stringify(entry) });
+    expect((await accept(token)).status).toBe(200);
   });
 });
