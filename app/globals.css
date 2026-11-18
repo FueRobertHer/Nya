@@ -3943,9 +3943,11 @@ button.danger-outline {
 }
 
 /* A demo account's own account menu (components/ClerkAccount.tsx): its
-   picture, the size Clerk's button draws it, in a 44px target. */
+   picture, the size Clerk's button draws it, in a 44px target, round as
+   the picture is, so its hover and focus ring are too. */
 .account-menu-btn {
   padding: 0;
+  border-radius: var(--r-pill);
 }
 
 .account-menu-btn img {

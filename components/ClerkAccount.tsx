@@ -53,7 +53,9 @@ export function useSignInDetails(userId: string | null | undefined): SignInDetai
   useEffect(() => {
     if (!userId) return;
     let live = true;
-    fetch('/api/demo/me', { cache: 'no-store' })
+    // Not waited on for good: an answer that hasn't come in ten seconds is
+    // one it couldn't give, so the menu, and Sign out, are never held back.
+    fetch('/api/demo/me', { cache: 'no-store', signal: AbortSignal.timeout(10_000) })
       .then((res) => (res.ok ? res.json() : null))
       .catch(() => null)
       .then((body: { user?: unknown; demo?: unknown } | null) => {

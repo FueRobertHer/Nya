@@ -11,8 +11,10 @@ import { mockForFile } from './scoped-mock';
 // answer for. Clerk is stubbed, and so is the server's answer
 // (app/api/demo/me).
 
-// What Clerk was asked to draw: its button, and the pages added to its window.
+// What Clerk was asked to draw: its button (and for whom), and the pages
+// added to its window.
 const drawn: { userButton: number; pages: { label: string; url: string }[] } = { userButton: 0, pages: [] };
+let drawnFor: (string | undefined)[] = [];
 const calls: string[] = [];
 type User = { id: string; fullName: string | null; imageUrl: string; primaryEmailAddress: { emailAddress: string } | null };
 let signedIn: { isLoaded: boolean; user: User | null } = { isLoaded: true, user: null };
@@ -28,6 +30,7 @@ await mockForFile('@clerk/nextjs', () => ({
   UserButton: Object.assign(
     ({ children }: { children: unknown }) => {
       drawn.userButton++;
+      drawnFor.push(signedIn.user?.id);
       return children;
     },
     {
@@ -45,13 +48,13 @@ const dom = installDom();
 // The server's answer to app/api/demo/me: set per test. Each ask is kept,
 // with a way to answer it later.
 const realFetch = globalThis.fetch;
-type Ask = { url: string; answer: (res: Response | Error) => void };
+type Ask = { url: string; init?: RequestInit; answer: (res: Response | Error) => void };
 let asks: Ask[] = [];
 let respond: ((url: string) => Response | Error) | null = null;
-globalThis.fetch = ((url: string) =>
+globalThis.fetch = ((url: string, init?: RequestInit) =>
   new Promise<Response>((resolve, reject) => {
     const answer = (res: Response | Error) => (res instanceof Error ? reject(res) : resolve(res));
-    asks.push({ url, answer });
+    asks.push({ url, init, answer });
     if (respond) answer(respond(url));
   })) as typeof fetch;
 afterAll(() => {
@@ -81,6 +84,7 @@ const settle = () => act(async () => void (await new Promise((r) => setTimeout(r
 beforeEach(() => {
   drawn.userButton = 0;
   drawn.pages = [];
+  drawnFor = [];
   calls.length = 0;
   asks = [];
   respond = server;
@@ -124,6 +128,8 @@ describe('the account menu', () => {
     const v = mount();
     await settle();
     expect(asks.map((a) => a.url)).toEqual(['/api/demo/me']);
+    // Never waited on for good: the ask gives up in time, and the menu shows.
+    expect(asks[0].init?.signal).toBeInstanceOf(AbortSignal);
     expect(drawn.userButton).toBeGreaterThan(0);
     expect(drawn.pages).toContainEqual({ ...DATA_PAGE });
     expect(v.trigger()).toBeUndefined();
@@ -187,6 +193,21 @@ describe('the account menu', () => {
     key(settings, 'Escape');
     expect(v.items()).toHaveLength(0);
     expect(dom.document.activeElement).toBe(trigger);
+    // Opened with a click, on its first item too; Tab closes it.
+    act(() => click(trigger));
+    expect(dom.document.activeElement).toBe(v.items()[0]);
+    key(v.items()[0], 'Tab');
+    expect(v.items()).toHaveLength(0);
+    // A press anywhere else closes it; one inside it doesn't.
+    act(() => click(trigger));
+    act(() => {
+      v.items()[1].dispatchEvent(new FakeEvent('pointerdown'));
+    });
+    expect(v.items()).toHaveLength(3);
+    act(() => {
+      dom.document.body.dispatchEvent(new FakeEvent('pointerdown'));
+    });
+    expect(v.items()).toHaveLength(0);
     v.unmount();
   });
 
@@ -229,7 +250,24 @@ describe('the account menu', () => {
   });
 
   test('a change of account in place asks again, and an answer for the one before is never used', async () => {
+    // Fue's answer in: Clerk's button. Alex, the demo, signs in in place:
+    // not drawn for Alex even once, while Alex's answer is on its way.
     respond = null;
+    signedIn = { isLoaded: true, user: FUE };
+    const before = mount();
+    act(() => asks[0].answer(Response.json({ user: FUE.id, demo: false })));
+    await settle();
+    expect(drawnFor.length).toBeGreaterThan(0);
+    signedIn = { isLoaded: true, user: ALEX };
+    before.rerender();
+    await settle();
+    expect(drawnFor.filter((u) => u === ALEX.id)).toEqual([]);
+    expect(before.skeleton()).toBe(1);
+    before.unmount();
+    asks = [];
+    drawn.userButton = 0;
+    drawnFor = [];
+
     signedIn = { isLoaded: true, user: FUE };
     const v = mount();
     // Fue's answer is still on its way when Alex, the demo, signs in in place.
@@ -244,6 +282,7 @@ describe('the account menu', () => {
     act(() => asks[1].answer(Response.json({ user: ALEX.id, demo: true })));
     await settle();
     expect(drawn.userButton).toBe(0);
+    expect(drawnFor).toEqual([]);
     expect(v.trigger()).toBeDefined();
     // And back to a real account: asked again, the circle meanwhile, then Clerk's.
     signedIn = { isLoaded: true, user: FUE };
