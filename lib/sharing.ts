@@ -162,6 +162,9 @@ export const INVITE_HOURS = 72;
 const LABEL_MAX = 40;
 
 export class SharingRefused extends Error {}
+/** Using an invite from someone I'm already connected with: refused, though
+ *  nothing is wrong, so the invite page says it as information. */
+export class AlreadyConnected extends SharingRefused {}
 
 type Meta = { users: [string, string]; status: 'active' | 'blocked'; blocked_by?: string; created_at: string };
 
@@ -373,21 +376,24 @@ export async function describeInvite(me: string, token: string): Promise<{ from_
   return { from_name: inv.from_name, own: inv.from === me };
 }
 
-const UNUSABLE = 'This invite link can’t be used. Ask for a new one.';
+/** Every link that can't be used, whatever the reason, in these words: on its
+ *  page (app/connect/[token]) and when Connect is refused. */
+export const UNUSABLE = 'This invite link can’t be used. Ask for a new one.';
+export const OWN_LINK = 'This is your own invite link. Send it to the person you want to connect with.';
 
 /** Uses the invite and connects the two people; `label` is what I call
  *  them, `myName` how I introduce myself to them. */
 export async function acceptInvite(me: string, token: string, label: unknown, myName?: unknown, now: number = Date.now()): Promise<{ id: string }> {
   const peek = await readInvite(token);
   if (!peek) throw new SharingRefused(UNUSABLE);
-  if (peek.from === me) throw new SharingRefused('This is your own invite link. Send it to the person you want to connect with.');
+  if (peek.from === me) throw new SharingRefused(OWN_LINK);
   const id = connectionId(me, peek.from);
   const existing = (await allConnections()).find((c) => c.id === id);
   // Checked before the link is used up, and a blocked pair gets the same
   // answer as any dead link: the link stays exactly as if it were ignored,
   // so its sender can't tell a block from someone not answering.
   if (existing?.meta.status === 'blocked') throw new SharingRefused(UNUSABLE);
-  if (existing) throw new SharingRefused('You’re already connected.');
+  if (existing) throw new AlreadyConnected('You’re already connected.');
   // Single use: whoever takes it first has it.
   const inv = parse<Invite>(await redis().getdel<unknown>(inviteKey(token)));
   if (!inv || inv.from !== peek.from) throw new SharingRefused(UNUSABLE);

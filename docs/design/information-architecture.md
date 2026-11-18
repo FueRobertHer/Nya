@@ -259,7 +259,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | DebtPayoff | Accounts top card button | Budgets > Goals (6a1): a Debt payoff card holding a Payoff plan row, shown when a card or loan that isn't hidden is on screen; the sheet stays mounted once, outside the tabs |
 | Sharing (SharingSettings with SharingListView and ConnectionView, SharedViews, ShareKinds, SharingDates) | Avatar menu, Accounts button | Settings > Sharing, in place, each person in a sheet; the avatar menu's Sharing opens it |
 | Sharing (SharedWithMe) | Bottom of Accounts; empty state | Bottom of Accounts; empty state |
-| AcceptInvite | Invite link page | Unchanged |
+| AcceptInvite | Invite link page | Unchanged (`/connect/<token>`); once connected, or already, it links to Settings > Sharing over Accounts |
 | DownloadMyData, DownloadOptions | Manage | Settings > Your data |
 | InventoryEntry, DataInventory | Manage, `/your-data` | Settings > Your data, `/your-data`; the admin's links to Storage across accounts and Nightly jobs moved to the admin page in F2 |
 | RestoreCard, RestoreAnswers | Manage; empty state | Settings > Your data; empty state |

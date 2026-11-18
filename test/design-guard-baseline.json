@@ -1,7 +1,4 @@
 {
-  "app/connect/[token]/page.tsx": {
-    "inlineLayoutStyles": 1
-  },
   "app/globals.css": {
     "smallFonts": 2
   },
