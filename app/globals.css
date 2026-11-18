@@ -3592,45 +3592,6 @@ button.danger-outline {
 }
 
 /* "Shared by ..." cards on the Accounts tab. */
-.incoming-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.incoming-head h3 {
-  flex: 1;
-  margin: 0;
-  font-size: var(--fs-3);
-}
-
-.pill {
-  font-size: var(--fs-1);
-  font-weight: 600;
-  color: var(--text-2);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 2px 8px;
-}
-
-.incoming-account {
-  padding: 10px 0;
-}
-
-.incoming-account + .incoming-account {
-  border-top: 1px solid var(--line);
-}
-
-.incoming-account .peer-row {
-  padding: 0;
-}
-
-.incoming-account-value {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  white-space: nowrap;
-}
 
 /* Under an account's row: its transactions' toggle and list, or why there
    are none, set in as the row's words are. The ghost button's own padding
