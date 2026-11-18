@@ -54,15 +54,19 @@ export function planGrowth(plan: Pick<PlanCore, 'realReturn' | 'assets' | 'accou
   return { growth: Math.min(high, Math.max(low, plan.realReturn + lift / total)), own };
 }
 
-/** The plan's accounts with each one's own growth as a sheet holds it (`rates`,
- *  by id; an id not in it grows at the plan's rate): each one's dividends kept,
- *  none with neither rate, by id. Past `cap` (LIMITS.accountRates), the
- *  accounts `listed` now come before those since hidden or closed. Absent when
- *  none is left, as a plan stores it. */
-export function withGrowth(held: readonly AccountRate[] | undefined, rates: ReadonlyMap<string, number>, listed: ReadonlySet<string>, cap: number): AccountRate[] | undefined {
-  const dividends = new Map((held ?? []).map((x) => [x.account_id, x.yield]));
-  const ids = [...new Set([...dividends.keys(), ...rates.keys()])];
-  const kept = ids.map((account_id) => ({ account_id, growth: rates.get(account_id) ?? null, yield: dividends.get(account_id) ?? null })).filter((x) => x.growth !== null || x.yield !== null);
+/** An account's own growth and dividends as a sheet holds them: a null is the
+ *  plan's. */
+export type OwnRates = { growth: number | null; yield: number | null };
+
+/** A plan's accounts' own rates, by id: what a sheet starts from. */
+export const ratesOf = (accounts: readonly AccountRate[] | undefined): Map<string, OwnRates> => new Map((accounts ?? []).map((x) => [x.account_id, { growth: x.growth, yield: x.yield }]));
+
+/** The plan's accounts with their own rates as a sheet holds them (`rates`, by
+ *  id, from ratesOf): none with neither, by id. Past `cap`
+ *  (LIMITS.accountRates), the accounts `listed` now come before those since
+ *  hidden or closed. Absent when none is left, as a plan stores it. */
+export function withRates(rates: ReadonlyMap<string, OwnRates>, listed: ReadonlySet<string>, cap: number): AccountRate[] | undefined {
+  const kept = [...rates].map(([account_id, r]) => ({ account_id, growth: r.growth, yield: r.yield })).filter((x) => x.growth !== null || x.yield !== null);
   const first = [...kept.filter((x) => listed.has(x.account_id)), ...kept.filter((x) => !listed.has(x.account_id))].slice(0, cap);
   const list = first.sort((a, b) => (a.account_id < b.account_id ? -1 : a.account_id > b.account_id ? 1 : 0));
   return list.length > 0 ? list : undefined;

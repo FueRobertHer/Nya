@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { planGrowth, withGrowth } from '@/lib/fire/account-growth';
+import { planGrowth, ratesOf, withRates, type OwnRates } from '@/lib/fire/account-growth';
 import { yearsToTarget } from '@/lib/fire/fi';
 import { fiView, LIMITS, type AccountRate, type Measured } from '@/lib/fire/plan';
 import { DEFAULT_PLAN_V2, basePlanOf, isFirePlanV2, parsePlanV2, repairPlanV2, toStored, upgradeStoredPlan, type FirePlanV2 } from '@/lib/fire/plan-v2';
@@ -224,22 +224,26 @@ describe('a saved plan’s growth', () => {
 
 describe('a sheet’s rates into the plan’s list', () => {
   const ids = (...x: string[]) => new Set(x);
-  test('each account’s growth as held, its dividends kept, none with neither, by id', () => {
+  const own = (growth: number | null, yieldRate: number | null = null): OwnRates => ({ growth, yield: yieldRate });
+  test('each account’s growth and dividends as the sheet holds them, none with neither, by id', () => {
     const held = [rate('b', 0.07, 0.02), rate('c', 0.09), rate('d', null, 0.01)];
-    expect(withGrowth(held, new Map([['a', 0.06], ['c', 0.09]]), ids('a', 'b', 'c', 'd'), LIMITS.accountRates)).toEqual([rate('a', 0.06), rate('b', null, 0.02), rate('c', 0.09), rate('d', null, 0.01)]);
+    const sheet = ratesOf(held);
+    expect(withRates(sheet, ids('b', 'c', 'd'), LIMITS.accountRates)).toEqual(held);
+    sheet.set('a', own(0.06)).set('b', own(null, 0.02)).set('c', own(null)).set('e', own(null, 0.03));
+    expect(withRates(sheet, ids('a', 'b', 'c', 'd', 'e'), LIMITS.accountRates)).toEqual([rate('a', 0.06), rate('b', null, 0.02), rate('d', null, 0.01), rate('e', null, 0.03)]);
   });
 
   test('nothing left: absent, as a plan stores it', () => {
-    expect(withGrowth(undefined, new Map(), ids(), LIMITS.accountRates)).toBeUndefined();
-    expect(withGrowth([rate('a', 0.07)], new Map(), ids('a'), LIMITS.accountRates)).toBeUndefined();
+    expect(withRates(ratesOf(undefined), ids(), LIMITS.accountRates)).toBeUndefined();
+    expect(withRates(new Map([['a', own(null)]]), ids('a'), LIMITS.accountRates)).toBeUndefined();
   });
 
-  test('past the cap, the accounts listed now come first, and what is kept parses', () => {
+  test('past the cap, the accounts listed now come first, a dividends-only one too, and what is kept parses', () => {
     const stale = Array.from({ length: LIMITS.accountRates }, (_, i) => rate(`old${String(i).padStart(2, '0')}`, 0.06));
-    const rates = new Map([...stale.map((x) => [x.account_id, 0.06] as const), ['new', 0.08] as const]);
-    const list = withGrowth(stale, rates, ids('new'), LIMITS.accountRates)!;
+    const rates = ratesOf(stale).set('new', own(null, 0.03));
+    const list = withRates(rates, ids('new'), LIMITS.accountRates)!;
     expect(list.length).toBe(LIMITS.accountRates);
-    expect(list.some((x) => x.account_id === 'new')).toBe(true);
+    expect(list.find((x) => x.account_id === 'new')).toEqual(rate('new', null, 0.03));
     expect(list.map((x) => x.account_id)).toEqual([...list.map((x) => x.account_id)].sort());
     expect('plan' in parsePlanV2({ ...PLAN, accounts: list })).toBe(true);
   });

@@ -149,6 +149,14 @@ describe('a year’s sheet', () => {
     expect(h).toContain('Assumes steady 5% growth after inflation, health costs rising 2.1 points a year faster than prices, and 2026 tax law. Hypothetical, not tax advice.');
   });
 
+  test('with accounts at their own rates, it says the buckets drift apart from the stop on', () => {
+    const y = yearAt(run(), 51);
+    expect(yearHelper(y, { ...CONTEXT, growth: 0.056, apart: true })).toContain(
+      'Assumes steady 5.6% growth after inflation, health costs rising 2.1 points a year faster than prices, and 2026 tax law. From the stop on, taxable, tax-deferred, Roth and HSA money each grow at their own accounts’ rates, so together they drift from 5.6%. Hypothetical, not tax advice.'
+    );
+    expect(yearHelper(y, { ...CONTEXT, apart: false })).not.toContain('drift');
+  });
+
   test('a state with no income tax is named as having none', () => {
     const pays = lines(yearAt(run(), 51), 'What it pays for').lines;
     expect(pays.map((l) => l.label)).toContain('Nevada: no income tax');

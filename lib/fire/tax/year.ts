@@ -178,12 +178,18 @@ export type YearInput = {
   fill?: Ceiling | null;
   /** The year's return after inflation. */
   growth: number;
+  /** Each bucket's own, where the plan's accounts grow apart
+   *  (lib/fire/bucket-growth.ts); absent, all grow at `growth`. */
+  bucketGrowth?: YearGrowth;
   inflation: number;
   /** Leave health coverage out of what the year pays: a year still working
    *  (lib/fire/tax/mix.ts), whose coverage isn't the plan's to know. Coverage
    *  alone can't say so: Medicare is charged from 65 whatever it is. */
   skipHealth?: boolean;
 };
+
+/** A year's growth after inflation by what it holds, the same for both people. */
+export type YearGrowth = { taxable: number; deferred: number; deferred457: number; roth: number; hsa: number };
 
 export type Drawn = {
   hsaPremiums: number;
@@ -796,6 +802,7 @@ function finish(inp: YearInput, law: TaxLaw, out: YearResult): YearResult {
     }
   }
   const g = inp.growth;
+  const bg = inp.bucketGrowth;
   const infl = 1 + inp.inflation;
   for (let i = 0; i < 2; i++) {
     const r = out.people[i];
@@ -835,13 +842,13 @@ function finish(inp: YearInput, law: TaxLaw, out: YearResult): YearResult {
       if (w === 0) held = v - t;
       else e.window[w - 1] = (v - t) / infl;
     }
-    e.taxable = Math.max(0, taxable) * (1 + g - inp.taxableYield);
+    e.taxable = Math.max(0, taxable) * (1 + (bg ? bg.taxable : g) - inp.taxableYield);
     e.basis = Math.max(0, basis) / infl;
-    e.deferred = Math.max(0, deferred) * (1 + g);
-    e.deferred457 = Math.max(0, plan457) * (1 + g);
-    e.roth = Math.max(0, roth) * (1 + g);
+    e.deferred = Math.max(0, deferred) * (1 + (bg ? bg.deferred : g));
+    e.deferred457 = Math.max(0, plan457) * (1 + (bg ? bg.deferred457 : g));
+    e.roth = Math.max(0, roth) * (1 + (bg ? bg.roth : g));
     e.rothReachable = (reachable + held) / infl;
-    e.hsa = Math.max(0, p.hsa - d.hsaPremiums - d.hsaTaxed - d.hsaEarly) * (1 + g);
+    e.hsa = Math.max(0, p.hsa - d.hsaPremiums - d.hsaTaxed - d.hsaEarly) * (1 + (bg ? bg.hsa : g));
   }
   return out;
 }
@@ -1063,6 +1070,7 @@ export function checkYearInput(inp: YearInput): void {
   finite(inp.healthGrowth, 'healthGrowth', -0.5);
   finite(inp.incomeGrowth, 'incomeGrowth', -0.5);
   finite(inp.growth, 'growth', -1);
+  if (inp.bucketGrowth) for (const k of ['taxable', 'deferred', 'deferred457', 'roth', 'hsa'] as const) finite(inp.bucketGrowth[k], `bucketGrowth.${k}`, -1);
   finite(inp.inflation, 'inflation', -0.5);
   if (inp.ceiling !== null) finite(inp.ceiling.at, 'ceiling.at');
   if (inp.fill != null) finite(inp.fill.at, 'fill.at');

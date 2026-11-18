@@ -30,6 +30,13 @@ export function ownRatesText(n: number): string {
   return n === 0 ? '' : n === 1 ? ', 1 account at its own' : `, ${n} accounts at their own`;
 }
 
+/** Said beside a detailed plan's steady rate where accounts grow at their own
+ *  (FiView ownRates): from the stop on each tax bucket grows at its accounts'
+ *  rate (lib/fire/bucket-growth.ts), so the total no longer follows the blend. */
+export function apartWords(growth: number): string {
+  return `from the stop on, taxable, tax-deferred, Roth and HSA money each grow at their own accounts’ rates, so together they drift from ${pct(growth)}`;
+}
+
 /** A fraction as a percent with no trailing zeros: 0.04 "4%", 0.035 "3.5%", 0.0425 "4.25%". */
 export function pct(f: number, maxDigits = 2): string {
   return `${Number((f * 100).toFixed(maxDigits))}%`;
