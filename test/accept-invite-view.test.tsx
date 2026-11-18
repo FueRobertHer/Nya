@@ -111,7 +111,10 @@ describe('the invite page, before Connect', () => {
     expect(html).toContain('Connecting shares nothing by itself: each of you then chooses what to share with the other, read-only.');
     expect(html).toContain('<div class="card connect-card"><div class="card-header"><h2>Connect</h2></div><div class="stack">');
     expect(html.match(/<label class="field">/g)).toHaveLength(2);
-    expect(html).toContain('<label class="field">What you call them<input maxLength="40" value="Sam"/></label>');
+    // What an empty name becomes is said under its field, which it describes.
+    const [, noteId] = html.match(/<label class="field">What you call them<input maxLength="40" aria-describedby="([^"]+)" value="Sam"\/><\/label>/) ?? [];
+    expect(noteId).toBeTruthy();
+    expect(html).toContain(`<p class="helper" id="${noteId}">Left empty, you’ll see them as Sam.</p>`);
     expect(html).toContain('<button class="btn btn-block">Connect</button>');
     // The way out is a button-sized link, not a 21px line of text.
     expect(html).toContain('<div class="btn-row"><a class="btn ghost" href="/">Back to Nya</a></div>');
@@ -260,6 +263,22 @@ describe('the accept route’s words', () => {
   beforeEach(async () => {
     await ownerContainer('user_sender');
     await ownerContainer('user_follower');
+  });
+
+  test('an empty name is saved as the page says it will be: the sender’s name, or Someone when they gave none', async () => {
+    const { GET, DELETE } = await import('@/app/api/connections/route');
+    const myLabel = async () => (await (await GET()).json()).connections[0].label;
+    for (const [fromName, shown] of [
+      ['Sam', 'Sam'],
+      ['', 'Someone'],
+    ]) {
+      const token = (await createInvite('user_sender', { fromName })).token;
+      expect(await page(token)).toContain(`Left empty, you’ll see them as ${shown}.</p>`);
+      const made = await accept(token);
+      expect(made.status).toBe(200);
+      expect(await myLabel()).toBe(shown);
+      await DELETE(new Request('http://x/api/connections', { method: 'DELETE', body: JSON.stringify({ id: made.body.id }) }));
+    }
   });
 
   test('already connected is a refusal marked connected; a blocked pair is answered as a dead link is, word for word', async () => {

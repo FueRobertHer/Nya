@@ -7,7 +7,7 @@
 // gives way to the answer and focus goes to it; a failure keeps the form, to
 // try again.
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { settingsHref, tabHref } from '@/lib/dashboard-tab';
 import { Notice } from './TotalCaveats';
 
@@ -32,6 +32,7 @@ export function AcceptInvite({ token, fromName }: { token: string; fromName: str
   const [error, setError] = useState('');
   const [answer, setAnswer] = useState<Answer | null>(null);
   const answerLine = useRef<HTMLDivElement>(null);
+  const labelNote = useId();
   // Connect is gone with the form, so focus goes to what replaced it.
   useEffect(() => {
     if (answer) answerLine.current?.focus();
@@ -74,10 +75,16 @@ export function AcceptInvite({ token, fromName }: { token: string; fromName: str
         {fromName ? `${fromName} invited you to connect.` : 'Someone invited you to connect.'} Connecting shares nothing by
         itself: each of you then chooses what to share with the other, read-only.
       </p>
-      <label className="field">
-        What you call them
-        <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={40} />
-      </label>
+      <div className="stack tight">
+        <label className="field">
+          What you call them
+          <input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={40} aria-describedby={labelNote} />
+        </label>
+        {/* What an empty field is saved as (lib/sharing.ts acceptInvite). */}
+        <p className="helper" id={labelNote}>
+          Left empty, you’ll see them as {fromName || 'Someone'}.
+        </p>
+      </div>
       <label className="field">
         Your name, as they’ll see it
         <input value={myName} onChange={(e) => setMyName(e.target.value)} maxLength={40} placeholder="So they know it’s you" />
