@@ -255,7 +255,21 @@ export class FakeElement extends FakeNode {
   get options(): FakeElement[] {
     return this.findAll((e) => e.tagName === 'OPTION');
   }
-  selected = false;
+  /** An option's: choosing one in a single select unchooses the others, as
+   *  a browser does (React marks only the one chosen). */
+  get selected(): boolean {
+    return this.picked;
+  }
+  set selected(v: boolean) {
+    if (v && this.tagName === 'OPTION') {
+      let select = this.parentNode;
+      while (select && (select as FakeElement).tagName !== 'SELECT') select = select.parentNode;
+      const many = select && ((select as FakeElement & { multiple?: boolean }).multiple === true || (select as FakeElement).hasAttribute('multiple'));
+      if (select && !many) for (const o of (select as FakeElement).options) o.picked = false;
+    }
+    this.picked = !!v;
+  }
+  private picked = false;
   defaultSelected = false;
   checked = false;
   disabled = false;

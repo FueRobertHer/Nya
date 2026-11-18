@@ -18,7 +18,9 @@
 // (docs/design/guidelines.md#after-save), which a refusal never does. Changes
 // the list shows only once it is read again (a part's, a group's) close it,
 // as the editor closed: a part's or a group transaction's waits for its write
-// first, and says in the sheet why one wasn't made. A rename waits for its
+// first, and says in the sheet why one wasn't made. A group's category and
+// Ungroup keep it open instead: each waits for its write and the list read
+// again, then says what it did in the done line. A rename waits for its
 // write too: it closes once saved, the rows behind it renamed, or says beside
 // Rename why it wasn't.
 // Each action that has a sheet of its own closes this one first, so no sheet
@@ -267,9 +269,10 @@ export type TransactionSheetProps = {
   /** As onRecategorize: a promise of true once saved (empty clears it). */
   onSaveNote?: (t: Txn, note: string) => unknown;
   onCreateRule?: (t: Txn, category_id?: string) => void;
-  /** Splits and groups (#39): the list read again after one changes;
+  /** Splits and groups (#39): the list read again after one changes, a
+   *  promise of it read (without a spinner, so the sheet stays open);
    *  without it, nothing is offered to split or group. */
-  onSplitsChanged?: () => void;
+  onSplitsChanged?: () => void | Promise<void>;
   onSplit: (t: Txn) => void;
   onGroup: (start: Txn | null, group: Txn | null) => void;
   /** What went wrong with a split or group change, or null once one is made. */
@@ -420,6 +423,18 @@ function TxnSheet({
   const [renameError, setRenameError] = useState<string | null>(null);
   const renameErrorId = useId();
   const categoryRef = useRef<HTMLSelectElement>(null);
+  // A group's category chosen: the field holds it while it saves (`out`),
+  // and a change made meanwhile isn't taken; saved, it holds it while the
+  // row still has the category it had (the list not read again yet), so a
+  // save is never shown as undone. Refused, the field is back on the
+  // category it had and points at why, said at the top. Focus stays on the
+  // field throughout: it never waits disabled.
+  const [groupCategory, setGroupCategory] = useState<{ id: string; was: string | undefined; out: boolean } | null>(null);
+  const heldCategory = groupCategory && (groupCategory.out || t.category_id === groupCategory.was) ? groupCategory.id : null;
+  const [categoryRefused, setCategoryRefused] = useState(false);
+  const savingId = useId();
+  // Ungroup, while it is out: its row says so, and isn't taken again.
+  const [ungrouping, setUngrouping] = useState(false);
   const act = (go: () => void) => () => {
     onClose();
     go();
@@ -524,28 +539,52 @@ function TxnSheet({
   // files the group's net; the list shows that once it is read again.
   const category =
     t.split_parts || t.group_outside ? null : taxonomy ? (
-      <label className="field">
-        Category
-        <CategoryPicker
-          ref={categoryRef}
-          taxonomy={taxonomy}
-          value={t.category_id ?? taxonomy.uncategorized}
-          onChange={(id) => {
-            if (!id || id === t.category_id) return;
-            begin();
-            if (t.group_members) {
-              onClose();
-              void sendChange('/api/transaction-groups', 'PATCH', { id: t.group_id, category_id: id }).then((failed) => {
-                onSplitError(failed);
-                onSplitsChanged?.();
-              });
-              return;
-            }
-            onRecategorize(t.transaction_id, { category_id: id });
-            setOffer(id);
-          }}
-        />
-      </label>
+      <div className="stack tight">
+        <label className="field">
+          Category
+          <CategoryPicker
+            ref={categoryRef}
+            taxonomy={taxonomy}
+            value={heldCategory ?? t.category_id ?? taxonomy.uncategorized}
+            describedBy={groupCategory?.out ? savingId : categoryRefused ? saidId : undefined}
+            onChange={(id) => {
+              if (groupCategory?.out || !id || id === (heldCategory ?? t.category_id)) return;
+              const n = begin();
+              setCategoryRefused(false);
+              if (t.group_members) {
+                // Shown once the list is read again, so it is said then: the
+                // sheet stays open on the group, focus staying on the field.
+                const row = t.transaction_id;
+                const was = t.category_id;
+                const name = displayName(taxonomy.categories.find((c) => c.id === id)?.name ?? 'uncategorized');
+                setGroupCategory({ id, was, out: true });
+                // A refusal said before is gone: one now is new, in the same words or not.
+                onSplitError(null);
+                void sendChange('/api/transaction-groups', 'PATCH', { id: t.group_id, category_id: id }).then(async (failed) => {
+                  if (failed) {
+                    setGroupCategory(null);
+                    setCategoryRefused(true);
+                    onSplitError(failed);
+                    await onSplitsChanged?.();
+                    return;
+                  }
+                  await onSplitsChanged?.();
+                  setGroupCategory({ id, was, out: false });
+                  sayOnce(n, true, row, `Category saved: the group counts under ${name}.`, (x) => x.category_id === id || x.category_id === was);
+                });
+                return;
+              }
+              onRecategorize(t.transaction_id, { category_id: id });
+              setOffer(id);
+            }}
+          />
+        </label>
+        {groupCategory?.out && (
+          <p className="helper" id={savingId} role="status">
+            Saving…
+          </p>
+        )}
+      </div>
     ) : t.group_members ? null : (
       <label className="field">
         Category
@@ -576,13 +615,40 @@ function TxnSheet({
     ? splitActions(t, {
         onSplit: act(() => onSplit(t)),
         onGroup: act(() => (t.group_members ? onGroup(null, t) : onGroup(t, null))),
-        onUngroup: (id) => {
-          onClose();
-          void sendChange('/api/transaction-groups', 'DELETE', { id }).then((failed) => {
-            onSplitError(failed);
-            onSplitsChanged();
+        // Shown once the list is read again: the sheet stays open, and the
+        // done line says what moved, focus on it, as its row goes. None
+        // undoes it (Fue, 2026-11-18): grouping them again is Group with
+        // others, offered in its place. Refused, said at the top, focus
+        // back on its row.
+        onUngroup: (id, name) => {
+          if (ungrouping) return;
+          const n = begin();
+          const row = t.transaction_id;
+          const from = document.activeElement;
+          setUngrouping(true);
+          onSplitError(null);
+          void sendChange('/api/transaction-groups', 'DELETE', { id }).then(async (failed) => {
+            if (failed) {
+              setUngrouping(false);
+              onSplitError(failed);
+              await onSplitsChanged();
+              return;
+            }
+            await onSplitsChanged();
+            setUngrouping(false);
+            // Said while the row is on its own, or still shows the group (the
+            // list not read again yet): the server has it ungrouped.
+            sayOnce(
+              n,
+              true,
+              row,
+              `Ungrouped “${name}”: its transactions count on their own again, each on its own day and in its own category.`,
+              (x) => ((x.group_unapplied ?? x.group_outside)?.id ?? id) === id,
+              from
+            );
           });
         },
+        ungrouping,
       })
     : null;
   const actions: SheetAction[] = [

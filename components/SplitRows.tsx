@@ -129,13 +129,30 @@ export function groupGoneText(t: Pick<Txn, 'group_missing' | 'group_removed' | '
  *  actions (components/ActionRows.tsx). */
 export function splitActions(
   t: Txn,
-  { onSplit, onGroup, onUngroup }: { onSplit: (t: Txn) => void; onGroup: (t: Txn) => void; /** Ungroups the group by its id. */ onUngroup: (id: string) => void }
+  {
+    onSplit,
+    onGroup,
+    onUngroup,
+    ungrouping = false,
+  }: {
+    onSplit: (t: Txn) => void;
+    onGroup: (t: Txn) => void;
+    /** Ungroups the group by its id (its name, to say it by). */
+    onUngroup: (id: string, name: string) => void;
+    /** Its Ungroup is out: the row says so. */
+    ungrouping?: boolean;
+  }
 ): { rows: SheetAction[]; said: string | null } {
   const none = (said: string | null = null) => ({ rows: [], said });
   // In a group the list has no row for: one that no longer applies, or one
   // counted on a day before what is shown. Ungrouping acts at once.
   const listless = t.group_unapplied ?? t.group_outside;
-  if (listless) return { rows: [{ key: 'ungroup', title: `Ungroup “${listless.name}”`, onSelect: () => onUngroup(listless.id) }], said: null };
+  if (listless) {
+    return {
+      rows: [{ key: 'ungroup', title: ungrouping ? 'Ungrouping…' : `Ungroup “${listless.name}”`, onSelect: () => onUngroup(listless.id, listless.name) }],
+      said: null,
+    };
+  }
   if (t.group_members) return { rows: [{ key: 'group', title: 'Edit group', opens: true, onSelect: () => onGroup(t) }], said: null };
   if (t.split_unread) return none();
   if (t.pending) return none('Once it posts, it can be split or grouped with others.');
