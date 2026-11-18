@@ -773,6 +773,8 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 .list-row-sub {
   color: var(--text-2);
   font-size: var(--fs-2);
+  /* A long name (a backup's, in a run log line) breaks rather than widen the page. */
+  overflow-wrap: break-word;
 }
 
 .list-row-value {

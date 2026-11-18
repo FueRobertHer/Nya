@@ -25,8 +25,8 @@ await mockForFile('@/lib/admin-items', () => ({
   adminCtx: async () => (admin ? TEST_CTX : null),
   notAdmin: () => NextResponse.json({ error: 'Not found' }, { status: 404 }),
 }));
-// The real run lock, kept in the stand-in for the rest of lib/backup.ts.
-const { runningNow, takeRunLock } = await import('@/lib/backup');
+// The real run lock and run log, kept in the stand-in for the rest of lib/backup.ts.
+const { runningNow, takeRunLock, startRun, logNotRun, recentRuns } = await import('@/lib/backup');
 const stoodIn = (job: string) => async () => {
   ran.push(job);
   during.push(await runningNow());
@@ -35,6 +35,9 @@ const stoodIn = (job: string) => async () => {
 await mockForFile('@/lib/backup', () => ({
   runningNow,
   takeRunLock,
+  startRun,
+  logNotRun,
+  recentRuns,
   runNightlyBackup: stoodIn('backup'),
   nightlyJobs: async () => jobs,
 }));
@@ -74,15 +77,41 @@ describe('the nightly jobs route', () => {
   test('the admin reads both jobs', async () => {
     const res = await GET();
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ jobs });
+    expect(await res.json()).toEqual({ jobs, runs: [] });
     expect(ran).toEqual([]);
   });
 
   test('runs the job asked for, and answers both jobs as they now stand', async () => {
     const res = await post({ job: 'backup' });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ jobs });
+    expect(await res.json()).toEqual({ jobs, runs: [expect.objectContaining({ job: 'backup', by: 'hand', outcome: 'worked' })] });
     expect(ran).toEqual(['backup']);
+  });
+
+  test('each run from here is in the run log, with how it went; a click that waits is not', async () => {
+    const errors = console.error;
+    console.error = () => {};
+    try {
+      answer = async () => ({ status: 500, body: { error: 'The backup’s upload step took longer than 35s' } });
+      await post({ job: 'backup' });
+      // A run's id starts with its start time: a later millisecond, a later run.
+      await new Promise((r) => setTimeout(r, 5));
+      answer = () => Promise.reject(new Error('down'));
+      await post({ job: 'backup' });
+    } finally {
+      console.error = errors;
+    }
+    jobs = [{ job: 'backup', again_at: new Date(Date.now() + 60_000).toISOString() }, { job: 'files', again_at: null }];
+    expect((await post({ job: 'backup' })).status).toBe(409);
+    const cron = await takeRunLock('backup', 'cron');
+    if (!('lock' in cron)) throw new Error('expected the lock');
+    expect((await post({ job: 'files' })).status).toBe(409);
+    await cron.lock.release();
+    const runs = (await (await GET()).json()).runs;
+    expect(runs.map((r: { outcome: string; reason: string | null; by: string }) => [r.by, r.outcome, r.reason])).toEqual([
+      ['hand', 'failed', 'down'],
+      ['hand', 'failed', 'The backup’s upload step took longer than 35s'],
+    ]);
   });
 
   test('runs under the run lock its cron takes too, and lets it go once the run ends', async () => {
@@ -96,7 +125,7 @@ describe('the nightly jobs route', () => {
     if (!('lock' in cron)) throw new Error('expected the lock');
     const res = await post({ job: 'files' });
     expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: 'The nightly backup (started by its cron) is running now. Try again once it finishes.', jobs });
+    expect(await res.json()).toEqual({ error: 'The nightly backup (started by its cron) is running now. Try again once it finishes.', jobs, runs: [] });
     expect(ran).toEqual([]);
     // The cron's lock is left alone, and once it ends, a run can start.
     expect(await runningNow()).toEqual(cron.lock.holder);
@@ -128,7 +157,7 @@ describe('the nightly jobs route', () => {
     jobs = [{ job: 'backup', again_at: new Date(Date.now() + 4 * 60_000 - 1000).toISOString() }, { job: 'files', again_at: null }];
     const res = await post({ job: 'backup' });
     expect(res.status).toBe(409);
-    expect(await res.json()).toEqual({ error: 'It worked a few minutes ago. Try again in 4 minutes.', jobs });
+    expect(await res.json()).toEqual({ error: 'It worked a few minutes ago. Try again in 4 minutes.', jobs, runs: [] });
     expect(ran).toEqual([]);
     expect(await runningNow()).toBeNull();
     expect((await post({ job: 'files' })).status).toBe(200);
@@ -145,6 +174,6 @@ describe('the nightly jobs route', () => {
     answer = async () => ({ status: 500, body: { error: 'The backup’s keys step took longer than 40s' } });
     const res = await post({ job: 'backup' });
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: 'The backup’s keys step took longer than 40s', jobs });
+    expect(await res.json()).toEqual({ error: 'The backup’s keys step took longer than 40s', jobs, runs: [expect.objectContaining({ outcome: 'failed', reason: 'The backup’s keys step took longer than 40s' })] });
   });
 });

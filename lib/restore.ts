@@ -88,9 +88,11 @@ const MIN_RESTORED_TTL = 60;
 /** Never deleted by an overwrite: they belong to the running environment, not to
  *  the data being restored. Login rate-limit counters; a container's session
  *  epoch (lowering it would bring back revoked sessions); the snapshot cron's log
- *  and lock; and the data move's record, lock and retirement (restoring over them
- *  would let a later move misjudge what it copied). Judged inside containers too. */
-const PRESERVED_PREFIXES = ['ratelimit:', 'sessions:', 'snapshot:', 'move:'];
+ *  and lock; the nightly jobs' run log (lib/backup.ts startRun), which says what
+ *  ran here, the restore's own nights included; and the data move's record, lock
+ *  and retirement (restoring over them would let a later move misjudge what it
+ *  copied). Judged inside containers too. */
+const PRESERVED_PREFIXES = ['ratelimit:', 'sessions:', 'snapshot:', 'backups:runs', 'move:'];
 
 /** Preserved too: the refetched public data (lib/export.ts REFETCHED_PREFIXES,
  *  the ECB's exchange rates), which describes the world, not the data being

@@ -532,6 +532,15 @@ describe('the cron route', () => {
     expect((await res.json()).finished).toBe(true);
   });
 
+  test('each run is in the run log with its counts, and no account', async () => {
+    process.env.CRON_SECRET = 'cron-secret';
+    const route = await import('@/app/api/attachments/sweep/route');
+    await route.GET(new Request('http://localhost/api/attachments/sweep', { headers: { authorization: 'Bearer cron-secret' } }));
+    const [run] = (await backup.recentRuns())!;
+    expect(run).toMatchObject({ job: 'files', by: 'cron', outcome: 'worked', reason: null, counts: expect.objectContaining({ containers: expect.any(Number), finished: true }) });
+    expect(JSON.stringify(run)).not.toContain(ctx.container as string);
+  });
+
   test('runs under the run lock: waits for a run going, then runs, and lets the lock go', async () => {
     process.env.CRON_SECRET = 'cron-secret';
     const route = await import('@/app/api/attachments/sweep/route');

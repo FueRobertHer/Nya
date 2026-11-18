@@ -31,7 +31,7 @@ export async function GET(req: Request) {
   }
   const { status, body } = await runAsCron(
     'files',
-    (waited) => runNightlySweep(new Date(), { budgetMs: SWEEP_BUDGET_MS - waited }),
+    (waited, log) => runNightlySweep(new Date(), { budgetMs: SWEEP_BUDGET_MS - waited, log }),
     (reason) => recordSweepFailed(reason)
   );
   return NextResponse.json(body, { status });

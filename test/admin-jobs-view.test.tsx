@@ -22,6 +22,7 @@ for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs
 const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: AdminJobs } = await import('@/components/AdminJobs');
 type JobView = import('@/lib/backup').JobView;
+type RunView = import('@/lib/backup').RunView;
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -45,15 +46,19 @@ const goodFiles = job({ job: 'files', last_ok: '2026-10-24T17:32:00Z' });
 /** What the page sent, and what the route answers next: a GET, then a POST. */
 let posts: unknown[] = [];
 let listing: JobView[] = [];
+/** The run log the GET answers with (lib/backup.ts recentRuns); undefined
+ *  leaves it out, as a log that couldn't be read is. */
+let runs: RunView[] | undefined = [];
 let answer: () => Promise<Response> = async () => new Response('{}');
 beforeEach(() => {
   posts = [];
+  runs = [];
   globalThis.fetch = (async (_url: string, init?: RequestInit) => {
     if (init?.method === 'POST') {
       posts.push(JSON.parse(String(init.body)));
       return answer();
     }
-    return new Response(JSON.stringify({ jobs: listing }));
+    return new Response(JSON.stringify({ jobs: listing, ...(runs ? { runs } : { runs: null }) }));
   }) as unknown as typeof fetch;
 });
 
@@ -223,6 +228,62 @@ describe('the Nightly jobs page', () => {
     });
     expect(page.text('Nightly backup')).toContain('Could not run it right now.');
     expect(page.button('Receipts and documents clean-up')?.getAttribute('disabled')).toBeNull();
+    page.unmount();
+  });
+
+  test('Recent runs: each run of either job, newest first, with how it went and why', async () => {
+    listing = [goodBackup, goodFiles];
+    const run = (over: Partial<RunView> & Pick<RunView, 'id' | 'job' | 'outcome'>): RunView => ({
+      by: 'cron',
+      started: '2026-10-24T16:00:00.000Z',
+      ended: '2026-10-24T16:00:12.300Z',
+      reason: null,
+      at: null,
+      silent: false,
+      ...over,
+    });
+    runs = [
+      run({ id: '5', job: 'backup', outcome: 'running', ended: null, at: { phase: 'upload', at: '2026-10-24T16:00:03.000Z' } }),
+      run({
+        id: '4',
+        job: 'backup',
+        outcome: 'worked',
+        by: 'hand',
+        attempts: [{ step: 'upload', reason: 'Vercel Blob: the service is unavailable' }],
+        steps: [
+          ['export', 2100],
+          ['upload', 800],
+        ],
+        resends: 2,
+      }),
+      run({ id: '3', job: 'files', outcome: 'worked', counts: { containers: 3, orphans_deleted: 1, errors: 0, finished: true, listed: true } }),
+      run({ id: '2', job: 'files', outcome: 'not-run', reason: 'Not run: the nightly backup (started by its cron) was still going after 30s.' }),
+      run({ id: '1', job: 'backup', outcome: 'running', ended: null, silent: true, at: { phase: 'keys', at: '2026-10-23T16:00:40.000Z' } }),
+    ];
+    const page = await mount();
+    const text = page.text('Recent runs');
+    const order = ['Nightly backup: running now', 'Nightly backup: worked', 'Receipts and documents clean-up: worked', 'Receipts and documents clean-up: not run', 'Nightly backup: no outcome recorded'];
+    expect(order.map((t) => text.indexOf(t))).toEqual([...order.map((t) => text.indexOf(t))].sort((a, b) => a - b));
+    expect(order.every((t) => text.includes(t))).toBe(true);
+    expect(text).toContain('Now at: upload.');
+    expect(text).toContain('from this page · 12.3 seconds · on attempt 2');
+    expect(text).toContain('Attempt 1 failed at its upload step: Vercel Blob: the service is unavailable');
+    expect(text).toContain('Steps: export 2.1 seconds, upload 0.8 seconds. 2 Vercel Blob calls sent again.');
+    expect(text).toContain('3 accounts checked, 1 file no record names removed, the weekly store-wide pass ran.');
+    expect(text).toContain('Not run: the nightly backup (started by its cron) was still going after 30s.');
+    expect(text).toContain('It stopped before it could say how it went: Vercel ends a run at 300 seconds, or storage couldn’t be reached. Last at: keys,');
+    page.unmount();
+  });
+
+  test('Recent runs with none yet says so, and a log that can’t be read says so without hiding the jobs', async () => {
+    listing = [goodBackup, goodFiles];
+    let page = await mount();
+    expect(page.text('Recent runs')).toContain('No runs recorded yet.');
+    page.unmount();
+    runs = undefined;
+    page = await mount();
+    expect(page.text('Recent runs')).toContain('The run log couldn’t be read. Reload the page to try again.');
+    expect(page.button('Nightly backup')?.textContent).toBe('Run now');
     page.unmount();
   });
 
