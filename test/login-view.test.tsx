@@ -80,7 +80,7 @@ describe('the password login', () => {
     answer = respond(401, { error: 'Incorrect password' });
     page.type('hunter2');
     page.clickFocus();
-    expect(dom.document.activeElement).toBe(page.button());
+    expect(dom.document.activeElement).toBe(page.button()!);
     await page.submit();
     const error = page.errorUnder();
     expect(words(error)).toBe('That password isn’t right. Check it and try again.');
