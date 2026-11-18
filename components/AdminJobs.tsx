@@ -24,6 +24,9 @@ const WHAT: Record<Job, string> = {
 const RAN: Record<Job, string> = { backup: 'The backup ran and was saved.', files: 'The clean-up ran.' };
 /** How often the page reads the jobs again while a run is going. */
 const POLL_MS = 5000;
+/** Reads in a row that may fail before the page stops reading on its own (the
+ *  error notice is on screen, and a reload reads again). */
+const MAX_FAILED_READS = 3;
 
 const CHECK = (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -131,7 +134,8 @@ export function JobCard({ view, running, said, onRun }: { view: JobView; running
   );
 }
 
-export default function AdminJobs() {
+/** `pollMs`: tests shorten it. */
+export default function AdminJobs({ pollMs = POLL_MS }: { pollMs?: number } = {}) {
   const [jobs, setJobs] = useState<JobView[] | null>(null);
   const [error, setError] = useState('');
   const [running, setRunning] = useState<Job | null>(null);
@@ -139,6 +143,9 @@ export default function AdminJobs() {
   /** Counts each read, worked or failed, so the timer below is set again after
    *  every one: a read that fails while a run is going is tried again. */
   const [reads, setReads] = useState(0);
+  /** Reads that failed in a row: each waits twice as long as the one before,
+   *  and after MAX_FAILED_READS the page stops reading on its own. */
+  const [failed, setFailed] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -146,8 +153,10 @@ export default function AdminJobs() {
       if (!res.ok) throw new Error();
       setJobs((await res.json()).jobs);
       setError('');
+      setFailed(0);
     } catch {
       setError('Could not read the nightly jobs right now.');
+      setFailed((n) => n + 1);
     } finally {
       setReads((n) => n + 1);
     }
@@ -159,16 +168,17 @@ export default function AdminJobs() {
 
   // While a run is going (a cron's, or one started elsewhere), the buttons
   // wait: read again every few seconds, so they come back once it ends without
-  // a reload. A job that just worked waits until its again_at.
+  // a reload. A job that just worked waits until its again_at. A read that
+  // fails is tried again later each time, and not after MAX_FAILED_READS in a
+  // row (a session that expired, a laptop offline).
   const going = !!jobs?.some((j) => j.running_now);
   const againAt = jobs?.map((j) => j.again_at).filter((t): t is string => t !== null).sort()[0] ?? null;
   useEffect(() => {
-    if (running !== null) return;
-    const wait = going ? POLL_MS : againAt ? Math.max(0, Date.parse(againAt) - Date.now()) + 1000 : null;
-    if (wait === null) return;
+    if (running !== null || (!going && !againAt) || failed >= MAX_FAILED_READS) return;
+    const wait = failed > 0 ? pollMs * 2 ** failed : going ? pollMs : Math.max(0, Date.parse(againAt!) - Date.now()) + 1000;
     const timer = setTimeout(load, wait);
     return () => clearTimeout(timer);
-  }, [going, againAt, running, reads, load]);
+  }, [going, againAt, running, reads, failed, pollMs, load]);
 
   const run = async (job: Job) => {
     setRunning(job);

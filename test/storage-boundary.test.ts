@@ -155,7 +155,7 @@ const FROZEN_PREFIXES = [
  * (containers only) can't hold. So were the key archives' lock and the
  * marker a deletion leaves for the nightly run ("backups:keys-lock",
  * "backups:keys-pending"), beside the backups' own record, under that family,
- * and the nightly jobs' run lock ("backups:job-running", lib/nightly-run-limit.ts),
+ * and the nightly jobs' run lock ("backups:job-running", lib/backup.ts takeRunLock),
  * one environment-wide run of either job at a time, which a container can't
  * hold either.
  */

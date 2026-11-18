@@ -60,12 +60,12 @@ beforeEach(() => {
 const json = (status: number, body: unknown) => async () => new Response(JSON.stringify(body), { status });
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
-async function mount() {
+async function mount(props: { pollMs?: number } = {}) {
   const host = dom.document.createElement('div');
   dom.document.body.appendChild(host);
   const root = createRoot(host as unknown as HTMLElement);
   await act(async () => {
-    root.render(<AdminJobs />);
+    root.render(<AdminJobs {...props} />);
     await settle();
   });
   const body = dom.document.body as unknown as FakeElement;
@@ -154,10 +154,17 @@ describe('the Nightly jobs page', () => {
     page.unmount();
   });
 
+  /** Real time passing, in short acts, so React runs the effects each read
+   *  sets off, until `done` (or `ms` have passed). */
+  const waitUntil = async (done: () => boolean, ms: number) => {
+    const end = performance.now() + ms;
+    while (!done() && performance.now() < end) await act(async () => void (await new Promise((r) => setTimeout(r, 20))));
+  };
+
   test('while it waits, it reads again on its own, after a read that failed too, and Run now comes back', async () => {
     // Worked a moment ago, free again half a second from now (the day is held at noon).
     listing = [job({ ...goodBackup, again_at: '2026-11-06T12:00:00.500Z' }), goodFiles];
-    const page = await mount();
+    const page = await mount({ pollMs: 100 });
     expect(page.button('Nightly backup')?.getAttribute('disabled')).not.toBeNull();
     // The next read fails; the one after says it is free.
     let reads = 0;
@@ -165,16 +172,28 @@ describe('the Nightly jobs page', () => {
       reads++;
       return reads === 1 ? new Response('', { status: 503 }) : new Response(JSON.stringify({ jobs: [goodBackup, goodFiles] }));
     }) as unknown as typeof fetch;
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 1700));
-    });
-    expect(reads).toBe(1);
+    await waitUntil(() => reads === 1, 3000);
     expect(page.text('Nightly backup')).toContain('It worked a few minutes ago.');
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 1700));
-    });
+    expect(page.button('Nightly backup')?.getAttribute('disabled')).not.toBeNull();
+    await waitUntil(() => reads === 2, 3000);
+    await waitUntil(() => page.button('Nightly backup')?.getAttribute('disabled') === null, 1000);
     expect(reads).toBe(2);
     expect(page.button('Nightly backup')?.getAttribute('disabled')).toBeNull();
+    page.unmount();
+  }, 10_000);
+
+  test('reads that keep failing are tried less often, and stop after three', async () => {
+    const going = { job: 'backup' as const, by: 'cron' as const, started: '2026-11-06T11:59:00Z' };
+    listing = [job({ ...failedBackup, running_now: going }), job({ ...goodFiles, running_now: going })];
+    const page = await mount({ pollMs: 100 });
+    const at: number[] = [];
+    globalThis.fetch = (async () => (at.push(performance.now()), new Response('', { status: 503 }))) as unknown as typeof fetch;
+    // 100 ms, then 200 and 400 more: three reads, and none after.
+    await waitUntil(() => at.length >= 3, 3000);
+    await waitUntil(() => false, 1500);
+    expect(at.length).toBe(3);
+    expect(at[2] - at[1]).toBeGreaterThan(at[1] - at[0]);
+    expect((dom.document.body as unknown as FakeElement).textContent).toContain('Could not read the nightly jobs right now.');
     page.unmount();
   }, 10_000);
 

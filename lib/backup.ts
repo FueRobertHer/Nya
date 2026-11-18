@@ -723,8 +723,9 @@ export async function backupNotice(now: Date = new Date()): Promise<BackupProble
 // of its own, since no new key family is built by hand
 // (test/storage-boundary.test.ts). Each writer keeps the other's part: the
 // backup's recordOutcome carries it over, and the sweep writes only it. The
-// two run at different times of night (vercel.json), so the read and the
-// write of one never meet the other's.
+// two never run at once: every run of either, from its cron or from Run now,
+// holds the run lock (takeRunLock), so the read and the write of one never
+// meet the other's.
 
 export type AttachmentSweepStatus = {
   last_ok: string | null;
