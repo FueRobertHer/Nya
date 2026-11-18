@@ -9,18 +9,34 @@
 // from the press (components/SignInFlow.tsx) until Clerk has moved to Home.
 // Before Clerk has loaded, or without script, the form posts as forms do and
 // the page comes back with the ticket, which Clerk's form signs in with.
+// When a sign-in fails, or the app hasn't opened in the page's wait
+// (components/SignInFlow.tsx), the card says so under the buttons, and focus
+// goes there as the page comes back: the press hid the whole page, the
+// button with it.
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useClerk } from '@clerk/nextjs';
 import { DEMO_UNAVAILABLE, type DemoUser } from '@/lib/demo';
 import { useDemoHold } from './SignInFlow';
 import { demoSignIn } from './demo-sign-in';
+import { DEMO_LATE } from './sign-in-view';
 import { Notice } from './TotalCaveats';
 
 export default function DemoSignIn({ demos, unavailable }: { demos: DemoUser[]; unavailable: boolean }) {
   const clerk = useClerk();
   const hold = useDemoHold();
   const [error, setError] = useState<string | null>(unavailable ? DEMO_UNAVAILABLE : null);
+  const said = error ?? (hold.late ? DEMO_LATE : null);
+  const notice = useRef<HTMLDivElement>(null);
+  // Focus goes to what the card says only as the page comes back from the
+  // app loading. What it says when the page loads, or a failure said once
+  // the page is back, is read in place, and focus stays where it is.
+  const hidden = useRef(hold.pending);
+  useEffect(() => {
+    const was = hidden.current;
+    hidden.current = hold.pending;
+    if (was && !hold.pending && said) notice.current?.focus();
+  }, [hold.pending, said]);
 
   const onSubmit = (e: FormEvent<HTMLFormElement>) => {
     setError(null);
@@ -57,9 +73,9 @@ export default function DemoSignIn({ demos, unavailable }: { demos: DemoUser[]; 
             </form>
           ))}
         </div>
-        {error && (
-          <Notice level="critical" role="alert">
-            {error}
+        {said && (
+          <Notice level="critical" role="alert" ref={notice} tabIndex={-1}>
+            {said}
           </Notice>
         )}
       </div>

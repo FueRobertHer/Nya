@@ -16,14 +16,25 @@ import { AppLoading, SignInSkeleton } from './LoadingSkeletons';
 import { DEMO_WAIT_MS, FORM_WAIT_MS, demoStart, demoStep } from './sign-in-view';
 
 /** For the demo buttons (components/DemoSignIn.tsx): start shows the app
- *  loading from a press; stop shows the page again when the sign-in failed. */
-type DemoHold = { start: () => void; stop: () => void };
-const DemoHoldContext = createContext<DemoHold>({ start: () => {}, stop: () => {} });
+ *  loading from a press; stop shows the page again when the sign-in failed;
+ *  late is true when the page is back because the app didn't open in
+ *  DEMO_WAIT_MS, which the demo card says; pending while the page is
+ *  hidden under the app loading. */
+type DemoHold = { start: () => void; stop: () => void; late: boolean; pending: boolean };
+const DemoHoldContext = createContext<DemoHold>({ start: () => {}, stop: () => {}, late: false, pending: false });
 export const useDemoHold = () => useContext(DemoHoldContext);
 
 export function SignInFlow({ demoTicket, children }: { demoTicket: boolean; children: ReactNode }) {
   const [demo, dispatch] = useReducer(demoStep, demoTicket, demoStart);
-  const hold = useMemo<DemoHold>(() => ({ start: () => dispatch({ type: 'press' }), stop: () => dispatch({ type: 'failed' }) }), []);
+  const hold = useMemo<DemoHold>(
+    () => ({
+      start: () => dispatch({ type: 'press' }),
+      stop: () => dispatch({ type: 'failed' }),
+      late: demo.late,
+      pending: demo.pending,
+    }),
+    [demo.late, demo.pending]
+  );
 
   useEffect(() => {
     if (!demo.pending) return;
