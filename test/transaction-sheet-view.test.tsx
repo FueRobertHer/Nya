@@ -10,13 +10,18 @@ import type { CategoryChoice } from '@/components/transaction-edits';
 // open; Rename vendor and Edit or delete in its ⋯; Split and Group closing
 // it for their own sheet; a split's parts and a group's transactions opening
 // it on themselves; and the sheet following its row as the list changes.
+// Rename vendor goes through the tab's own edits (components/transaction-edits.ts),
+// so its failure is seen where it is said.
 
 const dom = installDom();
-// What the sheet sends for a part or a group's transaction, answered at once.
+// What the sheet sends for a part or a group's transaction, answered at once;
+// a rename as `renameAnswer` says, when a test sets it.
 const sent: { url: string; method: string; body: unknown }[] = [];
+let renameAnswer: (() => Promise<unknown>) | null = null;
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
   sent.push({ url, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : null });
+  if (url === '/api/rename' && renameAnswer) return renameAnswer();
   return { ok: true, json: async () => ({}) };
 }) as unknown as typeof fetch;
 afterAll(() => {
@@ -29,6 +34,7 @@ const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
 const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
 const { default: MonthBreakdown } = await import('@/components/MonthBreakdown');
+const { useTransactionEdits } = await import('@/components/transaction-edits');
 const { expandSplitsAndGroups } = await import('@/lib/split-rows');
 const { indexTaxonomy } = await import('@/lib/categories');
 const { localDate } = await import('@/lib/local-date');
@@ -131,7 +137,28 @@ const pass = fakeClock();
 const settle = (ms = 5) => pass(ms);
 
 type Props = Partial<React.ComponentProps<typeof MonthBreakdown>>;
-function mount(props: Props = {}) {
+/** The list read again in full (loadTransactions), counted. */
+let reloads = 0;
+/** The list with the tab's own edits, wired as components/Dashboard.tsx
+ *  wires them, its rows in its own state: their writes go through the fetch
+ *  above. */
+function Wired(p: Props) {
+  const [txns, setTxns] = React.useState<Txn[] | null>(() => served());
+  const edits = useTransactionEdits({
+    txns,
+    setTxns,
+    setTxnNotes: () => {},
+    setTxnIncomplete: () => {},
+    loadTransactions: () => void reloads++,
+    loadNetWorth: async () => {},
+    requestBackfill: () => {},
+    taxonomy,
+  });
+  return (
+    <MonthBreakdown txns={txns} notes={[]} loading={false} taxonomy={taxonomy} tags={TAGS} onRecategorize={edits.recategorize} onRename={edits.rename} onSplitsChanged={() => {}} {...p} />
+  );
+}
+function mount(props: Props = {}, { wired = false } = {}) {
   const host = dom.document.createElement('div');
   dom.document.body.appendChild(host);
   const root = createRoot(host as unknown as HTMLElement);
@@ -140,7 +167,11 @@ function mount(props: Props = {}) {
     last = p;
     act(() =>
       root.render(
-        <MonthBreakdown txns={served()} notes={[]} loading={false} taxonomy={taxonomy} tags={TAGS} onRecategorize={() => {}} onRename={() => {}} onSplitsChanged={() => {}} {...p} />
+        wired ? (
+          <Wired {...p} />
+        ) : (
+          <MonthBreakdown txns={served()} notes={[]} loading={false} taxonomy={taxonomy} tags={TAGS} onRecategorize={() => {}} onRename={() => {}} onSplitsChanged={() => {}} {...p} />
+        )
       )
     );
   };
@@ -431,6 +462,8 @@ describe('a transaction’s sheet', () => {
     act(() => type(v.field('Name')!, 'Whole Foods Market'));
     act(() => click(v.button('Rename', v.dialog()!)!));
     expect(said).toEqual(['rename v:Whole Foods Whole Foods Market']);
+    // It waits for the write, then closes.
+    await settle();
     expect(v.dialog()).toBeNull();
     await settle(400);
 
@@ -445,6 +478,116 @@ describe('a transaction’s sheet', () => {
 
   // The screen review: Split, Group with others, Share the cost and Exclude
   // from budgets were four tonal buttons of four widths, wrapping raggedly.
+  describe('Rename vendor, written through the tab’s edits', () => {
+    /** Whole Foods' row's title, its tag's chip after the name. */
+    const wholeFoods = (v: ReturnType<typeof mount>) => v.all((e) => e.getAttribute('class') === 'list-row-title' && e.textContent.startsWith('Whole Foods')).map((e) => e.textContent);
+    const footNote = (v: ReturnType<typeof mount>) => {
+      const foot = v.dialog()!.findAll((e) => (e.getAttribute('class') ?? '') === 'sheet-footer')[0];
+      return foot?.findAll((e) => (e.getAttribute('class') ?? '') === 'sheet-footer-note')[0] ?? null;
+    };
+    const renameTo = async (v: ReturnType<typeof mount>, name: string) => {
+      const more = v.dialog()!.findAll((e) => e.getAttribute('aria-haspopup') === 'menu')[0]!;
+      act(() => click(more));
+      act(() => click(v.button('Rename vendor')!));
+      act(() => type(v.field('Name')!, name));
+      act(() => click(v.button('Rename', v.dialog()!)!));
+      await settle();
+    };
+    const refused = (status: number, body: unknown = {}) => async () => ({ ok: false, status, json: async () => body });
+
+    test('refused: it stays open on the name typed, says so beside Rename, and nothing in the list changed', async () => {
+      renameAnswer = refused(500, { error: 'Failed to rename' });
+      reloads = 0;
+      const v = mount({}, { wired: true });
+      await v.open('Whole Foods');
+      await renameTo(v, 'Whole Foods Market');
+      expect(v.dialog()!.getAttribute('aria-label')).toBe('Rename vendor');
+      expect(v.field('Name')!.value).toBe('Whole Foods Market');
+      const note = footNote(v)!;
+      const alert = note.findAll((e) => e.getAttribute('role') === 'alert')[0]!;
+      expect(alert.getAttribute('class')).toBe('notice critical');
+      expect(alert.textContent).toContain('Could not rename this vendor. Please try again.');
+      expect(v.button('Rename', v.dialog()!)!.getAttribute('aria-describedby')).toBe(note.getAttribute('id'));
+      // Never shown, so nothing to put back: no silent revert, no reload.
+      expect(wholeFoods(v)).toEqual(['Whole FoodsReimbursable']);
+      expect(reloads).toBe(0);
+      v.unmount();
+    });
+
+    test('a server that can’t be reached, or a store that says why, is said in its words', async () => {
+      renameAnswer = async () => {
+        throw new Error('offline');
+      };
+      const v = mount({}, { wired: true });
+      await v.open('Whole Foods');
+      await renameTo(v, 'Whole Foods Market');
+      expect(footNote(v)!.textContent).toContain('Could not reach the server.');
+      renameAnswer = refused(503, { error: 'Your data is being moved. Try again in a minute.' });
+      act(() => click(v.button('Rename', v.dialog()!)!));
+      await settle();
+      expect(footNote(v)!.textContent).toContain('Your data is being moved. Try again in a minute.');
+      expect(footNote(v)!.textContent).not.toContain('Could not reach the server.');
+      v.unmount();
+    });
+
+    test('tried again: it waits, the error gone, then closes with the rows renamed behind it', async () => {
+      renameAnswer = refused(500);
+      const v = mount({}, { wired: true });
+      await v.open('Whole Foods');
+      await renameTo(v, 'Whole Foods Market');
+      expect(footNote(v)).not.toBeNull();
+      let answer: (r: unknown) => void = () => {};
+      renameAnswer = () => new Promise((resolve) => (answer = resolve));
+      act(() => click(v.button('Rename', v.dialog()!)!));
+      expect(footNote(v)).toBeNull();
+      const waiting = v.button('Renaming…', v.dialog()!)!;
+      expect(waiting.getAttribute('disabled')).not.toBeNull();
+      expect(v.field('Name')!.getAttribute('disabled')).not.toBeNull();
+      // No way out mid-write, so its answer is never said to no one; Back
+      // stays drawn, so the level (and focus) doesn't change under it.
+      act(() => click(v.button('Back', v.dialog()!)!));
+      expect(v.dialog()!.getAttribute('aria-label')).toBe('Rename vendor');
+      answer({ ok: true, status: 200, json: async () => ({ success: true }) });
+      await settle(400);
+      expect(v.dialog()).toBeNull();
+      expect(wholeFoods(v)).toEqual(['Whole Foods MarketReimbursable']);
+      v.unmount();
+    });
+
+    test('cleared: the bank’s names are read again, and it closes', async () => {
+      renameAnswer = async () => ({ ok: true, status: 200, json: async () => ({ success: true }) });
+      reloads = 0;
+      const v = mount({}, { wired: true });
+      await v.open('Whole Foods');
+      await renameTo(v, '');
+      expect(sent.filter((s) => s.url === '/api/rename').at(-1)!.body).toEqual({ vendor_key: 'v:Whole Foods', name: '' });
+      expect(reloads).toBe(1);
+      await settle(400);
+      expect(v.dialog()).toBeNull();
+      v.unmount();
+    });
+
+    test('back, and Rename vendor again: no error left from before', async () => {
+      renameAnswer = refused(500);
+      const v = mount({}, { wired: true });
+      await v.open('Whole Foods');
+      await renameTo(v, 'Whole Foods Market');
+      expect(footNote(v)).not.toBeNull();
+      act(() => click(v.button('Back', v.dialog()!)!));
+      const more = v.dialog()!.findAll((e) => e.getAttribute('aria-haspopup') === 'menu')[0]!;
+      act(() => click(more));
+      act(() => click(v.button('Rename vendor')!));
+      expect(v.dialog()!.getAttribute('aria-label')).toBe('Rename vendor');
+      expect(footNote(v)).toBeNull();
+      expect(v.field('Name')!.value).toBe('Whole Foods');
+      v.unmount();
+    });
+
+    afterAll(() => {
+      renameAnswer = null;
+    });
+  });
+
   test('its actions, one to a row in one list; those that open another sheet end in a chevron', async () => {
     const shared = { names: new Map(), onShare: () => {}, onPaidBack: () => {}, onIou: () => {}, owes: false };
     const v = mount({ shared, onToggleExcluded: () => {}, onCreateRule: () => {} });
