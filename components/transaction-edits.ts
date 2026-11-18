@@ -344,14 +344,17 @@ export function useTransactionEdits({
   );
 
   /** Undoes an exclusion or an include exactly (app/api/transaction-annotations,
-   *  PUT). Once the server has it, its rows show as they did before, and the
-   *  list is read again, where a rule's hide applies once more; it resolves
-   *  null then. Refused, it resolves what went wrong, for the sheet to say
-   *  beside its Undo, and the list is read again as the server has it. */
+   *  PUT). Once the server has it, its rows show as they did before (unless
+   *  another change was made to the list meanwhile), and the list is read
+   *  again, where a rule's hide applies once more; it resolves null then.
+   *  Refused, it resolves what went wrong, for the sheet to say beside its
+   *  Undo, which nothing on screen changed for: the list is read again
+   *  quietly as the server has it, never with the spinner that would close
+   *  the sheet. */
   const undoExcluded = useCallback(
     async (saved: ExclusionSaved): Promise<string | null> => {
       setError(null);
-      changes.current++;
+      const at = ++changes.current;
       let res: Response | null = null;
       try {
         res = await fetch('/api/transaction-annotations', {
@@ -360,30 +363,33 @@ export function useTransactionEdits({
           body: JSON.stringify({ transaction_id: saved.transaction_id, undo: saved.undo }),
         });
         if (res.ok) {
-          changes.current++;
-          setTxns((prev) =>
-            prev
-              ? prev.map((x) => {
-                  const was = saved.shown.get(x.transaction_id);
-                  if (!was) return x;
-                  const row: Txn = { ...x, ...was };
-                  for (const k of ['excluded', 'excluded_by_rule', 'split_parent'] as const) if (row[k] === undefined) delete row[k];
-                  return row;
-                })
-              : prev
-          );
+          // A change made meanwhile shows as it is; the read below has both.
+          if (changes.current === at) {
+            changes.current++;
+            setTxns((prev) =>
+              prev
+                ? prev.map((x) => {
+                    const was = saved.shown.get(x.transaction_id);
+                    if (!was) return x;
+                    const row: Txn = { ...x, ...was };
+                    for (const k of ['excluded', 'excluded_by_rule', 'split_parent'] as const) if (row[k] === undefined) delete row[k];
+                    return row;
+                  })
+                : prev
+            );
+          }
           void refreshQuietly();
           return null;
         }
       } catch {
         res = null;
       }
-      const data = res ? await res.json().catch(() => null) : null;
-      loadTransactions();
       if (!res) return 'Could not reach the server. Check your connection and press Undo again.';
+      const data = await res.json().catch(() => null);
+      void refreshQuietly();
       return typeof data?.error === 'string' ? data.error : 'Could not undo that. Please try again.';
     },
-    [setTxns, refreshQuietly, loadTransactions]
+    [setTxns, refreshQuietly]
   );
 
   /** What a change to a row's record sends: a manual row's account, so the

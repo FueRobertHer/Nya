@@ -779,7 +779,8 @@ describe('a transaction’s sheet', () => {
       w.unmount();
     });
 
-    test('refused: the line stays, why is said under Undo, which stays, and the list is read again', async () => {
+    // The review: the spinner's read closed the sheet, and its refusal with it.
+    test('refused: the line stays, why is said under Undo, which stays, and the list is read again quietly', async () => {
       undoAnswer = async () => ({ ok: false, status: 409, json: async () => ({ error: 'What’s said about this transaction changed since.' }) });
       annotationAnswer = answering({ transaction_id: 'Whole Foods', excluded: true, undo: NONE });
       reloads = 0;
@@ -789,9 +790,11 @@ describe('a transaction’s sheet', () => {
       await settle();
       const undo = v.button('Undo', v.dialog()!)!;
       undo.focus();
+      sent.length = 0;
       act(() => click(undo));
       await settle();
-      expect(reloads).toBe(1);
+      expect(reloads).toBe(0);
+      expect(sent.map((s) => `${s.method} ${s.url}`)).toEqual(['PUT /api/transaction-annotations', 'GET /api/transactions']);
       expect(said(v)!.textContent).toBe('Done: Excluded: it stays in this list, out of totals, budgets, insights, bills and the Plan.');
       const alert = v.dialog()!.findAll((e) => e.getAttribute('role') === 'alert')[0]!;
       expect(alert.getAttribute('class')).toBe('notice critical');
@@ -819,6 +822,29 @@ describe('a transaction’s sheet', () => {
       await settle();
       expect(v.dialog()!.findAll((e) => e.getAttribute('role') === 'alert')[0]!.textContent).toContain('Could not reach the server. Check your connection and press Undo again.');
       expect(v.button('Undo', v.dialog()!)!.getAttribute('disabled')).toBeNull();
+      v.unmount();
+    });
+
+    test('a change made while its Undo is out stays as made once the Undo lands', async () => {
+      let answer: (r: unknown) => void = () => {};
+      undoAnswer = () => new Promise((resolve) => (answer = resolve));
+      annotationAnswer = answering({ transaction_id: 'Whole Foods', excluded: false, undo: { before: null, after: { excluded: false, updated_at: at } } });
+      // A rule hides it; Include, then Undo, and Exclude from its row while the Undo is out.
+      wiredRows = () => served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...t, excluded: true, excluded_by_rule: true } : t));
+      const v = mount({}, { wired: true });
+      await v.open('Whole Foods');
+      act(() => click(toggle(v)));
+      await settle();
+      act(() => click(v.button('Undo', v.dialog()!)!));
+      act(() => click(toggle(v)));
+      await settle();
+      expect(v.dialog()!.textContent).toContain('Excluded from budgets and reports');
+      act(() => answer({ ok: true, status: 200, json: async () => ({}) }));
+      await settle();
+      // Still the person's own exclusion, not the rule's hide the Undo would have shown.
+      expect(v.dialog()!.textContent).toContain('Excluded from budgets and reports');
+      expect(v.dialog()!.textContent).not.toContain('Hidden by a rule');
+      expect(said(v)!.textContent).toBe('Done: Excluded: it stays in this list, out of totals, budgets, insights, bills and the Plan.');
       v.unmount();
     });
 
