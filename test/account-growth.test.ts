@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { planGrowth } from '@/lib/fire/account-growth';
+import { planGrowth, withGrowth } from '@/lib/fire/account-growth';
 import { yearsToTarget } from '@/lib/fire/fi';
-import { fiView, type AccountRate, type Measured } from '@/lib/fire/plan';
+import { fiView, LIMITS, type AccountRate, type Measured } from '@/lib/fire/plan';
 import { DEFAULT_PLAN_V2, basePlanOf, isFirePlanV2, parsePlanV2, repairPlanV2, toStored, upgradeStoredPlan, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { planFigures } from '@/lib/fire/plan-figures';
 import { planPath } from '@/lib/fire/path';
@@ -219,5 +219,28 @@ describe('a saved plan’s growth', () => {
     expect(changedSince(was, { ...PLAN, accounts: [rate('a', 0.08)] })).toEqual(['growth after inflation']);
     expect(changedSince(was, PLAN)).toEqual(['growth after inflation']);
     expect(changedSince(saved(), { ...PLAN, accounts: [rate('a', 0.08)] })).toEqual(['growth after inflation']);
+  });
+});
+
+describe('a sheet’s rates into the plan’s list', () => {
+  const ids = (...x: string[]) => new Set(x);
+  test('each account’s growth as held, its dividends kept, none with neither, by id', () => {
+    const held = [rate('b', 0.07, 0.02), rate('c', 0.09), rate('d', null, 0.01)];
+    expect(withGrowth(held, new Map([['a', 0.06], ['c', 0.09]]), ids('a', 'b', 'c', 'd'), LIMITS.accountRates)).toEqual([rate('a', 0.06), rate('b', null, 0.02), rate('c', 0.09), rate('d', null, 0.01)]);
+  });
+
+  test('nothing left: absent, as a plan stores it', () => {
+    expect(withGrowth(undefined, new Map(), ids(), LIMITS.accountRates)).toBeUndefined();
+    expect(withGrowth([rate('a', 0.07)], new Map(), ids('a'), LIMITS.accountRates)).toBeUndefined();
+  });
+
+  test('past the cap, the accounts listed now come first, and what is kept parses', () => {
+    const stale = Array.from({ length: LIMITS.accountRates }, (_, i) => rate(`old${String(i).padStart(2, '0')}`, 0.06));
+    const rates = new Map([...stale.map((x) => [x.account_id, 0.06] as const), ['new', 0.08] as const]);
+    const list = withGrowth(stale, rates, ids('new'), LIMITS.accountRates)!;
+    expect(list.length).toBe(LIMITS.accountRates);
+    expect(list.some((x) => x.account_id === 'new')).toBe(true);
+    expect(list.map((x) => x.account_id)).toEqual([...list.map((x) => x.account_id)].sort());
+    expect('plan' in parsePlanV2({ ...PLAN, accounts: list })).toBe(true);
   });
 });

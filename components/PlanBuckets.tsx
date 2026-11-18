@@ -7,7 +7,9 @@
 // nothing the flat model's figures rest on but which accounts count (D7).
 //
 // Levels of the Plan's shared drawer (components/PlanTab.tsx). Every fact is
-// shared by all plans, so with a copy open each is off, with the reason.
+// shared by all plans, so with a copy open each is off, with the reason. An
+// account's own growth is the plan's: its level hands it to the Invested assets
+// sheet, whose Save keeps it with the rest of the sheet, in a copy too.
 
 'use client';
 
@@ -23,6 +25,8 @@ import { Notice } from './TotalCaveats';
 import { Why } from './Why';
 import { isChildAccount } from '@/lib/fire/child-accounts';
 import { MAX_FACT_AMOUNT, type Owner, type TaxFactOp, type TaxFacts } from '@/lib/fire/tax-facts';
+import { LIMITS, pctText } from '@/lib/fire/plan';
+import { pct } from './plan-text';
 import { normalizedAmountText } from '@/lib/manual-txn-input';
 import type { BucketAccount, BucketsToday } from '@/lib/fire/buckets-today';
 import type { ChildAccount } from '@/lib/fire/inputs';
@@ -63,6 +67,28 @@ export type BucketSheet = {
    *  type's. */
   saveBucket: (account_id: string, bucket: TaxBucket | null) => Promise<boolean>;
   bucketsEditable: boolean;
+};
+
+/** Each account's own growth after inflation, as the Invested assets sheet holds
+ *  it until its Save. */
+export type SheetRates = {
+  /** The plan's own rate, which an account without one grows at. */
+  plan: number;
+  /** Each account's own, by id. */
+  rates: ReadonlyMap<string, number>;
+  /** Hands an account's own (null: the plan's) to the sheet. */
+  set: (account_id: string, growth: number | null) => void;
+  /** The sheet's figure is your own: no account grows at a rate of its own. */
+  typed: boolean;
+  /** The sheet can't save, so nothing is handed to it. */
+  off: boolean;
+  /** Why it can't, when there is more to say than a moment's save. */
+  why: string | null;
+  /** The accounts listed with their own growth fill what a plan keeps
+   *  (LIMITS.accountRates): another can't be given one. */
+  full: boolean;
+  /** A copy is open: its rates are its own, its facts every plan's. */
+  copy: boolean;
 };
 
 type Money = (n: number) => string;
@@ -110,7 +136,7 @@ function RothRow({ row, sheet, money }: { row: BucketsToday['roth'][number]; she
 }
 
 /** Invested assets' accounts by bucket. */
-export function BucketGroups({ today, sheet, mix, money }: { today: BucketsToday; sheet: BucketSheet; mix: string | null; money: Money }) {
+export function BucketGroups({ today, sheet, mix, money, rates = null }: { today: BucketsToday; sheet: BucketSheet; mix: string | null; money: Money; /** Each account's own growth, said on its row; null when none applies. */ rates?: ReadonlyMap<string, number> | null }) {
   const names = namesOf(today);
   const openAccount = (a: { account_id: string; name: string; institution: string }) => sheet.onLevel({ kind: 'account', account_id: a.account_id, title: rowTitle(a, names) });
   // No Roth group to sit in, and the amounts typed still need a way to be changed
@@ -132,7 +158,7 @@ export function BucketGroups({ today, sheet, mix, money }: { today: BucketsToday
           {sheet.detail && g.bucket === 'hsa' && <p className="helper">{HSA_WORDS}</p>}
           <ul className="list-rows">
             {g.accounts.map((a) => (
-              <AccountRow key={a.account_id} title={rowTitle(a, names)} sub={accountSub(a, money, sheet.partner)} value={money(a.value)} onOpen={() => openAccount(a)} />
+              <AccountRow key={a.account_id} title={rowTitle(a, names)} sub={[accountSub(a, money, sheet.partner), growsWords(rates?.get(a.account_id))].filter(Boolean).join(' · ')} value={money(a.value)} onOpen={() => openAccount(a)} />
             ))}
             {g.bucket === 'roth' && today.roth.map((r) => <RothRow key={r.owner} row={r} sheet={sheet} money={money} />)}
           </ul>
@@ -176,6 +202,9 @@ export function BucketGroups({ today, sheet, mix, money }: { today: BucketsToday
   );
 }
 
+/** An account's own growth, on its row. */
+const growsWords = (rate: number | undefined) => (rate === undefined ? '' : `grows ${pct(rate)}`);
+
 const rothTitle = (owner: Owner) => (owner === 'you' ? 'Your Roth contributions' : 'Your partner’s Roth contributions');
 
 /** Annual savings' split, one line a bucket. */
@@ -198,15 +227,16 @@ export function SavingsSplitLines({ split, reading, heading = true }: { split: S
   );
 }
 
-/** Cancel and Save for a level: Cancel goes back, as the arrow does. */
-function LevelButtons({ onCancel, onSave, saving, off }: { onCancel: () => void; onSave: () => void; saving: boolean; off: boolean }) {
+/** Cancel and Save for a level: Cancel goes back, as the arrow does. `done`: the
+ *  level only hands something to its sheet, which keeps it on its own Save. */
+function LevelButtons({ onCancel, onSave, saving, off, done = false }: { onCancel: () => void; onSave: () => void; saving: boolean; off: boolean; done?: boolean }) {
   return (
     <div className="btn-row">
       <button type="button" className="btn secondary" onClick={onCancel} disabled={saving}>
         Cancel
       </button>
       <button type="button" className="btn" onClick={onSave} disabled={saving || off}>
-        {saving ? 'Saving…' : 'Save'}
+        {saving ? 'Saving…' : done ? 'Done' : 'Save'}
       </button>
     </div>
   );
@@ -223,13 +253,27 @@ function readAmount(text: string, what: string): { amount: number | null } | { p
   return { amount: n };
 }
 
-/** An account's facts: a level of the drawer. Cancel leaves everything as it was,
- *  and a failed save stays open and says why. */
+/** A growth typed as a percent, read as the plan's own is (PlanForms' readNumber),
+ *  or the problem. */
+function readGrowth(text: string): { rate: number } | { problem: string } {
+  const t = text.trim();
+  if (t === '') return { problem: 'Its growth is needed.' };
+  const n = Number(t);
+  const [min, max] = LIMITS.realReturn;
+  if (!Number.isFinite(n) || n * 0.01 < min - 1e-12 || n * 0.01 > max + 1e-12) return { problem: `Its growth must be from ${pct(min)} to ${pct(max)}.` };
+  return { rate: Number((n * 0.01).toFixed(6)) };
+}
+
+/** An account's facts, and its growth in the plan: a level of the drawer. Its
+ *  facts save at once, and only when they changed; its growth goes to the sheet
+ *  (`growth`), which keeps it on Save. Cancel leaves everything as it was, and a
+ *  failed save stays open and says why. */
 function AccountLevel({
   title,
   account,
   child,
   sheet,
+  growth,
   money,
   onBack,
 }: {
@@ -239,6 +283,8 @@ function AccountLevel({
   /** The left-out one, when it is. */
   child: ChildAccount | null;
   sheet: BucketSheet;
+  /** The sheet's growth rates; null where there are none to set. */
+  growth: SheetRates | null;
   money: Money;
   onBack: () => void;
 }) {
@@ -247,30 +293,58 @@ function AccountLevel({
   const locked = sheet.factsLocked;
   const typed = sheet.tax.basis.find((b) => b.account_id === id)?.amount ?? null;
   const heldOwner = sheet.tax.owners.find((o) => o.account_id === id)?.owner ?? 'you';
+  const heldCount = sheet.tax.countAnyway.includes(id);
   const [owner, setOwner] = useState<Owner>(heldOwner);
   const [basis, setBasis] = useState(typed === null ? '' : String(typed));
-  const [counted, setCounted] = useState(sheet.tax.countAnyway.includes(id));
+  const [counted, setCounted] = useState(heldCount);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [wrong, setWrong] = useState('');
   const errorId = useId();
+  // Facts that arrive while it is open, or a lock that comes or goes, are what
+  // its facts start from again; what was typed for its growth stays.
+  const [lockWas, setLockWas] = useState(locked);
+  if (lockWas !== locked) {
+    setLockWas(locked);
+    setOwner(heldOwner);
+    setBasis(typed === null ? '' : String(typed));
+    setCounted(heldCount);
+    setWrong('');
+    setError('');
+  }
+  const ownHeld = growth?.rates.get(id);
+  const [own, setOwn] = useState(ownHeld !== undefined);
+  const [rateText, setRateText] = useState(growth ? pctText(ownHeld ?? growth.plan) : '');
+  const [rateWrong, setRateWrong] = useState('');
+  const rateId = useId();
+  // A child's account left out isn't in the plan, so it grows at nothing; with your
+  // own figure, everything grows at the plan's rate.
+  const rates = account && growth && !growth.typed ? growth : null;
+  const settable = !!rates && !rates.off;
+  // Its facts can't change here, but its growth can: the button hands it over.
+  const handsOnly = !!locked && settable;
   const showsBasis = account?.bucket === 'taxable' && account.basisFrom !== 'cash';
   // A partner since removed: the choice stays, to take the account back.
   const showsWhose = !!account && (sheet.partner || heldOwner === 'partner');
   const showsCount = isChildAccount(subtype);
   const save = async () => {
-    const read = showsBasis ? readAmount(basis, 'Cost basis') : { amount: typed };
-    if ('problem' in read) {
-      setWrong(read.problem);
-      return;
-    }
-    setWrong('');
+    const read = !locked && showsBasis ? readAmount(basis, 'Cost basis') : { amount: typed };
+    const rate = !settable || !own ? { rate: null } : rates.full && !rates.rates.has(id) ? { problem: `A plan keeps its own growth for ${LIMITS.accountRates} accounts at most: set one of them back to the plan’s first.` } : readGrowth(rateText);
+    setWrong('problem' in read ? read.problem : '');
+    setRateWrong('problem' in rate ? rate.problem : '');
+    if ('problem' in read || 'problem' in rate) return;
     setError('');
-    setSaving(true);
-    const done = await sheet.saveFact({ kind: 'account', account_id: id, owner, basis: read.amount, count: counted });
-    setSaving(false);
-    if (done === true) onBack();
-    else setError(done);
+    if (!locked && (owner !== heldOwner || read.amount !== typed || counted !== heldCount)) {
+      setSaving(true);
+      const done = await sheet.saveFact({ kind: 'account', account_id: id, owner, basis: read.amount, count: counted });
+      setSaving(false);
+      if (done !== true) {
+        setError(done);
+        return;
+      }
+    }
+    if (settable) rates.set(id, rate.rate);
+    onBack();
   };
   const value = account ? account.value : (child?.value ?? null);
   const institution = (account ?? child)!.institution;
@@ -319,6 +393,39 @@ function AccountLevel({
           <p className="helper">{basisNote(account)}</p>
         </div>
       )}
+      {locked && <p className="helper">{rates?.copy ? `${locked} Its growth is this copy’s own.` : settable ? `${locked} Its growth in this plan can still be changed.` : locked}</p>}
+      {account && growth && (
+        <div className="stack tight">
+          <h3 className="section-label">Growth after inflation</h3>
+          {rates ? (
+            <>
+              <Segmented
+                label="Growth after inflation"
+                options={[
+                  ['plan', `The plan’s ${pct(rates.plan)}`],
+                  ['own', 'Its own'],
+                ]}
+                value={own ? 'own' : 'plan'}
+                onChange={(v) => {
+                  setOwn(v === 'own');
+                  setRateWrong('');
+                }}
+                disabled={saving || rates.off}
+              />
+              {own && (
+                <label className="field">
+                  Its growth after inflation (% a year)
+                  <input type="number" inputMode="decimal" data-percent step="0.5" value={rateText} onChange={(e) => setRateText(e.target.value)} disabled={saving || rates.off} aria-invalid={rateWrong ? true : undefined} aria-describedby={rateWrong ? rateId : undefined} />
+                </label>
+              )}
+              {rateWrong && <FieldError id={rateId}>{rateWrong}</FieldError>}
+              {rates.off && rates.why && <p className="helper">{rates.why}</p>}
+            </>
+          ) : (
+            <p className="helper">With your own figure for invested assets, every account grows at the plan&rsquo;s {pct(growth.plan)} after inflation.</p>
+          )}
+        </div>
+      )}
       {account?.bucket === 'taxable' && account.basisFrom !== 'cash' && (
         <div className="stack tight">
           <dl className="txn-detail">
@@ -344,13 +451,12 @@ function AccountLevel({
           </li>
         </ul>
       )}
-      {locked && <p className="helper">{locked}</p>}
       {error && (
         <Notice level="critical" role="alert">
           {error}
         </Notice>
       )}
-      <LevelButtons onCancel={onBack} onSave={() => void save()} saving={saving} off={!!locked} />
+      <LevelButtons onCancel={onBack} onSave={() => void save()} saving={saving} off={!!locked && !handsOnly} done={handsOnly} />
     </div>
   );
 }
@@ -403,9 +509,11 @@ function RothLevel({ owner, sheet, onBack }: { owner: Owner; sheet: BucketSheet;
 }
 
 /** Whichever level is open. An account gone since it was opened (hidden, or
- *  disconnected) shows nothing and goes back by the arrow. Each is keyed by the
- *  lock too, so facts that arrive while it is open are the ones it starts from. */
-export function BucketLevel({ level, today, sheet, money }: { level: FigureLevel; today: BucketsToday; sheet: BucketSheet; money: Money }) {
+ *  disconnected) shows nothing and goes back by the arrow. Facts that arrive
+ *  while one is open are the ones it starts from: a Roth level is keyed by the
+ *  lock, and an account's starts its facts again on its own (what was typed for
+ *  its growth stays). `growth`: the Invested assets sheet's rates. */
+export function BucketLevel({ level, today, sheet, money, growth = null }: { level: FigureLevel; today: BucketsToday; sheet: BucketSheet; money: Money; growth?: SheetRates | null }) {
   const lock = sheet.factsLocked ?? '';
   if (level.kind === 'roth') return <RothLevel key={`${level.owner}:${lock}`} owner={level.owner} sheet={sheet} onBack={() => sheet.onLevel(null)} />;
   const account = today.groups.flatMap((g) => g.accounts).find((a) => a.account_id === level.account_id) ?? null;
@@ -419,7 +527,7 @@ export function BucketLevel({ level, today, sheet, money }: { level: FigureLevel
       {/* The account's level stays under its bucket's, so what was typed in it is
           there on the way back. */}
       <div hidden={inBucket}>
-        <AccountLevel key={`${level.account_id}:${lock}`} title={title} account={account} child={child} sheet={sheet} money={money} onBack={() => sheet.onLevel(null)} />
+        <AccountLevel key={level.account_id} title={title} account={account} child={child} sheet={sheet} growth={growth} money={money} onBack={() => sheet.onLevel(null)} />
       </div>
       {inBucket && account && (
         <>
