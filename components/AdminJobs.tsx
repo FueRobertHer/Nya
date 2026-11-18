@@ -182,7 +182,8 @@ function runLines(r: RunView): string[] {
 /** One run: the job and how it went, then when, who started it, how long it
  *  took and, for a backup that worked after a failure, which attempt did. */
 function RunRow({ run }: { run: RunView }) {
-  const took = run.ended ? `${((Date.parse(run.ended) - Date.parse(run.started)) / 1000).toFixed(1)} seconds` : null;
+  // A run that didn't happen took no time.
+  const took = run.ended && run.outcome !== 'not-run' ? `${((Date.parse(run.ended) - Date.parse(run.started)) / 1000).toFixed(1)} seconds` : null;
   const again = run.outcome === 'worked' && run.attempts ? `on attempt ${run.attempts.length + 1}` : null;
   const meta = [when(run.started), run.by === 'cron' ? 'its cron' : 'from this page', took, again].filter((s): s is string => s !== null).join(' · ');
   return (

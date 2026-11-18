@@ -1287,7 +1287,9 @@ function phaseOf(v: unknown): { phase: string; at: string } | null {
 export async function recentRuns(now: Date = new Date()): Promise<RunView[] | null> {
   let stored: Record<string, unknown>;
   try {
-    stored = ((await rawRedis().hgetall(RUN_LOG())) ?? {}) as Record<string, unknown>;
+    // Through the deserializing client: the raw one answers HGETALL as Upstash's
+    // REST API does, a flat list of fields and values, not an object.
+    stored = ((await redis().hgetall<Record<string, unknown>>(RUN_LOG())) ?? {}) as Record<string, unknown>;
   } catch (err) {
     console.error('Run log not read', err instanceof Error ? logReason(err.message) : typeof err);
     return null;

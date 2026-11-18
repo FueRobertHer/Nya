@@ -271,6 +271,8 @@ describe('the Nightly jobs page', () => {
     expect(text).toContain('Steps: export 2.1 seconds, upload 0.8 seconds. 2 Vercel Blob calls sent again.');
     expect(text).toContain('3 accounts checked, 1 file no record names removed, the weekly store-wide pass ran.');
     expect(text).toContain('Not run: the nightly backup (started by its cron) was still going after 30s.');
+    // Two runs that ran say how long they took; the one that didn't run, nothing.
+    expect(text.split('12.3 seconds').length - 1).toBe(2);
     expect(text).toContain('It stopped before it could say how it went: Vercel ends a run at 300 seconds, or storage couldn’t be reached. Last at: keys,');
     page.unmount();
   });
