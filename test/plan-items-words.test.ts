@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { walkWords } from '@/components/plan-text';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
-import type { PlanItem } from '@/lib/fire/items';
+import { ITEM_KINDS, type ItemKind, type PlanItem } from '@/lib/fire/items';
 import { DEFAULT_PLAN_V2, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import {
   CHIP_TEMPLATES,
@@ -95,17 +95,45 @@ describe('what moved the walk', () => {
 });
 
 describe('templates', () => {
-  test('13 in three groups, five as chips; a career break is pay down for some years', () => {
-    expect(ITEM_TEMPLATES).toHaveLength(13);
+  test('7 in three groups, each with a line on what it covers, four as chips', () => {
+    expect(ITEM_TEMPLATES).toHaveLength(7);
     expect(TEMPLATE_GROUPS.map((g) => [g.name, ITEM_TEMPLATES.filter((t) => t.group === g.id).map((t) => t.label)])).toEqual([
-      ['Money out', ['Buy a home', 'A child', 'Buy a car', 'Pay off a loan', 'A change in spending', 'A cost']],
-      ['Money in', ['Social Security', 'A pension', 'A windfall', 'Other income']],
-      ['Work', ['A change in pay', 'Part-time work', 'A career break']],
+      ['Money out', ['A cost', 'A change in spending', 'Buy a home']],
+      ['Money in', ['Income', 'A windfall']],
+      ['Work', ['A change in pay', 'Part-time work']],
     ]);
-    expect(CHIP_TEMPLATES.map((t) => t.label)).toEqual(['Social Security', 'Part-time work', 'Buy a home', 'A child', 'A cost']);
-    expect(templateOf(mk('b', 'pay', at(45), { yearly: -20_000, until: { years: 1 } })).id).toBe('career-break');
-    expect(templateOf(mk('r', 'pay', at(45), { yearly: 5_000 })).id).toBe('pay');
-    expect(templateOf(mk('c', 'one-off', at(45), { once: 1 })).id).toBe('cost');
+    for (const t of ITEM_TEMPLATES) expect([t.id, t.sub.length > 0]).toEqual([t.id, true]);
+    expect(CHIP_TEMPLATES.map((t) => t.label)).toEqual(['Income', 'Part-time work', 'Buy a home', 'A cost']);
+    // Income asks which kind; a new one starts as Social Security.
+    const income = ITEM_TEMPLATES.find((t) => t.id === 'income')!;
+    expect([income.kind, income.name, income.kinds?.map((c) => [c.kind, c.name])]).toEqual([
+      'social-security',
+      'Social Security',
+      [
+        ['social-security', 'Social Security'],
+        ['pension', 'A pension'],
+        ['other-income', 'Other income'],
+      ],
+    ]);
+  });
+
+  test('every kind opens in a row: a car is a cost, a child or a loan paid off a change in spending, a break a change in pay', () => {
+    const shown: Record<ItemKind, string> = {
+      'one-off': 'cost',
+      car: 'cost',
+      spending: 'spending',
+      child: 'spending',
+      'loan-end': 'spending',
+      home: 'home',
+      'social-security': 'income',
+      pension: 'income',
+      'other-income': 'income',
+      windfall: 'windfall',
+      pay: 'pay',
+      'part-time': 'part-time',
+    };
+    for (const kind of ITEM_KINDS) expect([kind, templateOf(mk('x', kind, at(45))).id]).toEqual([kind, shown[kind]]);
+    expect(templateOf(mk('b', 'pay', at(45), { yearly: -20_000, until: { years: 1 } })).id).toBe('pay');
   });
 });
 
@@ -289,9 +317,13 @@ describe('copies and refusals', () => {
   });
 
   test('a copy’s name takes the item’s own name, once it has one', () => {
-    const t = ITEM_TEMPLATES.find((x) => x.id === 'other-income')!;
-    expect(copyNameFor(t, mk('x', 'other-income', at(67), { label: 'Rent', yearly: 1 }), base, [])).toBe('Rent at 67');
-    expect(copyNameFor(t, mk('x', 'other-income', at(67), { label: t.name, yearly: 1 }), base, [])).toBe('Other income at 67');
+    const t = ITEM_TEMPLATES.find((x) => x.id === 'spending')!;
+    expect(copyNameFor(t, mk('x', 'spending', at(67), { label: 'Travel', yearly: 1 }), base, [])).toBe('Travel at 67');
+    expect(copyNameFor(t, mk('x', 'spending', at(67), { label: t.name, yearly: 1 }), base, [])).toBe('A change in spending at 67');
+    // Income's names say what it is: a pension stays a pension, never Income.
+    const income = ITEM_TEMPLATES.find((x) => x.id === 'income')!;
+    expect(copyNameFor(income, mk('x', 'pension', at(65), { label: 'A pension', yearly: 1 }), base, [])).toBe('A pension at 65');
+    expect(copyNameFor(income, mk('x', 'social-security', at(67), { label: income.name, yearly: 1 }), base, [])).toBe('Social Security at 67');
   });
 
   test('a refusal names the items', () => {
