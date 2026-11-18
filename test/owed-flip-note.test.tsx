@@ -39,9 +39,11 @@ describe('the Update form, asked to change an account between money held and mon
     expect(html).toContain('aria-haspopup="dialog"');
   });
 
+  // The form itself, used as a person would, is test/manual-account-sheet-view.test.tsx.
   test('the Update form points its type and Save at it while it shows', async () => {
-    const source = await Bun.file(new URL('../components/Dashboard.tsx', import.meta.url)).text();
-    expect(source.match(/aria-describedby=\{manualCrossing \? OWED_FLIP_REASON : undefined\}/g)).toHaveLength(2);
-    expect(source).toMatch(/<OwedFlipNote\s+crossing=\{manualCrossing\}/);
+    const source = await Bun.file(new URL('../components/ManualAccountSheet.tsx', import.meta.url)).text();
+    expect(source.match(/aria-describedby=\{crossing \? OWED_FLIP_REASON : undefined\}/g)).toHaveLength(1);
+    expect(source).toMatch(/aria-describedby=\{\[crossing && OWED_FLIP_REASON, /);
+    expect(source).toMatch(/<OwedFlipNote\s+crossing=\{crossing\}/);
   });
 });

@@ -230,6 +230,12 @@ describe('updating a manual account', () => {
     const save = v.button('Save')!;
     expect(save.getAttribute('disabled')).not.toBeNull();
     expect(save.getAttribute('aria-describedby')).toBe(OWED_FLIP_REASON);
+    expect(v.selects()[0].getAttribute('aria-describedby')).toBe(OWED_FLIP_REASON);
+    expect(v.dialog()!.findAll((e) => e.getAttribute('id') === OWED_FLIP_REASON).length).toBe(1);
+    // Back on its own side, nothing to say.
+    act(() => type(v.selects()[0], 'credit'));
+    expect(v.button('Save')!.getAttribute('aria-describedby')).toBeNull();
+    expect(v.selects()[0].getAttribute('aria-describedby')).toBeNull();
   });
 
   test('a refused update is said beside Save, which points at it', async () => {
