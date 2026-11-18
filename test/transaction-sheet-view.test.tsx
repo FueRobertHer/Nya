@@ -38,7 +38,7 @@ const React = await import('react');
 const { act } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
 const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
-const { default: MonthBreakdown } = await import('@/components/MonthBreakdown');
+const { default: MonthBreakdown, findTxnRow } = await import('@/components/MonthBreakdown');
 const { useTransactionEdits } = await import('@/components/transaction-edits');
 const { expandSplitsAndGroups } = await import('@/lib/split-rows');
 const { indexTaxonomy } = await import('@/lib/categories');
@@ -1153,6 +1153,53 @@ describe('a transaction’s sheet', () => {
       expect(doneLine(v)!.textContent).toContain('Ungrouped “Ski trip”');
       expect(dom.document.activeElement).toBe(doneLine(v));
       v.unmount();
+    });
+  });
+
+  // The follow-up to the sheets review: no way to rename or delete a tag
+  // from where tags are put on.
+  describe('Rename or delete tags', () => {
+    const editing = { onChangeTags: async () => true, onSaveNote: async () => true };
+
+    test('under the tag field, a ghost button: it closes the sheet, then the tags open, for the row it was on', async () => {
+      const opened: string[] = [];
+      const v = mount({ ...editing, onManageTags: (t) => opened.push(t.transaction_id) });
+      await v.open('Whole Foods');
+      const link = v.button('Rename or delete tags', v.dialog()!)!;
+      expect(link.getAttribute('class')).toBe('btn ghost');
+      expect(link.getAttribute('aria-haspopup')).toBe('dialog');
+      // After the tag field and its suggestions, before the note.
+      const order = v.dialog()!.findAll((e) => e === link || e.getAttribute('aria-label') === 'Add a tag to Whole Foods' || e.tagName === 'TEXTAREA');
+      expect(order.map((e) => e.tagName)).toEqual(['INPUT', 'BUTTON', 'TEXTAREA']);
+      act(() => click(link));
+      await settle(400);
+      expect(v.dialog()).toBeNull();
+      expect(opened).toEqual(['Whole Foods']);
+      // Each row says whose it is, for focus to come back to it once Settings closes.
+      expect(findTxnRow('Whole Foods') as unknown).toBe(v.row('Whole Foods')!);
+      v.unmount();
+    });
+
+    test('a row is found again by its id once the list is drawn anew; an id a selector can’t hold finds none', async () => {
+      const v = mount();
+      const before = v.row('Cash market')!;
+      v.unmount();
+      const again = mount();
+      expect(findTxnRow('Cash market') as unknown).toBe(again.row('Cash market')!);
+      expect(findTxnRow('Cash market') as unknown).not.toBe(before);
+      expect(findTxnRow('Nowhere')).toBeNull();
+      expect(findTxnRow('a"b')).toBeNull();
+      expect(findTxnRow('a\nb')).toBeNull();
+      again.unmount();
+    });
+
+    test('not offered with no tags to rename, nor without a way there', async () => {
+      for (const props of [{ ...editing, tags: [], onManageTags: () => {} }, editing]) {
+        const v = mount(props);
+        await v.open('Whole Foods');
+        expect(v.button('Rename or delete tags', v.dialog()!)).toBeNull();
+        v.unmount();
+      }
     });
   });
 

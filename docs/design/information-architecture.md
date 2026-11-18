@@ -273,7 +273,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | CurrencyCard, CurrencyChoiceSheet | Manage; Home offer | Settings > Preferences; Needs attention |
 | CategoriesCard, CategoryManager, CategoryTemplates | Manage | Settings > Transactions |
 | TemplateOffer | Top of Budgets | Budgets > Month: one row that opens the starter sets, a × beside it that keeps yours (a card with two buttons until the screen review) |
-| TagsCard | Manage | Settings > Transactions |
+| TagsCard | Manage | Settings > Transactions; also opened from a transaction's sheet (Rename or delete tags), its drawer open, focus back on Edit tags as it closes |
 | RulesCard, RuleSheet | Manage; Activity row | Settings > Transactions; Transaction sheet (the "Make a rule" offer and "Create a rule from this", since 5e) |
 | VendorDefaultsCard | Manage | Settings > Transactions |
 | ReviewSettingsCard | Manage | Settings > Transactions |
@@ -293,7 +293,7 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | MonthFigures | The summary card on Transactions, Cash flow's own row and Spending's In and out card | Activity > Transactions and Spending: the one In / Out / Net strip under the bar, signed, on the page (the screen review after step 5) |
 | CashFlowSankey | Activity, first card, own period picker | Activity > Spending, on the shared period (5c): no control of its own, and no In / Out / Net of its own since the screen review (the strip over the panel says them); on a phone, three columns, its categories in the table under it (5d) |
 | MonthFlowChart, CategoryRollup, SpendByTag | Activity | Activity > Spending |
-| TagFilter, TagChips, TxnTagsNote | Activity list and editor | Transactions filters (the Tag chip, since 5b); Transaction sheet (5e) |
+| TagFilter, TagChips, TxnTagsNote | Activity list and editor | Transactions filters (the Tag chip, since 5b); Transaction sheet (5e). Under the tag field, Rename or delete tags (a `.btn.ghost`) closes the sheet and opens Settings > Transactions with the TagsCard drawer open on its list; closing Settings comes back to the transaction's row. Not on the Tag filter, a native select that can't hold a button |
 | ChipSelect | New (phase 5b) | A filter chip that chooses one of a few options: Transactions' Tag and Receipt chips |
 | AccountsChooser | New | Accounts > Investments: the Accounts chip, which opens a sheet of presets (RadioRows) and the accounts (CheckRows), so any set of accounts can be shown |
 | ReviewBar, ReviewNote, CardMode | Activity list | Activity > Transactions: the count as a heading beside Card Mode, under the filter chips (5b); its filter is the To review chip |

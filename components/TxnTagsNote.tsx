@@ -23,6 +23,10 @@
 // The editor keeps what is typed in it: a note saved, or read again, is
 // taken into it only while it holds the note the row had, so what is typed
 // while a save is out stays.
+//
+// Under the tag field and its suggestions, Rename or delete tags goes to
+// the tags themselves (Settings > Transactions, the Tags sheet), where a
+// tag is renamed or deleted everywhere at once.
 
 import { useMemo, useRef, useState } from 'react';
 import { MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
@@ -56,6 +60,7 @@ export default function TxnTagsNote({
   onChangeTags,
   onSaveNote,
   refusedBy,
+  onManageTags,
 }: {
   t: { transaction_id: string; name: string; name_from_bank?: true; pending: boolean; tags?: string[]; note?: string | null };
   tags: readonly Tag[];
@@ -64,6 +69,8 @@ export default function TxnTagsNote({
   onSaveNote: (note: string) => Promise<boolean>;
   /** The id of what says why a change was refused, while it says so. */
   refusedBy?: string;
+  /** Opens the tags themselves, to rename or delete one. */
+  onManageTags?: () => void;
 }) {
   const [draft, setDraft] = useState('');
   const [note, setNote] = useState(t.note ?? '');
@@ -149,6 +156,14 @@ export default function TxnTagsNote({
               {tag.name}
             </button>
           ))}
+        </div>
+      )}
+      {onManageTags && tags.length > 0 && (
+        // In a row of its own: the column would stretch the button to its width.
+        <div>
+          <button type="button" className="btn ghost" aria-haspopup="dialog" onClick={onManageTags}>
+            Rename or delete tags
+          </button>
         </div>
       )}
       <textarea
