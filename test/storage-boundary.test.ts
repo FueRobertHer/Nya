@@ -154,7 +154,10 @@ const FROZEN_PREFIXES = [
  * store under the family already listed, holding no data, which the seam
  * (containers only) can't hold. So were the key archives' lock and the
  * marker a deletion leaves for the nightly run ("backups:keys-lock",
- * "backups:keys-pending"), beside the backups' own record, under that family.
+ * "backups:keys-pending"), beside the backups' own record, under that family,
+ * and the nightly jobs' run lock ("backups:job-running", lib/backup.ts takeRunLock),
+ * one environment-wide run of either job at a time, which a container can't
+ * hold either.
  */
 const FROZEN_KEY_NAMES = [
   'account-links in lib/link-core.ts',
@@ -163,6 +166,7 @@ const FROZEN_KEY_NAMES = [
   'accounts:directory in lib/links.ts',
   'accounts:meta in lib/last-known.ts',
   'accounts:vanished in lib/vanished.ts',
+  'backups:job-running in lib/backup.ts',
   'backups:keys-lock in lib/backup.ts',
   'backups:keys-pending in lib/backup.ts',
   'backups:status in lib/backup.ts',

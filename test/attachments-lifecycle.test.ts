@@ -531,4 +531,40 @@ describe('the cron route', () => {
     expect(res.status).toBe(200);
     expect((await res.json()).finished).toBe(true);
   });
+
+  test('runs under the run lock: waits for a run going, then runs, and lets the lock go', async () => {
+    process.env.CRON_SECRET = 'cron-secret';
+    const route = await import('@/app/api/attachments/sweep/route');
+    const hand = await backup.takeRunLock('backup', 'hand');
+    if (!('lock' in hand)) throw new Error('expected the lock');
+    setTimeout(() => void hand.lock.release(), 300);
+    const res = await route.GET(new Request('http://localhost/api/attachments/sweep', { headers: { authorization: 'Bearer cron-secret' } }));
+    expect(res.status).toBe(200);
+    expect(await backup.runningNow()).toBeNull();
+  });
+
+  test('a night it couldn’t run is recorded, keeping where it got to; never while a restore may be running, nor over a record it can’t read', async () => {
+    const before = { last_ok: '2026-06-14T17:31:00.000Z', last_failed: null, reason: null, cursor: ctx.container as string, listed_at: '2026-06-10T17:31:00.000Z' };
+    await backup.recordAttachmentSweep(before);
+    await sweep.recordSweepFailed('Not run: the nightly backup (started by its cron) was still going after 30s.', new Date('2026-06-15T17:31:30.000Z'));
+    expect(await backup.readAttachmentSweep()).toEqual({ ...before, last_failed: '2026-06-15T17:31:30.000Z', reason: 'Not run: the nightly backup (started by its cron) was still going after 30s.' });
+    // A record that can't be read: nothing written over it.
+    const errors = console.error;
+    console.error = () => {};
+    const token = process.env.BLOB_READ_WRITE_TOKEN;
+    try {
+      // With no backups kept, the record's own read is the first: that is the one that fails.
+      delete process.env.BLOB_READ_WRITE_TOKEN;
+      fake.failNext('get');
+      await sweep.recordSweepFailed('later', new Date('2026-06-16T17:31:30.000Z'));
+    } finally {
+      console.error = errors;
+      process.env.BLOB_READ_WRITE_TOKEN = token;
+    }
+    expect((await backup.readAttachmentSweep())?.reason).toBe('Not run: the nightly backup (started by its cron) was still going after 30s.');
+    // A restore may be running (the backups' record is gone): nothing written.
+    await fake.del(testKey('backups:status'));
+    await sweep.recordSweepFailed('later', new Date('2026-06-16T17:31:30.000Z'));
+    expect(await fake.get(testKey('backups:status'))).toBeNull();
+  });
 });
