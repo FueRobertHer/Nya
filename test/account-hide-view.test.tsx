@@ -22,7 +22,7 @@ const React = await import('react');
 const { act, useEffect, useRef, useState } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
 const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
-const { default: AccountSheet } = await import('@/components/AccountSheet');
+const { default: AccountSheet, focusAfterHide } = await import('@/components/AccountSheet');
 type Account = import('@/components/accounts-format').Account;
 type Institution = import('@/components/accounts-format').Institution;
 
@@ -68,7 +68,32 @@ async function mount() {
     openAgain = () => setOpenId(CHECKING.account_id);
     listed = () => list.map((a) => a.account_id);
     const a = last.current!;
+    // The list behind, as Dashboard draws it: a row for each account
+    // (InstitutionCard), opening its sheet, and Hidden's toggle once one is hidden.
+    const toggle = useRef<HTMLButtonElement>(null);
     return (
+      <>
+        <ul>
+          {list.map((x) => (
+            <li key={x.account_id}>
+              <button
+                className="list-row"
+                data-account-row={x.account_id}
+                onClick={() => {
+                  focusAfterHide(document.activeElement, x.account_id, () => toggle.current);
+                  setOpenId(x.account_id);
+                }}
+              >
+                {x.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+        {list.length === 0 && (
+          <button type="button" className="section-toggle" ref={toggle}>
+            Hidden
+          </button>
+        )}
       <AccountSheet
         open={!!opened}
         account={a}
@@ -102,6 +127,7 @@ async function mount() {
         onMoneyInOut={noop}
         onDelete={noop}
       />
+      </>
     );
   }
   act(() => root.render(<Screen />));
@@ -119,6 +145,19 @@ async function mount() {
     act(() => click(button(label)!));
     await pass(20);
   };
+  /** Outside the sheet: the account's row, and Hidden's toggle. */
+  const row = () => doc.findAll((e) => e.getAttribute('data-account-row') === CHECKING.account_id)[0] ?? null;
+  const hiddenToggle = () => doc.findAll((e) => (e.getAttribute('class') ?? '') === 'section-toggle')[0] ?? null;
+  /** Closed, then opened from its row, as a person does. */
+  const openFromRow = async () => {
+    const close = dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('aria-label') === 'Close')[0]!;
+    act(() => click(close));
+    await pass(400);
+    const r = row()!;
+    r.focus();
+    act(() => click(r));
+    await pass(5);
+  };
   return {
     said,
     answers,
@@ -134,6 +173,9 @@ async function mount() {
     footNote,
     doneLine,
     press,
+    row,
+    hiddenToggle,
+    openFromRow,
     unmount: () => act(() => root.unmount()),
   };
 }
@@ -234,6 +276,34 @@ describe('hiding an account from its sheet', () => {
     act(() => answer(null));
     await pass(20);
     expect(v.doneLine()!.textContent).toContain(HIDDEN);
+    v.unmount();
+  });
+
+  // The follow-up to the sheets review: focus fell to the page once Done
+  // closed the sheet, its row gone with the account.
+  test('Done: focus goes to Hidden at the bottom of Accounts, where the account went', async () => {
+    const v = await mount();
+    await v.openFromRow();
+    await v.press('Hide');
+    expect(v.row()).toBeNull();
+    await v.press('Done');
+    await pass(400);
+    expect(v.dialog()).toBeNull();
+    expect(dom.document.activeElement).toBe(v.hiddenToggle()!);
+    v.unmount();
+  });
+
+  test('Done after Undo: focus goes to the account’s row, back on the list', async () => {
+    const v = await mount();
+    await v.openFromRow();
+    const before = v.row();
+    await v.press('Hide');
+    await v.press('Undo');
+    await v.press('Done');
+    await pass(400);
+    // A row drawn anew, not the one that opened the sheet.
+    expect(v.row()).not.toBe(before);
+    expect(dom.document.activeElement).toBe(v.row()!);
     v.unmount();
   });
 

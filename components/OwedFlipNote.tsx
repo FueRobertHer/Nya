@@ -17,6 +17,7 @@
 // soon as such a type is chosen; the form's type and Save point at it
 // (aria-describedby, OWED_FLIP_REASON) while it shows.
 
+import type { Ref } from 'react';
 import { isOwedType } from '@/lib/balance';
 
 /** The note's id, for the controls it explains to point at. */
@@ -33,6 +34,8 @@ export default function OwedFlipNote({
   onClose,
   onHide,
   disabled,
+  hiding,
+  hideRef,
 }: {
   /** The type chosen crosses: the note shows. */
   crossing: boolean;
@@ -40,6 +43,10 @@ export default function OwedFlipNote({
   onClose: () => void;
   onHide: () => void;
   disabled?: boolean;
+  /** Its hide is under way. */
+  hiding?: boolean;
+  /** Hide's button, for focus to come back to when a hide is refused. */
+  hideRef?: Ref<HTMLButtonElement>;
 }) {
   return (
     <div aria-live="polite">
@@ -61,8 +68,8 @@ export default function OwedFlipNote({
               if it was entered as the wrong type from the start, hide this one: hiding takes it, and the transactions on it, out
               of every day, earlier ones too (balances, Activity, budgets and spending), so no day counts it the wrong way, and
               Unhide brings it all back.{' '}
-              <button className="link-btn" onClick={onHide} disabled={disabled}>
-                Hide this account
+              <button className="link-btn" ref={hideRef} onClick={onHide} disabled={disabled}>
+                {hiding ? 'Hiding…' : 'Hide this account'}
               </button>
             </li>
           </ul>

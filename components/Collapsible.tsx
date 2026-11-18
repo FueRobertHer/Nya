@@ -3,7 +3,7 @@
 // by heading and hear whether it is open. A count and one status badge may
 // follow the title; nothing else in the header is a control.
 
-import type { ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 
 export function CollapsibleHeader({
   title,
@@ -12,6 +12,7 @@ export function CollapsibleHeader({
   open,
   onToggle,
   controls,
+  buttonRef,
 }: {
   title: string;
   /** How many it holds, as a neutral badge. */
@@ -22,11 +23,14 @@ export function CollapsibleHeader({
   onToggle: () => void;
   /** The id of what it opens. */
   controls?: string;
+  /** Its button, for focus to come back to (the Hidden accounts' toggle,
+   *  after an account is hidden from its sheet). */
+  buttonRef?: Ref<HTMLButtonElement>;
 }) {
   return (
     <div className="card-header">
       <h2>
-        <button type="button" className="section-toggle" aria-expanded={open} aria-controls={open ? controls : undefined} onClick={onToggle}>
+        <button type="button" className="section-toggle" ref={buttonRef} aria-expanded={open} aria-controls={open ? controls : undefined} onClick={onToggle}>
           <span>{title}</span>
           {count !== undefined && <span className="badge">{count}</span>}
           {status}

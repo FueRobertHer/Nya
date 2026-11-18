@@ -164,7 +164,7 @@ Nothing you type is saved, on the server or on the device. It lasts until the ap
 
 Some accounts you want synced but not counted: a joint account, a business card, an old account kept linked for records. On the Accounts tab, tap any account, linked or manual, to open it, then **Hide**.
 
-A hidden account keeps syncing and keeps being stored. It's left out of net worth, the balance sheet, the Activity tab, budgets, insights, recurring-bill detection, and the goal picker. Hidden accounts collect in a collapsed **Hidden** card at the bottom of the Accounts tab, where **Unhide** restores them.
+A hidden account keeps syncing and keeps being stored. It's left out of net worth, the balance sheet, the Activity tab, budgets, insights, recurring-bill detection, and the goal picker. Hidden accounts collect in a collapsed **Hidden** card at the bottom of the Accounts tab, where **Unhide** restores them. Hiding one from its sheet (or from the manual account form's **Hide this account**) says what moved, with an **Undo** that unhides it, until **Done**.
 
 Hiding is **retroactive**: the net-worth chart redraws as though the account was never counted, rather than showing a cliff on the day you hid it. That works because nothing is deleted. Snapshots keep recording the true total and every account's balance, and hiding is applied when the chart is read, so unhiding brings back the full history including the period while it was hidden.
 

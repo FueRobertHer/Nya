@@ -46,7 +46,7 @@ import { SettingsSkeleton, TabSkeleton } from './LoadingSkeletons';
 import { TABS, parseSettings, parseTab, settingsHref, tabHref, type Tab } from '@/lib/dashboard-tab';
 import ConnectButtons, { SwitchingLink } from './ConnectButtons';
 import AddAccountSheet from './AddAccountSheet';
-import AccountSheet from './AccountSheet';
+import AccountSheet, { focusAfterHide } from './AccountSheet';
 import MoneyInOutSheet from './MoneyInOutSheet';
 import type { MoneyInOutTarget } from './MoneyInOutFigures';
 import AccountsStatus from './AccountsStatus';
@@ -475,6 +475,9 @@ export default function Dashboard({
   // The account whose sheet is open (components/AccountSheet.tsx), by id, so
   // it shows the account as the latest load has it.
   const [accountOpen, setAccountOpen] = useState<{ item_id: string; account_id: string } | null>(null);
+  // Hidden accounts' toggle at the bottom of Accounts, where focus comes back
+  // once an account hidden from its sheet has left the list (focusAfterHide).
+  const hiddenToggle = useRef<HTMLButtonElement>(null);
   const [expandedHoldings, setExpandedHoldings] = useState<Set<string>>(new Set());
   // Budgets and goals are each saved as one whole list, so their loading and
   // saving go through lib/whole-list-store.ts, which never lets an unloaded or
@@ -1756,7 +1759,8 @@ export default function Dashboard({
     onSaved: manualSaved,
     onEnd: (a) =>
       lifecycle.open({ account_id: a.account_id, name: a.name, mask: null, institution: a.institution_name, balance: a.balance, type: a.type, currency: a.currency ?? 'USD', lastKnown: false }),
-    onHide: (account_id) => void toggleHidden(account_id, true),
+    onHide: (account_id) => writeHidden(account_id, true),
+    onUnhide: (account_id) => writeHidden(account_id, false),
     hiding: togglingHidden !== null,
   });
   // The manual accounts typed in the app, with their currency, which the
@@ -2503,7 +2507,11 @@ export default function Dashboard({
                         lifecycle={lifecycle}
                         place={places.get(inst.item_id) ?? null}
                         requestsLeft={connectors.data?.requests?.left ?? null}
-                        onOpenAccount={(account_id) => setAccountOpen({ item_id: inst.item_id, account_id })}
+                        onOpenAccount={(account_id) => {
+                          // Hidden from its sheet, its row goes: Done comes back to Hidden's toggle.
+                          focusAfterHide(document.activeElement, account_id, () => hiddenToggle.current);
+                          setAccountOpen({ item_id: inst.item_id, account_id });
+                        }}
                         toggleHoldings={toggleHoldings}
                         onDetails={(i) => setDetailsFor(i.item_id)}
                         onRemove={removeConnection}
@@ -2519,6 +2527,7 @@ export default function Dashboard({
                       <section className="card stack">
                         <CollapsibleHeader
                           title="Hidden"
+                          buttonRef={hiddenToggle}
                           count={hiddenAccounts.length}
                           open={hiddenExpanded}
                           onToggle={() => setHiddenExpanded((v) => !v)}

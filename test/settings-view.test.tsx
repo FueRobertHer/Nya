@@ -149,13 +149,15 @@ describe('the dashboard', () => {
   // test/account-sheet-view.test.tsx (Hide, Mark as closed… and Delete per kind).
   test('an account row holds no button that Manage used to add; the account sheet it opens does', () => {
     const rows = card.slice(card.indexOf('<ul className="list-rows">'), card.indexOf('</ul>'));
-    expect(rows).toContain('<button className="list-row" onClick={() => onOpenAccount(a.account_id)}>');
+    expect(rows).toContain('<button className="list-row" data-account-row={a.account_id} onClick={() => onOpenAccount(a.account_id)}>');
     for (const word of ['Hide', 'Mark as closed…', 'Delete']) expect(rows).not.toContain(word);
     const sheet = readFileSync(join(import.meta.dir, '..', 'components', 'AccountSheet.tsx'), 'utf8');
     const footer = sheet.slice(sheet.indexOf('const footer = ('), sheet.indexOf('return (\n    <Sheet'));
     for (const word of ['Hide', 'Mark as closed…', 'Update balance', 'Add transaction']) expect(footer).toContain(word);
     expect(sheet).toContain("...(typed ? [{ label: 'Delete…', danger: true,");
-    expect(dashboard).toContain('onOpenAccount={(account_id) => setAccountOpen({ item_id: inst.item_id, account_id })}');
+    // Opened from its row, which names where focus goes once the row has gone (Hide).
+    expect(dashboard).toContain('focusAfterHide(document.activeElement, account_id, () => hiddenToggle.current);');
+    expect(dashboard).toContain('setAccountOpen({ item_id: inst.item_id, account_id });');
     // An account gone while its sheet is open closes it for good, so it never
     // opens again by itself when the account comes back (Unhide).
     expect(dashboard).toContain('if (accountOpen && !openedAccount) setAccountOpen(null);');
