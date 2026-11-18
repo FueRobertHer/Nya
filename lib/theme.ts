@@ -153,6 +153,9 @@ export const CLERK_APPEARANCE = {
     // adds (Settings, Sharing) take separate keys.
     userButtonPopoverActionButton: MENU_ROW,
     userButtonPopoverCustomItemButton: MENU_ROW,
+    // The account window's ⋯ menus (Remove email, Sign out of device) the
+    // same: Clerk draws their rows 29px.
+    menuItem: MENU_ROW,
     footerActionLink: SENTENCE_LINK,
     formFieldAction: SENTENCE_LINK,
   },

@@ -335,13 +335,23 @@ describe('design guard: the tokens (app/globals.css and docs/design/tokens.css)'
       'modalCloseButton',
       'userButtonPopoverActionButton',
       'userButtonPopoverCustomItemButton',
+      'menuItem',
     ]) {
       expect(sized.map(([k]) => k)).toContain(key);
     }
-    // A link inside a sentence keeps its line and reaches 44px through a box over it.
+    // An icon button is as wide as it is tall.
+    for (const key of ['formFieldInputShowPasswordButton', 'menuButtonEllipsis', 'modalCloseButton'] as const) {
+      expect(elements[key].minWidth).toBe('var(--tap)');
+    }
+    // A link inside a sentence keeps its line and reaches 44px through a box
+    // over it, placed against the link itself: without position, the box
+    // would cover the nearest positioned box around it, the whole card.
     for (const key of ['footerActionLink', 'formFieldAction'] as const) {
-      expect(elements[key]['&::after'].inset).toContain('var(--tap)');
-      expect(elements[key].textDecoration).toBe('underline');
+      const link = elements[key];
+      expect(link.position).toBe('relative');
+      expect(link['&::after']).toMatchObject({ content: '""', position: 'absolute' });
+      expect(link['&::after'].inset).toContain('var(--tap)');
+      expect(link.textDecoration).toBe('underline');
     }
   });
 
