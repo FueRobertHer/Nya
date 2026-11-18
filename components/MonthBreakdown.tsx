@@ -189,6 +189,14 @@ export type Txn = {
  * looked for; the search, or more than one, says nothing matches them; none,
  * that the month (or the cash flow's pick) has nothing.
  */
+/** A transaction's row on the list, by its id (`data-txn-row`): for focus
+ *  to come back to once the list is drawn anew. None for an id a selector
+ *  can't hold as it is. */
+export function findTxnRow(id: string): HTMLElement | null {
+  if (/["\\\n]/.test(id)) return null;
+  return document.querySelectorAll<HTMLElement>(`button[data-txn-row="${id}"]`)[0] ?? null;
+}
+
 export function emptyListWords(on: { query: boolean; tag: boolean; review: boolean; unsure?: boolean; receipt: ReceiptChoice; pick: boolean }): string {
   const count = [on.query, on.tag, on.review, !!on.unsure, on.receipt !== ""].filter(Boolean).length;
   if (count === 0) return on.pick ? "Nothing to list." : "No transactions this month.";
@@ -328,6 +336,7 @@ export default function MonthBreakdown({
   review,
   shared,
   onAttachmentsChanged,
+  onManageTags,
   segment: segmentShown,
   onSegment,
   sharedSegment = null,
@@ -407,6 +416,9 @@ export default function MonthBreakdown({
    *  read again, for its paperclips. Without it (no file store connected),
    *  no receipt is shown, offered or filtered by. */
   onAttachmentsChanged?: () => void;
+  /** From a transaction's sheet: the tags themselves (Settings), to rename
+   *  or delete one. Without it, no way there is offered. */
+  onManageTags?: (t: Txn) => void;
   /** The segment shown (components/ActivityBar.tsx) and how to choose
    *  another, when the caller keeps it: the dashboard does, so the tab
    *  comes back on the last one chosen. Left out, it keeps its own,
@@ -1334,6 +1346,7 @@ export default function MonthBreakdown({
                                   type="button"
                                   className="list-row txn-row"
                                   aria-haspopup="dialog"
+                                  data-txn-row={t.transaction_id}
                                   onClick={() => (iou ? shared?.onIou(iou.item) : openSheet({ kind: "txn", id: t.transaction_id }))}
                                 >
                                   {body}
@@ -1395,6 +1408,7 @@ export default function MonthBreakdown({
         onGroup={(start, group) => setGrouping({ start, group })}
         onSplitError={setSplitError}
         onAttachmentsChanged={onAttachmentsChanged}
+        onManageTags={onManageTags}
       />
 
       {/* Card Mode, over the tab: its Split and Group open the sheets below, over it. */}

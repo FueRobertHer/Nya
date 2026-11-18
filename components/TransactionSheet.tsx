@@ -268,6 +268,9 @@ export type TransactionSheetProps = {
   onChangeTags?: (t: Txn, change: TagChange) => unknown;
   /** As onRecategorize: a promise of true once saved (empty clears it). */
   onSaveNote?: (t: Txn, note: string) => unknown;
+  /** Opens the tags themselves (Settings > Transactions, the Tags sheet),
+   *  once this sheet has closed; focus comes back to the row's place. */
+  onManageTags?: (t: Txn) => void;
   onCreateRule?: (t: Txn, category_id?: string) => void;
   /** Splits and groups (#39): the list read again after one changes, a
    *  promise of it read (without a spinner, so the sheet stays open);
@@ -329,6 +332,7 @@ function TxnSheet({
   onUndoExcluded,
   onChangeTags,
   onSaveNote,
+  onManageTags,
   onCreateRule,
   onSplitsChanged,
   onSplit,
@@ -788,6 +792,7 @@ function TxnSheet({
             t={t}
             tags={tags}
             refusedBy={saidId}
+            onManageTags={onManageTags && act(() => onManageTags(t))}
             onChangeTags={(change) => {
               const n = begin();
               const id = t.transaction_id;

@@ -61,6 +61,20 @@ describe('the dashboard', () => {
     return dashboard.slice(at, Math.min(...ends));
   };
 
+  test('Rename or delete tags opens Settings > Transactions on the Tags drawer, and closing Settings finds the row again', () => {
+    // The row found by its id (findTxnRow, run in test/transaction-sheet-view.test.tsx).
+    expect(dashboard).toContain("enterSettings('transactions', () => findTxnRow(transaction_id));");
+    // Scrolled to, since Settings left the page at its top.
+    expect(dashboard).toContain("if (typeof named === 'function') opener?.scrollIntoView?.({ block: 'center' });");
+    // Asked for once.
+    expect(dashboard).toContain("if (settings !== 'transactions') setTagsFocus(false);");
+    expect(dashboard).toContain('<TagsCard tags={tagList.tags} ruleUses={ruleUses} onChanged={acceptTags} focus={tagsFocus} onFocused={clearTagsFocus} />');
+    expect(dashboard).toContain('onManageTags={(t) => openTags(t.transaction_id)}');
+    // Its row is drawn anew as Settings closes: found again by its id.
+    expect(dashboard).toContain("const opener = typeof named === 'function' ? named() : named;");
+    expect(dashboard).toContain('const target = opener?.isConnected ? opener :');
+  });
+
   test('has no Manage mode left', () => {
     expect(dashboard).not.toContain('manageMode');
     expect(dashboard).not.toContain("'Manage'");
