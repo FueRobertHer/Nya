@@ -36,33 +36,42 @@ describe('a demo sign-in', () => {
   const waited = (s: DemoState, attempt: number) => demoStep(s, { type: 'waited', attempt });
 
   test('on its way from the start only on a demo ticket’s page', () => {
-    expect(demoStart(true)).toEqual({ pending: true, attempt: 0 });
-    expect(demoStart(false)).toEqual({ pending: false, attempt: 0 });
+    expect(demoStart(true)).toEqual({ pending: true, attempt: 0, late: false });
+    expect(demoStart(false)).toEqual({ pending: false, attempt: 0, late: false });
   });
 
   test('on its way from a press, until its wait is over', () => {
     const s = press(demoStart(false));
-    expect(s).toEqual({ pending: true, attempt: 1 });
-    expect(waited(s, 1)).toEqual({ pending: false, attempt: 1 });
+    expect(s).toEqual({ pending: true, attempt: 1, late: false });
+    expect(waited(s, 1)).toEqual({ pending: false, attempt: 1, late: true });
   });
 
-  test('a ticket that never signs in: the page again after its wait', () => {
-    expect(waited(demoStart(true), 0).pending).toBe(false);
+  test('a ticket that never signs in: the page again after its wait, said to be late', () => {
+    expect(waited(demoStart(true), 0)).toEqual({ pending: false, attempt: 0, late: true });
   });
 
   test('a press after the page came back waits again, and an earlier wait ends nothing', () => {
     const back = waited(press(demoStart(true)), 1);
     expect(back.pending).toBe(false);
     const again = press(back);
-    expect(again).toEqual({ pending: true, attempt: 2 });
+    expect(again).toEqual({ pending: true, attempt: 2, late: false });
     // The first press's wait, or the ticket's, landing late.
     expect(waited(again, 1)).toEqual(again);
     expect(waited(again, 0)).toEqual(again);
     expect(waited(again, 2).pending).toBe(false);
   });
 
-  test('a sign-in that failed, or back from the browser’s cache: the page', () => {
-    expect(demoStep(press(demoStart(false)), { type: 'failed' }).pending).toBe(false);
-    expect(demoStep(press(demoStart(false)), { type: 'back' }).pending).toBe(false);
+  test('a sign-in that failed, or back from the browser’s cache: the page, not late (the card says why it failed)', () => {
+    expect(demoStep(press(demoStart(false)), { type: 'failed' })).toEqual({ pending: false, attempt: 1, late: false });
+    expect(demoStep(press(demoStart(false)), { type: 'back' })).toEqual({ pending: false, attempt: 1, late: false });
+  });
+
+  test('late until the next press, and only a wait that ran out on its own press is late', () => {
+    const late = waited(press(demoStart(false)), 1);
+    expect(late.late).toBe(true);
+    expect(press(late)).toEqual({ pending: true, attempt: 2, late: false });
+    // A wait that lands after its sign-in failed (the page is already back) says nothing.
+    const failed = demoStep(press(demoStart(false)), { type: 'failed' });
+    expect(waited(failed, 1)).toEqual(failed);
   });
 });
