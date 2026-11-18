@@ -323,6 +323,10 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: A
     'Until you change them, or delete your account. Encrypted, and in your download. Nothing converted is kept by Nya’s server: each figure is worked out again when it is shown (your device keeps the last ones it showed, with the rest of what the app last showed). The European Central Bank’s rates are public, kept once for everyone in plain text, and left out of Nya’s nightly backups.',
   ],
   [
+    'Your accounts’ own growth in a plan',
+    'Any growth after inflation or dividends you give one of your accounts of its own, in each plan, by the account’s id: until you change it in that plan, or delete your account. Forgetting or removing the account doesn’t take it out of a plan; the plan stops using it. Encrypted, and in your download. Never shown to anyone you share with, sent to a program with an API token, or put in an email.',
+  ],
+  [
     'What you tell your plan about tax',
     'Whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count; and if you have Nya work tax out from your accounts, how you file, your birth years, how long each dependent counts, which category or tag already pays for coverage and, for each plan, your state and its rate, your health coverage and what it costs, how your savings split and the inflation and yield it uses: until you change them, or delete your account. What you said about an account goes once you Forget it or remove it, or disconnect a bank connected through Plaid. An account you keep as a manual account when you disconnect SimpleFIN or Lunch Flow keeps it. Encrypted, and in your download. None of these are shown to anyone you share with, sent to a program with an API token, or put in an email. The buckets you choose for your accounts are a separate setting, and what you share of your holdings is split by them.',
   ],

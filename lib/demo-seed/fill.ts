@@ -163,7 +163,8 @@ export function plansOf(profile: DemoProfile, idOf: (mask: string) => string): S
   const copies = (p.copies ?? []).map((c) => {
     for (const id of c.drop ?? []) if (!main.items.some((x) => x.id === id)) throw new Error(`The copy ${c.name} drops ${id}, which your plan doesn't have`);
     const items = [...main.items.filter((x) => !c.drop?.includes(x.id)), ...(c.add ?? [])];
-    return { name: c.name, plan: checkedPlan({ ...main, ...c.set, items }, `copy ${c.name}`) };
+    const accounts = c.growth ? { accounts: c.growth.map((g) => ({ account_id: idOf(g.mask), growth: g.growth, yield: null })) } : {};
+    return { name: c.name, plan: checkedPlan({ ...main, ...c.set, ...accounts, items }, `copy ${c.name}`) };
   });
   return { first, main, copies };
 }
