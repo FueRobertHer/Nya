@@ -369,7 +369,9 @@ async function readInvite(token: string): Promise<Invite | null> {
 }
 
 /** What an invite says, for its page: how its sender would like to be seen,
- *  or null for any link that can't be used. Doesn't use it up. */
+ *  or null for any link that can't be used. Doesn't use it up. Throws only
+ *  when storage can't be read, before anything of the link is known, so the
+ *  page can say that apart from a link that can't be used. */
 export async function describeInvite(me: string, token: string): Promise<{ from_name: string; own: boolean } | null> {
   const inv = await readInvite(token);
   if (!inv) return null;
