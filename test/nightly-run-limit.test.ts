@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, setSystemTime, test } from 'bun:test';
 import { FakeRedis, storageMock, testKey } from './fake-redis';
 
 // The one run lock of the nightly jobs (lib/backup.ts takeRunLock, and
@@ -14,6 +14,7 @@ const { runAsCron, runWords, CRON_WAIT_MS } = await import('@/lib/nightly-run-li
 const LOCK = testKey('backups:job-running');
 
 beforeEach(() => fake.reset());
+afterEach(() => setSystemTime());
 
 /** Takes the lock, or fails the test. */
 async function take(job: 'backup' | 'files', by: 'cron' | 'hand') {
@@ -50,13 +51,46 @@ describe('the nightly jobs’ run lock', () => {
     expect(await fake.ttl(LOCK)).toBe(RUN_LOCK_MS / 1000);
   });
 
-  test('a run lets go only of its own lock', async () => {
+  test('a run lets go only of its own lock, even one just like it', async () => {
+    // The same job, started the same way at the same moment: only the token
+    // tells the two apart.
+    setSystemTime(new Date('2026-06-15T16:00:00.000Z'));
     const first = await take('backup', 'hand');
-    // Its lock expired (Vercel ended it), and a cron took the next.
+    // Its lock expired (Vercel ended it), and the next run took it.
     await fake.del(LOCK);
-    const second = await take('files', 'cron');
+    const second = await take('backup', 'hand');
+    expect(second.holder).toEqual(first.holder);
     await first.release();
     expect(await runningNow()).toEqual(second.holder);
+    await second.release();
+    expect(await runningNow()).toBeNull();
+  });
+
+  test('a SET that landed but whose answer was lost still takes the lock, never waiting on itself', async () => {
+    const set = fake.set.bind(fake);
+    // The request ran out of time after Redis applied it.
+    fake.set = (async (...args: Parameters<typeof set>) => {
+      await set(...args);
+      fake.set = set;
+      throw new Error('timed out');
+    }) as typeof fake.set;
+    const timedOut = await takeRunLock('backup', 'cron');
+    expect('lock' in timedOut).toBe(true);
+    if ('lock' in timedOut) await timedOut.lock.release();
+    expect(await runningNow()).toBeNull();
+    // The client sent it again after a network error, and the second found the first's value.
+    fake.set = (async (...args: Parameters<typeof set>) => {
+      await set(...args);
+      fake.set = set;
+      return null;
+    }) as typeof fake.set;
+    const resent = await takeRunLock('files', 'hand');
+    expect('lock' in resent).toBe(true);
+    if ('lock' in resent) await resent.lock.release();
+    expect(await runningNow()).toBeNull();
+    // A SET that failed without landing still throws.
+    fake.failNext('set');
+    await expect(takeRunLock('backup', 'hand')).rejects.toThrow('armed failure');
   });
 
   test('a lock that can’t be read still holds, naming no run', async () => {
@@ -98,6 +132,17 @@ describe('a cron’s run', () => {
     expect(res.status).toBe(200);
     expect(waited).toBeGreaterThanOrEqual(250);
     expect(await runningNow()).toBeNull();
+  });
+
+  test('a lock that can’t be taken: the cron fails, records why, and runs nothing', async () => {
+    fake.failNext('set');
+    const recorded: string[] = [];
+    let ran = false;
+    const res = await quiet(() => runAsCron('backup', async () => ((ran = true), { status: 200, body: {} }), async (reason) => void recorded.push(reason)));
+    const reason = 'Not run: the run lock could not be taken (FakeRedis: armed failure for set). Run it again from the Nightly jobs page.';
+    expect(res).toEqual({ status: 500, body: { error: reason } });
+    expect(recorded).toEqual([reason]);
+    expect(ran).toBe(false);
   });
 
   test('a run still going after the wait: the cron fails, records why, runs nothing, and leaves the other run’s lock alone', async () => {

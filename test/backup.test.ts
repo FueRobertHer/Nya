@@ -23,9 +23,12 @@ let sdkStreamCancelled = false;
 const urlReads: { url: string; headers: Record<string, string> }[] = [];
 /** The abortSignal each call was last given. */
 const signals: Record<string, AbortSignal | undefined> = {};
+/** Called at each upload, to see what holds while the backup runs. */
+let onPut: (() => Promise<void>) | null = null;
 await mockForFile('@vercel/blob', () => ({
   put: async (pathname: string, body: string, options: any) => {
     signals.put = options.abortSignal;
+    await onPut?.();
     if (blobs.has(pathname) && !options.allowOverwrite) throw new Error('exists');
     blobs.set(pathname, { body, uploadedAt: clock, options });
     return { pathname, url: `https://blob/${pathname}` };
@@ -99,6 +102,7 @@ beforeEach(async () => {
   hangReads = false;
   blobHost = 'store.blob.vercel-storage.com';
   sdkStreamCancelled = false;
+  onPut = null;
   urlReads.length = 0;
   clock = new Date('2026-06-15T16:00:00.000Z');
   process.env.BLOB_READ_WRITE_TOKEN = 'token';
@@ -617,7 +621,12 @@ describe('running a job again by hand', () => {
   });
 
   test('the cron runs under the run lock, and lets it go whether the backup worked or failed', async () => {
+    const during: unknown[] = [];
+    onPut = async () => void during.push(await runningNow());
     expect((await quietly(cron)).status).toBe(200);
+    // Held through the upload (and its key archive's), by the cron.
+    expect(during.length).toBeGreaterThan(0);
+    for (const held of during) expect(held).toMatchObject({ job: 'backup', by: 'cron' });
     expect(await runningNow()).toBeNull();
     delete process.env.BLOB_READ_WRITE_TOKEN;
     const errors = console.error;
@@ -634,7 +643,9 @@ describe('running a job again by hand', () => {
     const hand = await takeRunLock('files', 'hand');
     if (!('lock' in hand)) throw new Error('expected the lock');
     setTimeout(() => void hand.lock.release(), 300);
+    const started = Date.now();
     const res = await quietly(cron);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(250);
     expect(res.status).toBe(200);
     expect(blobs.has((await res.json()).pathname)).toBe(true);
     expect(await runningNow()).toBeNull();

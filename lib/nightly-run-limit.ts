@@ -36,8 +36,8 @@ export function runWords(holder: RunHolder | null): string {
  * A cron's run (app/api/backup, app/api/attachments/sweep): under the run lock,
  * after waiting up to `waitMs` for a run already going. `run` is told how long
  * that wait took, so a run with a time budget can take it off. When the lock
- * stays held, `recordBusy` records why, and the cron answers 500 with it, so it
- * shows red in Vercel too.
+ * stays held, or can't be taken, `recordBusy` records why (it never throws),
+ * and the cron answers 500 with it, so it shows red in Vercel too.
  */
 export async function runAsCron(
   job: NightlyJob,
@@ -46,7 +46,17 @@ export async function runAsCron(
   waitMs = CRON_WAIT_MS
 ): Promise<RunAnswer> {
   const started = Date.now();
-  const taken = await takeRunLock(job, 'cron', waitMs);
+  let taken: Awaited<ReturnType<typeof takeRunLock>>;
+  try {
+    taken = await takeRunLock(job, 'cron', waitMs);
+  } catch (err) {
+    // Recorded like any failure of the run, so the page and the dashboard say
+    // so tonight rather than when the job has been missing for days.
+    const reason = `Not run: the run lock could not be taken (${err instanceof Error ? err.message : String(err)}). Run it again from the Nightly jobs page.`;
+    console.error(`Nightly ${job} not run`, reason);
+    await recordBusy(reason);
+    return { status: 500, body: { error: reason } };
+  }
   if ('busy' in taken) {
     const reason = `Not run: ${runWords(taken.busy)} was still going after ${Math.round(waitMs / 1000)}s. Run it again from the Nightly jobs page.`;
     console.error(`Nightly ${job} not run`, reason);

@@ -145,7 +145,7 @@ describe('the Nightly jobs page', () => {
   });
 
   test('a job that worked a few minutes ago waits until when; one that failed never waits', async () => {
-    listing = [job({ ...goodBackup, again_at: '2026-10-24T16:09:00Z' }), failedFiles];
+    listing = [job({ ...goodBackup, again_at: '2026-11-06T12:04:00Z' }), failedFiles];
     const page = await mount();
     expect(page.button('Nightly backup')?.getAttribute('disabled')).not.toBeNull();
     expect(page.text('Nightly backup')).toContain('It worked a few minutes ago. Run it again from here after');
@@ -153,6 +153,30 @@ describe('the Nightly jobs page', () => {
     expect(page.text('Receipts and documents clean-up')).not.toContain('Run it again from here after');
     page.unmount();
   });
+
+  test('while it waits, it reads again on its own, after a read that failed too, and Run now comes back', async () => {
+    // Worked a moment ago, free again half a second from now (the day is held at noon).
+    listing = [job({ ...goodBackup, again_at: '2026-11-06T12:00:00.500Z' }), goodFiles];
+    const page = await mount();
+    expect(page.button('Nightly backup')?.getAttribute('disabled')).not.toBeNull();
+    // The next read fails; the one after says it is free.
+    let reads = 0;
+    globalThis.fetch = (async () => {
+      reads++;
+      return reads === 1 ? new Response('', { status: 503 }) : new Response(JSON.stringify({ jobs: [goodBackup, goodFiles] }));
+    }) as unknown as typeof fetch;
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1700));
+    });
+    expect(reads).toBe(1);
+    expect(page.text('Nightly backup')).toContain('It worked a few minutes ago.');
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1700));
+    });
+    expect(reads).toBe(2);
+    expect(page.button('Nightly backup')?.getAttribute('disabled')).toBeNull();
+    page.unmount();
+  }, 10_000);
 
   test('a clean-up the breaker held, or no file store: no button, and why', async () => {
     listing = [job({ job: 'backup', runnable: false }), job({ job: 'files', runnable: false, problem: { last_ok: null, reason: null, held: true } })];

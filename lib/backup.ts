@@ -875,31 +875,55 @@ export async function runningNow(): Promise<RunHolder | null> {
 
 export type RunLock = { holder: RunHolder; release(): Promise<void> };
 
+/** The lock held as `raw`, which its release deletes only while it still holds. */
+function heldLock(holder: RunHolder, raw: string): { lock: RunLock } {
+  return {
+    lock: {
+      holder,
+      async release() {
+        try {
+          await redis().eval(DELETE_IF_HOLDS, [RUN_LOCK()], [raw]);
+        } catch (err) {
+          console.error('Nightly jobs: the run lock could not be released; it will expire.', err instanceof Error ? err.name : typeof err);
+        }
+      },
+    },
+  };
+}
+
 /**
  * Takes the run lock for a run of `job`, waiting up to `waitMs` while another
  * run holds it. The lock, or, when it stays held, who holds it (null when that
  * can't be read). Throws when storage fails.
+ *
+ * A SET can land and its answer be lost: the request ran out of time, or the
+ * client sent it again after a network error and the second found the first's
+ * value. Either way the lock holds one of the values this call sent, so it is
+ * this call's, never another run's that it waits on until it expires.
  */
 export async function takeRunLock(job: NightlyJob, by: RunHolder['by'], waitMs = 0): Promise<{ lock: RunLock } | { busy: RunHolder | null }> {
   const until = Date.now() + waitMs;
+  const sent: string[] = [];
+  const current = () => rawRedis().get(RUN_LOCK()) as Promise<unknown>;
+  const ours = (raw: unknown) => (typeof raw === 'string' && sent.includes(raw) ? holderOf(raw) : null);
   for (;;) {
     const holder: RunHolder = { job, by, started: new Date().toISOString() };
     const raw = JSON.stringify({ ...holder, token: crypto.randomUUID() });
-    if (await redis().set(RUN_LOCK(), raw, { nx: true, px: RUN_LOCK_MS })) {
-      return {
-        lock: {
-          holder,
-          async release() {
-            try {
-              await redis().eval(DELETE_IF_HOLDS, [RUN_LOCK()], [raw]);
-            } catch (err) {
-              console.error('Nightly jobs: the run lock could not be released; it will expire.', err instanceof Error ? err.name : typeof err);
-            }
-          },
-        },
-      };
+    sent.push(raw);
+    let set: unknown;
+    try {
+      set = await redis().set(RUN_LOCK(), raw, { nx: true, px: RUN_LOCK_MS });
+    } catch (err) {
+      const now = await current().catch(() => null);
+      const mine = ours(now);
+      if (mine) return heldLock(mine, now as string);
+      throw err;
     }
-    if (Date.now() >= until) return { busy: await runningNow() };
+    if (set) return heldLock(holder, raw);
+    const now = await current();
+    const mine = ours(now);
+    if (mine) return heldLock(mine, now as string);
+    if (Date.now() >= until) return { busy: holderOf(now) };
     await new Promise((r) => setTimeout(r, Math.min(1000, Math.max(0, until - Date.now()))));
   }
 }

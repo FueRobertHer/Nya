@@ -502,11 +502,14 @@ export async function runNightlySweep(now: Date = new Date(), opts: { budgetMs?:
 /** Records a sweep that didn't run (its cron found another run still going:
  *  lib/nightly-run-limit.ts runAsCron), keeping where it got to. Not while a
  *  restore may be running, as for a run (runAttachmentSweep): that would put
- *  the backups' record back. Best effort, as recordAttachmentSweep is. */
+ *  the backups' record back. Best effort, as recordAttachmentSweep is: never
+ *  throws. */
 export async function recordSweepFailed(reason: string, now: Date = new Date()): Promise<void> {
   try {
     if (backupRetention()?.kept === true && !(await backupRecordExists())) return;
-    const before = (await readAttachmentSweep().catch(() => null)) ?? { last_ok: null, last_failed: null, reason: null, cursor: null, listed_at: null };
+    // A record that can't be read isn't taken for none: writing over it would
+    // lose where the sweep got to. Nothing is recorded then.
+    const before = (await readAttachmentSweep()) ?? { last_ok: null, last_failed: null, reason: null, cursor: null, listed_at: null };
     await recordAttachmentSweep({ ...before, last_failed: now.toISOString(), reason });
   } catch (err) {
     console.error('Receipts sweep outcome not recorded', loggable(err));

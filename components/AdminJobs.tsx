@@ -136,6 +136,9 @@ export default function AdminJobs() {
   const [error, setError] = useState('');
   const [running, setRunning] = useState<Job | null>(null);
   const [said, setSaid] = useState<{ job: Job; words: string } | null>(null);
+  /** Counts each read, worked or failed, so the timer below is set again after
+   *  every one: a read that fails while a run is going is tried again. */
+  const [reads, setReads] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -145,6 +148,8 @@ export default function AdminJobs() {
       setError('');
     } catch {
       setError('Could not read the nightly jobs right now.');
+    } finally {
+      setReads((n) => n + 1);
     }
   }, []);
 
@@ -163,7 +168,7 @@ export default function AdminJobs() {
     if (wait === null) return;
     const timer = setTimeout(load, wait);
     return () => clearTimeout(timer);
-  }, [going, againAt, running, jobs, load]);
+  }, [going, againAt, running, reads, load]);
 
   const run = async (job: Job) => {
     setRunning(job);
