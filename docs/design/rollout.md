@@ -980,7 +980,6 @@ The design system artifact was checked rule by rule against the app, its tokens,
 
 The look and feel review (2026-10-27) and the screen review (2026-10-28) were pages of their own, now retired. What they raised that is neither built nor recorded above:
 
-- **Runway's Saved scenarios card** still sits after the whole report, away from "Save as a scenario" (noted in PR #165, not changed there).
 - **Not reviewed yet:** what each sheet shows after Save, Clerk's own screens and its sign-in form, and what a follower sees from a share link.
 - **Ideas from the look and feel review, not taken up:** category tiles tinted from their tag color, a short haptic tick (`navigator.vibrate`) where the platform has one, and a brief check as a recategorized row's chip settles.
 
