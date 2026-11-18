@@ -337,7 +337,7 @@ export function useManualAccountSheets(opts: {
                     onChange={(e) => setDraft({ ...shown, name: e.target.value })}
                     placeholder="e.g. Credit Union Checking"
                     maxLength={60}
-                    disabled={saving}
+                    disabled={saving || hidingNow}
                   />
                 </label>
                 <label className="field">
@@ -347,7 +347,7 @@ export function useManualAccountSheets(opts: {
                     onChange={(e) => setDraft({ ...shown, institution_name: e.target.value })}
                     placeholder="Groups accounts into one card"
                     maxLength={60}
-                    disabled={saving}
+                    disabled={saving || hidingNow}
                   />
                 </label>
                 <label className="field">
@@ -363,7 +363,7 @@ export function useManualAccountSheets(opts: {
                         subtype: cash ? CASH_SUBTYPE : shown.subtype === CASH_SUBTYPE ? null : shown.subtype,
                       });
                     }}
-                    disabled={saving}
+                    disabled={saving || hidingNow}
                     aria-describedby={crossing ? OWED_FLIP_REASON : undefined}
                   >
                     {MANUAL_TYPE_LABELS.map((t) => (
@@ -379,7 +379,7 @@ export function useManualAccountSheets(opts: {
                     value={shown.currency}
                     // The balance stays as typed: only what it is counted in changes.
                     onChange={(e) => setDraft({ ...shown, currency: e.target.value })}
-                    disabled={saving}
+                    disabled={saving || hidingNow}
                   >
                     <CurrencyOptions first={currencies} value={shown.currency} />
                   </select>
@@ -397,7 +397,7 @@ export function useManualAccountSheets(opts: {
                     value={shown.balance}
                     onChange={(e) => setDraft({ ...shown, balance: e.target.value })}
                     placeholder={zeroExample(minorDigits(shown.currency))}
-                    disabled={saving}
+                    disabled={saving || hidingNow}
                   />
                 </label>
               </div>
@@ -416,7 +416,7 @@ export function useManualAccountSheets(opts: {
                   to={shown.currency}
                   checked={!!shown.relabel}
                   onChange={(on) => setDraft({ ...shown, relabel: on })}
-                  disabled={saving}
+                  disabled={saving || hidingNow}
                 />
               )}
               {/* One child of the stack: the note's live region is there

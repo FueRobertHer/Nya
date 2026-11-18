@@ -251,7 +251,6 @@ export default function AccountSheet({
       setHid({ ...h, closed: true });
       onDismiss();
     };
-    const undone = h.step === 'undone';
     return (
       <Sheet
         open={!h.closed}
@@ -263,7 +262,7 @@ export default function AccountSheet({
           </button>
         }
       >
-        <HiddenSaid label={h.label} step={h.step} syncs undoError={undoError} onUndo={() => void undo()} lineRef={doneLine} />
+        <HiddenSaid label={h.label} step={h.step} syncs={h.syncs} undoError={undoError} onUndo={() => void undo()} lineRef={doneLine} />
       </Sheet>
     );
   }
@@ -382,7 +381,8 @@ export default function AccountSheet({
   /** Hides it, kept open on the sheet while it does. */
   async function hide() {
     if (!a || hiding || hid) return;
-    const at = { account_id: a.account_id, label: withMask(a.name, a.mask) };
+    // A typed account has no connection to keep it syncing.
+    const at = { account_id: a.account_id, label: withMask(a.name, a.mask), syncs: !typed };
     setHideError('');
     setHid({ ...at, step: 'hiding', closed: false });
     const refused = await onHide(at.account_id);
@@ -494,6 +494,8 @@ type Hid = {
   account_id: string;
   /** Its name and mask, as the sheet's title said them. */
   label: string;
+  /** Fed by a connection, which keeps it syncing while hidden. */
+  syncs: boolean;
   step: 'hiding' | HiddenStep;
   closed: boolean;
 };
@@ -559,9 +561,17 @@ function accountRow(account_id: string): HTMLElement | null {
  * the sheet, or a sheet opened from it, closes after the account was hidden,
  * its row has left the list: focus goes to its row again if Undo brought it
  * back, else to Hidden's toggle at the bottom of Accounts, where Unhide is,
- * rather than to nothing.
+ * scrolled into view, rather than to nothing. `hiddenToggle` answers null
+ * when the account isn't hidden (it left the list some other way, closed or
+ * deleted), and focus is the sheet's to place as before.
  */
 export function focusAfterHide(from: Element | null, account_id: string, hiddenToggle: () => HTMLElement | null) {
   if (!from || from === document.body) return;
-  focusInsteadOf(from, () => accountRow(account_id) ?? hiddenToggle());
+  focusInsteadOf(from, () => {
+    const row = accountRow(account_id);
+    if (row) return row;
+    const toggle = hiddenToggle();
+    toggle?.scrollIntoView?.({ block: 'nearest' });
+    return toggle;
+  });
 }

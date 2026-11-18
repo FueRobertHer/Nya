@@ -317,7 +317,7 @@ describe('hiding a manual account from its form', () => {
     expect(v.dialog()).toBeNull();
   });
 
-  test('while it hides: Hiding…, the form’s buttons wait, and it doesn’t close', async () => {
+  test('while it hides: Hiding…, the form waits, and it doesn’t close', async () => {
     const v = await crossed();
     let answer: (refused: string | null) => void = () => {};
     v.answers.hide = () => new Promise((resolve) => (answer = resolve));
@@ -325,6 +325,8 @@ describe('hiding a manual account from its form', () => {
     await pass(5);
     expect(v.button('Hiding…')!.getAttribute('disabled')).not.toBeNull();
     expect(v.button('Cancel')!.getAttribute('disabled')).not.toBeNull();
+    // Its fields too: an edit made now would be lost as the sheet moves on.
+    for (const f of [...v.fields(), ...v.selects()]) expect(f.getAttribute('disabled')).not.toBeNull();
     const close = v.dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('aria-label') === 'Close')[0]!;
     act(() => click(close));
     await pass(20);

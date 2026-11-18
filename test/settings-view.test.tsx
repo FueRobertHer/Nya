@@ -155,8 +155,11 @@ describe('the dashboard', () => {
     const footer = sheet.slice(sheet.indexOf('const footer = ('), sheet.indexOf('return (\n    <Sheet'));
     for (const word of ['Hide', 'Mark as closed…', 'Update balance', 'Add transaction']) expect(footer).toContain(word);
     expect(sheet).toContain("...(typed ? [{ label: 'Delete…', danger: true,");
-    // Opened from its row, which names where focus goes once the row has gone (Hide).
-    expect(dashboard).toContain('focusAfterHide(document.activeElement, account_id, () => hiddenToggle.current);');
+    // Opened from its row, which names where focus goes once the row has gone:
+    // Hidden's toggle, only for an account that was hidden.
+    expect(dashboard).toContain('focusAfterHide(document.activeElement, account_id, () =>');
+    expect(dashboard).toContain('hiddenNow.current.has(account_id) ? hiddenToggle.current : null');
+    expect(dashboard).toContain('hiddenNow.current = hiddenIds;');
     expect(dashboard).toContain('setAccountOpen({ item_id: inst.item_id, account_id });');
     // An account gone while its sheet is open closes it for good, so it never
     // opens again by itself when the account comes back (Unhide).

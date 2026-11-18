@@ -1423,6 +1423,10 @@ export default function Dashboard({
   // The stored hidden set's ids, and the notes the chart marks: not those
   // about a hidden account, which moves no day of it (#50).
   const hiddenIds = useMemo(() => new Set(hiddenMeta.map((h) => h.account_id)), [hiddenMeta]);
+  // Read as an account's sheet closes (focusAfterHide): only a hidden
+  // account's sheet comes back to Hidden's toggle.
+  const hiddenNow = useRef(hiddenIds);
+  hiddenNow.current = hiddenIds;
   const chartNotes = useMemo(
     () => timeline.notes.filter((n) => !(n.kind === 'auto' && n.account_id && hiddenIds.has(n.account_id))),
     [timeline.notes, hiddenIds]
@@ -2509,7 +2513,9 @@ export default function Dashboard({
                         requestsLeft={connectors.data?.requests?.left ?? null}
                         onOpenAccount={(account_id) => {
                           // Hidden from its sheet, its row goes: Done comes back to Hidden's toggle.
-                          focusAfterHide(document.activeElement, account_id, () => hiddenToggle.current);
+                          focusAfterHide(document.activeElement, account_id, () =>
+                            hiddenNow.current.has(account_id) ? hiddenToggle.current : null
+                          );
                           setAccountOpen({ item_id: inst.item_id, account_id });
                         }}
                         toggleHoldings={toggleHoldings}
