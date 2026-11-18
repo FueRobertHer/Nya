@@ -14,7 +14,8 @@
 // transactions typed on it too, with the server's count and the plain words
 // that it has no undo (RelabelOffer); once saved, the sheet says what moved,
 // on a done notice with focus on it (docs/design/guidelines.md#after-save).
-// Saved with nothing moved, it closes: the totals behind show the choice.
+// Saved with no account corrected, it closes: the totals behind show the
+// choice. A correction shows nowhere behind, so it is said there too.
 
 import { useEffect, useId, useRef, useState } from 'react';
 import { Sheet, SheetFooter } from './Sheet';
@@ -171,7 +172,8 @@ export default function CurrencyChoiceSheet({ open, onClose, title = 'Show your 
           return;
         }
         changed = true;
-        if (moves[m.account_id]) {
+        if (!moves[m.account_id]) done.push({ name: '', text: `${m.name} is counted in ${to} now.` });
+        else {
           const r = (await res.json().catch(() => null))?.relabelled;
           if (typeof r?.moved === 'number' && typeof r?.kept === 'number') done.push({ name: m.name, text: relabelledText(r, m.currency, to) });
         }
@@ -185,7 +187,7 @@ export default function CurrencyChoiceSheet({ open, onClose, title = 'Show your 
       }
       changed = false;
       onSaved(chosen);
-      // What the moves did, said before the sheet closes.
+      // What the corrections and moves did, said before the sheet closes.
       if (done.length > 0) setMoved(done);
       else onClose();
     } catch {
@@ -222,7 +224,8 @@ export default function CurrencyChoiceSheet({ open, onClose, title = 'Show your 
   );
 }
 
-/** Saved: what moving each account's typed transactions did, on a done
+/** Saved: what correcting each account, and moving its typed transactions,
+ *  did (an entry with no name says its account itself), on a done
  *  notice that takes focus as it is drawn. No Undo: a move has none, as the
  *  offer said before it was ticked (RelabelOffer). */
 export function MovedBody({ moved, onClose }: { moved: readonly Moved[]; onClose: () => void }) {
@@ -236,7 +239,7 @@ export function MovedBody({ moved, onClose }: { moved: readonly Moved[]; onClose
         <span className="stack tight">
           <span>Saved.</span>
           {moved.map((m) => (
-            <span key={m.name}>{moved.length === 1 ? m.text : `${m.name}: ${m.text}`}</span>
+            <span key={m.name || m.text}>{moved.length === 1 || !m.name ? m.text : `${m.name}: ${m.text}`}</span>
           ))}
         </span>
       </Notice>

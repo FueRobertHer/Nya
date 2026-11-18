@@ -98,6 +98,7 @@ describe('after Save', () => {
     expect(sent.filter((s) => s.method === 'PATCH').at(-1)!.body).toEqual({ account_id: 'manual_abroad', currency: 'GBP', relabel_from: 'USD' });
     const line = v.doneLine()!;
     expect(line.getAttribute('role')).toBe('status');
+    expect(line.getAttribute('tabindex')).toBe('-1');
     expect(line.textContent).toContain('Saved.');
     expect(line.textContent).toContain('3 transactions you entered on it moved to GBP. 1 stays in USD: split, in a group, or more precise than GBP allows.');
     expect(dom.document.activeElement).toBe(line);
@@ -110,7 +111,24 @@ describe('after Save', () => {
     v.unmount();
   });
 
-  test('nothing moved: it closes, the totals behind showing the choice', async () => {
+  test('a correction alone: shown nowhere behind, so said there, with no Undo', async () => {
+    patch = async () => ({ ok: true, status: 200, json: async () => ({}) });
+    const v = await mount();
+    act(() => type(v.accountSelect(), 'GBP'));
+    await pass(5);
+    act(() => click(v.button('Save the currencies')!));
+    await pass(5);
+    expect(sent.filter((s) => s.method === 'PATCH').at(-1)!.body).toEqual({ account_id: 'manual_abroad', currency: 'GBP' });
+    const line = v.doneLine()!;
+    expect(line.textContent).toContain('Saved.');
+    expect(line.textContent).toContain('Abroad is counted in GBP now.');
+    expect(line.textContent).not.toContain('Abroad: ');
+    expect(dom.document.activeElement).toBe(line);
+    expect(v.button('Undo')).toBeNull();
+    v.unmount();
+  });
+
+  test('nothing corrected: it closes, the totals behind showing the choice', async () => {
     const v = await mount('USD');
     expect(v.footerButtons()).toEqual(['Not now', 'Show my net worth in USD']);
     act(() => click(v.button('Show my net worth in USD')!));

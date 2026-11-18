@@ -82,7 +82,9 @@ describe('after Save and Delete', () => {
     expect(v.dialog()!.getAttribute('aria-label')).toBe('Chart notes');
     const line = v.doneLine()!;
     expect(line.getAttribute('role')).toBe('status');
-    expect(line.textContent).toContain('Added "Rolled over the 401(k)" to Jun 1, 2025.');
+    // Focusable by script only, which a browser needs to take the focus.
+    expect(line.getAttribute('tabindex')).toBe('-1');
+    expect(line.textContent).toContain('Added "Rolled over the 401(k)", for Jun 1, 2025.');
     expect(dom.document.activeElement).toBe(line);
     expect(v.changed()).toBe(1);
     answer = ok({ id: 'n2', removed: true });
@@ -93,6 +95,36 @@ describe('after Save and Delete', () => {
     expect(dom.document.activeElement).toBe(v.doneLine());
     expect(v.button('Undo')).toBeNull();
     expect(v.changed()).toBe(2);
+    v.unmount();
+  });
+
+  test('on the day it opens on: said for today', async () => {
+    answer = ok({ id: 'n3', note: {} });
+    const v = await mount();
+    act(() => click(v.button('Add a note')!));
+    await pass(5);
+    act(() => type(v.field('Note')!, 'Paid off the car'));
+    act(() => click(v.button('Save')!));
+    await pass(5);
+    expect(v.doneLine()!.textContent).toContain('Added "Paid off the car", for today.');
+    v.unmount();
+  });
+
+  test('an Undo that can’t reach the server: said as an Undo, not a save', async () => {
+    answer = ok({ id: 'n2', note: {} });
+    const v = await mount();
+    act(() => click(v.button('Add a note')!));
+    await pass(5);
+    act(() => type(v.field('Note')!, 'Rolled over the 401(k)'));
+    act(() => click(v.button('Save')!));
+    await pass(5);
+    answer = async () => {
+      throw new Error('offline');
+    };
+    act(() => click(v.button('Undo')!));
+    await pass(5);
+    const alert = v.dialog()!.findAll((e) => e.getAttribute('role') === 'alert')[0]!;
+    expect(alert.textContent).toContain('That note couldn’t be taken back: the server couldn’t be reached.');
     v.unmount();
   });
 
@@ -124,7 +156,7 @@ describe('after Save and Delete', () => {
     await pass(5);
     expect(sent.at(-1)).toEqual({ method: 'PATCH', body: { id: 'n1', date: '2025-03-12', text: 'Bought the flat' } });
     const line = v.doneLine()!;
-    expect(line.textContent).toContain('Saved "Bought the flat", on Mar 12, 2025.');
+    expect(line.textContent).toContain('Saved "Bought the flat", for Mar 12, 2025.');
     expect(dom.document.activeElement).toBe(line);
     expect(v.button('Undo')).toBeNull();
     v.unmount();

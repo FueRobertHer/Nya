@@ -122,20 +122,20 @@ export function TimelineNotesSheet({
   }, [said]);
 
   /** The server's answer once it has the change, else null with the error set. */
-  const send = async (method: 'POST' | 'PATCH' | 'DELETE', body: Record<string, unknown>): Promise<{ id?: unknown } | null> => {
+  const send = async (method: 'POST' | 'PATCH' | 'DELETE', body: Record<string, unknown>, failed = 'That note couldn’t be saved'): Promise<{ id?: unknown } | null> => {
     setBusy(true);
     setError('');
     try {
       const res = await fetch('/api/timeline-notes', { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error ?? 'That note couldn’t be saved.');
+        setError(data.error ?? `${failed}.`);
         return null;
       }
       onChanged();
       return data;
     } catch {
-      setError('That note couldn’t be saved: the server couldn’t be reached.');
+      setError(`${failed}: the server couldn’t be reached.`);
       return null;
     } finally {
       setBusy(false);
@@ -145,11 +145,11 @@ export function TimelineNotesSheet({
   const save = async (d: Draft) => {
     const text = d.text.trim();
     if (d.id) {
-      if (await send('PATCH', { id: d.id, date: d.date, text: d.text })) go({ at: 'list' }, { text: `Saved "${text}", on ${dayText(d.date, true)}.` });
+      if (await send('PATCH', { id: d.id, date: d.date, text: d.text })) go({ at: 'list' }, { text: `Saved "${text}", for ${dayText(d.date, true)}.` });
       return;
     }
     const added = await send('POST', { date: d.date, text: d.text });
-    if (added) go({ at: 'list' }, { text: `Added "${text}" to ${dayText(d.date, true)}.`, added: typeof added.id === 'string' ? { id: added.id, text } : undefined });
+    if (added) go({ at: 'list' }, { text: `Added "${text}", for ${dayText(d.date, true)}.`, added: typeof added.id === 'string' ? { id: added.id, text } : undefined });
   };
   const remove = async (d: Draft) => {
     const stored = notes.find((n) => n.id === d.id) ?? d;
@@ -157,7 +157,7 @@ export function TimelineNotesSheet({
   };
   /** Takes back the note just added: removed, as if never added. */
   const undo = async (added: { id: string; text: string }) => {
-    if (await send('DELETE', { id: added.id })) go({ at: 'list' }, { text: `Undone: "${added.text}" is no longer on the chart.` });
+    if (await send('DELETE', { id: added.id }, 'That note couldn’t be taken back')) go({ at: 'list' }, { text: `Undone: "${added.text}" is no longer on the chart.` });
   };
 
   const newest = [...notes].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
@@ -183,9 +183,12 @@ export function TimelineNotesSheet({
             </Notice>
           )}
           {said?.added && (
-            <button type="button" className="btn ghost" onClick={() => void undo(said.added!)} disabled={busy}>
-              {busy ? 'Undoing…' : 'Undo'}
-            </button>
+            // Its own row, so the button sizes itself rather than the stack's width.
+            <div>
+              <button type="button" className="btn ghost" onClick={() => void undo(said.added!)} disabled={busy}>
+                {busy ? 'Undoing…' : 'Undo'}
+              </button>
+            </div>
           )}
           {error && (
             <Notice level="critical" role="alert">
