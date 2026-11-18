@@ -379,10 +379,11 @@ export default function MonthBreakdown({
   /** Your tags (components/tags-state.ts): names and colors for each row's
    *  tag ids, the filter, and spending by tag. */
   tags?: Tag[];
-  /** Puts tags on a transaction or takes them off, or makes one as typed. */
-  onChangeTags?: (t: Txn, change: TagChange) => void;
-  /** Saves a transaction's note (empty clears it). */
-  onSaveNote?: (t: Txn, note: string) => void;
+  /** Puts tags on a transaction or takes them off, or makes one as typed:
+   *  a promise of true once saved, for its sheet to say so. */
+  onChangeTags?: (t: Txn, change: TagChange) => unknown;
+  /** Saves a transaction's note (empty clears it), as onChangeTags. */
+  onSaveNote?: (t: Txn, note: string) => unknown;
   /** Opens the rule drawer on a rule made from a transaction, filing it
    *  under `category_id` (the one just chosen in its sheet) or the one it is
    *  under now. */
