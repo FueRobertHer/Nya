@@ -164,7 +164,8 @@ describe('every note the month said is still said, in its words and at its level
         hiding={false}
         lifecycleBusy={false}
         onDismiss={noop}
-        onHide={noop}
+        onHide={async () => null}
+        onUnhide={async () => null}
         onEnd={noop}
         onUpdate={noop}
         onAddTransaction={noop}
