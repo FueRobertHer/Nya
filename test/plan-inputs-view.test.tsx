@@ -722,8 +722,8 @@ describe('Why? in a figure’s sheet', () => {
     const container = dom.document.createElement('div');
     dom.document.body.appendChild(container);
     const root = createRoot(container as unknown as Element);
-    const account = { account_id: 'brk', name: 'Brokerage', institution: 'Broker', balance: 300_000, currency: 'USD' };
-    const cash = { account_id: 'chk', name: 'Checking', institution: 'Bank', balance: 10_000, currency: 'USD' };
+    const account = { account_id: 'brk', name: 'Brokerage', institution: 'Broker', balance: 300_000, currency: 'USD', value: 300_000 };
+    const cash = { account_id: 'chk', name: 'Checking', institution: 'Bank', balance: 10_000, currency: 'USD', value: 10_000 };
     await act(async () =>
       root.render(
         <FigureForm

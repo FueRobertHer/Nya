@@ -21,7 +21,7 @@
 //
 // Imports no data and no storage.
 
-import type { Measured, PlanCore } from './plan';
+import type { AccountRate, Measured, PlanCore } from './plan';
 
 /** The rate a plan runs at (see the top of this file), and how many counted
  *  accounts above zero grow at their own rate in it (0 where the plan's rate
@@ -52,4 +52,18 @@ export function planGrowth(plan: Pick<PlanCore, 'realReturn' | 'assets' | 'accou
   }
   if (own === 0) return base;
   return { growth: Math.min(high, Math.max(low, plan.realReturn + lift / total)), own };
+}
+
+/** The plan's accounts with each one's own growth as a sheet holds it (`rates`,
+ *  by id; an id not in it grows at the plan's rate): each one's dividends kept,
+ *  none with neither rate, by id. Past `cap` (LIMITS.accountRates), the
+ *  accounts `listed` now come before those since hidden or closed. Absent when
+ *  none is left, as a plan stores it. */
+export function withGrowth(held: readonly AccountRate[] | undefined, rates: ReadonlyMap<string, number>, listed: ReadonlySet<string>, cap: number): AccountRate[] | undefined {
+  const dividends = new Map((held ?? []).map((x) => [x.account_id, x.yield]));
+  const ids = [...new Set([...dividends.keys(), ...rates.keys()])];
+  const kept = ids.map((account_id) => ({ account_id, growth: rates.get(account_id) ?? null, yield: dividends.get(account_id) ?? null })).filter((x) => x.growth !== null || x.yield !== null);
+  const first = [...kept.filter((x) => listed.has(x.account_id)), ...kept.filter((x) => !listed.has(x.account_id))].slice(0, cap);
+  const list = first.sort((a, b) => (a.account_id < b.account_id ? -1 : a.account_id > b.account_id ? 1 : 0));
+  return list.length > 0 ? list : undefined;
 }

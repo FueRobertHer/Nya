@@ -109,6 +109,7 @@ import { fmtAsOf } from './accounts-format';
 import { EMPTY_SETTINGS, overridesOf, withBucket } from '@/lib/allocation/settings';
 import { investedAssets, type AssetInstitution, type InvestedAssets, type TrailingFlows, type UnreadTransactions, type WorkplaceSavings } from '@/lib/fire/inputs';
 import { fiFigures, measuredInputs, notMeasuredWhat, notWorkedOutText, unmeasuredNeed, type ShareRates } from '@/lib/fire/progress';
+import { planGrowth } from '@/lib/fire/account-growth';
 import { historyCount } from '@/lib/spending';
 import { figureNotes, inputFlags, names, stressNotice, windowText, type FigureArgs, type FigureNote, type FigureNotes, type FigureText } from './plan-figure-notes';
 import TotalCaveats, { Notice } from './TotalCaveats';
@@ -2483,6 +2484,7 @@ export default function PlanTab({
             onFlatRate={entry ? null : () => chooseModel({ kind: 'model', model: 'flat' })}
             defaultGrowth={defaultGrowth}
             measuredYield={detailBuckets ? measuredYield(detailBuckets) : null}
+            growthAt={(rate) => planGrowth({ ...formPlan, realReturn: rate }, measured)}
           />
         )}
         {shownSheet?.kind === 'numbers' && <AboutNumbers detailed={detailShown} />}
