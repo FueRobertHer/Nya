@@ -11,10 +11,14 @@
 // delete closes on the Accounts list, which shows it. An update that moved
 // the account's typed transactions with its currency says what moved, in the
 // same sheet, until the person closes it. Their buttons sit in the sheet's
-// footer, a refusal beside them.
+// footer, a refusal beside them. Hide this account, offered when Update
+// would move it between money held and owed, takes it off the list, so the
+// sheet stays open on what moved, with an Undo, as the account sheet's Hide
+// does (components/AccountSheet.tsx HiddenSaid), until Done.
 
-import { useCallback, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
+import { HiddenSaid, type HiddenStep } from './AccountSheet';
 import { Notice } from './TotalCaveats';
 import { CurrencyOptions, MovedBody, RelabelOffer } from './CurrencyChoiceSheet';
 import { CORRECTION_KEEPS, RELABEL_KEEPS, relabelledText } from './currency-text';
@@ -75,12 +79,15 @@ export function useManualAccountSheets(opts: {
   /** Update, with a type across money held and owed: closing the account
    *  instead (components/AccountLifecycle.tsx). */
   onEnd: (account: ManualAccount) => void;
-  /** Or hiding it. */
-  onHide: (account_id: string) => void;
+  /** Or hiding it, and the screen behind reads it again: the words of a
+   *  refusal, or null once done. */
+  onHide: (account_id: string) => Promise<string | null>;
+  /** Unhides it: its Undo. */
+  onUnhide: (account_id: string) => Promise<string | null>;
   /** A hide under way: the offer to hide waits for it. */
   hiding: boolean;
 }) {
-  const { currencies, onSaved, onEnd, onHide, hiding } = opts;
+  const { currencies, onSaved, onEnd, onHide, onUnhide, hiding } = opts;
   // `draft` drives the add and update sheet, and `editing` flips the same form
   // between adding and updating. `error` is the sheets' own, so a failed save
   // can't linger on the Accounts card after the sheet closes, and a
@@ -101,6 +108,24 @@ export function useManualAccountSheets(opts: {
   const crossing = !!shown?.kept && crossesOwed(shown.kept.type, shown.type);
   const shownDelete = useLast(deleteTarget);
   const id = useId();
+  // Hidden from the form: kept open on what was said until Done, which
+  // `closed` keeps while it slides out. Each time it says something new
+  // (hidden, then undone), focus goes to the line; a refused Undo is said
+  // under Undo, and a refused hide beside the form's buttons, focus back on
+  // Hide this account.
+  const [hid, setHid] = useState<{ account_id: string; label: string; step: 'hiding' | HiddenStep; closed: boolean } | null>(null);
+  const [undoError, setUndoError] = useState('');
+  const hidLine = useRef<HTMLDivElement>(null);
+  const hideButton = useRef<HTMLButtonElement>(null);
+  const [hidSaid, setHidSaid] = useState(0);
+  useEffect(() => {
+    if (hidSaid > 0) hidLine.current?.focus();
+  }, [hidSaid]);
+  const [hideRefused, setHideRefused] = useState(0);
+  useEffect(() => {
+    const at = document.activeElement;
+    if (hideRefused > 0 && (!at || at === document.body || at === hideButton.current)) hideButton.current?.focus();
+  }, [hideRefused]);
 
   /** One manual-account write, naming a single account. */
   const mutate = useCallback(
@@ -145,6 +170,7 @@ export function useManualAccountSheets(opts: {
   const startAdd = useCallback((currency: string) => {
     setError('');
     setMoved(null);
+    setHid(null);
     setEditing(false);
     // The id is minted server-side on create, so a draft doesn't carry one.
     setDraft({
@@ -162,6 +188,7 @@ export function useManualAccountSheets(opts: {
   const startEdit = useCallback((account: ManualAccount) => {
     setError('');
     setMoved(null);
+    setHid(null);
     setEditing(true);
     const currency = account.currency ?? 'USD';
     setDraft({ ...account, balance: String(account.balance), currency, stored: currency, kept: account });
@@ -169,6 +196,7 @@ export function useManualAccountSheets(opts: {
 
   const startDelete = useCallback((account: ManualAccount) => {
     setError('');
+    setHid(null);
     setDeleteTarget(account);
   }, []);
 
@@ -191,6 +219,46 @@ export function useManualAccountSheets(opts: {
       void mutate('POST', payload);
     }
   };
+
+  /** Hides it from the form, kept open on it while it does. */
+  const hide = async (a: ManualAccount) => {
+    if (hid || saving) return;
+    const at = { account_id: a.account_id, label: a.name, closed: false };
+    setError('');
+    setUndoError('');
+    setHid({ ...at, step: 'hiding' });
+    const refused = await onHide(a.account_id);
+    if (refused) {
+      setHid(null);
+      setError(refused);
+      setHideRefused((n) => n + 1);
+      return;
+    }
+    setDraft(null);
+    setHid({ ...at, step: 'hidden' });
+    setHidSaid((n) => n + 1);
+  };
+  /** Its Undo: unhides it. */
+  const undoHide = async () => {
+    if (!hid || hid.step !== 'hidden') return;
+    const h = hid;
+    setUndoError('');
+    setHid({ ...h, step: 'undoing' });
+    const refused = await onUnhide(h.account_id);
+    if (refused) {
+      setHid({ ...h, step: 'hidden' });
+      setUndoError(refused);
+      return;
+    }
+    setHid({ ...h, step: 'undone' });
+    setHidSaid((n) => n + 1);
+  };
+  const hidShown = hid && hid.step !== 'hiding' ? { ...hid, step: hid.step } : null;
+  const closeHid = () => {
+    if (hid?.step === 'undoing') return;
+    setHid((h) => (h ? { ...h, closed: true } : h));
+  };
+  const hidingNow = hid?.step === 'hiding';
 
   const showingMoved = !!moved && !draft;
   const invalid =
@@ -215,36 +283,45 @@ export function useManualAccountSheets(opts: {
   const sheets = (
     <>
       <Sheet
-        open={!!draft || !!moved?.open}
-        title={showingMoved ? 'Saved' : shown && editingShown ? 'Update account' : 'Add a manual account'}
+        open={!!draft || !!moved?.open || (!!hid && !hid.closed)}
+        title={hidShown ? hidShown.label : showingMoved ? 'Saved' : shown && editingShown ? 'Update account' : 'Add a manual account'}
         onClose={() => {
-          if (saving) return;
+          if (saving || hidingNow) return;
+          if (hidShown) return closeHid();
           setDraft(null);
           setMoved((m) => (m ? { ...m, open: false } : m));
         }}
         // What moved draws its own Done: no footer of the form's under it.
         footer={
-          !showingMoved &&
-          shown && (
+          hidShown ? (
+            <button type="button" className="btn" onClick={closeHid} disabled={hidShown.step === 'undoing'}>
+              Done
+            </button>
+          ) : (
+            !showingMoved &&
+            shown && (
             <>
               {said(formError)}
-              <button type="button" className="btn secondary" onClick={() => setDraft(null)} disabled={saving}>
+              <button type="button" className="btn secondary" onClick={() => setDraft(null)} disabled={saving || hidingNow}>
                 Cancel
               </button>
               <button
                 type="button"
                 className="btn"
-                disabled={saving || invalid}
+                disabled={saving || hidingNow || invalid}
                 onClick={submit}
                 aria-describedby={[crossing && OWED_FLIP_REASON, error && formError].filter(Boolean).join(' ') || undefined}
               >
                 {saving ? 'Saving…' : editingShown ? 'Save' : 'Add account'}
               </button>
             </>
+            )
           )
         }
       >
-        {showingMoved ? (
+        {hidShown ? (
+          <HiddenSaid label={hidShown.label} step={hidShown.step} syncs={false} undoError={undoError} onUndo={() => void undoHide()} lineRef={hidLine} />
+        ) : showingMoved ? (
           <MovedBody moved={[{ name: '', text: moved.text }]} onClose={() => setMoved((m) => (m ? { ...m, open: false } : m))} />
         ) : (
           shown && (
@@ -260,7 +337,7 @@ export function useManualAccountSheets(opts: {
                     onChange={(e) => setDraft({ ...shown, name: e.target.value })}
                     placeholder="e.g. Credit Union Checking"
                     maxLength={60}
-                    disabled={saving}
+                    disabled={saving || hidingNow}
                   />
                 </label>
                 <label className="field">
@@ -270,7 +347,7 @@ export function useManualAccountSheets(opts: {
                     onChange={(e) => setDraft({ ...shown, institution_name: e.target.value })}
                     placeholder="Groups accounts into one card"
                     maxLength={60}
-                    disabled={saving}
+                    disabled={saving || hidingNow}
                   />
                 </label>
                 <label className="field">
@@ -286,7 +363,7 @@ export function useManualAccountSheets(opts: {
                         subtype: cash ? CASH_SUBTYPE : shown.subtype === CASH_SUBTYPE ? null : shown.subtype,
                       });
                     }}
-                    disabled={saving}
+                    disabled={saving || hidingNow}
                     aria-describedby={crossing ? OWED_FLIP_REASON : undefined}
                   >
                     {MANUAL_TYPE_LABELS.map((t) => (
@@ -302,7 +379,7 @@ export function useManualAccountSheets(opts: {
                     value={shown.currency}
                     // The balance stays as typed: only what it is counted in changes.
                     onChange={(e) => setDraft({ ...shown, currency: e.target.value })}
-                    disabled={saving}
+                    disabled={saving || hidingNow}
                   >
                     <CurrencyOptions first={currencies} value={shown.currency} />
                   </select>
@@ -320,7 +397,7 @@ export function useManualAccountSheets(opts: {
                     value={shown.balance}
                     onChange={(e) => setDraft({ ...shown, balance: e.target.value })}
                     placeholder={zeroExample(minorDigits(shown.currency))}
-                    disabled={saving}
+                    disabled={saving || hidingNow}
                   />
                 </label>
               </div>
@@ -339,7 +416,7 @@ export function useManualAccountSheets(opts: {
                   to={shown.currency}
                   checked={!!shown.relabel}
                   onChange={(on) => setDraft({ ...shown, relabel: on })}
-                  disabled={saving}
+                  disabled={saving || hidingNow}
                 />
               )}
               {/* One child of the stack: the note's live region is there
@@ -351,17 +428,15 @@ export function useManualAccountSheets(opts: {
                 <OwedFlipNote
                   crossing={crossing}
                   toOwed={isOwedType(shown.type)}
-                  disabled={saving || hiding}
+                  disabled={saving || hiding || !!hid}
+                  hiding={hidingNow}
+                  hideRef={hideButton}
                   onClose={() => {
                     const a = shown.kept!;
                     setDraft(null);
                     onEnd(a);
                   }}
-                  onHide={() => {
-                    const a = shown.kept!;
-                    setDraft(null);
-                    onHide(a.account_id);
-                  }}
+                  onHide={() => void hide(shown.kept!)}
                 />
               </div>
               {editingShown && shown.account_id && (

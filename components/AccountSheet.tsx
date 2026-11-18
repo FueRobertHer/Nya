@@ -16,14 +16,18 @@
 // the hidden set (app/api/hidden-accounts), and an account on the list has
 // no entry there, under any of its ids. What hiding clears beside it is
 // worked out again from the accounts (the caches, and the backfill of past
-// days, which a hide may start and an Undo leaves done).
+// days, which a hide may start and an Undo leaves done). The manual account
+// form's Hide this account says the same (HiddenSaid). Done closes on the
+// list, where the account's row has gone: focus goes to Hidden's toggle
+// instead, or to its row again once Undo has brought it back
+// (focusAfterHide, as the row opens the sheet).
 
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type Ref } from 'react';
 import AccountSparkline from './AccountSparkline';
 import HoldingsRecorded from './HoldingsRecorded';
 import InvestmentActivity from './InvestmentActivity';
 import type { MoneyInOutTarget } from './MoneyInOutFigures';
-import { Sheet } from './Sheet';
+import { focusInsteadOf, Sheet } from './Sheet';
 import { Notice } from './TotalCaveats';
 import { Menu, type MenuItem } from './Menu';
 import { Masked } from './HideAmounts';
@@ -227,7 +231,7 @@ export default function AccountSheet({
   }, [said]);
 
   if (hid && hid.step !== 'hiding') {
-    const h = hid;
+    const h = { ...hid, step: hid.step };
     const busy = h.step === 'undoing';
     const undo = async () => {
       if (busy) return;
@@ -247,7 +251,6 @@ export default function AccountSheet({
       setHid({ ...h, closed: true });
       onDismiss();
     };
-    const undone = h.step === 'undone';
     return (
       <Sheet
         open={!h.closed}
@@ -259,33 +262,7 @@ export default function AccountSheet({
           </button>
         }
       >
-        <div className="stack">
-          <Notice level="done" role="status" ref={doneLine} tabIndex={-1}>
-            {undone ? `Undone: ${h.label} is back in every total, past days included.` : `${h.label} is hidden. It’s out of every total, past days included, and its transactions are out of Activity.`}
-          </Notice>
-          {!undone && (
-            // In a row of its own: a .stack would stretch the button to its width.
-            <div>
-              <button
-                type="button"
-                className="btn ghost"
-                onClick={() => void undo()}
-                disabled={busy}
-                aria-describedby={undoError ? `${id}-undo-error` : undefined}
-              >
-                {busy ? 'Undoing…' : 'Undo'}
-              </button>
-            </div>
-          )}
-          {undoError && (
-            <div id={`${id}-undo-error`}>
-              <Notice level="critical" role="alert">
-                {undoError}
-              </Notice>
-            </div>
-          )}
-          {!undone && <p className="helper">It keeps syncing. It’s under Hidden at the bottom of Accounts, where Unhide brings it back.</p>}
-        </div>
+        <HiddenSaid label={h.label} step={h.step} syncs={h.syncs} undoError={undoError} onUndo={() => void undo()} lineRef={doneLine} />
       </Sheet>
     );
   }
@@ -404,7 +381,8 @@ export default function AccountSheet({
   /** Hides it, kept open on the sheet while it does. */
   async function hide() {
     if (!a || hiding || hid) return;
-    const at = { account_id: a.account_id, label: withMask(a.name, a.mask) };
+    // A typed account has no connection to keep it syncing.
+    const at = { account_id: a.account_id, label: withMask(a.name, a.mask), syncs: !typed };
     setHideError('');
     setHid({ ...at, step: 'hiding', closed: false });
     const refused = await onHide(at.account_id);
@@ -516,6 +494,84 @@ type Hid = {
   account_id: string;
   /** Its name and mask, as the sheet's title said them. */
   label: string;
-  step: 'hiding' | 'hidden' | 'undoing' | 'undone';
+  /** Fed by a connection, which keeps it syncing while hidden. */
+  syncs: boolean;
+  step: 'hiding' | HiddenStep;
   closed: boolean;
 };
+
+/** Hidden, its Undo out, or undone. */
+export type HiddenStep = 'hidden' | 'undoing' | 'undone';
+
+/** What a sheet says once it has hidden an account: what moved, an Undo
+ *  that unhides it, why an Undo was refused, and where it went. `syncs`: the
+ *  account is fed by a connection, which keeps it syncing. Focus is the
+ *  owner's to move to the line (`lineRef`) each time it says something new. */
+export function HiddenSaid({
+  label,
+  step,
+  syncs,
+  undoError,
+  onUndo,
+  lineRef,
+}: {
+  label: string;
+  step: HiddenStep;
+  syncs: boolean;
+  undoError: string;
+  onUndo: () => void;
+  lineRef: Ref<HTMLDivElement>;
+}) {
+  const id = useId();
+  const busy = step === 'undoing';
+  const undone = step === 'undone';
+  return (
+    <div className="stack">
+      <Notice level="done" role="status" ref={lineRef} tabIndex={-1}>
+        {undone ? `Undone: ${label} is back in every total, past days included.` : `${label} is hidden. It’s out of every total, past days included, and its transactions are out of Activity.`}
+      </Notice>
+      {!undone && (
+        // In a row of its own: a .stack would stretch the button to its width.
+        <div>
+          <button type="button" className="btn ghost" onClick={onUndo} disabled={busy} aria-describedby={undoError ? `${id}-undo-error` : undefined}>
+            {busy ? 'Undoing…' : 'Undo'}
+          </button>
+        </div>
+      )}
+      {undoError && (
+        <div id={`${id}-undo-error`}>
+          <Notice level="critical" role="alert">
+            {undoError}
+          </Notice>
+        </div>
+      )}
+      {!undone && <p className="helper">{syncs ? 'It keeps syncing. ' : ''}It’s under Hidden at the bottom of Accounts, where Unhide brings it back.</p>}
+    </div>
+  );
+}
+
+/** An account's row on the list, by its id (InstitutionCard marks each). */
+function accountRow(account_id: string): HTMLElement | null {
+  if (!/^[\w-]+$/.test(account_id)) return null;
+  return document.querySelectorAll<HTMLElement>(`button[data-account-row="${account_id}"]`)[0] ?? null;
+}
+
+/**
+ * Called as an account's row opens its sheet (`from`, what had focus). Once
+ * the sheet, or a sheet opened from it, closes after the account was hidden,
+ * its row has left the list: focus goes to its row again if Undo brought it
+ * back, else to Hidden's toggle at the bottom of Accounts, where Unhide is,
+ * scrolled into view, rather than to nothing. `hiddenToggle` answers null
+ * when the account isn't hidden (it left the list some other way, closed or
+ * deleted), and focus is the sheet's to place as before.
+ */
+export function focusAfterHide(from: Element | null, account_id: string, hiddenToggle: () => HTMLElement | null) {
+  if (!from || from === document.body) return;
+  focusInsteadOf(from, () => {
+    const row = accountRow(account_id);
+    if (row) return row;
+    const toggle = hiddenToggle();
+    toggle?.scrollIntoView?.({ block: 'nearest' });
+    return toggle;
+  });
+}

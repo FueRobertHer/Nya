@@ -22,7 +22,7 @@ const React = await import('react');
 const { act, useEffect, useRef, useState } = React;
 for (const k of Object.keys(require.cache)) if (/react-dom[\\/](?:client\.js|cjs[\\/]react-dom-client\.)/.test(k)) delete require.cache[k];
 const { createRoot } = trackRoots(require('react-dom/client') as typeof import('react-dom/client'));
-const { default: AccountSheet } = await import('@/components/AccountSheet');
+const { default: AccountSheet, focusAfterHide } = await import('@/components/AccountSheet');
 type Account = import('@/components/accounts-format').Account;
 type Institution = import('@/components/accounts-format').Institution;
 
@@ -42,10 +42,14 @@ const CHECKING: Account = {
   currency: 'USD',
 };
 const chase = (accounts: Account[]): Institution => ({ institution_name: 'Chase', item_id: 'item_chase', accounts, holdings: [], error: null, needs_reauth: false });
+// Typed by hand: no connection feeds it.
+const typedIn = (accounts: Account[]): Institution => ({ ...chase(accounts), institution_name: 'Manual', item_id: 'manual', manual: true });
 
 type Answer = () => Promise<string | null>;
 
-async function mount() {
+/** `typed`: an account typed by hand. `alreadyHidden`: accounts hidden
+ *  before, so Hidden's toggle is on the page from the start. */
+async function mount(opts: { typed?: boolean; alreadyHidden?: string[] } = {}) {
   const host = dom.document.createElement('div');
   dom.document.body.appendChild(host);
   const root = createRoot(host as unknown as HTMLElement);
@@ -54,8 +58,13 @@ async function mount() {
   const answers: { hide: Answer; unhide: Answer } = { hide: async () => null, unhide: async () => null };
   let openAgain: () => void = noop;
   let listed: () => string[] = () => [];
+  let drop: () => void = noop;
   function Screen() {
     const [list, setList] = useState<Account[]>([CHECKING]);
+    const [hidden, setHidden] = useState(() => new Set(opts.alreadyHidden ?? []));
+    // Read as a sheet closes, as Dashboard's hiddenIds.
+    const hiddenNow = useRef(hidden);
+    hiddenNow.current = hidden;
     const [openId, setOpenId] = useState<string | null>(CHECKING.account_id);
     const opened = list.find((a) => a.account_id === openId) ?? null;
     // Dashboard: drawn from the last account shown, and closed once its
@@ -67,12 +76,39 @@ async function mount() {
     }, [openId, opened]);
     openAgain = () => setOpenId(CHECKING.account_id);
     listed = () => list.map((a) => a.account_id);
+    // Off the list some other way (closed or deleted), not hidden.
+    drop = () => setList([]);
     const a = last.current!;
+    // The list behind, as Dashboard draws it: a row for each account
+    // (InstitutionCard), opening its sheet, and Hidden's toggle once one is hidden.
+    const toggle = useRef<HTMLButtonElement>(null);
     return (
+      <>
+        <ul>
+          {list.map((x) => (
+            <li key={x.account_id}>
+              <button
+                className="list-row"
+                data-account-row={x.account_id}
+                onClick={() => {
+                  focusAfterHide(document.activeElement, x.account_id, () => (hiddenNow.current.has(x.account_id) ? toggle.current : null));
+                  setOpenId(x.account_id);
+                }}
+              >
+                {x.name}
+              </button>
+            </li>
+          ))}
+        </ul>
+        {hidden.size > 0 && (
+          <button type="button" className="section-toggle" ref={toggle}>
+            Hidden
+          </button>
+        )}
       <AccountSheet
         open={!!opened}
         account={a}
-        inst={chase(list.length ? list : [a])}
+        inst={(opts.typed ? typedIn : chase)(list.length ? list : [a])}
         shownCurrency="USD"
         saving={false}
         hiding={false}
@@ -85,13 +121,19 @@ async function mount() {
         onHide={async (id) => {
           said.push(`hide ${id}`);
           const refused = await answers.hide();
-          if (!refused) setList((l) => l.filter((x) => x.account_id !== id));
+          if (!refused) {
+            setList((l) => l.filter((x) => x.account_id !== id));
+            setHidden((h) => new Set([...h, id]));
+          }
           return refused;
         }}
         onUnhide={async (id) => {
           said.push(`unhide ${id}`);
           const refused = await answers.unhide();
-          if (!refused) setList((l) => (l.some((x) => x.account_id === id) ? l : [...l, CHECKING]));
+          if (!refused) {
+            setList((l) => (l.some((x) => x.account_id === id) ? l : [...l, CHECKING]));
+            setHidden((h) => new Set([...h].filter((x) => x !== id)));
+          }
           return refused;
         }}
         onEnd={(t) => said.push(`end ${t.account_id}`)}
@@ -102,6 +144,7 @@ async function mount() {
         onMoneyInOut={noop}
         onDelete={noop}
       />
+      </>
     );
   }
   act(() => root.render(<Screen />));
@@ -119,10 +162,27 @@ async function mount() {
     act(() => click(button(label)!));
     await pass(20);
   };
+  /** Outside the sheet: the account's row, and Hidden's toggle. */
+  const row = () => doc.findAll((e) => e.getAttribute('data-account-row') === CHECKING.account_id)[0] ?? null;
+  const hiddenToggle = () => doc.findAll((e) => (e.getAttribute('class') ?? '') === 'section-toggle')[0] ?? null;
+  /** Closed, then opened from its row, as a person does. */
+  const openFromRow = async () => {
+    const close = dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('aria-label') === 'Close')[0]!;
+    act(() => click(close));
+    await pass(400);
+    const r = row()!;
+    r.focus();
+    act(() => click(r));
+    await pass(5);
+  };
   return {
     said,
     answers,
     listed: () => listed(),
+    drop: async () => {
+      act(() => drop());
+      await pass(400);
+    },
     openAgain: async () => {
       act(() => openAgain());
       await pass(5);
@@ -134,6 +194,9 @@ async function mount() {
     footNote,
     doneLine,
     press,
+    row,
+    hiddenToggle,
+    openFromRow,
     unmount: () => act(() => root.unmount()),
   };
 }
@@ -152,7 +215,7 @@ describe('hiding an account from its sheet', () => {
     expect(line.textContent).toContain(HIDDEN);
     expect(dom.document.activeElement).toBe(line);
     expect(v.dialog()!.getAttribute('aria-label')).toBe('Total Checking ••4421');
-    expect(v.dialog()!.textContent).toContain('It’s under Hidden at the bottom of Accounts, where Unhide brings it back.');
+    expect(v.dialog()!.textContent).toContain('It keeps syncing. It’s under Hidden at the bottom of Accounts, where Unhide brings it back.');
     expect(v.footButtons()).toEqual(['Done']);
     // Undo in a row of its own, not stretched by the stack.
     const undo = v.button('Undo')!;
@@ -234,6 +297,53 @@ describe('hiding an account from its sheet', () => {
     act(() => answer(null));
     await pass(20);
     expect(v.doneLine()!.textContent).toContain(HIDDEN);
+    v.unmount();
+  });
+
+  // The follow-up to the sheets review: focus fell to the page once Done
+  // closed the sheet, its row gone with the account.
+  test('Done: focus goes to Hidden at the bottom of Accounts, where the account went', async () => {
+    const v = await mount();
+    await v.openFromRow();
+    await v.press('Hide');
+    expect(v.row()).toBeNull();
+    await v.press('Done');
+    await pass(400);
+    expect(v.dialog()).toBeNull();
+    expect(dom.document.activeElement).toBe(v.hiddenToggle()!);
+    v.unmount();
+  });
+
+  test('closed as its account left the list some other way: focus doesn’t go to Hidden', async () => {
+    const v = await mount({ alreadyHidden: ['acc_savings'] });
+    await v.openFromRow();
+    expect(v.hiddenToggle()).not.toBeNull();
+    await v.drop();
+    expect(v.dialog()).toBeNull();
+    expect(dom.document.activeElement).not.toBe(v.hiddenToggle()!);
+    v.unmount();
+  });
+
+  test('a typed account: no word of syncing, as nothing feeds it', async () => {
+    const v = await mount({ typed: true });
+    await v.press('Hide');
+    expect(v.doneLine()!.textContent).toContain(HIDDEN);
+    expect(v.dialog()!.textContent).toContain('It’s under Hidden at the bottom of Accounts, where Unhide brings it back.');
+    expect(v.dialog()!.textContent).not.toContain('syncing');
+    v.unmount();
+  });
+
+  test('Done after Undo: focus goes to the account’s row, back on the list', async () => {
+    const v = await mount();
+    await v.openFromRow();
+    const before = v.row();
+    await v.press('Hide');
+    await v.press('Undo');
+    await v.press('Done');
+    await pass(400);
+    // A row drawn anew, not the one that opened the sheet.
+    expect(v.row()).not.toBe(before);
+    expect(dom.document.activeElement).toBe(v.row()!);
     v.unmount();
   });
 

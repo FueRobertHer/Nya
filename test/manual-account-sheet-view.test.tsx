@@ -56,12 +56,15 @@ async function mount() {
     return hold ? new Promise<void>((resolve) => (release = resolve)) : Promise.resolve();
   };
   let sheets: Sheets | null = null;
+  // Each hide's and unhide's answer, as the test gives it: the words of a refusal, or null.
+  const answers: { hide: () => Promise<string | null>; unhide: () => Promise<string | null> } = { hide: async () => null, unhide: async () => null };
   function Harness() {
     sheets = useManualAccountSheets({
       currencies: ['USD', 'EUR'],
       onSaved,
       onEnd: (a) => said.push(`end ${a.account_id}`),
-      onHide: (id) => said.push(`hide ${id}`),
+      onHide: (id) => (said.push(`hide ${id}`), answers.hide()),
+      onUnhide: (id) => (said.push(`unhide ${id}`), answers.unhide()),
       hiding: false,
     });
     return sheets.sheets;
@@ -82,6 +85,7 @@ async function mount() {
   };
   return {
     said,
+    answers,
     sheets: () => sheets!,
     holdSaved: () => (hold = true),
     releaseSaved: () => act(() => release()),
@@ -240,19 +244,14 @@ describe('updating a manual account', () => {
     expect(v.selects()[0].getAttribute('aria-describedby')).toBeNull();
   });
 
-  test('its two ways instead each close the form and hand the account on', async () => {
+  test('Close this account… closes the form and hands the account on', async () => {
     const v = await mount();
     await v.open((s) => s.startEdit(CARD));
     act(() => type(v.selects()[0], 'depository'));
     act(() => click(v.button('Close this account…')!));
     await pass(5);
     expect(v.dialog()).toBeNull();
-    await v.open((s) => s.startEdit(CARD));
-    act(() => type(v.selects()[0], 'depository'));
-    act(() => click(v.button('Hide this account')!));
-    await pass(5);
-    expect(v.dialog()).toBeNull();
-    expect(v.said).toEqual(['end manual_2', 'hide manual_2']);
+    expect(v.said).toEqual(['end manual_2']);
     expect(sent).toEqual([]);
   });
 
@@ -266,6 +265,113 @@ describe('updating a manual account', () => {
     expect(note.textContent).toBe('Critical: Could not save. Please try again.');
     expect(v.button('Save')!.getAttribute('aria-describedby')).toBe(note.getAttribute('id'));
     expect(v.dialog()!.getAttribute('aria-label')).toBe('Update account');
+  });
+});
+
+// The follow-up to the sheets review: Hide this account said nothing. It
+// takes the account off the list, so the sheet stays open on what moved,
+// with an Undo, as the account sheet's Hide does.
+describe('hiding a manual account from its form', () => {
+  const HIDDEN = 'Store card is hidden. It’s out of every total, past days included, and its transactions are out of Activity.';
+  const crossed = async () => {
+    const v = await mount();
+    await v.open((s) => s.startEdit(CARD));
+    act(() => type(v.selects()[0], 'depository'));
+    return v;
+  };
+  const doneLine = (v: View) => v.dialog()?.findAll((e) => (e.getAttribute('class') ?? '') === 'notice done')[0] ?? null;
+
+  test('stays open on what moved, focus on its line, with an Undo and Done; no word of syncing', async () => {
+    const v = await crossed();
+    act(() => click(v.button('Hide this account')!));
+    await pass(20);
+    expect(v.said).toEqual(['hide manual_2']);
+    expect(sent).toEqual([]);
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Store card');
+    const line = doneLine(v)!;
+    expect(line.textContent).toContain(HIDDEN);
+    expect(line.getAttribute('role')).toBe('status');
+    expect(dom.document.activeElement).toBe(line);
+    expect(v.button('Undo')!.getAttribute('class')).toBe('btn ghost');
+    expect(v.footButtons()).toEqual(['Done']);
+    expect(v.dialog()!.textContent).toContain('It’s under Hidden at the bottom of Accounts, where Unhide brings it back.');
+    expect(v.dialog()!.textContent).not.toContain('syncing');
+    act(() => click(v.button('Done')!));
+    await pass(400);
+    expect(v.dialog()).toBeNull();
+  });
+
+  test('Undo unhides it, says so with focus on the line, and Done closes', async () => {
+    const v = await crossed();
+    act(() => click(v.button('Hide this account')!));
+    await pass(20);
+    act(() => click(v.button('Undo')!));
+    await pass(20);
+    expect(v.said).toEqual(['hide manual_2', 'unhide manual_2']);
+    const line = doneLine(v)!;
+    expect(line.textContent).toContain('Undone: Store card is back in every total, past days included.');
+    expect(dom.document.activeElement).toBe(line);
+    expect(v.button('Undo')).toBeNull();
+    act(() => click(v.button('Done')!));
+    await pass(400);
+    expect(v.dialog()).toBeNull();
+  });
+
+  test('while it hides: Hiding…, the form waits, and it doesn’t close', async () => {
+    const v = await crossed();
+    let answer: (refused: string | null) => void = () => {};
+    v.answers.hide = () => new Promise((resolve) => (answer = resolve));
+    act(() => click(v.button('Hide this account')!));
+    await pass(5);
+    expect(v.button('Hiding…')!.getAttribute('disabled')).not.toBeNull();
+    expect(v.button('Cancel')!.getAttribute('disabled')).not.toBeNull();
+    // Its fields too: an edit made now would be lost as the sheet moves on.
+    for (const f of [...v.fields(), ...v.selects()]) expect(f.getAttribute('disabled')).not.toBeNull();
+    const close = v.dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('aria-label') === 'Close')[0]!;
+    act(() => click(close));
+    await pass(20);
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Update account');
+    act(() => answer(null));
+    await pass(20);
+    expect(doneLine(v)!.textContent).toContain(HIDDEN);
+  });
+
+  test('a refused hide stays on the form, said beside its buttons, focus back on Hide this account', async () => {
+    const v = await crossed();
+    v.answers.hide = async () => 'Could not update hidden accounts.';
+    const hide = v.button('Hide this account')!;
+    hide.focus();
+    act(() => click(hide));
+    await pass(20);
+    expect(doneLine(v)).toBeNull();
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Update account');
+    expect(v.footNote()!.textContent).toBe('Critical: Could not update hidden accounts.');
+    expect(dom.document.activeElement).toBe(v.button('Hide this account')!);
+  });
+
+  test('a refused Undo keeps it hidden, and Undo points at the words', async () => {
+    const v = await crossed();
+    act(() => click(v.button('Hide this account')!));
+    await pass(20);
+    v.answers.unhide = async () => 'Could not update hidden accounts.';
+    act(() => click(v.button('Undo')!));
+    await pass(20);
+    expect(doneLine(v)!.textContent).toContain(HIDDEN);
+    const undo = v.button('Undo')!;
+    const why = v.dialog()!.findAll((e) => e.getAttribute('id') === undo.getAttribute('aria-describedby'))[0]!;
+    expect(why.findAll((e) => e.getAttribute('role') === 'alert')[0]!.textContent).toContain('Could not update hidden accounts.');
+  });
+
+  test('opened again after Done: the form, nothing said from before', async () => {
+    const v = await crossed();
+    act(() => click(v.button('Hide this account')!));
+    await pass(20);
+    act(() => click(v.button('Done')!));
+    await pass(400);
+    await v.open((s) => s.startEdit(WALLET));
+    expect(v.dialog()!.getAttribute('aria-label')).toBe('Update account');
+    expect(doneLine(v)).toBeNull();
+    expect(v.footButtons()).toEqual(['Cancel', 'Save']);
   });
 });
 
