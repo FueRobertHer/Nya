@@ -231,6 +231,17 @@ const fill = async (within: FakeElement, words: string, value: string) => {
   await act(async () => type(el, value));
   await settle();
 };
+/** A radio or a segment in an element, by its words, picked. */
+const pick = async (within: FakeElement, words: string) => {
+  const c = within.findAll((e) => (e.tagName === 'LABEL' && e.textContent.startsWith(words)) || (e.tagName === 'BUTTON' && e.textContent.trim() === words))[0];
+  if (!c) throw new Error(`no choice ${words}`);
+  const input = c.tagName === 'LABEL' ? c.findAll((e) => e.tagName === 'INPUT')[0] : null;
+  await act(async () => {
+    if (input) input.checked = true;
+    click(input ?? c);
+  });
+  await settle();
+};
 /** Also change it in's rows in a sheet: each plan's name and its value there. */
 const alsoRows = (sheet: FakeElement) =>
   sheet.findAll((e) => e.tagName === 'LABEL' && classOf(e).includes('check-row')).map((r) => [r.findAll((e) => classOf(e).includes('check-row-title'))[0]?.textContent ?? '', r.findAll((e) => classOf(e).includes('check-row-sub'))[0]?.textContent ?? '']);
@@ -262,11 +273,14 @@ describe('the Timeline’s Try it in a copy', () => {
     const tab = await render();
     expect(tab.title()).toBe('Your plan');
     await press(button(tab.container, 'Add'));
-    await press(tab.sheetRow('A career break'));
+    await press(tab.sheetRow('A change in pay'));
     const sheet = tab.dialog()!;
-    await fill(sheet, 'Starts at age', '45');
-    await fill(sheet, 'Saved less a year', '30000');
+    await pick(sheet, 'Less');
+    await fill(tab.dialog()!, 'Name', 'A career break');
+    await fill(tab.dialog()!, 'Starts at age', '45');
+    await fill(tab.dialog()!, 'By, a year', '30000');
     await press(tab.sheetRow('Ends'));
+    await pick(tab.dialog()!, 'After some years');
     await fill(tab.dialog()!, 'For how many years', '2');
     await press(button(tab.dialog(), 'Done'));
     await press(button(tab.dialog(), 'Try it in a copy'));
@@ -832,13 +846,16 @@ describe('the Timeline in a copy', () => {
     await openCopy(tab, 'Retire at 50');
     await press(button(tab.container, 'Add'));
     expect(tab.dialog()!.textContent).toContain('Everything here goes in Copy: Retire at 50.');
-    await press(tab.sheetRow('A career break'));
+    await press(tab.sheetRow('A change in pay'));
     const sheet = tab.dialog()!;
     // A copy of a copy is the Plans sheet's Duplicate.
     expect(button(sheet, 'Try it in a copy')).toBeNull();
+    await pick(sheet, 'Less');
+    await fill(sheet, 'Name', 'A career break');
     await fill(sheet, 'Starts at age', '45');
-    await fill(sheet, 'Saved less a year', '30000');
+    await fill(sheet, 'By, a year', '30000');
     await press(tab.sheetRow('Ends'));
+    await pick(tab.dialog()!, 'After some years');
     await fill(tab.dialog()!, 'For how many years', '2');
     await press(button(tab.dialog(), 'Done'));
     await settle(300);
