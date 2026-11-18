@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { secretsMatch } from '@/lib/auth';
-import { runNightlySweep } from '@/lib/attachment-sweep';
+import { recordSweepFailed, runNightlySweep, SWEEP_BUDGET_MS } from '@/lib/attachment-sweep';
+import { runAsCron } from '@/lib/nightly-run-limit';
 
 // The nightly clean-up of receipts and documents (lib/attachment-sweep.ts),
 // hit by Vercel Cron (vercel.json) after the backup and the day's other jobs.
@@ -16,8 +17,10 @@ import { runNightlySweep } from '@/lib/attachment-sweep';
 // counts and account ids, never a file's name or anything in it.
 //
 // The run itself is lib/attachment-sweep.ts runNightlySweep, which the admin
-// can also start from the app (app/api/admin/jobs), which holds off while
-// this cron may be running.
+// can also start from the app (app/api/admin/jobs). Either way it runs under
+// the one run lock (lib/nightly-run-limit.ts): a run already going is waited
+// for, its wait taken off the sweep's time budget, and one that is still going
+// after that fails tonight's sweep, recorded.
 
 export const maxDuration = 300;
 
@@ -26,6 +29,10 @@ export async function GET(req: Request) {
   if (!secret || !(await secretsMatch(req.headers.get('authorization') ?? '', `Bearer ${secret}`))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const { status, body } = await runNightlySweep();
+  const { status, body } = await runAsCron(
+    'files',
+    (waited) => runNightlySweep(new Date(), { budgetMs: SWEEP_BUDGET_MS - waited }),
+    (reason) => recordSweepFailed(reason)
+  );
   return NextResponse.json(body, { status });
 }

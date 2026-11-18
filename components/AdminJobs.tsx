@@ -22,6 +22,11 @@ const WHAT: Record<Job, string> = {
   files: 'Throws away unfinished uploads and finishes deletes, and once a week removes files no record names.',
 };
 const RAN: Record<Job, string> = { backup: 'The backup ran and was saved.', files: 'The clean-up ran.' };
+/** How often the page reads the jobs again while a run is going. */
+const POLL_MS = 5000;
+/** Reads in a row that may fail before the page stops reading on its own (the
+ *  error notice is on screen, and a reload reads again). */
+const MAX_FAILED_READS = 3;
 
 const CHECK = (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -43,6 +48,19 @@ function whyNot(v: JobView): string | null {
   if (v.runnable) return null;
   if (v.job === 'files' && (v.problem as AttachmentSweepProblem | null)?.held) return 'Running it again would hold back again. Its log in Vercel names the account.';
   return 'No file store is connected, so there is nothing to run.';
+}
+
+/** Why Run now waits, while it does: a run going (of either job, since one
+ *  runs at a time), or this job worked a moment ago. Never a failure: a job
+ *  that failed can be run again at once. */
+function waitWords(v: JobView): string | null {
+  const r = v.running_now;
+  if (r) {
+    if (r.job !== v.job) return `The ${NAMES[r.job].toLowerCase()} is running now. Run this once it finishes.`;
+    return `${r.by === 'cron' ? 'Its nightly cron is running it now' : 'It is running now, started from this page'}. Run now comes back when it finishes.`;
+  }
+  if (v.again_at) return `It worked a few minutes ago. Run it again from here after ${time(v.again_at)}.`;
+  return null;
 }
 
 /** One job: what it does, how it last went, and Run now. `said` is what the
@@ -101,11 +119,11 @@ export function JobCard({ view, running, said, onRun }: { view: JobView; running
         ) : (
           <>
             <div className="btn-row">
-              <button type="button" className="btn secondary" disabled={running !== null || view.hold_until !== null} onClick={() => onRun(view.job)}>
+              <button type="button" className="btn secondary" disabled={running !== null || view.running_now !== null || view.again_at !== null} onClick={() => onRun(view.job)}>
                 {running === view.job ? 'Running…' : 'Run now'}
               </button>
             </div>
-            {view.hold_until && running === null && <p className="helper">A nightly job may be running now. Run it from here after {time(view.hold_until)}.</p>}
+            {running === null && waitWords(view) && <p className="helper">{waitWords(view)}</p>}
           </>
         )}
         <p className="helper" role="status">
@@ -116,11 +134,18 @@ export function JobCard({ view, running, said, onRun }: { view: JobView; running
   );
 }
 
-export default function AdminJobs() {
+/** `pollMs`: tests shorten it. */
+export default function AdminJobs({ pollMs = POLL_MS }: { pollMs?: number } = {}) {
   const [jobs, setJobs] = useState<JobView[] | null>(null);
   const [error, setError] = useState('');
   const [running, setRunning] = useState<Job | null>(null);
   const [said, setSaid] = useState<{ job: Job; words: string } | null>(null);
+  /** Counts each read, worked or failed, so the timer below is set again after
+   *  every one: a read that fails while a run is going is tried again. */
+  const [reads, setReads] = useState(0);
+  /** Reads that failed in a row: each waits twice as long as the one before,
+   *  and after MAX_FAILED_READS the page stops reading on its own. */
+  const [failed, setFailed] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -128,8 +153,12 @@ export default function AdminJobs() {
       if (!res.ok) throw new Error();
       setJobs((await res.json()).jobs);
       setError('');
+      setFailed(0);
     } catch {
       setError('Could not read the nightly jobs right now.');
+      setFailed((n) => n + 1);
+    } finally {
+      setReads((n) => n + 1);
     }
   }, []);
 
@@ -137,14 +166,19 @@ export default function AdminJobs() {
     load();
   }, [load]);
 
-  // While the nightly crons may be running, the buttons wait; read again when
-  // that ends, so they come back without a reload.
-  const holdUntil = jobs?.find((j) => j.hold_until)?.hold_until ?? null;
+  // While a run is going (a cron's, or one started elsewhere), the buttons
+  // wait: read again every few seconds, so they come back once it ends without
+  // a reload. A job that just worked waits until its again_at. A read that
+  // fails is tried again later each time, and not after MAX_FAILED_READS in a
+  // row (a session that expired, a laptop offline).
+  const going = !!jobs?.some((j) => j.running_now);
+  const againAt = jobs?.map((j) => j.again_at).filter((t): t is string => t !== null).sort()[0] ?? null;
   useEffect(() => {
-    if (!holdUntil) return;
-    const timer = setTimeout(load, Math.max(0, Date.parse(holdUntil) - Date.now()) + 1000);
+    if (running !== null || (!going && !againAt) || failed >= MAX_FAILED_READS) return;
+    const wait = failed > 0 ? pollMs * 2 ** failed : going ? pollMs : Math.max(0, Date.parse(againAt!) - Date.now()) + 1000;
+    const timer = setTimeout(load, wait);
     return () => clearTimeout(timer);
-  }, [holdUntil, load]);
+  }, [going, againAt, running, reads, failed, pollMs, load]);
 
   const run = async (job: Job) => {
     setRunning(job);

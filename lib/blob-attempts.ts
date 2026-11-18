@@ -20,8 +20,9 @@
 // which is why the log says it didn't finish, not that it didn't answer: set
 // DEBUG=blob to see the SDK's retries (docs/operations.md).
 //
-// Never for a put: the backup's refuses to overwrite, so one sent again after
-// a first that landed would fail.
+// Never for a put: a put refuses to overwrite unless told to, so one sent
+// again after a first that landed would fail. A backup's upload is sent again
+// only by a later attempt, which tells it to (lib/backup.ts runNightlyBackup).
 
 /** How long the first attempt may take. A listing's page, a delete or a read
  *  of a backup's file finishes in well under a second; this is for one that

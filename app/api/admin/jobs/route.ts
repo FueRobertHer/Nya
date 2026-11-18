@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { containerUnavailable } from '@/lib/data-ctx';
 import { adminCtx, notAdmin } from '@/lib/admin-items';
-import { cronHoldUntil, nightlyJobs, runNightlyBackup } from '@/lib/backup';
+import { nightlyJobs, runNightlyBackup, takeRunLock } from '@/lib/backup';
 import { runNightlySweep } from '@/lib/attachment-sweep';
-import { manualRunCount } from '@/lib/nightly-run-limit';
+import { runWords } from '@/lib/nightly-run-limit';
 
 // The admin's Nightly jobs page (/admin/jobs, app/admin-view/jobs): the
 // backup (lib/backup.ts runNightlyBackup) and the clean-up of receipts and
@@ -17,11 +17,13 @@ import { manualRunCount } from '@/lib/nightly-run-limit';
 //                                    answers as GET; when the run failed, its
 //                                    reason in `error` (500).
 //
-// One run at a time, of either job: two at once would race over the same
-// files and over the backups' record, which each reads and writes whole. So
-// not while a nightly cron may be running (lib/backup.ts cronHoldUntil), nor
-// within five minutes of another run started here (lib/nightly-run-limit.ts):
-// either answers 409 and says when to try again.
+// One run at a time, of either job, whoever started it: a run takes the run
+// lock its cron takes too (lib/nightly-run-limit.ts, lib/backup.ts
+// takeRunLock), so while another run is
+// going this answers 409, naming it. Never by the clock: once a run ends, it
+// worked or failed, the next can start. A job that just worked waits a few
+// minutes before it runs again (lib/backup.ts againAt), so a second click
+// doesn't repeat it; one that failed can be run again at once.
 //
 // A demo account is never the admin (lib/admin-gate.ts), so none gets this
 // far. The POST takes JSON only, so a form on another site can't send it.
@@ -52,6 +54,8 @@ const tryIn = (ms: number) => {
   return `Try again in ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}.`;
 };
 
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 export async function POST(req: Request) {
   try {
     const admin = await adminCtx();
@@ -60,19 +64,27 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const job: unknown = body?.job;
     if (job !== 'backup' && job !== 'files') return NextResponse.json({ error: 'Unknown job' }, { status: 400 });
-    const now = new Date();
-    const until = await cronHoldUntil(now);
-    if (until) {
-      return NextResponse.json({ error: `A nightly job may be running now. ${tryIn(until.getTime() - now.getTime())}`, jobs: await nightlyJobs() }, { status: 409 });
+    // Taken before anything else, so two clicks racing never both start one,
+    // and what decides whether to run is read with no other run going.
+    const taken = await takeRunLock(job, 'hand');
+    if ('busy' in taken) {
+      return NextResponse.json({ error: `${capital(runWords(taken.busy))} is running now. Try again once it finishes.`, jobs: await nightlyJobs() }, { status: 409 });
     }
-    // Counted before it runs, so two clicks racing never both start one.
-    const started = await manualRunCount.take(admin);
-    if (started.count > 1) {
-      return NextResponse.json({ error: `A run started here may still be going. ${tryIn(started.secondsLeft * 1000)}`, jobs: await nightlyJobs() }, { status: 409 });
+    let answer: { status: number; error?: string };
+    try {
+      const now = new Date();
+      const again = (await nightlyJobs(now)).find((v) => v.job === job)?.again_at;
+      if (again) {
+        answer = { status: 409, error: `It worked a few minutes ago. ${tryIn(Date.parse(again) - now.getTime())}` };
+      } else {
+        const run = await JOBS[job](now);
+        answer = run.status === 200 ? { status: 200 } : { status: run.status, error: typeof run.body.error === 'string' ? run.body.error : 'The run failed.' };
+      }
+    } finally {
+      await taken.lock.release();
     }
-    const run = await JOBS[job](now);
-    const error = run.status === 200 ? {} : { error: typeof run.body.error === 'string' ? run.body.error : 'The run failed.' };
-    return NextResponse.json({ ...error, jobs: await nightlyJobs() }, { status: run.status });
+    // Read once the lock is released, so the page shows nothing running.
+    return NextResponse.json({ ...(answer.error !== undefined ? { error: answer.error } : {}), jobs: await nightlyJobs() }, { status: answer.status });
   } catch (err) {
     return fail(err);
   }

@@ -64,8 +64,10 @@ import { retryStalled } from './blob-attempts';
  *  signal that aborts when its step runs out of time. */
 export type BackupStore = {
   /** `cacheMaxAgeSeconds`: how long a cache may serve it, for a file that
-   *  must stop being served soon after it is deleted (a key archive). */
-  put(pathname: string, body: string, signal?: AbortSignal, opts?: { cacheMaxAgeSeconds?: number }): Promise<void>;
+   *  must stop being served soon after it is deleted (a key archive).
+   *  `overwrite`: replace a file already at that name (otherwise refused): for
+   *  a backup's upload sent again, whose first may have landed. */
+  put(pathname: string, body: string, signal?: AbortSignal, opts?: { cacheMaxAgeSeconds?: number; overwrite?: boolean }): Promise<void>;
   /** The blob's text, or null if it isn't there. */
   get(pathname: string, signal?: AbortSignal): Promise<string | null>;
   list(prefix: string, signal?: AbortSignal): Promise<{ pathname: string; uploadedAt: Date }[]>;
@@ -104,6 +106,16 @@ export type BackupOptions = {
   limits?: Partial<Record<BackupStep, number>>;
   /** How long to wait for the key archives' lock (lib/key-archive.ts). */
   keysLockWaitMs?: number;
+  /** When the run must be over (ms since the epoch): each step's limit is cut
+   *  to whole seconds left before it, and a step with less than one left fails
+   *  before it starts. So an attempt tried again late in a run still ends, and
+   *  is recorded, before Vercel ends the function (runNightlyBackup). */
+  deadline?: number;
+  /** Leave a copy that didn't read back as written for the caller to delete
+   *  (BackupProgress.bad), as runNightlyBackup does: its next attempt uploads
+   *  over it, and a delete sent before that could land after it and take the
+   *  good copy. */
+  keepBadCopy?: boolean;
 };
 
 /**
@@ -114,7 +126,12 @@ export type BackupOptions = {
  * retries 5xx and network errors up to 10 times with a doubling backoff.
  */
 async function step<T>(name: BackupStep, opts: BackupOptions, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
-  const limit = opts.limits?.[name] ?? STEP_LIMITS_MS[name];
+  let limit = opts.limits?.[name] ?? STEP_LIMITS_MS[name];
+  if (opts.deadline !== undefined) {
+    const left = Math.floor((opts.deadline - Date.now()) / 1000) * 1000;
+    if (left < 1000) throw new Error(`The backup ran out of time before its ${name} step`);
+    limit = Math.min(limit, left);
+  }
   const started = Date.now();
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -318,42 +335,91 @@ export async function listFormat1Archives(store: BackupStore, limitMs = 5_000): 
   }
 }
 
+/**
+ * How far a run's attempts have got (runNightlyBackup): an attempt after one
+ * that failed is given the same object and carries on from the step that
+ * failed, with the same archive under the same name, so nothing that finished
+ * is done again. Each field is set once its step has finished.
+ */
+export type BackupProgress = {
+  /** The step running, or the one that failed. */
+  step?: BackupStep;
+  exported?: { body: string; records: Awaited<ReturnType<typeof verifyArchive>>['records'] };
+  /** An upload was sent. One sent again may find the first's file there (it
+   *  can land and its answer be lost), so it replaces it: the name is this
+   *  run's own. */
+  sent?: boolean;
+  /** The upload finished, so an attempt after a read-back that failed reads
+   *  back again without uploading. Cleared when the copy didn't read back as
+   *  written: it is uploaded again, over the bad one. */
+  uploaded?: boolean;
+  /** A copy that didn't read back as written, not yet replaced by one that
+   *  did: deleted if the run gives up (BackupOptions.keepBadCopy). */
+  bad?: string;
+  /** The copy read back as written. */
+  verified?: boolean;
+  shared?: string[];
+  listed?: { existing: { pathname: string; uploadedAt: Date }[]; rollbacks: string[] };
+  keyArchive?: KeyArchiveResult;
+};
+
 export async function runBackup(
   client: ExportClient,
   store: BackupStore,
   now: Date = new Date(),
-  opts: BackupOptions = {}
+  opts: BackupOptions = {},
+  progress: BackupProgress = {}
 ): Promise<BackupResult> {
   const days = keepDays(); // before anything is written: a bad setting fails loudly first
-  const { body, records } = await step('export', opts, async () => {
+  const at = <T>(name: BackupStep, run: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    progress.step = name;
+    return step(name, opts, run);
+  };
+  progress.exported ??= await at('export', async () => {
     const parts: string[] = [];
     for await (const line of exportLines(client, now)) parts.push(line);
     const body = parts.join('');
     // Checked before upload too: an archive restore would refuse is not a backup.
     return { body, records: verifyArchive(body).records };
   });
+  const { body, records } = progress.exported;
 
   const pathname = `${backupFolder()}nya-${now.toISOString().replace(/[:.]/g, '-')}.f2.ndjson`;
-  await step('upload', opts, (signal) => store.put(pathname, body, signal));
+  if (!progress.verified) {
+    if (!progress.uploaded) {
+      const overwrite = progress.sent === true;
+      progress.sent = true;
+      await at('upload', (signal) => store.put(pathname, body, signal, overwrite ? { overwrite } : undefined));
+      progress.uploaded = true;
+    }
 
-  // Read back: what counts is what the store will hand over on the bad day. A
-  // read-back that runs out of time leaves the copy in place, unverified: it is
-  // most likely fine, and nothing is pruned on the strength of it.
-  const stored = await step('read-back', opts, (signal) => store.get(pathname, signal));
-  if (stored !== body) {
-    await step('discard', opts, (signal) => store.del([pathname], signal)).catch(() => {});
-    throw new Error(`The backup ${pathname} did not read back as written`);
+    // Read back: what counts is what the store will hand over on the bad day. A
+    // read-back that runs out of time leaves the copy in place, unverified: it is
+    // most likely fine, and nothing is pruned on the strength of it.
+    const stored = await at('read-back', (signal) => store.get(pathname, signal));
+    if (stored !== body) {
+      progress.uploaded = false;
+      progress.bad = pathname;
+      if (!opts.keepBadCopy) {
+        await at('discard', (signal) => store.del([pathname], signal)).catch(() => {});
+        progress.step = 'read-back';
+      }
+      throw new Error(`The backup ${pathname} did not read back as written`);
+    }
+    delete progress.bad;
+    progress.verified = true;
   }
 
   // The count, while the copy is known good: it is kept whatever follows.
-  const shared = await step('count', opts, () => noteSharedKeys(records, now));
+  progress.shared ??= await at('count', () => noteSharedKeys(records, now));
 
   // The folder's listing: what is kept, for the key archive and the prune,
   // and any archive the release before took (a rollback), noted from it.
-  const { existing, rollbacks } = await step('list', opts, async (signal) => {
+  progress.listed ??= await at('list', async (signal) => {
     const existing = await store.list(backupFolder(), signal);
     return { existing, rollbacks: await noteRollbacks(existing) };
   });
+  const { existing, rollbacks } = progress.listed;
   const kept = [now.toISOString(), ...existing.map((b) => dataArchiveName(b.pathname)?.taken).filter((t): t is string => t !== undefined)];
 
   // The key archive, checked against what tonight's values name and what the
@@ -361,19 +427,20 @@ export async function runBackup(
   // here: its data archive is kept, and nothing is pruned.
   const named = namedKeyIds(keyIdsByContainer(records));
   const maxDays = Math.max(days + 1, MIN_KEPT);
-  const keyArchive = await step('keys', opts, (signal) =>
+  progress.keyArchive ??= await at('keys', (signal) =>
     writeKeyArchive(client, store, keysLock, { takenAt: now, named, kept, maxDays, signal, ...(opts.keysLockWaitMs !== undefined ? { lockWaitMs: opts.keysLockWaitMs } : {}) })
   );
 
   const cutoff = now.getTime() - days * 86_400_000;
-  existing.sort((a, b) => (a.pathname < b.pathname ? 1 : -1)); // newest first
-  const pruned = existing
+  const pruned = [...existing]
+    .sort((a, b) => (a.pathname < b.pathname ? 1 : -1)) // newest first
     .slice(MIN_KEPT)
     .filter((b) => b.pathname !== pathname && b.uploadedAt.getTime() < cutoff)
     .map((b) => b.pathname);
-  if (pruned.length > 0) await step('prune', opts, (signal) => store.del(pruned, signal));
+  // Deleting is the same sent twice, so a prune tried again just sends it again.
+  if (pruned.length > 0) await at('prune', (signal) => store.del(pruned, signal));
 
-  return { pathname, bytes: Buffer.byteLength(body), keys: records.length, pruned, key_archive: keyArchive, shared_in: shared, rollback_noted: rollbacks };
+  return { pathname, bytes: Buffer.byteLength(body), keys: records.length, pruned, key_archive: progress.keyArchive, shared_in: progress.shared, rollback_noted: rollbacks };
 }
 
 /**
@@ -418,7 +485,7 @@ export async function vercelBlobStore(readUrl: ReadUrl = nodeText): Promise<Back
         access: 'private',
         contentType: 'application/x-ndjson',
         addRandomSuffix: false,
-        allowOverwrite: false,
+        allowOverwrite: opts?.overwrite === true,
         // Large bodies go up in parts, each retried on its own.
         multipart: body.length > 8 * 1024 * 1024,
         ...(opts?.cacheMaxAgeSeconds !== undefined ? { cacheControlMaxAge: opts.cacheMaxAgeSeconds } : {}),
@@ -612,8 +679,8 @@ export async function recordOutcome(
 // ---- A run, from the cron or from the app ----
 //
 // The backup and the receipts sweep each run nightly from a cron, and the
-// admin can start either again from Home's Admin card (app/api/admin/jobs),
-// which holds off while the job's own cron may be running.
+// admin can start either again from the Nightly jobs page (app/api/admin/jobs).
+// Every run, either way, holds the one run lock (lib/nightly-run-limit.ts).
 
 /** What a run answers its route: the status and the body, as the cron has
  *  always answered (500 with the reason on a failure, so the cron shows red in
@@ -621,11 +688,44 @@ export async function recordOutcome(
 export type RunAnswer = { status: number; body: Record<string, unknown> };
 
 /**
+ * How long a run's attempts may take in all, from when the run starts: the
+ * routes' maxDuration of 300 s, less recording the outcome (RECORD_LIMIT_MS)
+ * and a margin for what comes before and after. A cron that waited for the
+ * run lock (lib/nightly-run-limit.ts) takes its wait off.
+ */
+export const BACKUP_BUDGET_MS = 270_000;
+
+/** The pauses before each attempt after the first: a failure is most often a
+ *  call that stalled (lib/blob-attempts.ts), which a new attempt seconds later
+ *  gets through. One more attempt each, while the run's time lasts. */
+export const RETRY_PAUSES_MS: readonly number[] = [5_000, 15_000, 30_000, 60_000, 60_000];
+
+/** An attempt is started only with this long left: a backup takes seconds. */
+export const MIN_ATTEMPT_MS = 30_000;
+
+let retryPauses: readonly number[] = RETRY_PAUSES_MS;
+/** Tests shorten the pauses, or take them away (null puts them back). */
+export function setRetryPausesForTests(pauses: readonly number[] | null): void {
+  retryPauses = pauses ?? RETRY_PAUSES_MS;
+}
+
+/**
  * One nightly backup, as the cron runs it (app/api/backup/route.ts explains
  * the order): the read-write token checked, the deleted containers swept once
  * more, the backup, its outcome recorded.
+ *
+ * A backup that fails is tried again in the same run, after a pause
+ * (RETRY_PAUSES_MS), from the step that failed (BackupProgress): the same
+ * archive under the same name, uploaded again only when its upload failed or
+ * it didn't read back as written (over the bad copy, which is deleted only if
+ * the run gives up: a delete can land late). Until one works or the run's time
+ * (BACKUP_BUDGET_MS) is nearly up: every attempt's steps are cut to end
+ * before it, so the outcome is always recorded. A failure that would fail
+ * again (a setting, a key a value names that no archive holds) is tried again
+ * all the same, a few times at most, at the step it failed. The outcome says
+ * how many attempts it took; the log names each failure and its step.
  */
-export async function runNightlyBackup(now: Date = new Date()): Promise<RunAnswer> {
+export async function runNightlyBackup(now: Date = new Date(), opts: { waitedMs?: number; budgetMs?: number } = {}): Promise<RunAnswer> {
   const store = await vercelBlobStore();
   if (!store) {
     console.error('Backup skipped: no blob store is connected (BLOB_READ_WRITE_TOKEN is not set)');
@@ -635,6 +735,7 @@ export async function runNightlyBackup(now: Date = new Date()): Promise<RunAnswe
   // Timed so the headroom under maxDuration shows in the log, step by step as
   // each finishes: when one fails, the lines before it show where time went.
   const started = Date.now();
+  const deadline = started + (opts.budgetMs ?? BACKUP_BUDGET_MS) - (opts.waitedMs ?? 0);
   const onStep = (step: string, ms: number) => console.log(`Backup ${step} took ${(ms / 1000).toFixed(1)}s`);
   try {
     // Loaded here: lib/account-deletion.ts imports this module.
@@ -644,28 +745,46 @@ export async function runNightlyBackup(now: Date = new Date()): Promise<RunAnswe
   } catch (err) {
     console.error('The sweep of deleted containers failed; it runs again tomorrow', err instanceof Error ? err.name : typeof err);
   }
-  try {
-    const result = await runBackup(rawRedis(), store, now, { onStep });
-    // Logged before the outcome is recorded, so the line survives even if that
-    // write is what stalls.
-    const seconds = ((Date.now() - started) / 1000).toFixed(1);
-    console.log(
-      'Backup written',
-      result.pathname,
-      `${result.bytes} bytes`,
-      `${result.keys} keys`,
-      `${result.pruned.length} pruned`,
-      `key archive ${result.key_archive.pathname} (${result.key_archive.keys} keys, ${result.key_archive.carried.length} carried forward, ${result.key_archive.rewritten.length} rewritten, ${result.key_archive.pruned.length} pruned${result.key_archive.dropped.length > 0 ? `, ${result.key_archive.dropped.length} that didn't read back deleted` : ''})`,
-      `${result.shared_in.length} container(s) under a shared key`,
-      `${seconds}s`
-    );
-    await recordOutcome({ ok: true });
-    return { status: 200, body: result };
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    console.error('Backup failed', reason);
-    await recordOutcome({ ok: false, reason });
-    return { status: 500, body: { error: reason } };
+  const failures: string[] = [];
+  const progress: BackupProgress = {};
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const result = await runBackup(rawRedis(), store, now, { onStep, deadline, keepBadCopy: true }, progress);
+      // Logged before the outcome is recorded, so the line survives even if that
+      // write is what stalls.
+      const seconds = ((Date.now() - started) / 1000).toFixed(1);
+      console.log(
+        'Backup written',
+        result.pathname,
+        `${result.bytes} bytes`,
+        `${result.keys} keys`,
+        `${result.pruned.length} pruned`,
+        `key archive ${result.key_archive.pathname} (${result.key_archive.keys} keys, ${result.key_archive.carried.length} carried forward, ${result.key_archive.rewritten.length} rewritten, ${result.key_archive.pruned.length} pruned${result.key_archive.dropped.length > 0 ? `, ${result.key_archive.dropped.length} that didn't read back deleted` : ''})`,
+        `${result.shared_in.length} container(s) under a shared key`,
+        `${seconds}s`,
+        ...(attempt > 1 ? [`on attempt ${attempt}`] : [])
+      );
+      await recordOutcome({ ok: true });
+      return { status: 200, body: { ...result, ...(attempt > 1 ? { attempts: attempt, failed_attempts: failures } : {}) } };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      failures.push(reason);
+      const pause = retryPauses[attempt - 1];
+      const again = pause !== undefined && Date.now() + pause + MIN_ATTEMPT_MS <= deadline;
+      const where = progress.step ? ` at its ${progress.step} step` : '';
+      console.error(`Backup attempt ${attempt} failed${where}${again ? `; trying again from there in ${pause / 1000}s` : ''}`, reason);
+      if (!again) {
+        // No attempt follows to upload over a copy that didn't read back, so it
+        // goes now.
+        const bad = progress.bad;
+        if (bad) await step('discard', { onStep, deadline }, (signal) => store.del([bad], signal)).catch(() => {});
+        // The count first: the record keeps 200 characters of a reason.
+        const said = attempt > 1 ? `After ${attempt} attempts: ${reason}` : reason;
+        await recordOutcome({ ok: false, reason: said });
+        return { status: 500, body: { error: said } };
+      }
+      await new Promise((r) => setTimeout(r, pause));
+    }
   }
 }
 
@@ -723,8 +842,9 @@ export async function backupNotice(now: Date = new Date()): Promise<BackupProble
 // of its own, since no new key family is built by hand
 // (test/storage-boundary.test.ts). Each writer keeps the other's part: the
 // backup's recordOutcome carries it over, and the sweep writes only it. The
-// two run at different times of night (vercel.json), so the read and the
-// write of one never meet the other's.
+// two never run at once: every run of either, from its cron or from Run now,
+// holds the run lock (takeRunLock), so the read and the write of one never
+// meet the other's.
 
 export type AttachmentSweepStatus = {
   last_ok: string | null;
@@ -831,9 +951,104 @@ export async function attachmentSweepProblem(now: Date = new Date()): Promise<At
   return null;
 }
 
-// ---- Holding off while a job's cron may be running ----
+// ---- One nightly job at a time ----
+//
+// The run lock (rules and the cron's wait: lib/nightly-run-limit.ts), beside
+// the backups' record: every run of either job, from its cron or from Run now,
+// takes it with NX and lets it go when the run ends, worked or failed. Its
+// expiry, past the routes' maxDuration of 300 s, frees it only after a run
+// Vercel ended before it could. It holds which job, who started it, when, and
+// a random token: no account and no person. Never in an archive (lib/export.ts
+// leaves the backups: family out).
 
 export type NightlyJob = 'backup' | 'files';
+
+const RUN_LOCK = () => kEnv('backups:job-running');
+
+/** Past the routes' maxDuration of 300 s: a run still going is never freed. */
+export const RUN_LOCK_MS = 6 * 60_000;
+
+/** Who holds the run lock: for the page, and for why a run waits. */
+export type RunHolder = { job: NightlyJob; by: 'cron' | 'hand'; started: string };
+
+function holderOf(raw: unknown): RunHolder | null {
+  if (typeof raw !== 'string') return null;
+  let v: { job?: unknown; by?: unknown; started?: unknown } | null;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!v || typeof v !== 'object' || (v.job !== 'backup' && v.job !== 'files') || (v.by !== 'cron' && v.by !== 'hand') || !isIsoTime(v.started)) return null;
+  return { job: v.job, by: v.by, started: v.started };
+}
+
+/** The run going now, or null when none is (or the lock can't be read: a
+ *  notice on a page, never a reason to fail it). */
+export async function runningNow(): Promise<RunHolder | null> {
+  try {
+    return holderOf(await rawRedis().get(RUN_LOCK()));
+  } catch {
+    return null;
+  }
+}
+
+export type RunLock = { holder: RunHolder; release(): Promise<void> };
+
+/** The lock held as `raw`, which its release deletes only while it still holds. */
+function heldLock(holder: RunHolder, raw: string): { lock: RunLock } {
+  return {
+    lock: {
+      holder,
+      async release() {
+        try {
+          await redis().eval(DELETE_IF_HOLDS, [RUN_LOCK()], [raw]);
+        } catch (err) {
+          console.error('Nightly jobs: the run lock could not be released; it will expire.', err instanceof Error ? err.name : typeof err);
+        }
+      },
+    },
+  };
+}
+
+/**
+ * Takes the run lock for a run of `job`, waiting up to `waitMs` while another
+ * run holds it. The lock, or, when it stays held, who holds it (null when that
+ * can't be read). Throws when storage fails.
+ *
+ * A SET can land and its answer be lost: the request ran out of time, or the
+ * client sent it again after a network error and the second found the first's
+ * value. Either way the lock holds one of the values this call sent, so it is
+ * this call's, never another run's that it waits on until it expires.
+ */
+export async function takeRunLock(job: NightlyJob, by: RunHolder['by'], waitMs = 0): Promise<{ lock: RunLock } | { busy: RunHolder | null }> {
+  const until = Date.now() + waitMs;
+  const sent: string[] = [];
+  const current = () => rawRedis().get(RUN_LOCK()) as Promise<unknown>;
+  const ours = (raw: unknown) => (typeof raw === 'string' && sent.includes(raw) ? holderOf(raw) : null);
+  for (;;) {
+    const holder: RunHolder = { job, by, started: new Date().toISOString() };
+    const raw = JSON.stringify({ ...holder, token: crypto.randomUUID() });
+    sent.push(raw);
+    let set: unknown;
+    try {
+      set = await redis().set(RUN_LOCK(), raw, { nx: true, px: RUN_LOCK_MS });
+    } catch (err) {
+      const now = await current().catch(() => null);
+      const mine = ours(now);
+      if (mine) return heldLock(mine, now as string);
+      throw err;
+    }
+    if (set) return heldLock(holder, raw);
+    const now = await current();
+    const mine = ours(now);
+    if (mine) return heldLock(mine, now as string);
+    if (Date.now() >= until) return { busy: holderOf(now) };
+    await new Promise((r) => setTimeout(r, Math.min(1000, Math.max(0, until - Date.now()))));
+  }
+}
+
+// ---- Running a job again by hand ----
 
 /** When each job's cron is scheduled, UTC, as vercel.json says (a test holds
  *  the two to the same). */
@@ -842,48 +1057,32 @@ export const CRON_SCHEDULES: Record<NightlyJob, { path: string; hour: number; mi
   files: { path: '/api/attachments/sweep', hour: 17, minute: 30 },
 };
 
-/** How long a run takes at most: the routes' maxDuration. */
-const RUN_MS = 5 * 60_000;
+/** How long after a job last worked Run now waits before running it again, so
+ *  a job that just worked isn't run over and over. A failure never waits. */
+export const AGAIN_AFTER_OK_MS = 6 * 60_000;
 
 /**
- * Until when a run started by hand could overlap a nightly cron, or null when
- * it can't. Both jobs count, whichever is to be run: two runs at once, of
- * either job, race over the backups' record, which each reads and writes
- * whole. For each cron, the span runs from five minutes before the top of its
- * hour (a run started then is still going when the hour starts, and Vercel's
- * Hobby plan may start a cron at any point in its hour) until five minutes
- * after that hour ends (its limit), unless it has recorded an outcome since
- * its hour began: then it has run. A run started by hand never records inside
- * that span itself: it is refused there, and one started just before it ends
- * before the hour does. A record that can't be read holds nothing back: the
- * run itself says what is wrong.
+ * Until when Run now holds off a job because its latest outcome, from its cron
+ * or from Run now, is a success less than AGAIN_AFTER_OK_MS old; null when it
+ * doesn't. A failure since that success never holds it: it can be run again at
+ * once.
  */
-export async function cronHoldUntil(now: Date = new Date()): Promise<Date | null> {
-  let status: Status | null;
-  try {
-    status = await readStatus();
-  } catch {
-    return null;
-  }
-  let until: number | null = null;
-  for (const job of ['backup', 'files'] as const) {
-    const hour = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), CRON_SCHEDULES[job].hour);
-    const end = hour + 60 * 60_000 + RUN_MS;
-    if (now.getTime() < hour - RUN_MS || now.getTime() >= end) continue;
-    const record = job === 'backup' ? status : sweepOf(status);
-    const ran = [record?.last_ok, record?.last_failed].some((t) => !!t && Date.parse(t) >= hour);
-    if (!ran) until = Math.max(until ?? 0, end);
-  }
-  return until === null ? null : new Date(until);
+export function againAt(record: { last_ok: string | null; last_failed: string | null } | null, now: Date): Date | null {
+  const ok = record?.last_ok ? Date.parse(record.last_ok) : NaN;
+  if (Number.isNaN(ok)) return null;
+  if (record?.last_failed && Date.parse(record.last_failed) >= ok) return null;
+  const at = ok + AGAIN_AFTER_OK_MS;
+  return at > now.getTime() ? new Date(at) : null;
 }
 
 // ---- What the admin's Nightly jobs page shows (app/admin-view/jobs) ----
 
 /** One job as the page shows it: when it runs, its last outcomes, what the
  *  dashboard says of it (null when nothing), and whether it can be run now:
- *  `hold_until` while a nightly cron may be running (cronHoldUntil), `runnable`
- *  false where a run can't help (no blob store; a clean-up the breaker
- *  held, which would hold again). */
+ *  `running_now`, the run going (of either job, since one runs at a time:
+ *  lib/nightly-run-limit.ts), `again_at` while it worked a moment ago
+ *  (againAt), `runnable` false where a run can't help (no blob store; a
+ *  clean-up the breaker held, which would hold again). */
 export type JobView = {
   job: NightlyJob;
   hour: number;
@@ -892,7 +1091,8 @@ export type JobView = {
   last_failed: string | null;
   reason: string | null;
   problem: BackupProblem | AttachmentSweepProblem | null;
-  hold_until: string | null;
+  running_now: RunHolder | null;
+  again_at: string | null;
   runnable: boolean;
 };
 
@@ -901,11 +1101,7 @@ export type JobView = {
 export async function nightlyJobs(now: Date = new Date()): Promise<JobView[]> {
   const status = await readStatus().catch(() => null);
   const sweep = sweepOf(status);
-  const [backupNow, filesNow, hold] = await Promise.all([
-    backupNotice(now),
-    attachmentSweepProblem(now),
-    cronHoldUntil(now),
-  ]);
+  const [backupNow, filesNow, running] = await Promise.all([backupNotice(now), attachmentSweepProblem(now), runningNow()]);
   const kept = backupRetention()?.kept === true;
   const jobs: JobView[] = [
     {
@@ -916,7 +1112,8 @@ export async function nightlyJobs(now: Date = new Date()): Promise<JobView[]> {
       last_failed: status?.last_failed ?? null,
       reason: status?.last_failed ? status.reason : null,
       problem: backupNow,
-      hold_until: hold?.toISOString() ?? null,
+      running_now: running,
+      again_at: againAt(status, now)?.toISOString() ?? null,
       runnable: kept,
     },
     {
@@ -927,7 +1124,8 @@ export async function nightlyJobs(now: Date = new Date()): Promise<JobView[]> {
       last_failed: sweep?.last_failed ?? null,
       reason: sweep?.last_failed ? sweep.reason : null,
       problem: filesNow,
-      hold_until: hold?.toISOString() ?? null,
+      running_now: running,
+      again_at: againAt(sweep, now)?.toISOString() ?? null,
       runnable: kept && !filesNow?.held,
     },
   ];
