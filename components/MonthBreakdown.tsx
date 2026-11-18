@@ -396,7 +396,7 @@ export default function MonthBreakdown({
   /** After a split or a group is saved or undone (components/SplitSheet.tsx,
    *  components/GroupSheet.tsx): the list read again. Without it, nothing is
    *  offered to split or group. */
-  onSplitsChanged?: () => void;
+  onSplitsChanged?: () => void | Promise<void>;
   /** The review queue (components/review-state.ts): what needs review, its
    *  filter, Card Mode and approving. Without it, none is shown. */
   review?: ReviewControls;
