@@ -35,6 +35,9 @@ let failLists = 0;
 let corruptOnce = 0;
 /** Every upload sent, by name. */
 const puts: string[] = [];
+/** When set, deletes are held here instead of done, to land after the run, as
+ *  one whose answer was lost can. */
+let lateDeletes: string[] | null = null;
 await mockForFile('@vercel/blob', () => ({
   put: async (pathname: string, body: string, options: any) => {
     signals.put = options.abortSignal;
@@ -82,6 +85,7 @@ await mockForFile('@vercel/blob', () => ({
   },
   del: async (pathnames: string[], options?: { abortSignal?: AbortSignal }) => {
     signals.del = options?.abortSignal;
+    if (lateDeletes) return void lateDeletes.push(...pathnames);
     for (const p of pathnames) blobs.delete(p);
   },
 }));
@@ -109,7 +113,7 @@ const fakeGet = (url: string, options: any, cb: (res: any) => void) => {
 };
 await mockForFile('node:https', () => ({ ...realHttps, default: { ...(realHttps as any).default, get: fakeGet }, get: fakeGet }));
 
-const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention, againAt, AGAIN_AFTER_OK_MS, CRON_SCHEDULES, recordAttachmentSweep, nightlyJobs, runningNow, takeRunLock, runNightlyBackup, setRetryPausesForTests, RETRY_PAUSES_MS, MIN_ATTEMPT_MS, BACKUP_BUDGET_MS } = await import('@/lib/backup');
+const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention, againAt, AGAIN_AFTER_OK_MS, CRON_SCHEDULES, recordAttachmentSweep, nightlyJobs, runningNow, takeRunLock, runNightlyBackup, setRetryPausesForTests, RETRY_PAUSES_MS, MIN_ATTEMPT_MS, BACKUP_BUDGET_MS, RECORD_LIMIT_MS } = await import('@/lib/backup');
 const { verifyArchive } = await import('@/lib/restore');
 const { keyArchiveFolder, verifyKeyArchive, KEY_GENERATIONS } = await import('@/lib/key-archive');
 /** The data archives kept, and the key archives (lib/key-archive.ts). */
@@ -132,6 +136,7 @@ beforeEach(async () => {
   failLists = 0;
   corruptOnce = 0;
   puts.length = 0;
+  lateDeletes = null;
   // No second attempt unless a test asks for one, so a failure answers at once.
   setRetryPausesForTests([]);
   urlReads.length = 0;
@@ -641,7 +646,7 @@ describe('trying a failed backup again in the same run', () => {
   };
 
   test('fits in the routes’ limit: tries again for 270 s at most, and starts an attempt only with 30 s left', () => {
-    expect(BACKUP_BUDGET_MS + 15_000).toBeLessThan(300_000);
+    expect(BACKUP_BUDGET_MS + RECORD_LIMIT_MS).toBeLessThan(300_000);
     expect(MIN_ATTEMPT_MS).toBe(30_000);
     expect(RETRY_PAUSES_MS).toEqual([5_000, 15_000, 30_000, 60_000, 60_000]);
   });
@@ -669,13 +674,23 @@ describe('trying a failed backup again in the same run', () => {
     expect(dataBlobs()).toEqual([answer.body.pathname as string]);
   });
 
-  test('a copy that didn’t read back as written is deleted and uploaded again, still one copy', async () => {
+  test('a copy that didn’t read back as written is uploaded again over the bad one, still one copy', async () => {
     setRetryPausesForTests([10]);
     corruptOnce = 1;
     const { answer, errors, steps } = await quietRun();
     expect(answer.status).toBe(200);
     expect(errors[0]).toStartWith('Backup attempt 1 failed at its read-back step; trying again from there');
-    expect(steps).toEqual(['export', 'upload', 'read-back', 'discard', 'upload', 'read-back', 'count', 'list', 'keys']);
+    expect(steps).toEqual(['export', 'upload', 'read-back', 'upload', 'read-back', 'count', 'list', 'keys']);
+    expect(dataBlobs()).toEqual([answer.body.pathname as string]);
+  });
+
+  test('a delete that lands late can’t take the copy uploaded over the bad one', async () => {
+    setRetryPausesForTests([10]);
+    corruptOnce = 1;
+    lateDeletes = [];
+    const { answer } = await quietRun();
+    expect(answer.status).toBe(200);
+    for (const p of lateDeletes) blobs.delete(p);
     expect(dataBlobs()).toEqual([answer.body.pathname as string]);
   });
 
@@ -715,8 +730,16 @@ describe('trying a failed backup again in the same run', () => {
 
   test('each step’s limit is cut to the whole seconds left, so an attempt ends in time', async () => {
     hangReads = true;
-    await expect(runBackup(fake as any, await store(), clock, { deadline: Date.now() + 1_900 })).rejects.toThrow("The backup's read-back step took longer than 1s");
+    // 2 s at most for the read-back, 1 s if the steps before it were slow.
+    await expect(runBackup(fake as any, await store(), clock, { deadline: Date.now() + 2_900 })).rejects.toThrow(/The backup's read-back step took longer than [12]s/);
     await expect(runBackup(fake as any, await store(), clock, { deadline: Date.now() + 500 })).rejects.toThrow('The backup ran out of time before its export step');
+  });
+
+  test('the run hands its time to each attempt: a read-back that hangs ends with the run’s budget, not its own limit', async () => {
+    hangReads = true;
+    const { answer } = await quietRun({ budgetMs: 2_900 });
+    expect(answer.status).toBe(500);
+    expect(String(answer.body.error)).toMatch(/The backup's read-back step took longer than [12]s/);
   });
 });
 

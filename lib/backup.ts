@@ -111,6 +111,11 @@ export type BackupOptions = {
    *  before it starts. So an attempt tried again late in a run still ends, and
    *  is recorded, before Vercel ends the function (runNightlyBackup). */
   deadline?: number;
+  /** Leave a copy that didn't read back as written for the caller to delete
+   *  (BackupProgress.bad), as runNightlyBackup does: its next attempt uploads
+   *  over it, and a delete sent before that could land after it and take the
+   *  good copy. */
+  keepBadCopy?: boolean;
 };
 
 /**
@@ -346,8 +351,11 @@ export type BackupProgress = {
   sent?: boolean;
   /** The upload finished, so an attempt after a read-back that failed reads
    *  back again without uploading. Cleared when the copy didn't read back as
-   *  written: it is deleted, and uploaded again. */
+   *  written: it is uploaded again, over the bad one. */
   uploaded?: boolean;
+  /** A copy that didn't read back as written, not yet replaced by one that
+   *  did: deleted if the run gives up (BackupOptions.keepBadCopy). */
+  bad?: string;
   /** The copy read back as written. */
   verified?: boolean;
   shared?: string[];
@@ -391,10 +399,14 @@ export async function runBackup(
     const stored = await at('read-back', (signal) => store.get(pathname, signal));
     if (stored !== body) {
       progress.uploaded = false;
-      await at('discard', (signal) => store.del([pathname], signal)).catch(() => {});
-      progress.step = 'read-back';
+      progress.bad = pathname;
+      if (!opts.keepBadCopy) {
+        await at('discard', (signal) => store.del([pathname], signal)).catch(() => {});
+        progress.step = 'read-back';
+      }
       throw new Error(`The backup ${pathname} did not read back as written`);
     }
+    delete progress.bad;
     progress.verified = true;
   }
 
@@ -705,7 +717,8 @@ export function setRetryPausesForTests(pauses: readonly number[] | null): void {
  * A backup that fails is tried again in the same run, after a pause
  * (RETRY_PAUSES_MS), from the step that failed (BackupProgress): the same
  * archive under the same name, uploaded again only when its upload failed or
- * it didn't read back as written. Until one works or the run's time
+ * it didn't read back as written (over the bad copy, which is deleted only if
+ * the run gives up: a delete can land late). Until one works or the run's time
  * (BACKUP_BUDGET_MS) is nearly up: every attempt's steps are cut to end
  * before it, so the outcome is always recorded. A failure that would fail
  * again (a setting, a key a value names that no archive holds) is tried again
@@ -736,7 +749,7 @@ export async function runNightlyBackup(now: Date = new Date(), opts: { waitedMs?
   const progress: BackupProgress = {};
   for (let attempt = 1; ; attempt++) {
     try {
-      const result = await runBackup(rawRedis(), store, now, { onStep, deadline }, progress);
+      const result = await runBackup(rawRedis(), store, now, { onStep, deadline, keepBadCopy: true }, progress);
       // Logged before the outcome is recorded, so the line survives even if that
       // write is what stalls.
       const seconds = ((Date.now() - started) / 1000).toFixed(1);
@@ -761,6 +774,10 @@ export async function runNightlyBackup(now: Date = new Date(), opts: { waitedMs?
       const where = progress.step ? ` at its ${progress.step} step` : '';
       console.error(`Backup attempt ${attempt} failed${where}${again ? `; trying again from there in ${pause / 1000}s` : ''}`, reason);
       if (!again) {
+        // No attempt follows to upload over a copy that didn't read back, so it
+        // goes now.
+        const bad = progress.bad;
+        if (bad) await step('discard', { onStep, deadline }, (signal) => store.del([bad], signal)).catch(() => {});
         // The count first: the record keeps 200 characters of a reason.
         const said = attempt > 1 ? `After ${attempt} attempts: ${reason}` : reason;
         await recordOutcome({ ok: false, reason: said });
