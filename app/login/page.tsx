@@ -124,9 +124,11 @@ export default function LoginPage() {
             />
           </label>
           {/* An alert, so it is heard when it comes: after Enter, focus is
-              already on the field, and moving it there again says nothing. */}
+              already on the field, and moving it there again says nothing.
+              A stack, so the error keeps the stack's spacing under the
+              field rather than adding its own. */}
           {wrong && (
-            <div role="alert">
+            <div role="alert" className="stack">
               <FieldError id={ERROR_ID}>{WRONG_PASSWORD}</FieldError>
             </div>
           )}

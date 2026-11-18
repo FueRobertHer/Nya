@@ -84,7 +84,8 @@ describe('the password login', () => {
     await page.submit();
     const error = page.errorUnder();
     expect(words(error)).toBe('That password isn’t right. Check it and try again.');
-    expect((error.parentNode as FakeElement).getAttribute('role')).toBe('alert');
+    const alert = error.parentNode as FakeElement;
+    expect([alert.getAttribute('role'), alert.getAttribute('class')]).toEqual(['alert', 'stack']);
     expect(page.field().getAttribute('aria-invalid')).toBe('true');
     expect(page.field().getAttribute('aria-describedby')).toBe(error.getAttribute('id'));
     expect(page.notice()).toBeUndefined();
