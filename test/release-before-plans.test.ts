@@ -22,7 +22,9 @@ import type { PlanItem } from '@/lib/fire/items';
 // and which its saves keep. It writes what T2 read a release
 // ahead: `model: 'detailed'`, each plan's choices, the household and `at-stop`.
 // And it writes `lastsIn`, your FI date as the earliest stop that lasts (D9),
-// which the release before reads and its saves keep.
+// which the release before reads and its saves keep. Accounts' own rates, and a
+// saved plan's growth, it writes with no reader a release before: the release
+// before refuses a plan or saved plan holding them (see their tests).
 // And its restore (test/fixtures/release-before/user-restore/parts.ts) knows
 // every part of a download this release makes, plans and all, but money in
 // and out's, new in this release (see the test): it refuses a file with a
@@ -263,6 +265,37 @@ describe('the release before reads every plan this release writes', () => {
     ok(await save(TYPED, main, factsOf(TYPED)));
     entries = await readsAll(MAIN_ID, 'your plan back to when you reach it');
     expect(Object.hasOwn(entries.get(MAIN_ID)!.plan, 'lastsIn')).toBe(false);
+  });
+
+  // Accounts' own rates shipped with their writer, with no reader a release
+  // before (no rollbacks are planned): the release before refuses a plan that
+  // holds them, and reads it again once they are taken off
+  // (docs/operations.md, rolling back). A plan without them is written as before.
+  test('accounts’ own rates: an entry it refuses while they are there, and reads once they are gone', async () => {
+    const rated: FirePlanV2 = { ...TYPED, accounts: [{ account_id: 'acc-1', growth: 0.07, yield: null }] };
+    const main = ok(await save(rated, null, DEFAULTS)).updated_at as string;
+    const { refused } = await readAsBefore();
+    expect(refused).toEqual([MAIN_ID]);
+    ok(await save(TYPED, main, factsOf(TYPED)));
+    const entries = await readsAll(MAIN_ID, 'your plan without them');
+    expect(Object.hasOwn(entries.get(MAIN_ID)!.plan, 'accounts')).toBe(false);
+  });
+
+  test('a saved plan with the growth its accounts ran at: one it refuses; without, one it reads', async () => {
+    const rated: FirePlanV2 = { ...TYPED, accounts: [{ account_id: 'acc-1', growth: 0.07, yield: null }] };
+    const put = async (saved: object) => (await call(savedRoute.PUT, 'saved-plan', 'PUT', { saved, based_on: (await savedPlanStore.get(ctx))?.rev ?? null })).status;
+    expect(await put({ plan: rated, savings: 20_000, currency: 'USD', inflation: 0.03, growth: 0.061 })).toBe(200);
+    expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(false);
+    // Either alone is refused: the plan's rates, or the growth.
+    expect(await put({ plan: rated, savings: 20_000, currency: 'USD', inflation: 0.03 })).toBe(200);
+    expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(false);
+    expect(await put({ plan: TYPED, savings: 20_000, currency: 'USD', inflation: 0.03, growth: 0.061 })).toBe(200);
+    expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(false);
+    // The plan's own rate sent as its growth isn't kept.
+    expect(await put({ plan: TYPED, savings: 20_000, currency: 'USD', inflation: 0.03, growth: TYPED.realReturn })).toBe(200);
+    const stored = await savedPlanStore.get(ctx);
+    expect(Object.hasOwn(stored as object, 'growth')).toBe(false);
+    expect(oSaved.isSavedPlan(stored)).toBe(true);
   });
 
   test('a saved plan of version 2, as this release’s saved plan route stores it', async () => {

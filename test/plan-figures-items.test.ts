@@ -36,8 +36,11 @@ describe('with one-offs and income out of the walk, the release before’s figur
         continue;
       }
       compared++;
-      const { stopAge, workedOut, ...view } = now.view;
+      const { stopAge, workedOut, growth, ownRates, ...view } = now.view;
       expect(view).toEqual(was.view);
+      // No account has a rate of its own: the plan's, to the bit.
+      expect(growth).toBe(p.realReturn);
+      expect(ownRates).toBe(0);
       expect(stopAge).toBe(p.targetAge);
       expect(workedOut).toBe(was.view.fiNumber);
       if ('missing' in was.engine) expect(now.engine).toEqual(was.engine);

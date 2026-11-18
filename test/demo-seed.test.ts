@@ -801,7 +801,7 @@ describe('what a seed sets up', () => {
     expect(planOfGoal('Japan trip')).toMatchObject({ monthly_target: 500 });
     expect(planOfGoal('New laptop')?.archived).toEqual(profile.goals[2].plan!.archived);
 
-    // Your plan with its own items and workplace plan; two copies beside it.
+    // Your plan with its own items and workplace plan; three copies beside it.
     const mine = (await firePlansStore.get(TEST_CTX, MAIN_ID))!.plan;
     if (mine.version !== 2) throw new Error('expected version 2');
     expect(mine.items.map((i) => i.id)).toEqual(['japan-trip']);
@@ -813,6 +813,9 @@ describe('what a seed sets up', () => {
     expect([coast.targetAge, coast.rule, coast.items.map((i) => i.id)]).toEqual([40, 'guardrails', ['japan-trip', 'freelance']]);
     const lasts = copies.find((c) => c.name === 'Earliest stop that lasts')!.plan;
     expect(lasts.version === 2 && lasts.lastsIn).toBe(0.9);
+    const brokerage = copies.find((c) => c.name === 'Brokerage at 7%')!.plan;
+    expect(brokerage.version === 2 && brokerage.accounts).toEqual([{ account_id: idOf('7788'), growth: 0.07, yield: null }]);
+    expect(mine.accounts).toBeUndefined();
 
     // Saved three months back, as the Progress card saves one.
     const savedPlan = (await savedPlanStore.get(TEST_CTX))!;

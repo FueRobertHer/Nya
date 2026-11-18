@@ -10,12 +10,17 @@
 // annual savings the Plan used that day (typed, or as Nya measured it), the
 // currency its amounts are in, an inflation rate, and the UTC day it was
 // saved (the days snapshots are kept by). Never a result: no FI number, no
-// FI age, no balance on any day. Invested assets aren't kept either: where
+// FI age, no balance on any day, with one exception: with accounts' own growth
+// rates (lib/fire/account-growth.ts), the rate they blended to that day
+// (`growth`), since the blend rests on each account's balance then and invested
+// history keeps only totals, so it can't be worked out again later. Invested
+// assets aren't kept either: where
 // the plan starts is that day's measured balances, summed again on every
 // read by today's rules (app/api/invested-history), so an account hidden
 // since, or include cash, counts the same at both ends.
 //
-// THE COMPARISON. The plan grows its start at its growth after inflation,
+// THE COMPARISON. The plan grows its start at its growth after inflation
+// (the one it was saved with where it has one, savedGrowth),
 // adding its savings steadily through the year (lib/fire/fi.ts
 // projectBalance, which is exact at whole years and smooth between them).
 // That is in the start day's dollars; snapshots are in each day's own, so
@@ -40,7 +45,7 @@
 
 import { projectBalance } from './fi';
 import type { WalkChanges } from './events';
-import { parsePlan, type PlanCore } from './plan';
+import { LIMITS, parsePlan, type PlanCore } from './plan';
 import { isStoredPlan, parsePlanV2, upgradeStoredPlan, type StoredPlan } from './plan-v2';
 
 export type SavedPlan = {
@@ -62,10 +67,14 @@ export type SavedPlan = {
   /** A new random value on every save: a change is made only to the version
    *  the page loaded (app/api/saved-plan). */
   rev: string;
+  /** The growth after inflation the Plan ran at that day, a fraction, where
+   *  its accounts' own rates made it differ from the plan's `realReturn`
+   *  (absent otherwise; see the top of this file). */
+  growth?: number;
 };
 
 /** What a save sends: everything but what the server sets. */
-export type SavedPlanDraft = Pick<SavedPlan, 'plan' | 'savings' | 'currency' | 'inflation'>;
+export type SavedPlanDraft = Pick<SavedPlan, 'plan' | 'savings' | 'currency' | 'inflation' | 'growth'>;
 
 /** The inflation rate a save starts with, which the save sheet shows and the
  *  person can change. */
@@ -77,6 +86,8 @@ const MAX_SAVINGS = 1e12;
 
 const KEYS = ['version', 'plan', 'savings', 'currency', 'inflation', 'day', 'savedAt', 'rev'] as const;
 const DRAFT_KEYS = ['plan', 'savings', 'currency', 'inflation'] as const;
+/** Held only while set. */
+const OPTIONAL = ['growth'] as const;
 /** A currency code as accounts carry them: ISO 4217, or one of Plaid's
  *  unofficial codes. */
 const CURRENCY = /^[A-Z0-9]{2,12}$/;
@@ -84,9 +95,10 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const REV = /^[A-Za-z0-9_.:-]{1,200}$/;
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+/** Every one of `keys`, and nothing but them and the optional fields. */
 const exactly = (o: Record<string, unknown>, keys: readonly string[]) => {
   const k = Object.keys(o);
-  return k.length === keys.length && keys.every((x) => Object.hasOwn(o, x));
+  return k.length === keys.length + OPTIONAL.filter((x) => Object.hasOwn(o, x)).length && keys.every((x) => Object.hasOwn(o, x));
 };
 
 /** A real calendar day, as YYYY-MM-DD. */
@@ -113,6 +125,7 @@ export function isSavedPlan(v: unknown): v is SavedPlan {
   if (typeof v.inflation !== 'number' || !Number.isFinite(v.inflation) || v.inflation <= -1) return false;
   if (!isDay(v.day)) return false;
   if (typeof v.savedAt !== 'string' || Number.isNaN(Date.parse(v.savedAt))) return false;
+  if (Object.hasOwn(v, 'growth') && !(typeof v.growth === 'number' && Number.isFinite(v.growth))) return false;
   return typeof v.rev === 'string' && REV.test(v.rev);
 }
 
@@ -121,7 +134,7 @@ export function isSavedPlan(v: unknown): v is SavedPlan {
  *  figures in range. */
 export function parseSavedDraft(raw: unknown): { ok: SavedPlanDraft } | { error: string } {
   if (!isObject(raw)) return { error: 'Send the plan to save, as an object' };
-  const extra = Object.keys(raw).find((k) => !(DRAFT_KEYS as readonly string[]).includes(k));
+  const extra = Object.keys(raw).find((k) => !(DRAFT_KEYS as readonly string[]).includes(k) && !(OPTIONAL as readonly string[]).includes(k));
   if (extra) return { error: `${extra.slice(0, 40)} isn’t taken here` };
   if (!exactly(raw, DRAFT_KEYS)) return { error: 'A saved plan has plan, savings, currency and inflation' };
   const parsed: { plan: StoredPlan } | { error: string } = isObject(raw.plan) && raw.plan.version === 2 ? parsePlanV2(raw.plan) : parsePlan(raw.plan);
@@ -131,7 +144,13 @@ export function parseSavedDraft(raw: unknown): { ok: SavedPlanDraft } | { error:
   if (typeof raw.inflation !== 'number' || !Number.isFinite(raw.inflation) || raw.inflation < 0 || raw.inflation > MAX_INFLATION) {
     return { error: `inflation is a rate from 0% to ${MAX_INFLATION * 100}% a year` };
   }
-  return { ok: { plan: parsed.plan, savings: raw.savings, currency: raw.currency, inflation: raw.inflation } };
+  const [min, max] = LIMITS.realReturn;
+  if (Object.hasOwn(raw, 'growth') && !(typeof raw.growth === 'number' && Number.isFinite(raw.growth) && raw.growth >= min && raw.growth <= max)) {
+    return { error: `growth is a rate from ${min * 100}% to ${max * 100}% a year` };
+  }
+  // Kept only where it differs from the plan's own.
+  const growth = typeof raw.growth === 'number' && raw.growth !== parsed.plan.realReturn ? { growth: raw.growth } : {};
+  return { ok: { plan: parsed.plan, savings: raw.savings, currency: raw.currency, inflation: raw.inflation, ...growth } };
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -148,16 +167,22 @@ export function yearsBetween(from: string, to: string): number {
  *  plan-figures.ts resolveSaved). */
 export type SavedItems = { from: string; age: number; walk: WalkChanges };
 
+/** The growth after inflation a saved plan grows at: the one it was saved
+ *  with, else its plan's. */
+export function savedGrowth(saved: Pick<SavedPlan, 'plan' | 'growth'>): number {
+  return saved.growth ?? saved.plan.realReturn;
+}
+
 /** Where the saved plan has invested assets on `day`, in that day's own
  *  money, growing from `start`, the measured balance on the `from` day (see
  *  the top of this file), with its items where `items` places them (none
  *  when left out). The one function for the card's words and any line drawn
  *  from it. Null for a day before `from`, or a growth rate the formula
  *  doesn't take. */
-export function plannedAt(saved: Pick<SavedPlan, 'plan' | 'savings' | 'inflation'>, start: { day: string; total: number }, day: string, items: SavedItems | null = null): number | null {
+export function plannedAt(saved: Pick<SavedPlan, 'plan' | 'savings' | 'inflation' | 'growth'>, start: { day: string; total: number }, day: string, items: SavedItems | null = null): number | null {
   const years = yearsBetween(start.day, day);
   if (!(years >= 0)) return null;
-  const g = saved.plan.realReturn;
+  const g = savedGrowth(saved);
   if (!(g > -0.99 && g <= 1)) return null;
   let total = projectBalance(start.total, saved.savings, g, years);
   if (items) {
@@ -175,13 +200,18 @@ export function plannedAt(saved: Pick<SavedPlan, 'plan' | 'savings' | 'inflation
   return total * (1 + saved.inflation) ** years;
 }
 
+/** Each account's own growth in a plan, by account (dividends don't move the comparison). */
+const ownGrowth = (plan: Pick<PlanCore, 'accounts'>): string =>
+  JSON.stringify((plan.accounts ?? []).filter((x) => x.growth !== null).map((x) => [x.account_id, x.growth]));
+
 /** What the comparison rests on that the Plan has changed since it was
- *  saved, in a few words each: its growth after inflation, include cash,
- *  and typed savings. Nothing else moves the comparison, so nothing else is
- *  said (a birthday's age, a new withdrawal rate). */
+ *  saved, in a few words each: its growth after inflation (the plan's, or an
+ *  account's own), include cash, and typed savings. Nothing else moves the
+ *  comparison, so nothing else is said (a birthday's age, a new withdrawal
+ *  rate, balances that move the blend of accounts' rates). */
 export function changedSince(saved: Pick<SavedPlan, 'plan'>, now: PlanCore): string[] {
   const out: string[] = [];
-  if (saved.plan.realReturn !== now.realReturn) out.push('growth after inflation');
+  if (saved.plan.realReturn !== now.realReturn || ownGrowth(saved.plan.version === 2 ? saved.plan : {}) !== ownGrowth(now)) out.push('growth after inflation');
   if (saved.plan.includeCash !== now.includeCash) out.push('include cash');
   if (saved.plan.savings !== now.savings) out.push(now.savings === null ? 'savings, which follow Nya’s figure now' : 'the savings you typed');
   return out;

@@ -57,7 +57,7 @@ export function MoneyLines({ lines }: { lines: readonly YearLine[] }) {
 export function DrawdownCard({
   copyName = null,
   detail,
-  realReturn,
+  growth,
   money,
   rmdAge,
   joint,
@@ -69,7 +69,8 @@ export function DrawdownCard({
 }: {
   copyName?: string | null;
   detail: PlanDetail;
-  realReturn: number;
+  /** The growth after inflation the plan runs at (FiView's). */
+  growth: number;
   money: Money;
   rmdAge: number;
   /** Two people on one return, for the survivor's line. */
@@ -90,7 +91,7 @@ export function DrawdownCard({
       <CopyTag name={copyName} />
       <div className="card-header">
         <h3 id="plan-years-title" ref={titleRef} tabIndex={-1}>
-          Year by year, at a steady {pct(realReturn)} after inflation
+          Year by year, at a steady {pct(growth)} after inflation
         </h3>
       </div>
       {working && (

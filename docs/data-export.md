@@ -660,7 +660,7 @@ Your shared transactions: `id` is the transaction's id (a bank's, as in `transac
 
 #### `fire-plan-saved`
 
-The plan you said is your plan, with **This is my plan** on the Plan tab ([progress against your plan](features.md#progress-against-your-plan), `lib/fire/saved-plan.ts`), or `null` if you never did or stopped comparing. It holds your [plan](#fire-plans)'s assumptions as they were that day, the savings it used and an inflation rate, never a figure worked out from them: no FI number, no FI age, and no balance on any day, not even the one it starts from, which the Plan tab adds up again from your recorded balances (in `account_history`) each time it is shown.
+The plan you said is your plan, with **This is my plan** on the Plan tab ([progress against your plan](features.md#progress-against-your-plan), `lib/fire/saved-plan.ts`), or `null` if you never did or stopped comparing. It holds your [plan](#fire-plans)'s assumptions as they were that day, the savings it used and an inflation rate, never a figure worked out from them but one: no FI number, no FI age, and no balance on any day, not even the one it starts from, which the Plan tab adds up again from your recorded balances (in `account_history`) each time it is shown. The one is `growth`, where your accounts' own rates made the growth your plan ran at differ from its own: it rests on each account's balance that day, and the recorded history keeps only totals, so it couldn't be worked out again.
 
 | Field | Meaning |
 | --- | --- |
@@ -672,6 +672,7 @@ The plan you said is your plan, with **This is my plan** on the Plan tab ([progr
 | `day` | The UTC day you saved it (`YYYY-MM-DD`), the days balances are recorded by. |
 | `savedAt` | When you saved it. |
 | `rev` | A random id, new on every save: the version a change is made to. |
+| `growth` | Only where it differs from the plan's `realReturn`: the growth after inflation your plan ran at that day, a fraction, the blend of your accounts' own rates and the plan's, weighted by each account's balance then. Progress grows the saved plan at it to say where it has you. |
 
 #### `fire-plans`
 
@@ -707,6 +708,7 @@ Only what you chose or typed: nothing Nya measures, and no result. A plan saved 
 | `partnerAge`, `stopAtFi`, `fiNumber` | Version 2: your partner's age, or `null`; whether you stop when you reach FI; and your own FI number, or `null` to work it out. |
 | `lastsIn` | Version 2, only while it is set: your FI date is the earliest stop whose money lasts in at least this share of Will it last?'s starts (`0.8`, `0.9` or `0.95`). Absent, your FI date is when your invested assets reach the FI number. |
 | `planFunding[]` | How you said each workplace plan is paid into: `account_id`, and `paidFrom`, `payroll` or `bank`. A plan not listed is not set. |
+| `accounts[]` | Version 2, only while it lists one: each account you gave a rate of its own in this plan, by `account_id`, sorted by it, with `growth`, its growth after inflation a year, and `yield`, the dividends and interest a taxable account pays a year, each a fraction or `null` for the plan's. An account that is gone stays listed, and is no longer used. |
 
 #### Parts from before plans were copies
 

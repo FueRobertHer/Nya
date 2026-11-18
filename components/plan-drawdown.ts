@@ -18,7 +18,8 @@ import type { Owner, TaxFacts } from '@/lib/fire/tax-facts';
 import type { Filing, StateCode } from '@/lib/fire/tax/law/types';
 import type { FigureNote } from './plan-figure-notes';
 import { plainNumber } from '@/lib/format';
-import { pct } from './plan-text';
+import type { FiView } from '@/lib/fire/plan';
+import { ownRatesText, pct } from './plan-text';
 
 type Money = (n: number) => string;
 
@@ -297,7 +298,8 @@ export type YearSection = { title: string; lines: YearLine[]; meter?: YearMeter;
 
 export type YearContext = {
   money: Money;
-  realReturn: number;
+  /** The growth after inflation the plan runs at (FiView's). */
+  growth: number;
   /** Fractions of a point: 0.021 is 2.1 points. */
   healthGrowth: number;
   acaLaw: TaxChoices['health']['acaLaw'];
@@ -337,7 +339,7 @@ export function yearHelper(y: DrawdownYear, c: YearContext): string {
   if (y.partnerAge !== null) parts.push(`Your partner is ${y.partnerAge}.`);
   const covered = coverageWords(y);
   if (covered) parts.push(covered);
-  parts.push(`Assumes steady ${pct(c.realReturn)} growth after inflation, health costs rising ${healthPace(c.healthGrowth)}, and ${c.lawYear} tax law. Hypothetical, not tax advice.`);
+  parts.push(`Assumes steady ${pct(c.growth)} growth after inflation, health costs rising ${healthPace(c.healthGrowth)}, and ${c.lawYear} tax law. Hypothetical, not tax advice.`);
   return parts.join(' ');
 }
 
@@ -520,9 +522,9 @@ export function sharesNote(s: Pick<FiShares, 'settled' | 'gap' | 'noMix'>, money
 }
 
 /** The last line of Tax after you stop: what it all rests on. */
-export function taxHypothetical(a: { lawYear: number; state: StateCode | null; stateRate: number; stateTaxes: boolean | null; converts: boolean; realReturn: number; healthGrowth: number }): string {
+export function taxHypothetical(a: { lawYear: number; state: StateCode | null; stateRate: number; stateTaxes: boolean | null; converts: boolean; growth: number; healthGrowth: number }): string {
   const state = a.state === null ? 'no state tax counted' : a.stateTaxes === false || a.stateRate === 0 ? `${STATE_NAMES[a.state]} with no income tax` : `${STATE_NAMES[a.state]} at ${pct(a.stateRate, 1)}`;
-  return `Hypothetical: ${a.lawYear} federal tax law held in today’s dollars, ${state}, ${a.converts ? 'the conversion rule you picked' : 'no conversions'}, a steady ${pct(a.realReturn)} after inflation, and health costs rising ${healthPace(a.healthGrowth)}. Not tax advice.`;
+  return `Hypothetical: ${a.lawYear} federal tax law held in today’s dollars, ${state}, ${a.converts ? 'the conversion rule you picked' : 'no conversions'}, a steady ${pct(a.growth)} after inflation, and health costs rising ${healthPace(a.healthGrowth)}. Not tax advice.`;
 }
 
 /** A joint plan's one line (the tax plan's Plan outcomes). */
@@ -567,8 +569,8 @@ export function stageHealthLines(stages: readonly DrawdownStage[], years: readon
 export const assumptionsLine = (choices: Pick<TaxChoices, 'inflation'>, growth: number) => `${pct(choices.inflation)} inflation · health costs ${points(Math.abs(growth))} ${growth < 0 ? 'below' : 'above'} inflation`;
 
 /** The Assumptions row of a plan whose tax has its own row. */
-export const assumptionsWorked = (plan: { withdrawalRate: number; realReturn: number; partTimeIncome: number }, choices: Pick<TaxChoices, 'inflation'>, growth: number, money: Money) =>
-  `${pct(plan.withdrawalRate)} withdrawal · ${pct(plan.realReturn)} growth · ${assumptionsLine(choices, growth)}${plan.partTimeIncome > 0 ? ` · ${money(plan.partTimeIncome)} part-time` : ''}`;
+export const assumptionsWorked = (plan: { withdrawalRate: number; partTimeIncome: number }, view: Pick<FiView, 'growth' | 'ownRates'>, choices: Pick<TaxChoices, 'inflation'>, growth: number, money: Money) =>
+  `${pct(plan.withdrawalRate)} withdrawal · ${pct(view.growth)} growth${ownRatesText(view.ownRates)} · ${assumptionsLine(choices, growth)}${plan.partTimeIncome > 0 ? ` · ${money(plan.partTimeIncome)} part-time` : ''}`;
 
 /** Under measured spending, a name for what could already be paying for coverage. */
 export const namesCoverage = (name: string) => /\b(health|medical|dental)\b/i.test(name) && /\b(insurance|premiums?|coverage)\b/i.test(name);

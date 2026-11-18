@@ -374,7 +374,7 @@ export function SortHeading({ column, label, sort, onSort }: { column: SortColum
 export function CompareCard({
   rows,
   money,
-  realReturn,
+  growth,
   lawYear,
   healthGrowth,
   acaLaw,
@@ -389,7 +389,8 @@ export function CompareCard({
 }: {
   rows: readonly CompareRow[];
   money: Money;
-  realReturn: number;
+  /** The growth after inflation the plan runs at (FiView's). */
+  growth: number;
   lawYear: number;
   /** Fractions of a point, as the years have it. */
   healthGrowth: number;
@@ -418,10 +419,10 @@ export function CompareCard({
       <div className="card-header">
         <h3 id="plan-compare-rules">Compare conversions</h3>
       </div>
-      <p className="helper">{`Each rule run on this plan at a steady ${pct(realReturn)} after inflation. Nya doesn’t recommend one. Tap a heading to sort, a rule to see its stages.`}</p>
+      <p className="helper">{`Each rule run on this plan at a steady ${pct(growth)} after inflation. Nya doesn’t recommend one. Tap a heading to sort, a rule to see its stages.`}</p>
       <div className="plan-table-scroll">
         <table className="plan-compare-table plan-rules-table">
-          <caption className="visually-hidden">{`Each conversion rule at a steady ${pct(realReturn)}, ${lawYear} tax law`}</caption>
+          <caption className="visually-hidden">{`Each conversion rule at a steady ${pct(growth)}, ${lawYear} tax law`}</caption>
           <thead>
             <tr>
               <th scope="col">Rule</th>

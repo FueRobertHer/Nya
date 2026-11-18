@@ -562,6 +562,12 @@ describe('the privacy page', () => {
     const entry = containerEntry('plan-facts')!;
     expect(entry.about).toContain('whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count, whether Nya works tax out from your accounts, how you file, your birth years, how long each dependent counts and which category or tag already pays for coverage');
     expect(containerEntry('fire-plans')!.about).toContain('your state and its rate, your health coverage and what it costs');
+    // Each plan's accounts' own rates, which outlast the account, as the list says too.
+    expect(privacy()).toContain(
+      'Your accounts’ own growth in a plan Any growth after inflation or dividends you give one of your accounts of its own, in each plan, by the account’s id: until you change it in that plan, or delete your account. Forgetting or removing the account doesn’t take it out of a plan; the plan stops using it.'
+    );
+    expect(containerEntry('fire-plans')!.about).toContain('kept by the account’s id until you change it there, even once the account is gone');
+    expect(containerEntry('fire-plans')!.seen).toBeUndefined();
     expect(entry.seen).toBeUndefined();
     expect(entry.plain).toBeUndefined();
   });
