@@ -64,8 +64,10 @@ import { retryStalled } from './blob-attempts';
  *  signal that aborts when its step runs out of time. */
 export type BackupStore = {
   /** `cacheMaxAgeSeconds`: how long a cache may serve it, for a file that
-   *  must stop being served soon after it is deleted (a key archive). */
-  put(pathname: string, body: string, signal?: AbortSignal, opts?: { cacheMaxAgeSeconds?: number }): Promise<void>;
+   *  must stop being served soon after it is deleted (a key archive).
+   *  `overwrite`: replace a file already at that name (otherwise refused): for
+   *  a backup's upload sent again, whose first may have landed. */
+  put(pathname: string, body: string, signal?: AbortSignal, opts?: { cacheMaxAgeSeconds?: number; overwrite?: boolean }): Promise<void>;
   /** The blob's text, or null if it isn't there. */
   get(pathname: string, signal?: AbortSignal): Promise<string | null>;
   list(prefix: string, signal?: AbortSignal): Promise<{ pathname: string; uploadedAt: Date }[]>;
@@ -328,42 +330,84 @@ export async function listFormat1Archives(store: BackupStore, limitMs = 5_000): 
   }
 }
 
+/**
+ * How far a run's attempts have got (runNightlyBackup): an attempt after one
+ * that failed is given the same object and carries on from the step that
+ * failed, with the same archive under the same name, so nothing that finished
+ * is done again. Each field is set once its step has finished.
+ */
+export type BackupProgress = {
+  /** The step running, or the one that failed. */
+  step?: BackupStep;
+  exported?: { body: string; records: Awaited<ReturnType<typeof verifyArchive>>['records'] };
+  /** An upload was sent. One sent again may find the first's file there (it
+   *  can land and its answer be lost), so it replaces it: the name is this
+   *  run's own. */
+  sent?: boolean;
+  /** The upload finished, so an attempt after a read-back that failed reads
+   *  back again without uploading. Cleared when the copy didn't read back as
+   *  written: it is deleted, and uploaded again. */
+  uploaded?: boolean;
+  /** The copy read back as written. */
+  verified?: boolean;
+  shared?: string[];
+  listed?: { existing: { pathname: string; uploadedAt: Date }[]; rollbacks: string[] };
+  keyArchive?: KeyArchiveResult;
+};
+
 export async function runBackup(
   client: ExportClient,
   store: BackupStore,
   now: Date = new Date(),
-  opts: BackupOptions = {}
+  opts: BackupOptions = {},
+  progress: BackupProgress = {}
 ): Promise<BackupResult> {
   const days = keepDays(); // before anything is written: a bad setting fails loudly first
-  const { body, records } = await step('export', opts, async () => {
+  const at = <T>(name: BackupStep, run: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+    progress.step = name;
+    return step(name, opts, run);
+  };
+  progress.exported ??= await at('export', async () => {
     const parts: string[] = [];
     for await (const line of exportLines(client, now)) parts.push(line);
     const body = parts.join('');
     // Checked before upload too: an archive restore would refuse is not a backup.
     return { body, records: verifyArchive(body).records };
   });
+  const { body, records } = progress.exported;
 
   const pathname = `${backupFolder()}nya-${now.toISOString().replace(/[:.]/g, '-')}.f2.ndjson`;
-  await step('upload', opts, (signal) => store.put(pathname, body, signal));
+  if (!progress.verified) {
+    if (!progress.uploaded) {
+      const overwrite = progress.sent === true;
+      progress.sent = true;
+      await at('upload', (signal) => store.put(pathname, body, signal, overwrite ? { overwrite } : undefined));
+      progress.uploaded = true;
+    }
 
-  // Read back: what counts is what the store will hand over on the bad day. A
-  // read-back that runs out of time leaves the copy in place, unverified: it is
-  // most likely fine, and nothing is pruned on the strength of it.
-  const stored = await step('read-back', opts, (signal) => store.get(pathname, signal));
-  if (stored !== body) {
-    await step('discard', opts, (signal) => store.del([pathname], signal)).catch(() => {});
-    throw new Error(`The backup ${pathname} did not read back as written`);
+    // Read back: what counts is what the store will hand over on the bad day. A
+    // read-back that runs out of time leaves the copy in place, unverified: it is
+    // most likely fine, and nothing is pruned on the strength of it.
+    const stored = await at('read-back', (signal) => store.get(pathname, signal));
+    if (stored !== body) {
+      progress.uploaded = false;
+      await at('discard', (signal) => store.del([pathname], signal)).catch(() => {});
+      progress.step = 'read-back';
+      throw new Error(`The backup ${pathname} did not read back as written`);
+    }
+    progress.verified = true;
   }
 
   // The count, while the copy is known good: it is kept whatever follows.
-  const shared = await step('count', opts, () => noteSharedKeys(records, now));
+  progress.shared ??= await at('count', () => noteSharedKeys(records, now));
 
   // The folder's listing: what is kept, for the key archive and the prune,
   // and any archive the release before took (a rollback), noted from it.
-  const { existing, rollbacks } = await step('list', opts, async (signal) => {
+  progress.listed ??= await at('list', async (signal) => {
     const existing = await store.list(backupFolder(), signal);
     return { existing, rollbacks: await noteRollbacks(existing) };
   });
+  const { existing, rollbacks } = progress.listed;
   const kept = [now.toISOString(), ...existing.map((b) => dataArchiveName(b.pathname)?.taken).filter((t): t is string => t !== undefined)];
 
   // The key archive, checked against what tonight's values name and what the
@@ -371,19 +415,20 @@ export async function runBackup(
   // here: its data archive is kept, and nothing is pruned.
   const named = namedKeyIds(keyIdsByContainer(records));
   const maxDays = Math.max(days + 1, MIN_KEPT);
-  const keyArchive = await step('keys', opts, (signal) =>
+  progress.keyArchive ??= await at('keys', (signal) =>
     writeKeyArchive(client, store, keysLock, { takenAt: now, named, kept, maxDays, signal, ...(opts.keysLockWaitMs !== undefined ? { lockWaitMs: opts.keysLockWaitMs } : {}) })
   );
 
   const cutoff = now.getTime() - days * 86_400_000;
-  existing.sort((a, b) => (a.pathname < b.pathname ? 1 : -1)); // newest first
-  const pruned = existing
+  const pruned = [...existing]
+    .sort((a, b) => (a.pathname < b.pathname ? 1 : -1)) // newest first
     .slice(MIN_KEPT)
     .filter((b) => b.pathname !== pathname && b.uploadedAt.getTime() < cutoff)
     .map((b) => b.pathname);
-  if (pruned.length > 0) await step('prune', opts, (signal) => store.del(pruned, signal));
+  // Deleting is the same sent twice, so a prune tried again just sends it again.
+  if (pruned.length > 0) await at('prune', (signal) => store.del(pruned, signal));
 
-  return { pathname, bytes: Buffer.byteLength(body), keys: records.length, pruned, key_archive: keyArchive, shared_in: shared, rollback_noted: rollbacks };
+  return { pathname, bytes: Buffer.byteLength(body), keys: records.length, pruned, key_archive: progress.keyArchive, shared_in: progress.shared, rollback_noted: rollbacks };
 }
 
 /**
@@ -428,7 +473,7 @@ export async function vercelBlobStore(readUrl: ReadUrl = nodeText): Promise<Back
         access: 'private',
         contentType: 'application/x-ndjson',
         addRandomSuffix: false,
-        allowOverwrite: false,
+        allowOverwrite: opts?.overwrite === true,
         // Large bodies go up in parts, each retried on its own.
         multipart: body.length > 8 * 1024 * 1024,
         ...(opts?.cacheMaxAgeSeconds !== undefined ? { cacheControlMaxAge: opts.cacheMaxAgeSeconds } : {}),
@@ -658,13 +703,14 @@ export function setRetryPausesForTests(pauses: readonly number[] | null): void {
  * more, the backup, its outcome recorded.
  *
  * A backup that fails is tried again in the same run, after a pause
- * (RETRY_PAUSES_MS), as a new copy under a new name, until one works or the
- * run's time (BACKUP_BUDGET_MS) is nearly up: every attempt's steps are cut to
- * end before it, so the outcome is always recorded. A failure that would fail
+ * (RETRY_PAUSES_MS), from the step that failed (BackupProgress): the same
+ * archive under the same name, uploaded again only when its upload failed or
+ * it didn't read back as written. Until one works or the run's time
+ * (BACKUP_BUDGET_MS) is nearly up: every attempt's steps are cut to end
+ * before it, so the outcome is always recorded. A failure that would fail
  * again (a setting, a key a value names that no archive holds) is tried again
- * all the same, a few times at most; an attempt that failed after its upload
- * leaves its copy, pruned with the rest by age. The outcome says how many
- * attempts it took; the log names each failure.
+ * all the same, a few times at most, at the step it failed. The outcome says
+ * how many attempts it took; the log names each failure and its step.
  */
 export async function runNightlyBackup(now: Date = new Date(), opts: { waitedMs?: number; budgetMs?: number } = {}): Promise<RunAnswer> {
   const store = await vercelBlobStore();
@@ -687,12 +733,10 @@ export async function runNightlyBackup(now: Date = new Date(), opts: { waitedMs?
     console.error('The sweep of deleted containers failed; it runs again tomorrow', err instanceof Error ? err.name : typeof err);
   }
   const failures: string[] = [];
+  const progress: BackupProgress = {};
   for (let attempt = 1; ; attempt++) {
-    // The first attempt is taken at the run's own time; each after it at its
-    // own, so its copy has a name of its own.
-    const takenAt = attempt === 1 ? now : new Date();
     try {
-      const result = await runBackup(rawRedis(), store, takenAt, { onStep, deadline });
+      const result = await runBackup(rawRedis(), store, now, { onStep, deadline }, progress);
       // Logged before the outcome is recorded, so the line survives even if that
       // write is what stalls.
       const seconds = ((Date.now() - started) / 1000).toFixed(1);
@@ -714,7 +758,8 @@ export async function runNightlyBackup(now: Date = new Date(), opts: { waitedMs?
       failures.push(reason);
       const pause = retryPauses[attempt - 1];
       const again = pause !== undefined && Date.now() + pause + MIN_ATTEMPT_MS <= deadline;
-      console.error(`Backup attempt ${attempt} failed${again ? `; trying again in ${pause / 1000}s` : ''}`, reason);
+      const where = progress.step ? ` at its ${progress.step} step` : '';
+      console.error(`Backup attempt ${attempt} failed${where}${again ? `; trying again from there in ${pause / 1000}s` : ''}`, reason);
       if (!again) {
         // The count first: the record keeps 200 characters of a reason.
         const said = attempt > 1 ? `After ${attempt} attempts: ${reason}` : reason;

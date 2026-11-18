@@ -27,16 +27,29 @@ const signals: Record<string, AbortSignal | undefined> = {};
 let onPut: (() => Promise<void>) | null = null;
 /** Uploads still to fail, as a store that is briefly down fails them. */
 let failPuts = 0;
+/** Uploads still to land and then fail, as one whose answer is lost does. */
+let landThenFail = 0;
+/** Listings still to fail. */
+let failLists = 0;
+/** Reads still to come back damaged. */
+let corruptOnce = 0;
+/** Every upload sent, by name. */
+const puts: string[] = [];
 await mockForFile('@vercel/blob', () => ({
   put: async (pathname: string, body: string, options: any) => {
     signals.put = options.abortSignal;
     await onPut?.();
+    puts.push(pathname);
     if (failPuts > 0) {
       failPuts--;
       throw new Error('Vercel Blob: the service is unavailable');
     }
     if (blobs.has(pathname) && !options.allowOverwrite) throw new Error('exists');
     blobs.set(pathname, { body, uploadedAt: clock, options });
+    if (landThenFail > 0) {
+      landThenFail--;
+      throw new Error('Vercel Blob: the connection was reset');
+    }
     return { pathname, url: `https://blob/${pathname}` };
   },
   get: async (pathname: string, options: any) => {
@@ -53,6 +66,10 @@ await mockForFile('@vercel/blob', () => ({
   },
   list: async ({ prefix, cursor, abortSignal }: { prefix: string; cursor?: string; abortSignal?: AbortSignal }) => {
     signals.list = abortSignal;
+    if (failLists > 0) {
+      failLists--;
+      throw new Error('Vercel Blob: the listing failed');
+    }
     // Two per page, so paging is exercised.
     const all = [...blobs.entries()].filter(([p]) => p.startsWith(prefix)).sort(([a], [b]) => (a < b ? -1 : 1));
     const start = cursor ? Number(cursor) : 0;
@@ -83,7 +100,8 @@ const fakeGet = (url: string, options: any, cb: (res: any) => void) => {
     return req;
   }
   const b = blobs.get(decodeURIComponent(new URL(url).pathname.slice(1)));
-  const res: any = Readable.from(b ? [Buffer.from(corruptReads ? b.body.slice(0, -2) + '\n' : b.body)] : []);
+  const corrupt = corruptReads || (corruptOnce > 0 && corruptOnce-- > 0);
+  const res: any = Readable.from(b ? [Buffer.from(corrupt ? b.body.slice(0, -2) + '\n' : b.body)] : []);
   res.statusCode = b ? 200 : 404;
   res.headers = {};
   queueMicrotask(() => cb(res));
@@ -110,6 +128,10 @@ beforeEach(async () => {
   sdkStreamCancelled = false;
   onPut = null;
   failPuts = 0;
+  landThenFail = 0;
+  failLists = 0;
+  corruptOnce = 0;
+  puts.length = 0;
   // No second attempt unless a test asks for one, so a failure answers at once.
   setRetryPausesForTests([]);
   urlReads.length = 0;
@@ -599,14 +621,19 @@ describe('how long a backup outlasts a deletion', () => {
 });
 
 describe('trying a failed backup again in the same run', () => {
-  /** A run, without its log lines; what it said to console.error. */
+  /** A run, without its log lines: what it answered, said to console.error,
+   *  and which steps finished, in order. */
   const quietRun = async (opts: Parameters<typeof runNightlyBackup>[1] = {}) => {
     const [log, error] = [console.log, console.error];
     const errors: string[] = [];
-    console.log = () => {};
+    const steps: string[] = [];
+    console.log = (...args: unknown[]) => {
+      const m = /^Backup (\S+) took /.exec(args.join(' '));
+      if (m) steps.push(m[1]);
+    };
     console.error = (...args: unknown[]) => void errors.push(args.join(' '));
     try {
-      return { answer: await runNightlyBackup(new Date(), opts), errors };
+      return { answer: await runNightlyBackup(new Date(), opts), errors, steps };
     } finally {
       console.log = log;
       console.error = error;
@@ -619,18 +646,51 @@ describe('trying a failed backup again in the same run', () => {
     expect(RETRY_PAUSES_MS).toEqual([5_000, 15_000, 30_000, 60_000, 60_000]);
   });
 
-  test('a failed attempt is tried again after a pause, and the night is recorded as worked, saying so', async () => {
+  test('an upload that failed is sent again after a pause, the export not taken again, and the night is recorded as worked', async () => {
     setRetryPausesForTests([10, 10]);
     failPuts = 1;
-    const { answer, errors } = await quietRun();
+    const { answer, errors, steps } = await quietRun();
     expect(answer.status).toBe(200);
     expect(answer.body).toMatchObject({ attempts: 2, failed_attempts: ['Vercel Blob: the service is unavailable'] });
-    expect(errors).toEqual(['Backup attempt 1 failed; trying again in 0.01s Vercel Blob: the service is unavailable']);
-    expect(blobs.has(answer.body.pathname as string)).toBe(true);
+    expect(errors).toEqual(['Backup attempt 1 failed at its upload step; trying again from there in 0.01s Vercel Blob: the service is unavailable']);
+    expect(steps).toEqual(['export', 'upload', 'read-back', 'count', 'list', 'keys']);
+    // The same copy, sent twice: one in the store.
+    expect(puts.filter((p) => p.startsWith(backupFolder()))).toEqual([answer.body.pathname as string, answer.body.pathname as string]);
+    expect(dataBlobs()).toEqual([answer.body.pathname as string]);
     expect(await backupProblem()).toBeNull();
   });
 
-  test('when every attempt fails: the last reason recorded, with how many attempts, once the pauses run out', async () => {
+  test('an upload that landed but whose answer was lost is sent again over its own file', async () => {
+    setRetryPausesForTests([10]);
+    landThenFail = 1;
+    const { answer } = await quietRun();
+    expect(answer.status).toBe(200);
+    expect(answer.body).toMatchObject({ attempts: 2 });
+    expect(dataBlobs()).toEqual([answer.body.pathname as string]);
+  });
+
+  test('a copy that didn’t read back as written is deleted and uploaded again, still one copy', async () => {
+    setRetryPausesForTests([10]);
+    corruptOnce = 1;
+    const { answer, errors, steps } = await quietRun();
+    expect(answer.status).toBe(200);
+    expect(errors[0]).toStartWith('Backup attempt 1 failed at its read-back step; trying again from there');
+    expect(steps).toEqual(['export', 'upload', 'read-back', 'discard', 'upload', 'read-back', 'count', 'list', 'keys']);
+    expect(dataBlobs()).toEqual([answer.body.pathname as string]);
+  });
+
+  test('a step after the copy read back carries on from that step: nothing exported, uploaded or counted again', async () => {
+    setRetryPausesForTests([10]);
+    failLists = 1;
+    const { answer, errors, steps } = await quietRun();
+    expect(answer.status).toBe(200);
+    expect(errors).toEqual(['Backup attempt 1 failed at its list step; trying again from there in 0.01s Vercel Blob: the listing failed']);
+    expect(steps).toEqual(['export', 'upload', 'read-back', 'count', 'list', 'keys']);
+    expect(puts.filter((p) => p.startsWith(backupFolder())).length).toBe(1);
+    expect(dataBlobs()).toEqual([answer.body.pathname as string]);
+  });
+
+  test('when every attempt fails: the last reason recorded, with how many attempts, once the pauses run out, and no copy left', async () => {
     setRetryPausesForTests([10, 10]);
     corruptReads = true;
     const { answer, errors } = await quietRun();
@@ -639,6 +699,7 @@ describe('trying a failed backup again in the same run', () => {
     expect(String(answer.body.error)).toStartWith(said);
     expect(String(answer.body.error)).toEndWith('did not read back as written');
     expect(errors.length).toBe(3);
+    expect(dataBlobs()).toEqual([]);
     expect((await backupProblem())?.reason).toStartWith(said);
   });
 
