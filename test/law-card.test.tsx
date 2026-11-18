@@ -94,6 +94,18 @@ describe('the card', () => {
     expect(row(card, 2026).sub).toBe('In use · every part in, each with its source');
     expect(row(card, 2027).parts).toHaveLength(12);
   });
+
+  test('the real tables with 2027’s Medicare in: only January’s part to come, nothing due until 2027 begins', () => {
+    for (const day of ['2026-11-18', '2026-12-01']) {
+      const next = row(lawCard(day), 2027);
+      expect(next.sub).toBe('11 of 12 parts in · still to come: Medicaid’s poverty guidelines');
+      expect(next.badge).toEqual({ text: 'Due in January', caution: false });
+      expect(lawAttention(day)).toBeNull();
+      expect(lawDue(day)).toEqual([]);
+    }
+    expect(row(lawCard('2027-01-01'), 2027).badge).toEqual({ text: 'Behind', caution: true });
+    expect(lawDue('2027-01-01').map((d) => d.key)).toEqual(['law-2027-medicaidPoverty', 'law-year']);
+  });
 });
 
 describe('what the upkeep issue lists', () => {

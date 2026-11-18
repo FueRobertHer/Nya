@@ -82,8 +82,8 @@ describe('the 2026 brackets', () => {
 });
 
 describe('the 2027 brackets', () => {
-  // 2027's table isn't whole yet, so 2026's Medicare and Medicaid poverty
-  // guidelines stand in; the federal tax reads neither.
+  // 2027's table isn't whole yet, so 2026's Medicaid poverty guidelines stand
+  // in; the federal tax doesn't read them.
   const law2027: TaxLaw = { ...LAW_2026, ...LAW_2027 };
 
   test("each bracket's tax at its start is Rev. Proc. 2026-35's printed base", () => {
