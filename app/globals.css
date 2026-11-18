@@ -8069,6 +8069,13 @@ button.review-keys-toggle {
   color: var(--text-2);
 }
 
+/* What qualifies a figure, under it (components/TotalCaveats.tsx's stack,
+   or one Notice), as far from it as a note under it was. */
+.incoming-kind > :is(.notice, .stack.tight),
+.incoming-kind-lines > .stack.tight {
+  margin-top: var(--sp-2);
+}
+
 .incoming-kind .peer-row {
   padding: 6px 0;
 }
