@@ -15,13 +15,18 @@ import type { CategoryChoice } from '@/components/transaction-edits';
 
 const dom = installDom();
 // What the sheet sends for a part or a group's transaction, answered at once;
-// a rename as `renameAnswer` says, when a test sets it.
+// a rename, a note or tags, and a part's or a group's change, as
+// `renameAnswer`, `annotationAnswer` and `splitAnswer` say, when a test sets one.
 const sent: { url: string; method: string; body: unknown }[] = [];
 let renameAnswer: (() => Promise<unknown>) | null = null;
+let annotationAnswer: (() => Promise<unknown>) | null = null;
+let splitAnswer: (() => Promise<unknown>) | null = null;
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (url: string, init?: { method?: string; body?: string }) => {
   sent.push({ url, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(init.body) : null });
   if (url === '/api/rename' && renameAnswer) return renameAnswer();
+  if (url === '/api/transaction-annotations' && annotationAnswer) return annotationAnswer();
+  if ((url === '/api/transaction-splits' || url === '/api/transaction-groups') && splitAnswer) return splitAnswer();
   return { ok: true, json: async () => ({}) };
 }) as unknown as typeof fetch;
 afterAll(() => {
@@ -155,7 +160,20 @@ function Wired(p: Props) {
     taxonomy,
   });
   return (
-    <MonthBreakdown txns={txns} notes={[]} loading={false} taxonomy={taxonomy} tags={TAGS} onRecategorize={edits.recategorize} onRename={edits.rename} onSplitsChanged={() => {}} {...p} />
+    <MonthBreakdown
+      txns={txns}
+      notes={[]}
+      loading={false}
+      taxonomy={taxonomy}
+      tags={TAGS}
+      onRecategorize={edits.recategorize}
+      onRename={edits.rename}
+      onChangeTags={edits.changeTags}
+      onSaveNote={edits.saveNote}
+      actionError={edits.error}
+      onSplitsChanged={() => {}}
+      {...p}
+    />
   );
 }
 function mount(props: Props = {}, { wired = false } = {}) {
@@ -356,12 +374,12 @@ describe('a transaction’s sheet', () => {
     // The button goes, so focus goes to the field it was about, and the status line says it was kept.
     expect(dom.document.activeElement).toBe(v.field('Category') as never);
     const status = () => v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent;
-    expect(status()).toBe('Category kept: groceries.');
+    expect(status()).toBe('Done: Category kept: groceries.');
     // The row as the dashboard then shows it (components/transaction-edits.ts).
     v.render({ txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...low(t), ...recategorizedRow(low(t), changes[0].choice as never, taxonomy) } : t)) });
     expect(badges()).toEqual([]);
     expect(v.button('Looks right', v.dialog()!)).toBeNull();
-    expect(status()).toBe('Category kept: groceries.');
+    expect(status()).toBe('Done: Category kept: groceries.');
     v.unmount();
 
     // Refused: nothing is said to have been kept (the dashboard says why).
@@ -375,7 +393,7 @@ describe('a transaction’s sheet', () => {
 
   // The audit after the screen review: "Category kept" outlived the category
   // it kept, and hid what Exclude did next.
-  test('the status line says only the last thing saved: never "kept" once the category changes, and Exclude after Looks right', async () => {
+  test('the done line says only the last thing saved: never "kept" once the category changes, and Exclude after Looks right', async () => {
     const low = (t: Txn) => (t.transaction_id === 'Whole Foods' ? { ...t, category_confidence: 'LOW' } : t);
     const onRecategorize = () => Promise.resolve(true);
     const onToggleExcluded = () => Promise.resolve(true);
@@ -384,7 +402,7 @@ describe('a transaction’s sheet', () => {
     const status = () => v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent;
     act(() => click(v.button('Looks right', v.dialog()!)!));
     await settle();
-    expect(status()).toBe('Category kept: groceries.');
+    expect(status()).toBe('Done: Category kept: groceries.');
     // Another category picked afterwards: nothing says it was kept.
     act(() => type(v.field('Category')!, cat('household')));
     const household = (t: Txn) => (t.transaction_id === 'Whole Foods' ? { ...t, category_id: cat('household'), category_name: 'household' } : t);
@@ -399,7 +417,7 @@ describe('a transaction’s sheet', () => {
     act(() => click(exclude));
     v.render({ onRecategorize, onToggleExcluded, txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...household(t), excluded: true } : t)) });
     await settle();
-    expect(status()).toBe('Excluded from budgets and reports.');
+    expect(status()).toBe('Done: Excluded: it stays in this list, out of totals, budgets, insights, bills and the Plan.');
     v.unmount();
   });
 
@@ -433,7 +451,7 @@ describe('a transaction’s sheet', () => {
     v.render({ taxonomy: null, onRecategorize, txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...low(t), ...recategorizedRow(low(t), choices[0], null) } : t)) });
     await settle();
     expect(choices).toEqual([{ category: 'groceries' }]);
-    expect(v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent).toBe('Category kept: groceries.');
+    expect(v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent).toBe('Done: Category kept: groceries.');
     v.unmount();
   });
 
@@ -623,7 +641,7 @@ describe('a transaction’s sheet', () => {
     pending.unmount();
   });
 
-  test('Exclude acts in place: focus stays on its row as its title flips, and the status line says what it did', async () => {
+  test('Exclude acts in place: focus stays on its row as its title flips, and the done line says what it did', async () => {
     const toggled: boolean[] = [];
     // Saved: the dashboard's toggle resolves true once the server has it.
     const onToggleExcluded = (_t: Txn, excluded: boolean) => (toggled.push(excluded), Promise.resolve(true));
@@ -642,9 +660,19 @@ describe('a transaction’s sheet', () => {
     expect(exclude()).toBe(before);
     expect(before.textContent.startsWith('Include in budgets and reports')).toBe(true);
     expect(dom.document.activeElement).toBe(before as never);
-    expect(status()).toBe('Excluded from budgets and reports.');
-    // Put back as it was (a refusal read again): the line no longer says it.
+    expect(status()).toBe('Done: Excluded: it stays in this list, out of totals, budgets, insights, bills and the Plan.');
+    // A done notice, in a live region kept on the page.
+    const region = v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!;
+    expect(region.getAttribute('class')).toBe('txn-sheet-said');
+    expect(region.findAll((e) => e.getAttribute('class') === 'notice done').length).toBe(1);
+    // Include, back: said too, and the row is the way back again.
+    act(() => click(before));
     v.render({ onToggleExcluded, txns: served() });
+    await settle();
+    expect(toggled).toEqual([true, false]);
+    expect(status()).toBe('Done: Included again: it counts in totals, budgets, insights, bills and the Plan.');
+    // Put back as it was (a refusal read again): the line no longer says it.
+    v.render({ onToggleExcluded, txns: served().map((t) => (t.transaction_id === 'Whole Foods' ? { ...t, excluded: true } : t)) });
     expect(status()).toBe('');
     v.unmount();
 
@@ -743,5 +771,108 @@ describe('a transaction’s sheet', () => {
     // A group's category shows once the list is read again: closed, and no rule offered.
     expect(v.dialog()).toBeNull();
     v.unmount();
+  });
+
+  describe('a note and tags, written through the tab’s edits', () => {
+    const status = (v: ReturnType<typeof mount>) => v.dialog()!.findAll((e) => e.getAttribute('role') === 'status')[0]!.textContent;
+    const note = (v: ReturnType<typeof mount>) => v.dialog()!.findAll((e) => e.tagName === 'TEXTAREA')[0]!;
+
+    test('a note saved, then cleared, says so in the sheet once the server has it', async () => {
+      annotationAnswer = null;
+      const v = mount({}, { wired: true });
+      await v.open('Whole Foods');
+      expect(status(v)).toBe('');
+      act(() => type(note(v), 'Team lunch'));
+      act(() => click(v.button('Save note', v.dialog()!)!));
+      await settle();
+      expect(status(v)).toBe('Done: Note saved.');
+      expect(v.dialog()!.findAll((e) => e.getAttribute('class') === 'notice done').length).toBe(1);
+      act(() => type(note(v), ''));
+      act(() => click(v.button('Clear note', v.dialog()!)!));
+      await settle();
+      expect(status(v)).toBe('Done: Note cleared.');
+      v.unmount();
+    });
+
+    test('a note refused is said at the top and never said saved', async () => {
+      annotationAnswer = async () => ({ ok: false, status: 500, json: async () => ({ error: 'nope' }) });
+      const v = mount({}, { wired: true });
+      await v.open('Whole Foods');
+      act(() => type(note(v), 'Team lunch'));
+      act(() => click(v.button('Save note', v.dialog()!)!));
+      await settle();
+      expect(status(v)).toBe('');
+      // The server's words, as every refused edit on the tab says them.
+      expect(v.dialog()!.textContent).toContain('Critical: nope');
+      annotationAnswer = null;
+      v.unmount();
+    });
+
+    test('a tag added, then one taken off, each said by its name', async () => {
+      annotationAnswer = null;
+      const v = mount({}, { wired: true });
+      await v.open('Whole Foods');
+      const field = v.dialog()!.findAll((e) => e.getAttribute('aria-label') === 'Add a tag to Whole Foods')[0]!;
+      act(() => type(field, 'Travel'));
+      act(() => click(v.button('Add', v.dialog()!)!));
+      await settle();
+      expect(status(v)).toBe('Done: Tag added: Travel.');
+      act(() => click(v.button('Take Reimbursable off', v.dialog()!)!));
+      await settle();
+      expect(status(v)).toBe('Done: Tag removed: Reimbursable.');
+      v.unmount();
+    });
+  });
+
+  describe('a part’s or a group transaction’s change, refused', () => {
+    const refusedWith = (error: string) => async () => ({ ok: false, status: 409, json: async () => ({ error }) });
+
+    test('a part waits for its write: refused, it stays open and says why, once, in the sheet', async () => {
+      let answer: (r: unknown) => void = () => {};
+      splitAnswer = () => new Promise((r) => (answer = r));
+      const v = mount();
+      act(() => click(v.row('Household')!));
+      await settle();
+      act(() => click(v.button('Leave this part out of budgets and reports', v.dialog()!)!));
+      await settle();
+      // Out: still open, saying so, and nothing else acts.
+      expect(v.dialog()!.getAttribute('aria-label')).toBe('Part of Costco');
+      expect(v.dialog()!.findAll((e) => e.getAttribute('role') === 'status' && e.textContent === 'Saving…').length).toBe(1);
+      expect(v.field('Category')!.getAttribute('disabled')).not.toBeNull();
+      expect(v.button('Edit split', v.dialog()!)!.getAttribute('disabled')).not.toBeNull();
+      act(() => click(v.button('Close', v.dialog()!)!));
+      await settle();
+      expect(v.dialog()).not.toBeNull();
+      const refusal = await refusedWith('This split changed since it opened. Open it again.')();
+      act(() => answer(refusal));
+      await settle();
+      expect(v.dialog()!.getAttribute('aria-label')).toBe('Part of Costco');
+      const alert = v.dialog()!.findAll((e) => e.getAttribute('role') === 'alert')[0]!;
+      expect(alert.textContent).toContain('This split changed since it opened. Open it again.');
+      // Said in the sheet only, not on the list behind it as well.
+      expect(v.all((e) => e.textContent.includes('This split changed since it opened.') && (e.getAttribute('class') ?? '').startsWith('notice')).length).toBe(1);
+      // Tried again and made: closed, nothing said on the list.
+      splitAnswer = null;
+      act(() => click(v.button('Leave this part out of budgets and reports', v.dialog()!)!));
+      await settle();
+      expect(v.dialog()).toBeNull();
+      expect(v.host.textContent).not.toContain('This split changed since it opened.');
+      v.unmount();
+    });
+
+    test('taking a transaction out of its group waits too: refused, said beside the button, which points at it', async () => {
+      splitAnswer = refusedWith('The group changed since it opened.');
+      const v = mount();
+      act(() => click(v.row('Venmo from Sam')!));
+      await settle();
+      act(() => click(v.button('Take it out of the group', v.dialog()!)!));
+      await settle();
+      expect(v.dialog()!.getAttribute('aria-label')).toBe('Venmo from Sam');
+      const note = v.dialog()!.findAll((e) => e.getAttribute('class') === 'sheet-footer-note')[0]!;
+      expect(note.textContent).toContain('The group changed since it opened.');
+      expect(v.button('Take it out of the group', v.dialog()!)!.getAttribute('aria-describedby')).toBe(note.getAttribute('id'));
+      splitAnswer = null;
+      v.unmount();
+    });
   });
 });

@@ -2075,6 +2075,12 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
   margin: 0;
 }
 
+/* What a change saved says (components/TransactionSheet.tsx): a live region
+   kept on the page, out of the hero's flow while it says nothing. */
+.txn-sheet-said:empty {
+  position: absolute;
+}
+
 .txn-sheet-amount {
   font-size: var(--fs-6);
   font-weight: var(--fw-semibold);
