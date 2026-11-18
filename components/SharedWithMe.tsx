@@ -18,7 +18,7 @@
 // Class names avoid "share": ad blockers' social-share filters hide such
 // elements (Fanboy's list has ##.share-row).
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { formatDay, formatMoney } from '@/lib/format';
 import { shownName } from '@/lib/merchant-name';
 import { SHARED_TXN_DAYS, type Level } from '@/lib/share-rules';
@@ -29,6 +29,7 @@ import { Masked } from './HideAmounts';
 import { cacheKeyFor } from './device-cache';
 import { SharedViewsList } from './SharedViews';
 import { shortDate, endLabel, ended } from './SharingDates';
+import { Notice } from './TotalCaveats';
 
 export type SharedAccount = {
   id: string;
@@ -221,72 +222,94 @@ function shownBalance(a: SharedAccount): string {
 }
 
 /** One person's shared accounts, read-only, as the one they're shared with
- *  sees them (and the sharer, in "What they see"). */
+ *  sees them (and the sharer, in "What they see"): a card titled by whose
+ *  it is, its accounts as rows, then each other kind shared. */
 export function SharedCard({ name, view, note }: { name: string; view: SharedView; note: ReactNode }) {
   const [open, setOpen] = useState<string | null>(null);
   return (
     <div className="card">
-      <div className="incoming-head">
+      <div className="card-header">
         <span className="avatar small">{initial(name)}</span>
         <h3>Shared by {name}</h3>
-        <span className="pill">Read-only</span>
+        <span className="badge">Read-only</span>
       </div>
-      {view.accounts.map((a) => (
-        <SharedAccountItem key={a.id} a={a} open={open === a.id} onToggle={() => setOpen(open === a.id ? null : a.id)} />
-      ))}
+      {view.accounts.length > 0 && (
+        <ul className="list-rows">
+          {view.accounts.map((a) => (
+            <SharedAccountItem key={a.id} a={a} open={open === a.id} onToggle={() => setOpen(open === a.id ? null : a.id)} />
+          ))}
+        </ul>
+      )}
       {view.views && <SharedViewsList views={view.views} whose={name === 'you' ? 'Your' : `${name}’s`} />}
       {note}
     </div>
   );
 }
 
-/** One account on a shared card: its balance, and, when `open`, its
- *  transactions, each figure in its own currency. */
+/** One account on a shared card, a row in its list: its balance, and,
+ *  when `open`, its transactions, each figure in its own currency. */
 export function SharedAccountItem({ a, open, onToggle }: { a: SharedAccount; open: boolean; onToggle: () => void }) {
+  const txnsId = useId();
   return (
-    <div className="incoming-account">
-      <div className="peer-row">
-        <span>
-          <span className="incoming-account-name">{a.label}</span>
-          {a.as_of && <span className="incoming-account-date"> · {shortDate(a.as_of)}</span>}
+    <li>
+      <div className="list-row">
+        <span className="list-row-text">
+          <span className="list-row-title">{a.label}</span>
+          {a.as_of && <span className="list-row-sub">{shortDate(a.as_of, undefined, true)}</span>}
         </span>
-        <span className="incoming-account-value">
+        <span className="list-row-value money">
           <Masked>{shownBalance(a)}</Masked>
         </span>
       </div>
-      {a.transactions_unreadable ? (
-        <div className="incoming-account-date">Its transactions can&apos;t be read, so they aren&apos;t shown.</div>
-      ) : a.transactions && a.transactions.length === 0 ? (
-        <div className="incoming-account-date">No transactions in the last {SHARED_TXN_DAYS} days.</div>
-      ) : (
-        a.transactions && (
-          <button className="link-btn" onClick={onToggle}>
-            {open ? 'Hide transactions' : `Recent transactions (${a.transactions.length})`}
-          </button>
-        )
+      {(a.transactions_unreadable || a.transactions) && (
+        <div className="incoming-account-more">
+          {a.transactions_unreadable ? (
+            <Notice level="caution">Its transactions can&apos;t be read, so they aren&apos;t shown.</Notice>
+          ) : a.transactions!.length === 0 ? (
+            <p className="helper">No transactions in the last {SHARED_TXN_DAYS} days.</p>
+          ) : (
+            <>
+              <button type="button" className="btn ghost" aria-expanded={open} aria-controls={open ? txnsId : undefined} onClick={onToggle}>
+                {open ? 'Hide transactions' : `Recent transactions (${a.transactions!.length})`}
+              </button>
+              {open && (
+                <ul id={txnsId} className="incoming-txns">
+                  {a.transactions!.map((t, i) => (
+                    <li key={i} className="incoming-txn">
+                      <span>
+                        {shortDate(t.date, undefined, true)} {shownName(t)}
+                        {t.pending && (
+                          <>
+                            {' '}
+                            <span className="badge">Pending</span>
+                          </>
+                        )}
+                      </span>
+                      <span className="money">
+                        <Masked>{sharedTxnAmount(t)}</Masked>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
       )}
-      {open &&
-        a.transactions?.map((t, i) => (
-          <div key={i} className="incoming-txn">
-            <span>
-              {shortDate(t.date, undefined, true)} {shownName(t)}
-              {t.pending ? ' (pending)' : ''}
-            </span>
-            <span>
-              <Masked>{sharedTxnAmount(t)}</Masked>
-            </span>
-          </div>
-        ))}
-    </div>
+    </li>
   );
 }
 
 /** `problem`: why the last read was turned away or failed (sharedProblem),
- *  said above what was last shown, which stays. With nothing on screen,
- *  nothing is said: someone nobody shares with, or one offline, is never
- *  told of shares they don't have. Only when nothing has loaded here yet
- *  (`data` null) and the last good read on this device had something shared
- *  (`hadShares`, rememberedShares) is it said alone. */
+ *  said above what was last shown, which stays: a caution, as what is shown
+ *  is real but may be dated. With nothing on screen, nothing is said:
+ *  someone nobody shares with, or one offline, is never told of shares they
+ *  don't have. Only when nothing has loaded here yet (`data` null) and the
+ *  last good read on this device had something shared (`hadShares`,
+ *  rememberedShares) is it said alone, critical, since none of it could be
+ *  shown (design-system.md "Status and honesty": rows couldn't be shown).
+ *  Either is announced, as it comes after a read the page made, a refresh
+ *  among them. */
 export function SharedWithMeView({ data, problem = '', hadShares = false }: { data: SharedPayload | null; problem?: string; hadShares?: boolean }) {
   const [now, setNow] = useState(() => Date.now());
   // Open to start with: what is shared is read only once it is on screen
@@ -303,21 +326,23 @@ export function SharedWithMeView({ data, problem = '', hadShares = false }: { da
   }, [next]);
   const shared = (data?.shared ?? []).filter((s) => !ended(s.expires_at, now));
   if (shared.length === 0) {
-    return problem && data === null && hadShares ? <p className="stale-note">{`What is shared with you couldn’t be shown just now. ${problem}`}</p> : null;
+    return problem && data === null && hadShares ? (
+      <Notice level="critical" role="alert">{`What is shared with you couldn’t be shown just now. ${problem}`}</Notice>
+    ) : null;
   }
   return (
     <section>
       <CollapsibleHeader title="Shared with me" open={open} onToggle={() => setOpen((v) => !v)} controls="shared-with-me" />
       {open && (
-        <div id="shared-with-me">
-          {problem && <p className="stale-note">{`This is what was last shown: it couldn’t be refreshed. ${problem}`}</p>}
+        <div id="shared-with-me" className="stack">
+          {problem && <Notice level="caution" role="status">{`This is what was last shown: it couldn’t be refreshed. ${problem}`}</Notice>}
           {shared.map((s) => (
             <SharedCard
               key={s.connection}
               name={s.label}
               view={s}
               note={
-                <p className="panel-note">
+                <p className="helper incoming-note">
                   {s.expires_at ? `Shared until ${endLabel(s.expires_at)}. ` : ''}
                   {s.label} sees each time this is shown to you, and so do you, in Sharing.
                 </p>
