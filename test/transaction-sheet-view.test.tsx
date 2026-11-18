@@ -992,16 +992,75 @@ describe('a transaction’s sheet', () => {
       v.unmount();
     });
 
-    test('a note refused is said at the top and never said saved', async () => {
+    /** What the top of the sheet says went wrong, announced. */
+    const refusal = (v: ReturnType<typeof mount>) => v.dialog()!.findAll((e) => e.getAttribute('role') === 'alert')[0] ?? null;
+    /** What a field points at, by its aria-describedby. */
+    const pointsAt = (v: ReturnType<typeof mount>, el: FakeElement) => v.dialog()!.findAll((e) => !!e.getAttribute('id') && e.getAttribute('id') === el.getAttribute('aria-describedby'))[0] ?? null;
+    const tagField = (v: ReturnType<typeof mount>) => v.dialog()!.findAll((e) => e.getAttribute('aria-label') === 'Add a tag to Whole Foods')[0]!;
+
+    // The follow-up to the sheets review: a refusal read the list again with
+    // the spinner, which closed the sheet, the note typed and focus with it.
+    test('a note refused: said at the top, never said saved; the sheet stays, the note typed in its field, focus on it, pointing at why', async () => {
       annotationAnswer = async () => ({ ok: false, status: 500, json: async () => ({ error: 'nope' }) });
+      reloads = 0;
       const v = mount({}, { wired: true });
       await v.open('Whole Foods');
       act(() => type(note(v), 'Team lunch'));
-      act(() => click(v.button('Save note', v.dialog()!)!));
+      press(v.button('Save note', v.dialog()!)!);
       await settle();
       expect(status(v)).toBe('');
       // The server's words, as every refused edit on the tab says them.
-      expect(v.dialog()!.textContent).toContain('Critical: nope');
+      expect(refusal(v)!.textContent).toContain('Critical: nope');
+      expect(reloads).toBe(0);
+      expect(note(v).value).toBe('Team lunch');
+      expect(dom.document.activeElement).toBe(note(v));
+      expect(pointsAt(v, note(v))!.findAll((e) => e === refusal(v))).toHaveLength(1);
+      // Never shown on the row: the note chip waits for the server.
+      expect(v.row('Whole Foods')!.textContent).not.toContain('Note');
+      // Saved on a second try: said, and the field points at nothing.
+      annotationAnswer = null;
+      press(v.button('Save note', v.dialog()!)!);
+      await settle();
+      expect(status(v)).toBe('Done: Note saved.');
+      expect(refusal(v)).toBeNull();
+      expect(note(v).getAttribute('aria-describedby')).toBeNull();
+      v.unmount();
+    });
+
+    test('a tag typed and refused: the name back in its field, focus on it, pointing at why, and the tag off the row', async () => {
+      annotationAnswer = async () => ({ ok: false, status: 500, json: async () => ({ error: 'Could not change its tags. Please try again.' }) });
+      reloads = 0;
+      const v = mount({}, { wired: true });
+      await v.open('Whole Foods');
+      act(() => type(tagField(v), 'Birthday'));
+      press(v.button('Add', v.dialog()!)!);
+      await settle();
+      expect(status(v)).toBe('');
+      expect(refusal(v)!.textContent).toContain('Could not change its tags. Please try again.');
+      expect(reloads).toBe(0);
+      expect(tagField(v).value).toBe('Birthday');
+      expect(dom.document.activeElement).toBe(tagField(v));
+      expect(pointsAt(v, tagField(v))!.findAll((e) => e === refusal(v))).toHaveLength(1);
+      expect(v.button('Add', v.dialog()!)!.getAttribute('disabled')).toBeNull();
+      annotationAnswer = null;
+      v.unmount();
+    });
+
+    test('a chip’s change refused: the tag back as it was, focus on the tag field, since the chip went with the press', async () => {
+      let answer: (r: unknown) => void = () => {};
+      annotationAnswer = () => new Promise((r) => (answer = r));
+      const v = mount({}, { wired: true });
+      await v.open('Whole Foods');
+      press(v.button('Take Reimbursable off', v.dialog()!)!);
+      await settle();
+      // Off at once.
+      expect(v.button('Take Reimbursable off', v.dialog()!)).toBeNull();
+      act(() => answer({ ok: false, status: 500, json: async () => ({ error: 'Could not change its tags. Please try again.' }) }));
+      await settle();
+      expect(v.button('Take Reimbursable off', v.dialog()!)).not.toBeNull();
+      expect(dom.document.activeElement).toBe(tagField(v));
+      expect(tagField(v).value).toBe('');
+      expect(pointsAt(v, tagField(v))).not.toBeNull();
       annotationAnswer = null;
       v.unmount();
     });

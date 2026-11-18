@@ -238,6 +238,18 @@ export function useTransactionEdits({
     [setTxns, loadTransactions, refreshQuietly, loadNetWorth, requestBackfill]
   );
 
+  /** A tag or a note refused, with nothing left on screen of it: why, and the
+   *  list read again quietly as the server has it, so the sheet it was made
+   *  in stays open to say so. */
+  const refused = useCallback(
+    async (res: Response | null, fallback: string) => {
+      const data = res ? await res.json().catch(() => null) : null;
+      setError(res ? (data?.error ?? fallback) : 'Could not reach the server.');
+      if (res) void refreshQuietly();
+    },
+    [refreshQuietly]
+  );
+
   /** A change shown at once that the server refused or never got: the list as
    *  the server has it, and why. */
   const undo = useCallback(
@@ -415,6 +427,8 @@ export function useTransactionEdits({
             })
           : prev
       );
+      // Which of them each row had, to take back exactly this change if refused.
+      const had = new Map((current.current ?? []).filter((x) => x.transaction_id === t.transaction_id || x.split_of === t.transaction_id).map((x) => [x.transaction_id, new Set(x.tags ?? [])]));
       let res: Response | null = null;
       try {
         res = await fetch('/api/transaction-annotations', {
@@ -447,10 +461,23 @@ export function useTransactionEdits({
       } catch {
         res = null;
       }
-      await undo(res, 'Could not change its tags. Please try again.');
+      // Refused: this change taken back, row by row (one made since stays),
+      // and the list read again quietly, so the sheet stays open to say why
+      // with the field as it was (a read with the spinner closes it).
+      setTxns((prev) =>
+        prev
+          ? prev.map((x) => {
+              const before = had.get(x.transaction_id);
+              if (!before) return x;
+              const tags = [...(x.tags ?? []).filter((id) => !add.includes(id) || before.has(id)), ...remove.filter((id) => before.has(id) && !(x.tags ?? []).includes(id))];
+              return { ...x, tags: tags.length > 0 ? tags : undefined };
+            })
+          : prev
+      );
+      await refused(res, 'Could not change its tags. Please try again.');
       return false;
     },
-    [setTxns, undo, onTagMade]
+    [setTxns, refused, onTagMade]
   );
 
   /** Saves a transaction's note, or clears it: one entered by hand or
@@ -461,18 +488,6 @@ export function useTransactionEdits({
     async (t: Txn, note: string): Promise<boolean> => {
       setError(null);
       changes.current++;
-      // A split transaction's note is its own, kept beside its parts' (split_parent).
-      setTxns((prev) =>
-        prev
-          ? prev.map((x) =>
-              x.transaction_id === t.transaction_id
-                ? { ...x, note: note || (x.source ? null : undefined) }
-                : x.split_of === t.transaction_id && x.split_parent
-                  ? { ...x, split_parent: { ...x.split_parent, note: note || (x.source ? null : undefined) } }
-                  : x
-            )
-          : prev
-      );
       let res: Response | null = null;
       try {
         res = await fetch('/api/transaction-annotations', {
@@ -480,14 +495,30 @@ export function useTransactionEdits({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...target(t), note }),
         });
-        if (res.ok) return true;
+        if (res.ok) {
+          // Shown once the server has it, so a refusal has nothing to put
+          // back and the editor keeps what was typed. A split transaction's
+          // note is its own, kept beside its parts' (split_parent).
+          setTxns((prev) =>
+            prev
+              ? prev.map((x) =>
+                  x.transaction_id === t.transaction_id
+                    ? { ...x, note: note || (x.source ? null : undefined) }
+                    : x.split_of === t.transaction_id && x.split_parent
+                      ? { ...x, split_parent: { ...x.split_parent, note: note || (x.source ? null : undefined) } }
+                      : x
+                )
+              : prev
+          );
+          return true;
+        }
       } catch {
         res = null;
       }
-      await undo(res, 'Could not save the note. Please try again.');
+      await refused(res, 'Could not save the note. Please try again.');
       return false;
     },
-    [setTxns, undo]
+    [setTxns, refused]
   );
 
   /** Renames a vendor on every transaction from it (app/api/rename), or with

@@ -12,8 +12,14 @@
 // A pending row gets a new id when it posts, and what is said about it is
 // kept by id, so tags and a note are offered once it has posted, as an
 // exclusion is: they can't quietly lapse.
+//
+// Refused, a change leaves the field as it was before it was pressed: the
+// name typed back in the tag field, the note still in its editor (shown on
+// the row only once saved), with focus on that field, which points at why
+// (said at the top of the sheet, `refusedBy`). A chip pressed goes with its
+// press, so a refused chip's change brings focus to the tag field.
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
 import { TAG_NAME_MAX, cleanTagName, tagNameKey, type Tag } from '@/lib/tags';
 import TagChips from './TagChips';
@@ -30,14 +36,32 @@ export default function TxnTagsNote({
   tags,
   onChangeTags,
   onSaveNote,
+  refusedBy,
 }: {
   t: { transaction_id: string; name: string; name_from_bank?: true; pending: boolean; tags?: string[]; note?: string | null };
   tags: readonly Tag[];
-  onChangeTags: (change: TagChange) => void;
-  onSaveNote: (note: string) => void;
+  /** Each a promise of whether it was saved. */
+  onChangeTags: (change: TagChange) => Promise<boolean>;
+  onSaveNote: (note: string) => Promise<boolean>;
+  /** The id of what says why a change was refused, while it says so. */
+  refusedBy?: string;
 }) {
   const [draft, setDraft] = useState('');
   const [note, setNote] = useState(t.note ?? '');
+  // Which field's change was refused last, until the next change.
+  const [refused, setRefused] = useState<'tag' | 'note' | null>(null);
+  const tagField = useRef<HTMLInputElement>(null);
+  const noteField = useRef<HTMLTextAreaElement>(null);
+  /** A tag change, and, refused, the name typed back and focus on the field. */
+  const changeTags = (change: TagChange, typedName = '') => {
+    setRefused(null);
+    void onChangeTags(change).then((saved) => {
+      if (saved) return;
+      if (typedName) setDraft((d) => d || typedName);
+      setRefused('tag');
+      tagField.current?.focus();
+    });
+  };
   const on = useMemo(() => new Set(t.tags ?? []), [t.tags]);
   const typed = cleanTagName(draft);
   const suggestions = useMemo(() => {
@@ -54,19 +78,21 @@ export default function TxnTagsNote({
     if (!typed) return;
     const there = tags.find((tag) => tagNameKey(tag.name) === tagNameKey(typed));
     if (there) {
-      if (!on.has(there.id)) onChangeTags({ add: [there.id] });
-    } else onChangeTags({ newTag: typed });
+      if (!on.has(there.id)) changeTags({ add: [there.id] }, draft);
+    } else changeTags({ newTag: typed }, draft);
     setDraft('');
   };
 
   return (
     <div className="txn-tags-note">
       <div className="txn-tags-row">
-        <TagChips ids={t.tags} tags={tags} onRemove={(id) => onChangeTags({ remove: [id] })} />
+        <TagChips ids={t.tags} tags={tags} onRemove={(id) => changeTags({ remove: [id] })} />
       </div>
       <div className="rename-row">
         <input
+          ref={tagField}
           className="text-input"
+          aria-describedby={refused === 'tag' ? refusedBy : undefined}
           value={draft}
           maxLength={TAG_NAME_MAX}
           onChange={(e) => setDraft(e.target.value)}
@@ -86,13 +112,15 @@ export default function TxnTagsNote({
       {suggestions.length > 0 && (
         <div className="chip-row tag-suggestions" role="group" aria-label="Your tags">
           {suggestions.map((tag) => (
-            <button key={tag.id} type="button" className="chip" onClick={() => onChangeTags({ add: [tag.id] })}>
+            <button key={tag.id} type="button" className="chip" onClick={() => changeTags({ add: [tag.id] })}>
               {tag.name}
             </button>
           ))}
         </div>
       )}
       <textarea
+        ref={noteField}
+        aria-describedby={refused === 'note' ? refusedBy : undefined}
         className="text-input txn-note-input"
         value={note}
         maxLength={MAX_NOTE_CHARS}
@@ -102,7 +130,18 @@ export default function TxnTagsNote({
         aria-label={`Note on ${shownName(t)}`}
       />
       <div className="rename-row">
-        <button className="secondary" disabled={note.trim() === (t.note ?? '').trim()} onClick={() => onSaveNote(note.trim())}>
+        <button
+          className="secondary"
+          disabled={note.trim() === (t.note ?? '').trim()}
+          onClick={() => {
+            setRefused(null);
+            void onSaveNote(note.trim()).then((saved) => {
+              if (saved) return;
+              setRefused('note');
+              noteField.current?.focus();
+            });
+          }}
+        >
           {note.trim() || !t.note ? 'Save note' : 'Clear note'}
         </button>
       </div>
