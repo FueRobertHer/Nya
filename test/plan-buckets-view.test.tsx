@@ -816,7 +816,7 @@ describe('each account’s growth', () => {
     // 6% + 140,000 × 1% / 485,000.
     expect(tab.shown()).toContain('With 1 account at its own, yours grow 6.29% a year together.');
     await act(async () => type(field(tab.dialog()!, 'Growth after inflation')!, '99'));
-    expect(tab.shown()).toContain('in Invested assets.Only for the years until FI');
+    expect(tab.shown()).toContain('in Invested assets.For years to FI, Coast FI, the balance at your stop age and Your path’s steady years after it.');
     await tab.unmount();
   });
 
@@ -846,6 +846,99 @@ describe('each account’s growth', () => {
     expect(tab.shown()).not.toContain('together');
     await tab.unmount();
   });
+});
+
+describe('the stress test moved by your accounts’ own growth', () => {
+  const LEGEND = 'Your accounts’ own growth in the stress test';
+  const TAIL = ' A point a year can move the answer by 10 points or more.';
+  const OWN = { ...PLAN, accounts: [{ account_id: 'brk', growth: 0.07, yield: null }] };
+  /** The radio in the row with this name. */
+  const radio = (tab: Tab, name: string) => tab.dialog()!.findAll((e) => e.tagName === 'LABEL' && has(e, 'radio-row') && part(e, 'radio-row-name')?.textContent === name)[0]?.findAll((e) => e.tagName === 'INPUT')[0];
+  const openAssumptions = async (tab: Tab) => {
+    await press(tab.row('Assumptions'));
+    await settle(60);
+  };
+
+  test('not offered with no account at its own rate, nor with your own figure for invested assets', async () => {
+    // The stress test answered first, so the card's silence counts.
+    const ANSWERED = /historical starts \(.+\) lasted/;
+    serve();
+    const tab = await mount();
+    await settle(200);
+    expect(tab.container.textContent).toMatch(ANSWERED);
+    expect(tab.container.textContent).not.toContain('History as it ran:');
+    await openAssumptions(tab);
+    expect(tab.shown()).not.toContain(LEGEND);
+    await tab.unmount();
+    serve({ plan: { ...OWN, assets: 200_000 } });
+    const typed = await mount();
+    await settle(200);
+    expect(typed.container.textContent).toMatch(ANSWERED);
+    expect(typed.container.textContent).not.toContain('History as it ran:');
+    await openAssumptions(typed);
+    expect(typed.shown()).not.toContain(LEGEND);
+    await typed.unmount();
+  });
+
+  test('as it ran by default, said on the card; moved, saved as on, said by how much; back, the key goes', async () => {
+    const server = serve({ plan: OWN });
+    const tab = await mount();
+    await settle(200);
+    expect(tab.container.textContent).toContain('History as it ran: your accounts’ own growth (5.58% together) counts only in the steady years. Assumptions can move history by it.');
+    await openAssumptions(tab);
+    expect(tab.shown()).toContain(`${LEGEND}History as it ranEvery start lives through the market as it was, for your mix. Your accounts’ own growth counts only in the steady years.`);
+    expect(radio(tab, 'History as it ran').checked).toBe(true);
+    // 5.58% against 5%, as typed.
+    expect(tab.shown()).toContain(`Moved by their ratesEvery year of history 0.6 points higher: your accounts grow 5.58% together, against the plan’s 5%.${TAIL}`);
+    await act(async () => type(field(tab.dialog()!, 'Growth after inflation')!, '6'));
+    expect(tab.shown()).toContain(`Every year of history 0.3 points higher: your accounts grow 6.29% together, against the plan’s 6%.${TAIL}`);
+    // Not a rate: the rows stay, and say it without a figure.
+    await act(async () => type(field(tab.dialog()!, 'Growth after inflation')!, ''));
+    expect(tab.shown()).toContain(`Every year of history moves by your accounts’ gap from the plan’s rate.${TAIL}`);
+    await act(async () => type(field(tab.dialog()!, 'Growth after inflation')!, '5'));
+    await press(radio(tab, 'Moved by their rates'));
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    expect(server.saved().map((p: any) => p.historyMoved)).toEqual([true]);
+    await settle(200);
+    expect(tab.container.textContent).toContain('History moved 0.6 points a year higher by your accounts’ own growth: 5.58% together, against the plan’s 5%.');
+    expect(tab.container.textContent).not.toContain('History as it ran:');
+    await openAssumptions(tab);
+    expect(radio(tab, 'Moved by their rates').checked).toBe(true);
+    await press(radio(tab, 'History as it ran'));
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    expect(server.saved().map((p: any) => Object.hasOwn(p, 'historyMoved'))).toEqual([true, false]);
+    await tab.unmount();
+  });
+
+  test('in a copy: its own, and saved in the copy, never your plan', async () => {
+    const server = serve({ copies: true, plan: OWN });
+    const tab = await mount();
+    await press(part(tab.container, 'plan-bar')!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.startsWith('Plans'))[0]);
+    await press(rowIn(tab.dialog()!, 'Stop at 52'));
+    await press(rowIn(tab.dialog()!, 'Open it'));
+    await openAssumptions(tab);
+    expect(tab.shown()).toContain(LEGEND);
+    expect(tab.shown()).toContain('This copy’s own.');
+    expect(radio(tab, 'Moved by their rates').disabled).toBe(false);
+    await press(radio(tab, 'Moved by their rates'));
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    const puts = server.calls.filter((c) => c.method === 'PUT');
+    expect(puts.map((c) => c.url)).toEqual(['/api/plans']);
+    expect(puts[0].body.saves.map((x: any) => [x.id, x.plan.historyMoved])).toEqual([['a', true]]);
+    await tab.unmount();
+  });
+
+  test('with tax worked out: by bucket, the ones held, those unmoved named in Assumptions', async () => {
+    serve({ tax: { ...DEFAULT_TAX_FACTS, model: 'detailed' }, plan: { ...OWN, historyMoved: true } });
+    const tab = await mount();
+    await settle(400);
+    // The brokerage is the taxable money; the 401(k) and the rest at the plan's.
+    expect(tab.container.textContent).toContain('History moved by your accounts’ own growth: taxable 2 points a year higher, 0.6 higher together.');
+    await openAssumptions(tab);
+    expect(tab.shown()).toContain('Your accounts’ own growth counts only in the steady years.');
+    expect(tab.shown()).toContain(`Every year of history moves by your accounts’ gap from the plan’s 5%: taxable 2 points higher, tax-deferred, Roth and HSA unmoved.${TAIL}`);
+    await tab.unmount();
+  }, 30_000);
 });
 
 describe('Roth contributions', () => {

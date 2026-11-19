@@ -816,6 +816,7 @@ describe('what a seed sets up', () => {
     expect(lasts.version === 2 && lasts.lastsIn).toBe(0.9);
     const brokerage = copies.find((c) => c.name === 'Brokerage at 7%')!.plan;
     expect(brokerage.version === 2 && brokerage.accounts).toEqual([{ account_id: idOf('7788'), growth: 0.07, yield: null }]);
+    expect(brokerage.version === 2 && brokerage.historyMoved).toBe(true);
     expect(mine.accounts).toBeUndefined();
 
     // Saved three months back, as the Progress card saves one.

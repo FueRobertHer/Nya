@@ -12,6 +12,7 @@ import { dayName, monthName, pct, progressText, successText, wholeMoney } from '
 import { DEFAULT_PLAN, enginePlan, fiView, type FirePlan, type Measured } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import { planOf } from '@/lib/fire/plan-v2';
+import type { HistoryMove } from '@/lib/fire/account-growth';
 import { figuresOf, OFF, timelineProps } from './plan-gen';
 import { simulate, successGrid } from '@/lib/fire/simulate';
 import { usMarket } from '@/lib/fire/us-market';
@@ -452,7 +453,7 @@ const cardOf = (p: FirePlan) => {
 
 describe('the simulation card', () => {
   const us = usMarket();
-  const render = (p: FirePlan, m = measured, opts: { pending?: boolean; noOutcome?: boolean; outcome?: Outcome; badge?: string } = {}) => {
+  const render = (p: FirePlan, m = measured, opts: { pending?: boolean; noOutcome?: boolean; outcome?: Outcome; badge?: string; history?: HistoryMove; setupHeld?: boolean } = {}) => {
     const f = figuresOf(p, m) as PlanFigures;
     const { view, engine } = f;
     const outcome = opts.outcome ?? ('sim' in engine && !opts.noOutcome ? { result: simulate(p.method, engine.sim, us) } : null);
@@ -469,10 +470,35 @@ describe('the simulation card', () => {
         currency="USD"
         badge={opts.badge ?? null}
         onRetry={noop}
+        history={opts.history ?? null}
+        setupHeld={opts.setupHeld ?? false}
       />
     );
   };
   const read = (p: FirePlan, m = measured, opts: { pending?: boolean; noOutcome?: boolean; outcome?: Outcome; badge?: string } = {}) => text(render(p, m, opts));
+
+  // With an account at its own rate (lib/fire/account-growth.ts historyMove).
+  test('says how its history treats your accounts’ own growth, under what counts as lasting; a caution from a point a year higher', () => {
+    const p = plan({ targetAge: 65, horizon: 30 });
+    const asRan = render(p, measured, { history: { on: false, blend: 0.051, rate: 0.05, together: 0.001, buckets: null } });
+    const LINE = '<p class="plan-definition">History as it ran: your accounts’ own growth (5.1% together) counts only in the steady years. Assumptions can move history by it.</p>';
+    expect(asRan).toContain(LINE);
+    expect(asRan.indexOf(LINE)).toBeGreaterThan(asRan.indexOf('It counts as lasting'));
+    expect(asRan.indexOf(LINE)).toBeLessThan(asRan.indexOf('Hypothetical, from US history'));
+    expect(asRan).not.toContain('notice caution');
+    const farMove: HistoryMove = { on: true, blend: 0.072, rate: 0.05, together: 0.022, buckets: null };
+    const far = render(p, measured, { history: farMove });
+    expect(far).not.toContain('History moved 2.2 points a year higher by your accounts’ own growth: 7.2% together, against the plan’s 5%.</p>');
+    const notice = far.slice(far.indexOf('<div class="notice caution">'));
+    expect(text(notice.slice(0, notice.indexOf('</div></div>'))).trim()).toBe('Caution: History moved 2.2 points a year higher by your accounts’ own growth: 7.2% together, against the plan’s 5%. Every start does far better than it did, and a rate from a few strong years rarely repeats.');
+    // Lower is a harder test: a line.
+    expect(render(p, measured, { history: { on: true, blend: 0.03, rate: 0.05, together: -0.02, buckets: null } })).toContain('<p class="plan-definition">History moved 2 points a year lower by your accounts’ own growth: 3% together, against the plan’s 5%.</p>');
+    expect(render(p)).not.toContain('History');
+    // Held with the setup while the run it describes is worked out.
+    expect(render(p, measured, { history: farMove, setupHeld: true })).not.toContain('History moved');
+    // Monte Carlo runs, not starts.
+    expect(text(render(plan({ targetAge: 65, horizon: 30, method: 'monte-carlo' }), measured, { history: farMove }))).toContain('7.2% together, against the plan’s 5%. Every run does far better than the history it’s drawn from, and a rate from a few strong years rarely repeats.');
+  });
 
   // The grid under it says it then instead (simulationAnswered, below).
   test('says its figures are hypothetical only with an answer: not while working it out, nor when it has none', () => {

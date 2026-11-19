@@ -499,8 +499,9 @@ function alex(today: string): DemoProfile {
             add: [planItem({ id: 'freelance', label: 'Freelance design', kind: 'part-time', from: atStop(), until: { years: 10 }, yearly: 18_000, replaces: 0 })],
           },
           { name: 'Earliest stop that lasts', set: { lastsIn: 0.9 } },
-          // The brokerage at a rate of its own; the rest at the plan's.
-          { name: 'Brokerage at 7%', growth: [{ mask: '7788', growth: 0.07 }] },
+          // The brokerage at a rate of its own, the rest at the plan's, and the
+          // stress test's history moved by it.
+          { name: 'Brokerage at 7%', set: { historyMoved: true }, growth: [{ mask: '7788', growth: 0.07 }] },
         ],
         savedMonthsBack: 3,
       },

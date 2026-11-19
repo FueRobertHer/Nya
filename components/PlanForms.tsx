@@ -17,7 +17,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { plainNumber } from '@/lib/format';
 import { allocationOf, asText, LIMITS, PLAN_TO_AGE, pctText, stopOf, type AccountRate, type FiView, type FirePlan, type PlanCore, type PlanFunding } from '@/lib/fire/plan';
-import { planGrowth, ratesOf, withRates, type OwnRates } from '@/lib/fire/account-growth';
+import { planGrowth, ratesOf, withRates, type HistoryMove, type OwnRates } from '@/lib/fire/account-growth';
 import { measuredYield } from './plan-detailed';
 import type { PathAfter } from '@/lib/fire/path';
 import { LASTS_IN_CHOICES, parsePlanV2, type FirePlanV2 } from '@/lib/fire/plan-v2';
@@ -30,7 +30,8 @@ import { STATE_CODES, type Filing, type StateCode, type Statute } from '@/lib/fi
 import { FILING_NAMES, fiLines, fiYearly, householdNotes, lawLabel, sharesNote, STATE_NAMES } from './plan-drawdown';
 import { MoneyLines } from './PlanDrawdown';
 import type { FiShares } from '@/lib/fire/plan-figures';
-import { METHOD_NAMES, RULE_NAMES, apartWords, ruleText, pct, pctNumber, saidAbove, saidRate, wholeMoney } from './plan-text';
+import { METHOD_NAMES, RULE_NAMES, apartWords, historyAsItRanNote, historyMovedNote, ruleText, pct, pctNumber, saidAbove, saidRate, wholeMoney } from './plan-text';
+import RadioRows from './RadioRows';
 import { BLOCK_MONTHS, DEFAULT_RUNS, DEFAULT_SEED } from '@/lib/fire/simulate';
 import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
 import { Masked, NO_EXAMPLE, spokenLabel } from './HideAmounts';
@@ -1130,6 +1131,9 @@ export function AssumptionsForm(
     /** The growth the plan would run at with this rate as its own, its accounts'
      *  own rates blended in (lib/fire/account-growth.ts), and how many those are. */
     growthAt?: (rate: number) => { growth: number; own: number };
+    /** What moving the stress test's history by the accounts' own growth does,
+     *  with this rate as the plan's (lib/fire/account-growth.ts historyMove). */
+    movedAt?: (rate: number) => HistoryMove | null;
   }
 ) {
   const { plan, at = null } = props;
@@ -1147,6 +1151,7 @@ export function AssumptionsForm(
   const [stocks, setStocks] = useState(String(fill ? offer.stocksPct : plan.stocksPct));
   const [bonds, setBonds] = useState(String(fill ? offer.bondsPct : plan.bondsPct));
   const [rebalance, setRebalance] = useState(plan.rebalance);
+  const [moved, setMoved] = useState(plan.historyMoved === true);
   const [fee, setFee] = useState(pctText(plan.fee));
   const [floor, setFloor] = useState(pctText(plan.floor));
   const [ceiling, setCeiling] = useState(pctText(plan.ceiling));
@@ -1178,6 +1183,10 @@ export function AssumptionsForm(
   // The accounts' own rates with the plan's as typed: nothing while it isn't a rate.
   const retNow = typedRate(ret, LIMITS.realReturn, NaN);
   const together = props.growthAt && Number.isFinite(retNow) ? props.growthAt(retNow) : null;
+  // Moving the stress test's history is offered while an account grows at its
+  // own rate, by the plan as saved, so the rows stay put while the rate is typed.
+  const someOwn = (props.growthAt?.(plan.realReturn).own ?? 0) > 0;
+  const movedNow = props.movedAt && Number.isFinite(retNow) ? props.movedAt(retNow) : null;
 
   // Opened at a part: the sheet's body is scrolled to it. Set on the body
   // alone (never scrollIntoView, which would scroll the page behind too, as
@@ -1207,8 +1216,11 @@ export function AssumptionsForm(
       };
       more.current = JSON.stringify(tax) === JSON.stringify(detail.choices) ? {} : { tax };
     }
+    // Held only while it is on (lib/fire/plan-v2.ts): off, the key goes.
+    const { historyMoved: _moved, ...kept } = plan;
     return {
-      ...plan,
+      ...kept,
+      ...(moved ? { historyMoved: true as const } : {}),
       withdrawalRate: readNumber(rate, 'The withdrawal rate', ...LIMITS.withdrawalRate, { scale: 0.01 }) as number,
       realReturn: readNumber(ret, 'Growth after inflation', ...LIMITS.realReturn, { scale: 0.01 }) as number,
       // Kept as it is while the field is away: for going flat, and for a rollback.
@@ -1270,7 +1282,7 @@ export function AssumptionsForm(
             ? 'The plan’s rate: your own figure for invested assets grows at it.'
             : `The plan’s rate: every account grows at it unless you give one its own in Invested assets.${together && together.own > 0 ? ` With ${together.own === 1 ? '1 account at its own' : `${together.own} at their own`}, yours grow ${pct(together.growth)} a year together${detail ? `. On Drawdown, ${apartWords(together.growth)}` : ''}.` : ''}`}
         </p>
-        <p className="helper">{detail ? 'For years to FI, Coast FI, the balance at your stop age and the steady years on Drawdown. Your FI number’s tax and health coverage come from the steady years. The stress test uses market history for its returns instead, and works out each year’s tax and health coverage on them.' : 'Only for the years until FI: years to FI, Coast FI and the balance at your stop age. The stress test uses market history for its returns instead.'}</p>
+        <p className="helper">{detail ? 'For years to FI, Coast FI, the balance at your stop age and the steady years on Drawdown. Your FI number’s tax and health coverage come from the steady years. The stress test uses market history for its returns instead, and works out each year’s tax and health coverage on them.' : 'For years to FI, Coast FI, the balance at your stop age and Your path’s steady years after it. The stress test uses market history for its returns instead.'}</p>
         {!taxWorked && (
           <>
         <label className="field">
@@ -1378,6 +1390,22 @@ export function AssumptionsForm(
             ? 'Starts the plan in every month since 1871 that leaves all of it inside the data, and lives through what followed.'
             : `${plainNumber(DEFAULT_RUNS)} runs, each built from ${BLOCK_MONTHS / 12}-year blocks of months drawn at random from the same history: more sequences than history holds, spread wider. They are drawn the same way each time (seed ${DEFAULT_SEED}), so the same plan gives the same answer.`}
         </p>
+        {someOwn && (
+          <>
+            <RadioRows
+              legend="Your accounts’ own growth in the stress test"
+              name="plan-history"
+              value={moved ? 'moved' : 'as-it-ran'}
+              onChange={(v) => setMoved(v === 'moved')}
+              disabled={s.saving}
+              options={[
+                { value: 'as-it-ran', name: 'History as it ran', note: historyAsItRanNote(method === 'monte-carlo') },
+                { value: 'moved', name: 'Moved by their rates', note: historyMovedNote(movedNow) },
+              ]}
+            />
+            {props.copy && <p className="helper">This copy’s own.</p>}
+          </>
+        )}
         <label className="field">
           Withdrawal rule
           <select value={rule} onChange={(e) => setRule(e.target.value as RuleKind)} disabled={s.saving}>
