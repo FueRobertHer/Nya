@@ -31,6 +31,15 @@ import { plainNumber } from '@/lib/format';
 /** A cell that couldn't be worked out. */
 export type FailedCell = { rate: number | null; years: number };
 
+/** The grid's rates with the plan's own among them: in place of the row its
+ *  label would repeat (pct, as each row is labeled), so a worked-out rate of
+ *  0.0349997 is the 3.5% row, still the plan's own, not a second "3.5%";
+ *  else added in order. */
+export function withOwnRate(rates: readonly number[], own: number): number[] {
+  const label = pct(own);
+  return rates.some((v) => pct(v) === label) ? rates.map((v) => (pct(v) === label ? own : v)) : [...rates, own].sort((a, b) => a - b);
+}
+
 export default function PlanGrid({
   cells,
   failed = [],

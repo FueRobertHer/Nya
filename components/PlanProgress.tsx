@@ -30,7 +30,7 @@ const firstUp = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 import type { Input, PlanCore } from '@/lib/fire/plan';
 import { toStored, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { AssetInstitution } from '@/lib/fire/inputs';
-import { changedSince, DEFAULT_INFLATION, MAX_INFLATION, plannedAt, savedGrowth, yearsBetween, YEAR_DAYS, type SavedItems, type SavedPlan } from '@/lib/fire/saved-plan';
+import { changedSince, DEFAULT_INFLATION, MAX_INFLATION, plannedAt, savedGrowth, savedStop, yearsBetween, YEAR_DAYS, type SavedItems, type SavedPlan } from '@/lib/fire/saved-plan';
 import { isComplete, progressAccountsOf, type InvestedDay } from '@/lib/fire/invested-series';
 import type { PathPoint } from '@/lib/fire/path';
 
@@ -78,7 +78,7 @@ export function shortWhy(day: InvestedDay, nameOf: (id: string) => string): stri
 /** What the card says about progress, worked out from the saved plan and the
  *  recorded days, with its items where `items` places them; amounts through
  *  `money`. */
-export function progressLines(saved: SavedPlan, answer: ProgressAnswer, nameOf: (id: string) => string, money: (n: number) => string, items: SavedItems | null = null) {
+export function progressLines(saved: SavedPlan, answer: ProgressAnswer, nameOf: (id: string) => string, money: (n: number) => string, items: SavedItems | null = null, spending: number | null = null) {
   const { anchor, latest } = answer;
   // The newest whole day: what is set against the plan.
   const whole = answer.months.length > 0 ? answer.months[answer.months.length - 1] : null;
@@ -112,7 +112,7 @@ export function progressLines(saved: SavedPlan, answer: ProgressAnswer, nameOf: 
   if (yearsBetween(anchor.date, whole.date) * 365.25 < MIN_DAYS) {
     return { start, compared: null, waiting: `A month after that, Nya sets where you are against where your plan has you.`, ...rest };
   }
-  const planned = plannedAt(saved, { day: anchor.date, total: anchor.total as number }, whole.date, items);
+  const planned = plannedAt(saved, { day: anchor.date, total: anchor.total as number }, whole.date, items, spending);
   if (planned === null) return { start, compared: null, waiting: 'Your plan’s growth can’t be worked out, so nothing is set against it.', ...rest };
   const diff = whole.total - planned;
   const verdict = Math.round(diff) === 0 ? 'Level with it.' : `${money(Math.abs(diff))} ${diff > 0 ? 'ahead of' : 'behind'} it.`;
@@ -128,6 +128,9 @@ export type ProgressViewProps = {
   savedState: SavedState;
   /** The saved plan's items where its own steady path has them. */
   items?: SavedItems | null;
+  /** Today's measured spending, which a saved plan that typed none takes out
+   *  after its stop (lib/fire/saved-plan.ts savedStop). */
+  spending?: number | null;
   /** What a detailed plan's draw before the stop leaves between its line and Your path. */
   flatLine?: string | null;
   series: SeriesState | null;
@@ -154,7 +157,7 @@ export function savingsBlock(savings: Input): string | null {
   return null;
 }
 
-export function ProgressView({ savedState, items = null, flatLine = null, series, plan, blocked, copyOpen, savings, money, nameOf, busy, error, onSheet, onRetry }: ProgressViewProps) {
+export function ProgressView({ savedState, items = null, spending = null, flatLine = null, series, plan, blocked, copyOpen, savings, money, nameOf, busy, error, onSheet, onRetry }: ProgressViewProps) {
   const saved = savedState.kind === 'ready' ? savedState.saved : null;
   const why = blocked ?? savingsBlock(savings);
   const menu = saved ? [{ label: 'Stop comparing', danger: true, onSelect: () => onSheet('forget'), disabled: busy }] : [];
@@ -207,7 +210,7 @@ export function ProgressView({ savedState, items = null, flatLine = null, series
             )}
           </>
         )}
-        {saved && <SavedBody saved={saved} items={items} flatLine={flatLine} series={series} money={money} nameOf={nameOf} onRetry={onRetry} />}
+        {saved && <SavedBody saved={saved} items={items} spending={spending} flatLine={flatLine} series={series} money={money} nameOf={nameOf} onRetry={onRetry} />}
         {saved && changedSince(saved, plan).length > 0 && (
           <>
             <Notice level="info">
@@ -233,6 +236,7 @@ export function ProgressView({ savedState, items = null, flatLine = null, series
 function SavedBody({
   saved,
   items,
+  spending,
   flatLine,
   series,
   money,
@@ -241,13 +245,16 @@ function SavedBody({
 }: {
   saved: SavedPlan;
   items: SavedItems | null;
+  spending: number | null;
   flatLine: string | null;
   series: SeriesState | null;
   money: (n: number) => string;
   nameOf: (id: string) => string;
   onRetry: () => void;
 }) {
-  const flow = saved.savings < 0 ? `spending ${money(-saved.savings)} a year more than comes in` : `saving ${money(saved.savings)} a year`;
+  const stop = savedStop(saved, spending);
+  const saving = saved.savings < 0 ? `spending ${money(-saved.savings)} a year more than comes in` : `saving ${money(saved.savings)} a year`;
+  const flow = stop ? `${saving} until ${stop.age}, then ${stop.draw > 0 ? `taking out ${money(stop.draw)} a year` : 'taking nothing out (no spending to go by)'}` : saving;
   const assumed = `Growing a steady ${pct(savedGrowth(saved))} a year after inflation, ${flow}, with prices rising ${pct(saved.inflation)} a year.`;
   return (
     <>
@@ -263,7 +270,7 @@ function SavedBody({
           </div>
         </>
       )}
-      {series?.kind === 'ready' && <Compared saved={saved} items={items} answer={series.answer} money={money} nameOf={nameOf} />}
+      {series?.kind === 'ready' && <Compared saved={saved} items={items} spending={spending} answer={series.answer} money={money} nameOf={nameOf} />}
       <p className="helper">
         <Masked>{assumed}</Masked>
       </p>
@@ -276,7 +283,7 @@ function SavedBody({
       <Why>
         <p>
           Your invested assets are added up from the balances recorded each day, by your plan’s rules as you saved it (investment accounts{saved.plan.includeCash ? ', and checking and savings' : ''}, hidden ones
-          and accounts for a child’s education left out){saved.currency ? `, in ${saved.currency}` : ''}. Your plan starts from the first day every account it counts was recorded, grows that at its rate, adding its savings steadily through the year,
+          and accounts for a child’s education left out){saved.currency ? `, in ${saved.currency}` : ''}. Your plan starts from the first day every account it counts was recorded, grows that at its rate, adding its savings steadily through the year{stop ? ' until the age it stops working, then taking out its spending, grossed up for tax (pay and part-time work end there; its other items go on)' : ''},
           and is raised by the inflation rate, since balances are in each day’s money and the plan in the dollars of the day it starts.
         </p>
       </Why>
@@ -287,17 +294,19 @@ function SavedBody({
 function Compared({
   saved,
   items,
+  spending,
   answer,
   money,
   nameOf,
 }: {
   saved: SavedPlan;
   items: SavedItems | null;
+  spending: number | null;
   answer: ProgressAnswer;
   money: (n: number) => string;
   nameOf: (id: string) => string;
 }) {
-  const l = progressLines(saved, answer, nameOf, money, items);
+  const l = progressLines(saved, answer, nameOf, money, items, spending);
   return (
     <>
       {l.start && (
@@ -370,7 +379,7 @@ export type ProgressOverlay = {
  *  than MIN_DAYS between them, as the card sets nothing against the plan
  *  before then. Both in each day's own money, as balances are, which today's
  *  dollars are on today. */
-export function progressOverlay(saved: SavedPlan, answer: ProgressAnswer, age: number, today: string, items: SavedItems | null = null): ProgressOverlay | null {
+export function progressOverlay(saved: SavedPlan, answer: ProgressAnswer, age: number, today: string, items: SavedItems | null = null, spending: number | null = null): ProgressOverlay | null {
   const { anchor } = answer;
   if (!anchor || anchor.total === null) return null;
   const start = { day: anchor.date, total: anchor.total };
@@ -380,7 +389,7 @@ export function progressOverlay(saved: SavedPlan, answer: ProgressAnswer, age: n
   const recorded: PathPoint[] = [];
   const planned: PathPoint[] = [];
   for (const d of days) {
-    const p = plannedAt(saved, start, d.day, items);
+    const p = plannedAt(saved, start, d.day, items, spending);
     if (p === null) return null;
     recorded.push({ age: ageOn(d.day), balance: d.total });
     planned.push({ age: ageOn(d.day), balance: p });
@@ -460,11 +469,13 @@ export type PlanProgressProps = {
   blocked: string | null;
   copyOpen: boolean;
   items?: SavedItems | null;
+  /** Today's measured spending, for a saved plan's years after its stop. */
+  spending?: number | null;
   /** What a detailed plan's draw before the stop leaves between its line and Your path. */
   flatLine?: string | null;
 };
 
-export default function PlanProgress({ progress, plan, savings, growth, currency, institutions, blocked, copyOpen, items = null, flatLine = null }: PlanProgressProps) {
+export default function PlanProgress({ progress, plan, savings, growth, currency, institutions, blocked, copyOpen, items = null, spending = null, flatLine = null }: PlanProgressProps) {
   const { savedState, series, setSaved, setSeries, retry } = progress;
   const [sheet, setSheet] = useState<ProgressSheet>(null);
   const [inflation, setInflation] = useState(String(DEFAULT_INFLATION * 100));
@@ -567,6 +578,7 @@ export default function PlanProgress({ progress, plan, savings, growth, currency
       <ProgressView
         savedState={savedState}
         items={items}
+        spending={spending}
         flatLine={flatLine}
         series={series}
         plan={plan}
