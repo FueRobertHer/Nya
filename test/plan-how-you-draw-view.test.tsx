@@ -556,7 +556,7 @@ describe('Your figures', () => {
     await tab.unmount();
   }, 30_000);
 
-  test('a rate you set is said as you set it, saved or just typed, on Will it last? and in Assumptions', async () => {
+  test('a rate you set is said as you set it, saved or just typed, on the stress test and in Assumptions', async () => {
     const tab = await detailed({ ...PLAN, withdrawalRate: 0.0325 }, WITH_ACCOUNTS);
     await pick(tab.container, 'Your path');
     expect(tab.text()).toContain('Your spending, health coverage and tax come to about 3.25% of it a year.');
@@ -568,7 +568,7 @@ describe('Your figures', () => {
     await tab.unmount();
   }, 30_000);
 
-  test('a rate that reads as the one you set is not said to be above it, on Will it last? and in Assumptions', async () => {
+  test('a rate that reads as the one you set is not said to be above it, on the stress test and in Assumptions', async () => {
     // Just over 4%, read to a tenth as 4%.
     const tab = await detailed({ ...PLAN, start: 'custom', startBalance: 1_065_000 } as typeof PLAN);
     await pick(tab.container, 'Your path');

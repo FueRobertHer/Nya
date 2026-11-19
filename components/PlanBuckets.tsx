@@ -28,7 +28,7 @@ import { MAX_FACT_AMOUNT, type Owner, type TaxFactOp, type TaxFacts } from '@/li
 import { LIMITS, pctText } from '@/lib/fire/plan';
 import type { OwnRates } from '@/lib/fire/account-growth';
 import { paidOf } from '@/lib/fire/bucket-growth';
-import { monthName, pct } from './plan-text';
+import { monthName, pct, pctNumber } from './plan-text';
 import { useMeasuredRate, type RateState } from './use-measured-rate';
 import { afterInflation } from '@/lib/fire/measured-rate';
 import { normalizedAmountText } from '@/lib/manual-txn-input';
@@ -342,9 +342,9 @@ function RateHint({ measured, inflation, balancesAt, typed, disabled, onUse }: {
 
 /** The field's placeholder: what empty is, as a rate. */
 function yieldPlaceholder(account: BucketAccount, d: { typed: number | null; together: number | null }): string {
-  if (d.typed !== null) return pct(d.typed);
+  if (d.typed !== null) return pctNumber(d.typed);
   const r = paidOf(account) ?? d.together;
-  return r === null ? 'None measured' : pct(r, 1);
+  return r === null ? 'None measured' : pctNumber(r, 1);
 }
 
 /** An account's facts, and its growth and dividends in the plan: a level of the

@@ -288,7 +288,7 @@ describe('the FI number in the detailed model', () => {
     const own = figures(plan({ fiNumber: 1_500_000 }));
     expect(own.view.fiNumber).toBe(1_500_000);
     expect(own.view.workedOut).toBeCloseTo(figures(plan()).view.workedOut as number, 6);
-    // Your own number is what Will it last? starts from.
+    // Your own number is what the stress test starts from.
     expect(total(detailOf(own).start.years[0].start)).toBeCloseTo(1_500_000, 4);
   });
 
@@ -316,7 +316,7 @@ describe('the FI number in the detailed model', () => {
     const fromToday = figures(plan({ items: [change], start: 'assets' }));
     expect(sharesOf(fromToday).spending).toBe(72_000);
     expect(fromToday.view.workedOut).toBeCloseTo(fromStop.view.workedOut as number, 6);
-    // And Will it last? still starts from today's spending.
+    // And the stress test still starts from today's spending.
     expect(detailOf(fromToday).start.years[0].living).toBeCloseTo(60_000, 4);
     // It is in the number, so nothing says the number leaves it out.
     expect(fromToday.events?.later ?? []).toEqual([]);

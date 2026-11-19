@@ -12,7 +12,7 @@ import { startsWithText } from '@/components/plan-scenario-text';
 import { everyRunText } from '@/components/plan-items';
 
 // D11's start, as its reader runs it (the tax plan's timeline, "With D11's
-// start"): Will it last? from what your own steady path has at the stop, a balance
+// start"): the stress test from what your own steady path has at the stop, a balance
 // anchor not fired by then checked per run on that run's balance. The oracle is
 // the steady path: on a market that never changes, every run is the steady one, so
 // each must fire where the steady path placed it, as steadyRun is held to
@@ -217,7 +217,7 @@ describe('what stays as the steady path has it', () => {
   });
 
   test('the words: a row waiting per run says so, one fixed keeps its reason', () => {
-    expect(everyRunText(null, plan(), true)).toBe('Will it last? goes by each run’s own balance for this.');
+    expect(everyRunText(null, plan(), true)).toBe('The stress test goes by each run’s own balance for this.');
     expect(everyRunText(58, plan())).toBe('Starts at 58 in every run, as on your steady path: your FI date and what comes before your stop are the steady path’s, not each run’s.');
   });
 });

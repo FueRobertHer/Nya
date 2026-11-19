@@ -67,7 +67,7 @@ const solve = (plan: FirePlanV2, method: Method = 'historical', flat = false): E
   return r;
 };
 
-/** Will it last?'s full share for a stop at k, as the plan would run it. */
+/** The stress test's full share for a stop at k, as the plan would run it. */
 const fullAt = (plan: FirePlanV2, k: number, method: Method = 'historical', flat = false) => {
   const f = planFigures({ ...plan, stopAtFi: true, start: 'at-stop' }, M, { count: ON, detailed: flat ? null : detailed, fiAt: k }) as PlanFigures;
   if (!('sim' in f.engine)) throw new Error('no sim');
@@ -107,7 +107,7 @@ describe('the earliest stop that lasts', () => {
     expect([atFi.age, atFi.resolution.stop]).toEqual([51, 51]);
     const g = planFigures({ ...PLAN, stopAtFi: true }, M, { count: ON, detailed, resolved: atFi.resolution }) as PlanFigures;
     expect([g.view.fiAge, g.view.stopAge]).toEqual([51, 51]);
-    // Will it last? at that stop is the run that was found to last.
+    // The stress test at that stop is the run that was found to last.
     if (!('sim' in g.engine)) throw new Error('no sim');
     expect(simulate('historical', g.engine.sim, usMarket(), WITH_TAX).successRate).toBe(atFi.share as number);
   }, 60_000);

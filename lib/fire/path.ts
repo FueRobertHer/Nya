@@ -15,7 +15,7 @@
 // balance at the start of its year, before that year's money in and costs.
 //
 // After the stop (the tax plan's P, D13), the same steady return on to the
-// plan's end, where Will it last? ends: the plan's own rule drawing its
+// plan's end, where the stress test ends: the plan's own rule drawing its
 // spending, with its items in the years they cover, at the ages the figures
 // resolved them to (steadyRun, below). It starts where the walk ends, at the
 // stop age's balance (today's once the stop has come). Not the simulation:
@@ -76,7 +76,7 @@ export type PathAfter = {
    *  can't pay. The first has the walk's last balance; a windfall that year
    *  is in that point's `inHand` on the walk, and in this path's first year. */
   points: PathPoint[];
-  /** The plan's end: where Will it last? ends (startAge plus planYears). */
+  /** The plan's end: where the stress test ends (startAge plus planYears). */
   endAge: number;
   /** The age of the year it can't pay, or null when it lasts. */
   runsOutAt: number | null;

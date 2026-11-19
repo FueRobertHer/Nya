@@ -544,7 +544,7 @@ export function inputFlags(a: Pick<FigureArgs, 'view' | 'unread' | 'withoutTrans
 }
 
 /**
- * Drawdown's notice (rollout phase 6c; Stress test's until T1): a caution
+ * Drawdown's notice (rollout phase 6c; the Stress test segment's until T1): a caution
  * for each input the simulation uses that may be low, naming the figure and
  * what the test does with it, since less spending reads safer, not lower. None while it can't
  * run ('missing' in engine), where its card says what it needs.

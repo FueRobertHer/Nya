@@ -39,7 +39,13 @@ export function apartWords(growth: number): string {
 
 /** A fraction as a percent with no trailing zeros: 0.04 "4%", 0.035 "3.5%", 0.0425 "4.25%". */
 export function pct(f: number, maxDigits = 2): string {
-  return `${Number((f * 100).toFixed(maxDigits))}%`;
+  return `${pctNumber(f, maxDigits)}%`;
+}
+
+/** The same number without its sign, as a percent field shows it: 0.035 "3.5", for a
+ *  placeholder under a label that already says "%". */
+export function pctNumber(f: number, maxDigits = 2): string {
+  return String(Number((f * 100).toFixed(maxDigits)));
 }
 
 /** The rate to say of one worked out from a balance: a tenth of a percent, so every
@@ -202,7 +208,7 @@ export function asksLasting(plan: { lastsIn?: number; age: number | null } & Par
 }
 
 /** How D9's answer was found, said under it in place of the steady path's line:
- *  the share of Will it last?'s starts by the plan's method, and the age the run
+ *  the share of the stress test's starts by the plan's method, and the age the run
  *  lasts to. Says what the age is, never that it is better or safer. */
 export function lastingText(found: { age: number | null; to: number | null; share: number }, method: 'historical' | 'monte-carlo', today: number | null): string {
   const pct = `${Math.round(found.share * 100)}%`;

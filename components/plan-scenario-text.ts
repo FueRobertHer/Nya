@@ -146,7 +146,7 @@ export function startsWithText(sw: StartsWith, money: Money, shortWhere: string 
   return `${head}: you’d have about ${money(sw.projected)} then, ${money(sw.balance - sw.projected)} less.`;
 }
 
-/** Drawdown's start line (the tax plan's P), under Will it last?'s answer:
+/** Drawdown's start line (the tax plan's P), under the stress test's answer:
  *  what it starts from, against what the steady path has where Whole path
  *  starts drawing. Said for a start with less than that (a start with more
  *  keeps its caution, in startsWithText's words), and for a start from

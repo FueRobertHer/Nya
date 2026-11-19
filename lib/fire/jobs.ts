@@ -14,7 +14,7 @@
 // the page, never in Home's chunk (lib/fire/plan-figures.ts).
 //
 // D9's earliest stop that lasts (lib/fire/earliest.ts) is a job here too, since it
-// runs Will it last? at each stop it tries: it brings the plan and what a detailed
+// runs the stress test at each stop it tries: it brings the plan and what a detailed
 // plan's drawdown runs on, with the law, as a detailed plan's search does.
 
 import type { Count } from './compile';
