@@ -8,6 +8,7 @@ import {
   ITEM_TEMPLATES,
   TEMPLATE_GROUPS,
   beforeStartText,
+  coastNotReachedText,
   copyNameFor,
   countsInFiDate,
   endWords,
@@ -487,5 +488,66 @@ describe('a milestone in words', () => {
     expect(unplacedText(travel, f.resolution.why[1], f.plan)).toBe('Waits on Lean FI, which isn’t reached on your steady path.');
     const { notReached, unplaced } = timelinePoints(f.plan, f, money);
     expect([notReached.map((x) => [x.label, x.items]), unplaced]).toEqual([[['Lean FI · not by 95', [0, 1]]], []]);
+  });
+});
+
+describe('a share of the FI number and Coast FI in words', () => {
+  // FI number $1,000,000; $500,000 now and $50,000 a year at 5%, stop at 50.
+  const share = (percent: number, label = 'Share') => mk('share', 'milestone', { anchor: { at: 'share', percent }, offset: 0 }, { label });
+  const coast = mk('coast', 'milestone', { anchor: { at: 'coast' }, offset: 0 }, { label: 'Coast FI' });
+  const more = mk('more', 'spending', { anchor: { at: 'item', id: 'share', edge: 'start' }, offset: 0 }, { yearly: 10_000, label: 'Travel more' });
+
+  test('its row says the share, and the amount it was reached at; Coast FI says by when', () => {
+    const plan = { ...base, items: [share(50, 'Halfway'), share(60), coast] };
+    expect(rowSub(plan.items[0], plan, money, { start: 40, inWalk: false, reached: 500_000 })).toBe('Half your FI number, about $500,000 then');
+    expect(rowSub(plan.items[1], plan, money, { start: null, inWalk: false })).toBe('60% of your FI number');
+    expect(rowSub(coast, plan, money, { start: 43, inWalk: false })).toBe('What you have grows to your FI number by 50 with nothing more added');
+    expect(rowSub(coast, { ...plan, stopAtFi: true, targetAge: null }, money, { start: null, inWalk: false, stop: 48 })).toBe('What you have grows to your FI number by 48 with nothing more added');
+    expect([itemSentence(plan.items[1], plan, money), itemSentence(coast, plan, money)]).toEqual(['when invested assets reach 60% of your FI number', 'when you reach Coast FI']);
+    expect(whenWords(more.from, more, { ...plan, items: [share(60), more] }, money)).toBe('At Share');
+    expect(copyNameFor(ITEM_TEMPLATES.find((t) => t.id === 'spending')!, { ...more, label: 'A change in spending' }, { ...plan, items: [share(60), more] }, [])).toBe('A change in spending at Share');
+  });
+
+  test('on the Timeline: under the age it is reached; Coast FI not reached by the stop comes last, saying why', () => {
+    const f = figures({ items: [share(60), coast] });
+    expect(f.resolution.ages).toEqual([{ start: 42, end: null }, { start: 43, end: null }]);
+    expect(f.resolution.reachedAt).toEqual([600_000, 1_000_000 / 1.05 ** 7]);
+    const labels = timelinePoints(f.plan, f, money).points.map((p) => [p.label, p.items]);
+    expect(labels).toContainEqual(['42 on your steady path', [0]]);
+    expect(labels).toContainEqual(['43 on your steady path', [1]]);
+    const early = figures({ targetAge: 45, items: [coast, { ...more, from: { anchor: { at: 'item', id: 'coast', edge: 'start' }, offset: 0 } }] });
+    expect(timelinePoints(early.plan, early, money).notReached.map((p) => [p.label, p.items])).toEqual([['Coast FI · not by your stop at 45', [0, 1]]]);
+    expect(coastNotReachedText(early)).toBe('You reach FI around 46, after your stop, so what you have never grows to it by then.');
+    // D9's FI date is the earliest stop that lasts, not when the FI number is reached: never given as why.
+    const lasting = { ...early, resolution: { ...early.resolution, searched: 'lasts' as const } };
+    expect(fiWhen(lasting)).toEqual({ kind: 'age', age: 46 });
+    expect(coastNotReachedText(lasting)).toBe('What you have doesn’t grow to your FI number by your stop with nothing more added.');
+    expect(unplacedText(early.plan.items[1], early.resolution.why[1], early.plan)).toBe('Waits on Coast FI, which isn’t reached on your steady path.');
+  });
+
+  test('with no FI number, it and what is timed on it wait on one', () => {
+    expect(unplacedText(share(60), 'no-fi-number', base)).toBe('Waits on your FI number, which isn’t worked out.');
+  });
+
+  test('What’s possible: where it falls, how it is checked, and the FI number it moved', () => {
+    const lines = (items: PlanItem[], over: Partial<FirePlanV2> = {}) => {
+      const after = figures({ ...over, items });
+      return previewLines({ draft: { ok: items[0] }, before: figures(over), after, without: null, where: 'plan', money, startAge: 50, most: null, savings: 50_000, runsOutAt: null, milestone: true });
+    };
+    const alone = lines([share(60)]);
+    expect(alone.rows).toEqual([
+      { key: 'On your steady path', value: '42, 8 years before you stop at 50' },
+      { key: 'Your FI date', value: 'Stays around 46' },
+    ]);
+    expect(alone.lines).toEqual(['Checked on the balance at the start of each year against your FI number as it stands then, and reached once, so a cost after it can’t undo it.', 'To time an item on it, pick Share under that item’s Starts or Ends.']);
+    const moved = lines([share(60), more]);
+    expect(moved.lines[0]).toBe('Reached at about $600,000. Your FI number has since moved to $1,250,000.');
+    const late = lines([coast], { targetAge: 45 });
+    expect(late.rows[0]).toEqual({ key: 'On your steady path', value: 'Not by your stop at 45' });
+    expect(late.lines).toEqual([
+      'You reach FI around 46, after your stop, so what you have never grows to it by then.',
+      'Checked on the balance at the start of each year until you stop, and reached once, so a cost after it can’t undo it.',
+      'To time an item on it, pick Coast FI under that item’s Starts or Ends.',
+    ]);
   });
 });

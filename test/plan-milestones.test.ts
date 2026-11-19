@@ -42,9 +42,9 @@ describe('the item', () => {
   test('reached at an amount or an age, with no years either side, no end and no money; whose only for an age', () => {
     expect(parseItem(milestone('m', when({ at: 'balance', amount: 1_000_000 })), 'items[0]')).toEqual({ ok: milestone('m', when({ at: 'balance', amount: 1_000_000 })) });
     expect('ok' in parseItem(milestone('m', when({ at: 'age', age: 55 }), 'partner'), 'items[0]')).toBe(true);
-    expect(parseItem(milestone('m', when({ at: 'stop' })), 'items[0]')).toEqual({ error: 'items[0]: a milestone is reached at an amount or an age' });
-    expect(parseItem(milestone('m', when({ at: 'item', id: 'a', edge: 'start' })), 'items[0]')).toEqual({ error: 'items[0]: a milestone is reached at an amount or an age' });
-    expect(parseItem(milestone('m', when({ at: 'balance', amount: 1_000_000 }, 2)), 'items[0]')).toEqual({ error: 'items[0]: a milestone is reached at its amount or age, with no years before or after' });
+    expect(parseItem(milestone('m', when({ at: 'stop' })), 'items[0]')).toEqual({ error: 'items[0]: a milestone is reached at an amount, an age, a share of the FI number or Coast FI' });
+    expect(parseItem(milestone('m', when({ at: 'item', id: 'a', edge: 'start' })), 'items[0]')).toEqual({ error: 'items[0]: a milestone is reached at an amount, an age, a share of the FI number or Coast FI' });
+    expect(parseItem(milestone('m', when({ at: 'balance', amount: 1_000_000 }, 2)), 'items[0]')).toEqual({ error: 'items[0]: a milestone is reached with no years before or after' });
     expect(parseItem({ ...milestone('m', when({ at: 'balance', amount: 1_000_000 })), owner: 'you' }, 'items[0]')).toEqual({ error: 'items[0]: only a milestone at an age says whose' });
     expect(parseItem({ ...milestone('m', when({ at: 'age', age: 55 })), until: { years: 2 } }, 'items[0]')).toEqual({ error: 'items[0]: a milestone item has no until' });
     expect(parseItem({ ...milestone('m', when({ at: 'age', age: 55 })), yearly: 1 }, 'items[0]')).toEqual({ error: 'items[0]: a milestone item has no yearly' });
@@ -192,7 +192,7 @@ describe('where it falls', () => {
     const world: SteadyWorld = {
       path: () => {
         paths++;
-        return Array.from({ length: 50 }, (_, k) => 500_000 + k * 100_000);
+        return { balances: Array.from({ length: 50 }, (_, k) => 500_000 + k * 100_000), fiNumber: null, growth: 0 };
       },
       fiAge: (_ages, stop) => {
         candidates++;

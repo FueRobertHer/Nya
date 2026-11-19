@@ -327,6 +327,30 @@ export function formatRate(rate: number, from: string, to: string): string {
   return `1 ${from} = ${new Intl.NumberFormat(undefined, { maximumSignificantDigits: 5 }).format(rate)} ${to}`;
 }
 
+/** A fraction as a percentage to a tenth, signed: "+9.2%", "−1.4%", and
+ *  "0.0%" once it rounds to nothing. A share, not an amount of the person's
+ *  money (Accounts > Investments' rates and total returns), so it shows while
+ *  amounts are hidden, as formatRate's rate does. */
+export function signedPercent(fraction: number): string {
+  const text = `${Math.abs(fraction * 100).toFixed(1)}%`;
+  if (text === '0.0%') return text;
+  return `${fraction > 0 ? '+' : MINUS}${text}`;
+}
+
+/** A currency's name for many of it, in English as the app's words are:
+ *  "US dollars", "Canadian dollars", "Euros"; the code itself where Intl has
+ *  no name. Words, not an amount: no figure is written. */
+export function currencyPlural(code: string): string {
+  try {
+    const part = new Intl.NumberFormat('en', { style: 'currency', currency: code, currencyDisplay: 'name' })
+      .formatToParts(2)
+      .find((p) => p.type === 'currency');
+    return part ? part.value.charAt(0).toUpperCase() + part.value.slice(1) : code;
+  } catch {
+    return code;
+  }
+}
+
 /**
  * A day (YYYY-MM-DD, a calendar day as the bank or the person gives it) as a
  * person reads it: "Today" and "Yesterday", then "Aug 7" within the current

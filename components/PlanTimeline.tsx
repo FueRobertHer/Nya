@@ -42,10 +42,11 @@ import {
   whereItCountsText,
   workedOutAmount,
   milestoneWords,
+  coastNotReachedText,
   type ItemTemplate,
 } from './plan-items';
 import type { Count } from '@/lib/fire/compile';
-import { itemRules, withItem, withoutItem, type PlanItem } from '@/lib/fire/items';
+import { itemRules, onPath, withItem, withoutItem, type PlanItem } from '@/lib/fire/items';
 import { planPath } from '@/lib/fire/path';
 import { PLAN_TO_AGE, stopOf, type Measured } from '@/lib/fire/plan';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
@@ -386,7 +387,8 @@ export function TimelineCard({
     const start = figures?.resolution.ages[i]?.start ?? null;
     const n = refused ? { warn: [], caution: [], plain: [] } : notesOf(x, i);
     // Said once, on what waits on the balance itself: not on what follows it.
-    const atMost = notReached && x.from.anchor.at !== 'item' ? nearest(figures, money) : null;
+    // Coast FI, checked until the stop, says why it isn't reached by then.
+    const atMost = notReached && x.from.anchor.at !== 'item' ? (x.from.anchor.at === 'coast' ? (figures ? coastNotReachedText(figures) : null) : nearest(figures, money)) : null;
     const mark = x.kind === 'milestone';
     const said = [...n.plain, ...(unplaced ? [unplaced] : []), ...(atMost ? [atMost] : [])];
     const noted = n.warn.length + n.caution.length + said.length > 0;
@@ -412,7 +414,7 @@ export function TimelineCard({
               {itemTitle(x, plan)}
             </span>
             <span className="list-row-sub">
-              <Masked>{rowSub(x, plan, money, { start, inWalk: figures ? countsInFiDate(figures, i) : false })}</Masked>
+              <Masked>{rowSub(x, plan, money, { start, inWalk: figures ? countsInFiDate(figures, i) : false, reached: figures?.resolution.reachedAt?.[i] ?? null, stop })}</Masked>
             </span>
           </span>
           {v && (
@@ -663,8 +665,10 @@ export function TimelineCard({
     const i = plan.items.findIndex((y) => y.id === id);
     if (i < 0 || !figures) return '';
     const at = figures.resolution.ages[i]?.start;
-    if (at !== undefined) return plan.items[i].from.anchor.at === 'balance' ? `${at} on your steady path` : lower(milestoneWords(plan.items[i], plan, money));
-    return figures.resolution.why[i] === 'not-reached' ? `not by ${PLAN_TO_AGE}` : '';
+    const a = plan.items[i].from.anchor;
+    if (at !== undefined) return onPath(a) ? `${at} on your steady path` : lower(milestoneWords(plan.items[i], plan, money));
+    if (figures.resolution.why[i] !== 'not-reached') return '';
+    return a.at === 'coast' ? `not by your stop${stop !== null ? ` at ${stop}` : ''}` : `not by ${PLAN_TO_AGE}`;
   };
 
   const fiAge = (() => {
@@ -751,6 +755,7 @@ export function TimelineCard({
               startsRef={startsRef}
               endsRef={endsRef}
               workedOut={figures ? (spending) => workedOutAmount(spending, figures, money) : undefined}
+              fiNumber={figures?.view.fiNumber ?? null}
             />
             {preview && <ItemPreview lines={preview} id={previewId} />}
             {!editing && tryIt && !isMilestone && !tryIt.can && tryIt.why}

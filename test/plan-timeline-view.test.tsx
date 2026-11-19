@@ -209,6 +209,30 @@ describe('a milestone', () => {
   });
 });
 
+describe('a milestone on your FI number', () => {
+  const half = mk('Halfway', 'milestone', { anchor: { at: 'share', percent: 50 }, offset: 0 });
+  const coast = mk('Coast FI', 'milestone', { anchor: { at: 'coast' }, offset: 0 });
+
+  test('a share says the amount it was reached at, hidden with amounts', () => {
+    expect(text(card({ ...PLAN, items: [ROOF, half] }))).toMatch(/\d+ on your steady path Milestone: Halfway Half your FI number, about \$[\d,]+,000 then/);
+    setAmountsHidden(true);
+    try {
+      const t = text(card({ ...PLAN, items: [ROOF, half] }));
+      expect(t).toContain('Half your FI number, about');
+      expect(t).not.toMatch(/about \$[\d,]+ then/);
+    } finally {
+      setAmountsHidden(false);
+    }
+  });
+
+  test('Coast FI not reached by the stop is last, saying why once, with what is timed on it', () => {
+    const late = { ...PLAN, targetAge: 42, items: [ROOF, coast, mk('Travel more', 'spending', { anchor: { at: 'item', id: 'Coast FI', edge: 'start' }, offset: 0 }, { yearly: 5_000 })] };
+    const t = text(card(late));
+    expect(t).toMatch(/Coast FI · not by your stop at 42 Milestone: Coast FI What you have grows to your FI number by 42 with nothing more added You reach FI around \d+, after your stop, so what you have never grows to it by then\. Travel more Starts at Coast FI · for good/);
+    expect(t).not.toContain('At most');
+  });
+});
+
 describe('the empty state', () => {
   test('its title, line, four chips and Add; in a copy its line says so', () => {
     const html = card(PLAN);

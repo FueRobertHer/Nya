@@ -559,8 +559,8 @@ describe('seeding', () => {
     expect(mine!.tax).toMatchObject({ state: 'NV', stateRate: 0, health: { beforeMedicare: { kind: 'aca', adult: 11_000, quotedAge: 50, child: null } } });
     expect(plan.items.map((x) => [x.kind, x.beforeTax, x.from])[0]).toEqual(['social-security', true, { anchor: { at: 'age', age: 67 }, offset: 0 }]);
     // Then the child, the two of them working part-time after the stop, and
-    // two milestones (Travel more, timed on one, is in a copy).
-    expect(plan.items.map((x) => x.id)).toEqual(['social-security', 'maya', 'sam-consulting', 'jordan-tutoring', 'lean-fi', 'travel-fund']);
+    // four milestones (Travel more, timed on one, is in a copy).
+    expect(plan.items.map((x) => x.id)).toEqual(['social-security', 'maya', 'sam-consulting', 'jordan-tutoring', 'lean-fi', 'travel-fund', 'halfway', 'coast-fi']);
     // Version 2, with the tax facts the profile holds: a partner's Roth, a basis
     // typed for the joint brokerage, and the 529 left out, to show that group.
     expect(plan.partnerAge).toBe(37);

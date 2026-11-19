@@ -11,9 +11,9 @@
 // hidden; a copy's name never holds one, since a name isn't masked.
 
 import type { ItemAges } from '@/lib/fire/compile';
-import { INCOME_KINDS, ITEM_LIMITS, ONCE_KINDS, type Anchor, type ItemKind, type PlanItem, type When } from '@/lib/fire/items';
+import { INCOME_KINDS, ITEM_LIMITS, ONCE_KINDS, onPath, type Anchor, type ItemKind, type PlanItem, type When } from '@/lib/fire/items';
 import { fiNumber } from '@/lib/fire/fi';
-import { PLAN_TO_AGE } from '@/lib/fire/plan';
+import { PLAN_TO_AGE, stopOf } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import type { FiredResult, SimPlan } from '@/lib/fire/simulate';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
@@ -147,6 +147,11 @@ export function workedOutAmount(spending: number, f: Pick<PlanFigures, 'plan' | 
 export const BREAK_HELP = 'For a break, what you would have saved each year of it, plus anything you would spend from savings, and its years under Ends. Once you have stopped working it changes nothing.';
 
 const years = (n: number) => `${n} year${n === 1 ? '' : 's'}`;
+/** To the nearest $1,000, said as about that. */
+const roundK = (n: number) => Math.round(n / 1000) * 1000;
+
+/** A share of the FI number: "Half your FI number", "60% of your FI number". */
+export const shareWords = (percent: number) => (percent === 50 ? 'Half your FI number' : `${percent}% of your FI number`);
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
@@ -162,7 +167,8 @@ export function itemTitle(x: PlanItem, plan: Pick<Facts, 'partnerAge'>): string 
 }
 
 /** What an anchor is, said after "when" or "until": "you stop", "you reach
- *  FI", "Part-time work ends", "invested assets reach $2,000,000". */
+ *  FI", "Part-time work ends", "invested assets reach $2,000,000", "invested
+ *  assets reach half your FI number", "you reach Coast FI". */
 function anchorWords(a: Anchor, x: PlanItem, plan: Facts, money: Money): string {
   switch (a.at) {
     case 'age':
@@ -178,6 +184,10 @@ function anchorWords(a: Anchor, x: PlanItem, plan: Facts, money: Money): string 
     }
     case 'balance':
       return `invested assets reach ${money(a.amount)}`;
+    case 'share':
+      return `invested assets reach ${lower(shareWords(a.percent))}`;
+    case 'coast':
+      return 'you reach Coast FI';
   }
 }
 
@@ -268,9 +278,10 @@ export function reachesStart(x: PlanItem, ages: { start: number; end: number | n
 /** A Timeline row's sub: how it starts when its point doesn't say it (an
  *  offset, a start before today, or a milestone it follows), how it ends or
  *  repeats, "before tax", and "counts in your FI date" exactly when the walk
- *  counts it. A milestone's is what reaches it. */
-export function rowSub(x: PlanItem, plan: Facts, money: Money, at: { start: number | null; inWalk: boolean }): string {
-  if (x.kind === 'milestone') return milestoneWords(x, plan, money);
+ *  counts it. A milestone's is what reaches it (`reached`, a share's
+ *  threshold when it was; `stop`, the stop as resolved). */
+export function rowSub(x: PlanItem, plan: Facts, money: Money, at: { start: number | null; inWalk: boolean; reached?: number | null; stop?: number | null }): string {
+  if (x.kind === 'milestone') return milestoneWords(x, plan, money, at);
   const parts: string[] = [];
   const before = at.start !== null && plan.age !== null && at.start < plan.age;
   if (onMilestone(x.from, plan)) parts.push(`Starts ${lower(whenWords(x.from, x, plan, money))}`);
@@ -283,10 +294,32 @@ export function rowSub(x: PlanItem, plan: Facts, money: Money, at: { start: numb
 }
 
 /** What reaches a milestone: "Invested assets reach $1,265,000", "At 55",
- *  "At your partner’s 55". */
-export function milestoneWords(x: PlanItem, plan: Facts, money: Money): string {
+ *  "At your partner’s 55", "Half your FI number, about $943,000 then" (the
+ *  threshold it was reached at, `reached`), "What you have grows to your FI
+ *  number by 50 with nothing more added" (by `stop`, else the plan's own). */
+export function milestoneWords(x: PlanItem, plan: Facts, money: Money, o: { reached?: number | null; stop?: number | null } = {}): string {
   const a = x.from.anchor;
-  return a.at === 'balance' ? `Invested assets reach ${money(a.amount)}` : whenWords(x.from, x, plan, money);
+  switch (a.at) {
+    case 'balance':
+      return `Invested assets reach ${money(a.amount)}`;
+    case 'share':
+      return o.reached != null ? `${shareWords(a.percent)}, about ${money(roundK(o.reached))} then` : shareWords(a.percent);
+    case 'coast': {
+      const stop = o.stop !== undefined ? o.stop : stopOf(plan);
+      return `What you have grows to your FI number by ${stop ?? 'your stop'} with nothing more added`;
+    }
+    default:
+      return whenWords(x.from, x, plan, money);
+  }
+}
+
+/** Why Coast FI isn't reached by the stop, on its row and in its sheet. */
+export function coastNotReachedText(f: Pick<PlanFigures, 'plan'> & Parameters<typeof fiWhen>[0]): string {
+  const fi = fiWhen(f);
+  const stop = stopOf(f.plan);
+  // D9's FI date is a stop that lasts, not the year the FI number is reached.
+  if (fi.kind === 'age' && f.resolution.searched !== 'lasts' && stop !== null && fi.age > stop) return `You reach FI around ${fi.age}, after your stop, so what you have never grows to it by then.`;
+  return 'What you have doesn’t grow to your FI number by your stop with nothing more added.';
 }
 
 /** An item in one line, for how a copy differs and Also change it in:
@@ -294,7 +327,7 @@ export function milestoneWords(x: PlanItem, plan: Facts, money: Money): string {
  *  milestone's is what reaches it, "when invested assets reach $1,265,000". */
 export function itemSentence(x: PlanItem, plan: Facts, money: Money): string {
   const v = itemAmount(x);
-  if (v === null) return x.from.anchor.at === 'balance' ? lower(whenWords(x.from, x, plan, money)) : lower(milestoneWords(x, plan, money));
+  if (v === null) return onPath(x.from.anchor) ? lower(whenWords(x.from, x, plan, money)) : lower(milestoneWords(x, plan, money));
   let amount: string;
   if (x.kind === 'home') {
     const yearly = x.yearly ?? 0;
@@ -388,8 +421,10 @@ export function timelinePoints(plan: FirePlanV2, f: PlanFigures | null, money: M
   };
   const neverReached = (m: PlanItem) => {
     const key = `milestone:${m.id}`;
+    // Coast FI is checked only until the stop.
+    const by = m.from.anchor.at === 'coast' ? (stop !== null ? `your stop at ${stop}` : 'your stop') : `${PLAN_TO_AGE}`;
     let p = notReached.get(key);
-    if (!p) notReached.set(key, (p = { key, label: `${m.label} · not by ${PLAN_TO_AGE}`, items: [] }));
+    if (!p) notReached.set(key, (p = { key, label: `${m.label} · not by ${by}`, items: [] }));
     return p;
   };
 
@@ -399,7 +434,7 @@ export function timelinePoints(plan: FirePlanV2, f: PlanFigures | null, money: M
     const a = x.from.anchor;
     const mark = why === 'not-reached' ? milestoneOf(x) : null;
     if (ages === null) {
-      if (mark && mark.from.anchor.at === 'balance') {
+      if (mark && onPath(mark.from.anchor)) {
         neverReached(mark).items.push(i);
       } else if (why === 'not-reached' && a.at === 'balance') {
         const key = `balance:${a.amount}`;
@@ -419,14 +454,12 @@ export function timelinePoints(plan: FirePlanV2, f: PlanFigures | null, money: M
     }
     const y = year(ages.start);
     y.items.push(i);
-    if (x.from.offset === 0 && a.at === 'balance') {
-      // A milestone's row says its amount, so its point says only the age,
-      // and only when no other balance names that year.
-      if (x.kind === 'milestone') y.mark = true;
-      else {
-        const label = `Invested assets reach ${money(a.amount)} · ${ages.start} on your steady path`;
-        if (!y.balances.includes(label)) y.balances.push(label);
-      }
+    // A milestone's row says what reaches it, so its point says only the age,
+    // and only when no balance names that year.
+    if (x.kind === 'milestone' && onPath(a)) y.mark = true;
+    else if (x.from.offset === 0 && a.at === 'balance') {
+      const label = `Invested assets reach ${money(a.amount)} · ${ages.start} on your steady path`;
+      if (!y.balances.includes(label)) y.balances.push(label);
     }
     // On a milestone, its own point says it.
     if (x.from.offset === 0 && a.at === 'item' && !onMilestone(x.from, plan)) {
@@ -489,6 +522,8 @@ export function unplacedText(x: PlanItem, why: Unplaced | null, plan: Facts): st
       return `Waits on FI, which isn’t reached by ${PLAN_TO_AGE}.`;
     case 'no-age':
       return 'Not placed: add your age.';
+    case 'no-fi-number':
+      return 'Waits on your FI number, which isn’t worked out.';
     case 'no-years':
       return 'Ends before it starts, so it runs no years.';
     case 'not-reached': {
@@ -592,7 +627,7 @@ export function onSteadyPath(x: PlanItem, plan: Facts, seen = new Set<string>())
   const ends = x.until !== null && !('years' in x.until) && !ONCE_KINDS.includes(x.kind) ? [x.from, x.until] : [x.from];
   return ends.some((w) => {
     const a = w.anchor;
-    if (a.at === 'fi' || a.at === 'balance') return true;
+    if (a.at === 'fi' || onPath(a)) return true;
     if (a.at !== 'item') return false;
     const y = plan.items.find((o) => o.id === a.id);
     return !!y && onSteadyPath(y, plan, seen);
@@ -658,6 +693,12 @@ export function copyNameFor(template: ItemTemplate, x: PlanItem, plan: Facts, ot
       break;
     case 'balance':
       when = 'at a balance';
+      break;
+    case 'share':
+      when = 'at a share of FI';
+      break;
+    case 'coast':
+      when = 'at Coast FI';
       break;
     case 'item': {
       const other = plan.items.find((y) => y.id === a.id);
@@ -796,7 +837,10 @@ function milestoneLines(p: PreviewInput, x: PlanItem, f: PlanFigures): PreviewLi
   const ages = i >= 0 ? (f.resolution.ages[i] ?? null) : null;
   const why = i >= 0 ? (f.resolution.why[i] ?? null) : null;
   const today = f.plan.age;
-  const balance = x.from.anchor.at === 'balance';
+  const a = x.from.anchor;
+  // On the steady path's balance: an amount, a share of the FI number or Coast FI.
+  const balance = onPath(a);
+  const stop = f.resolution.stop;
   const rows: { key: string; value: string }[] = [];
   const lines: string[] = [];
   const key = 'On your steady path';
@@ -804,7 +848,10 @@ function milestoneLines(p: PreviewInput, x: PlanItem, f: PlanFigures): PreviewLi
     const at = balance ? `${ages.start}` : `At ${ages.start}`;
     if (today !== null && ages.start <= today && balance) rows.push({ key, value: 'Already reached today' });
     else if (today !== null && ages.start < today) rows.push({ key, value: `${at}, before today` });
-    else rows.push({ key, value: `${at}${againstStop(ages.start, f.resolution.stop)}` });
+    else rows.push({ key, value: `${at}${againstStop(ages.start, stop)}` });
+  } else if (why === 'not-reached' && a.at === 'coast') {
+    rows.push({ key, value: stop !== null ? `Not by your stop at ${stop}` : 'Not by your stop' });
+    lines.push(coastNotReachedText(f));
   } else if (why === 'not-reached' && balance) {
     rows.push({ key, value: `Not by ${PLAN_TO_AGE}` });
     if (p.most) lines.push(`On your steady path invested assets start a year with at most ${p.money(p.most.amount)}, at ${p.most.age}, so it isn’t reached.`);
@@ -818,7 +865,14 @@ function milestoneLines(p: PreviewInput, x: PlanItem, f: PlanFigures): PreviewLi
   const whose = p.where === 'copy' ? 'this copy’s' : 'your';
   if (fi.kind === 'age') rows.push({ key: `${cap(whose)} FI date`, value: `Stays around ${fi.age}` });
   else if (fi.kind !== 'none' && fi.kind !== 'not-run') rows.push({ key: `${cap(whose)} FI date`, value: cap(fiWords(fi)) });
-  if (balance) lines.push('Checked on the balance at the start of each year, and reached once, so a cost after it can’t undo it.');
+  // A share's FI number moved after it was reached, by anything placed since.
+  const reached = i >= 0 ? (f.resolution.reachedAt?.[i] ?? null) : null;
+  if (a.at === 'share' && reached !== null && f.view.fiNumber !== null && roundK(reached) !== roundK((a.percent / 100) * f.view.fiNumber)) {
+    lines.push(`Reached at about ${p.money(roundK(reached))}. Your FI number has since moved to ${p.money(f.view.fiNumber)}.`);
+  }
+  if (a.at === 'balance') lines.push('Checked on the balance at the start of each year, and reached once, so a cost after it can’t undo it.');
+  else if (a.at === 'share') lines.push('Checked on the balance at the start of each year against your FI number as it stands then, and reached once, so a cost after it can’t undo it.');
+  else if (a.at === 'coast') lines.push('Checked on the balance at the start of each year until you stop, and reached once, so a cost after it can’t undo it.');
   // Last, since only the first line is said as it changes, and this one
   // changes only with the name.
   lines.push(balance ? `To time an item on it, pick ${x.label} under that item’s Starts or Ends.` : 'Items timed on it move together when you change the age.');
