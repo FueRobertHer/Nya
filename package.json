@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "NYA_DEV_FLAGS=1 next dev -H 127.0.0.1",
+    "dev": "NYA_DEV_FLAGS=1 next dev -H localhost",
     "dev:lan": "next dev",
     "build": "next build",
     "start": "next start",

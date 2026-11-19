@@ -92,7 +92,9 @@ vercel env pull .env.local   # pulls Redis credentials and your other variables
 bun run dev
 ```
 
-`bun run dev` answers only this machine (it binds 127.0.0.1) and opens `/dev/flags`, where anyone signed in sets the feature switches of the `dev:` prefix ([operations.md](operations.md#feature-switches)). To try the app on a phone on your network, run `bun run dev:lan` instead: it answers the network, and `/dev/flags` is missing.
+`bun run dev` answers only this machine (it binds `localhost`, the first loopback address the name resolves to: `::1` on Windows, so open `http://localhost:3000`, not `http://127.0.0.1:3000`) and opens `/dev/flags`, where anyone signed in sets the feature switches of the `dev:` prefix ([operations.md](operations.md#feature-switches)). To try the app on a phone on your network, run `bun run dev:lan` instead: it answers the network, and `/dev/flags` is missing.
+
+Why `localhost` and not `127.0.0.1`: Next.js renames any loopback address in a proxy's `req.url` to `localhost`, while its router keeps the `-H` address as its own origin. Clerk's proxy turns every request it lets through into a rewrite to `req.url`, so under `-H 127.0.0.1` that rewrite named another origin, Next.js proxied it to `http://localhost:3000`, which reached `::1` where nothing listened, and every page waited 30 seconds and failed with a 500. With `-H localhost` the two origins match. Any other loopback address (`127.0.0.1`, `::1`) brings the failure back.
 
 Open <http://localhost:3000>; you are redirected to `/login` first. Logging in with the shared password needs a container to exist; see [operations.md](operations.md#containers) for creating one and setting `CONTAINER_ID` in `.env.local`.
 
