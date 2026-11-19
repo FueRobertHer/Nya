@@ -59,9 +59,12 @@ export type ItemKind =
   | 'loan-end'
   | 'pay'
   | 'windfall'
-  | 'one-off';
+  | 'one-off'
+  /** A point on the path with no money: reached at an amount or an age, and
+   *  items can start or end on it. */
+  | 'milestone';
 
-export const ITEM_KINDS: readonly ItemKind[] = ['social-security', 'pension', 'part-time', 'other-income', 'home', 'child', 'car', 'spending', 'loan-end', 'pay', 'windfall', 'one-off'];
+export const ITEM_KINDS: readonly ItemKind[] = ['social-security', 'pension', 'part-time', 'other-income', 'home', 'child', 'car', 'spending', 'loan-end', 'pay', 'windfall', 'one-off', 'milestone'];
 
 export type PlanItem = {
   id: string;
@@ -123,6 +126,7 @@ const FIELDS: Record<ItemKind, readonly Field[]> = {
   pay: ['until', 'yearly', 'owner'],
   windfall: ['once'],
   'one-off': ['once', 'every', 'times'],
+  milestone: ['owner'],
 };
 
 const KEYS = ['id', 'label', 'kind', 'from', 'until', 'once', 'yearly', 'replaces', 'every', 'times', 'inflationAdjusted', 'owner', 'beforeTax'] as const;
@@ -208,7 +212,7 @@ export function parseItem(raw: unknown, at: string): { ok: PlanItem } | { error:
     if (!(Number.isInteger(e.every) && e.every >= emin && e.every <= emax)) return `${at}: the time between is a whole number of years from ${emin} to ${emax}`;
     return e.times !== null && Number.isInteger(e.times) && e.times >= tmin && e.times <= tmax ? null : `${at}: a repeat is ${tmin} to ${tmax} in all`;
   };
-  let error = when(e.from, 'when it starts');
+  let error = when(e.from, e.kind === 'milestone' ? 'when it is reached' : 'when it starts');
   if (!error && e.until !== null && takes.includes('until')) {
     if ('years' in e.until) {
       const [ymin, ymax] = ITEM_LIMITS.years;
@@ -257,6 +261,15 @@ export function parseItem(raw: unknown, at: string): { ok: PlanItem } | { error:
       case 'one-off':
         error = (e.once !== null && e.once >= 0 && e.once <= LIMITS.money * 10 ? null : `${at}: the amount is from 0 to ${LIMITS.money * 10}`) ?? repeat();
         break;
+      case 'milestone': {
+        // Reached at its own amount or age: nothing else to wait on, no years
+        // either side, and whose only for an age.
+        const a = e.from.anchor;
+        if (a.at !== 'age' && a.at !== 'balance') error = `${at}: a milestone is reached at an amount or an age`;
+        else if (e.from.offset !== 0) error = `${at}: a milestone is reached at its amount or age, with no years before or after`;
+        else if (a.at === 'balance' && e.owner !== null) error = `${at}: only a milestone at an age says whose`;
+        break;
+      }
     }
   }
   if (error) return { error };

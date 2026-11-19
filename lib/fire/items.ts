@@ -3,7 +3,8 @@
 // A plan's items (the tax plan's D14): its income, its one-offs and what a
 // scenario's life events were, as one kind of thing, each timed by an anchor
 // (an age, the stop, another item's start or end, a balance invested assets
-// reach, or FI) and an offset in whole years. FirePlan version 2 holds them
+// reach, or FI; a milestone also a share of the FI number, or Coast FI) and an
+// offset in whole years. FirePlan version 2 holds them
 // (lib/fire/plan-v2.ts); version 1's income and one-offs upgrade to them in
 // memory, keeping their ids and figures.
 //
@@ -41,10 +42,23 @@ export type Anchor =
   /** Invested assets reach it, in today's dollars, on the steady path. */
   | { at: 'balance'; amount: number }
   /** When you reach FI: the walk's FI, by its search (lib/fire/steady.ts). */
-  | { at: 'fi' };
+  | { at: 'fi' }
+  /** A milestone only: invested assets reach this share of the FI number, a
+   *  whole percent, as the number stands that year (lib/fire/steady.ts). */
+  | { at: 'share'; percent: number }
+  /** A milestone only: what you have would grow to the FI number by the stop
+   *  with nothing more added (lib/fire/fi.ts coastFiNumber), by the stop. */
+  | { at: 'coast' };
 
-/** Whole years after the anchor; below zero on any anchor but a balance, or
- *  an edge that follows one. */
+/** Anchors a milestone alone may take: they react to the FI number. */
+export const FI_ANCHORS: readonly Anchor['at'][] = ['share', 'coast'];
+
+/** Whether an anchor waits on the steady path's balance: an amount, a share
+ *  of the FI number or Coast FI. */
+export const onPath = (a: Anchor): a is Extract<Anchor, { at: 'balance' | 'share' | 'coast' }> => a.at === 'balance' || a.at === 'share' || a.at === 'coast';
+
+/** Whole years after the anchor; below zero on any anchor but a balance (or a
+ *  share or Coast FI), or an edge that follows one. */
 export type When = { anchor: Anchor; offset: number };
 
 export type ItemKind =
@@ -60,8 +74,8 @@ export type ItemKind =
   | 'pay'
   | 'windfall'
   | 'one-off'
-  /** A point on the path with no money: reached at an amount or an age, and
-   *  items can start or end on it. */
+  /** A point on the path with no money: reached at an amount, an age, a share
+   *  of the FI number or Coast FI, and items can start or end on it. */
   | 'milestone';
 
 export const ITEM_KINDS: readonly ItemKind[] = ['social-security', 'pension', 'part-time', 'other-income', 'home', 'child', 'car', 'spending', 'loan-end', 'pay', 'windfall', 'one-off', 'milestone'];
@@ -96,6 +110,8 @@ export type PlanItem = {
 
 export const ITEM_LIMITS = {
   items: 25,
+  /** A milestone's share of the FI number, a whole percent. */
+  share: [1, 200],
   /** Years either side of an anchor. */
   offset: [-60, 90],
   /** A span in years. */
@@ -129,6 +145,7 @@ const FIELDS: Record<ItemKind, readonly Field[]> = {
   milestone: ['owner'],
 };
 
+const SHARE = ITEM_LIMITS.share;
 const KEYS = ['id', 'label', 'kind', 'from', 'until', 'once', 'yearly', 'replaces', 'every', 'times', 'inflationAdjusted', 'owner', 'beforeTax'] as const;
 const ID = /^[A-Za-z0-9_-]{1,40}$/;
 const CONTROL = /[\u0000-\u001f\u007f]/;
@@ -145,7 +162,10 @@ function isAnchor(v: unknown): v is Anchor {
       return exact(a, ['at', 'age']) && finite(a.age);
     case 'stop':
     case 'fi':
+    case 'coast':
       return exact(a, ['at']);
+    case 'share':
+      return exact(a, ['at', 'percent']) && finite(a.percent);
     case 'item':
       return exact(a, ['at', 'id', 'edge']) && typeof a.id === 'string' && (a.edge === 'start' || a.edge === 'end');
     case 'balance':
@@ -195,10 +215,10 @@ export function parseItem(raw: unknown, at: string): { ok: PlanItem } | { error:
     if (!Number.isInteger(w.offset) || w.offset < omin || w.offset > omax) return `${at}: ${what} is a whole number of years from ${omin} to ${omax} from its anchor`;
     const a = w.anchor;
     if (a.at === 'age' && !(Number.isInteger(a.age) && a.age >= LIMITS.eventAge[0] && a.age <= LIMITS.eventAge[1])) return `${at}: ${what} is an age from ${LIMITS.eventAge[0]} to ${LIMITS.eventAge[1]}`;
-    if (a.at === 'balance') {
-      if (!(a.amount > 0 && a.amount <= LIMITS.balance)) return `${at}: ${what} is a balance above 0, up to ${LIMITS.balance}`;
-      if (w.offset < 0) return `${at}: ${what} can’t come before a balance is reached`;
-    }
+    if (a.at === 'balance' && !(a.amount > 0 && a.amount <= LIMITS.balance)) return `${at}: ${what} is a balance above 0, up to ${LIMITS.balance}`;
+    if (onPath(a) && w.offset < 0) return `${at}: ${what} can’t come before a balance is reached`;
+    if (a.at === 'share' && !(Number.isInteger(a.percent) && a.percent >= SHARE[0] && a.percent <= SHARE[1])) return `${at}: ${what} is a whole percent of the FI number from ${SHARE[0]} to ${SHARE[1]}`;
+    if (FI_ANCHORS.includes(a.at) && e.kind !== 'milestone') return `${at}: only a milestone is reached at a share of the FI number or Coast FI`;
     if (a.at === 'item' && !ID.test(a.id)) return `${at}: ${what} names an item by its id`;
     return null;
   };
@@ -262,12 +282,12 @@ export function parseItem(raw: unknown, at: string): { ok: PlanItem } | { error:
         error = (e.once !== null && e.once >= 0 && e.once <= LIMITS.money * 10 ? null : `${at}: the amount is from 0 to ${LIMITS.money * 10}`) ?? repeat();
         break;
       case 'milestone': {
-        // Reached at its own amount or age: nothing else to wait on, no years
-        // either side, and whose only for an age.
+        // Reached at its own amount, age, share of the FI number or Coast FI:
+        // nothing else to wait on, no years either side, and whose only for an age.
         const a = e.from.anchor;
-        if (a.at !== 'age' && a.at !== 'balance') error = `${at}: a milestone is reached at an amount or an age`;
-        else if (e.from.offset !== 0) error = `${at}: a milestone is reached at its amount or age, with no years before or after`;
-        else if (a.at === 'balance' && e.owner !== null) error = `${at}: only a milestone at an age says whose`;
+        if (a.at !== 'age' && !onPath(a)) error = `${at}: a milestone is reached at an amount, an age, a share of the FI number or Coast FI`;
+        else if (e.from.offset !== 0) error = `${at}: a milestone is reached with no years before or after`;
+        else if (a.at !== 'age' && e.owner !== null) error = `${at}: only a milestone at an age says whose`;
         break;
       }
     }
@@ -469,7 +489,8 @@ export function itemRules(plan: Pick<FirePlanV2, 'items' | 'age' | 'partnerAge' 
       }
     }
   }
-  // Nothing reacts to the future: no edge before a balance is reached.
+  // Nothing reacts to the future: no edge before a balance is reached (or a
+  // share of the FI number, or Coast FI).
   const onBalance = (node: string, seen = new Set<string>()): boolean => {
     if (seen.has(node)) return false;
     seen.add(node);
@@ -478,7 +499,7 @@ export function itemRules(plan: Pick<FirePlanV2, 'items' | 'age' | 'partnerAge' 
     const w = side === 'start' ? x.from : x.until !== null && !('years' in x.until) ? x.until : null;
     if (side === 'end' && x.until !== null && 'years' in x.until) return onBalance(`${i}:start`, seen);
     if (!w) return false;
-    if (w.anchor.at === 'balance') return true;
+    if (onPath(w.anchor)) return true;
     return w.anchor.at === 'item' && onBalance(`${index.get(w.anchor.id)}:${w.anchor.edge}`, seen);
   };
   for (const [i, x] of items.entries()) {
