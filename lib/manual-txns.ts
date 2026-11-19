@@ -92,6 +92,7 @@ import { defineMapStore, UnreadableEntriesError } from './repo';
 import type { Ctx } from './containers';
 import { getManualAccounts, toInstitutions, type ManualAccount } from './manual';
 import { keptFrom } from './kept-accounts';
+import { accountHsa } from './balance';
 import { ANY_CONNECTOR, connectorLabel, isConnectorKind } from './connectors/types';
 import { connectionsStore, connectorAccountsStore, type ConnectorAccount } from './connectors/store';
 import { amountUnitsError, isCalendarDay, isCurrencyCode, MANUAL_TXN_PREFIX, newManualTxnId, type TxnFields } from './manual-txn-input';
@@ -582,6 +583,7 @@ function toDisplay(row: ManualTxn, account: ManualAccount, institution: string, 
     pending: false,
     account_name: account.name,
     account_type: account.type,
+    ...accountHsa(account),
     institution_name: institution,
     category: shown ? shown.category : row.category,
     iso_currency_code: row.currency,

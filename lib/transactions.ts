@@ -46,6 +46,7 @@ import {
 } from './item-products';
 import { rememberedKindsForItem } from './last-known';
 import { RECURRING_LOOKBACK_DAYS } from './recurring';
+import { accountHsa } from './balance';
 import type { CategoryKind } from './categories';
 import { pruneOrphanAnnotations, carriedExtras, type CarriedAnnotation, type CarriedRowFacts } from './txn-annotations';
 import type { GroupAway, GroupOutside, SplitParent } from './split-rows';
@@ -81,6 +82,10 @@ export type Txn = {
   // leaves or reaches checking and savings (lib/forecast.ts). Null when the
   // account's type isn't known; absent on a row built before it was sent.
   account_type?: string | null;
+  // Its account is a health savings account its bank reports as a bank
+  // account (lib/balance.ts isDepositoryHsa): never bill-paying cash, so a
+  // series on it moves neither the cash forecast nor Runway. Absent otherwise.
+  account_hsa?: true;
   institution_name: string;
   // The category the row carries, as words: the one the person chose for it,
   // else carried across a re-link, else Plaid's primary in words, or a manual
@@ -291,6 +296,7 @@ export type OlderTxn = Pick<
   | 'amount'
   | 'account_name'
   | 'account_type'
+  | 'account_hsa'
   | 'institution_name'
   | 'category'
   | 'category_id'
@@ -1356,6 +1362,7 @@ async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn
       bankRowDisplay(t, {
         account_name: state.accounts[t.account_id]?.name || t.account_name || '',
         account_type: state.accounts[t.account_id]?.type ?? null,
+        ...accountHsa(state.accounts[t.account_id]),
         carried,
         carriedExclusions,
         carriedAnnotations,
@@ -1369,6 +1376,7 @@ async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn
 export type BankRowContext = {
   account_name: string;
   account_type: string | null;
+  account_hsa?: true;
   carried?: Map<string, string>;
   carriedExclusions?: Set<string>;
   carriedAnnotations?: Map<string, CarriedAnnotation>;
@@ -1391,6 +1399,7 @@ export function bankRowDisplay(t: StoredTxn, c: BankRowContext): Txn {
     pending: t.pending,
     account_name: c.account_name,
     account_type: c.account_type,
+    ...(c.account_hsa ? { account_hsa: true as const } : {}),
     institution_name: t.institution_name,
     ...categoryFacts(t, c.carried),
     iso_currency_code: t.iso_currency_code,
@@ -1453,6 +1462,7 @@ async function olderRows(state: ItemState, inputs: DisplayInputs): Promise<Older
       bankRowOlder(t, {
         account_name: state.accounts[t.account_id]?.name || t.account_name || '',
         account_type: state.accounts[t.account_id]?.type ?? null,
+        ...accountHsa(state.accounts[t.account_id]),
         carried,
         carriedExclusions,
         carriedAnnotations,
@@ -1471,6 +1481,7 @@ export function bankRowOlder(t: StoredTxn, c: BankRowContext): OlderTxn {
     amount: t.amount,
     account_name: c.account_name,
     account_type: c.account_type,
+    ...(c.account_hsa ? { account_hsa: true as const } : {}),
     institution_name: t.institution_name,
     ...categoryFacts(t, c.carried),
     subcategory: humanizeSubcategory(t.personal_finance_category),

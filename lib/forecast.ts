@@ -63,7 +63,7 @@ import { currencyOf } from './spending';
 import { convert, type FxTable, type NoRate } from './fx/rates';
 import { reasonText } from './fx/words';
 import { shownName } from './merchant-name';
-import { isBankCash, isDepositoryHsa } from './balance';
+import { isBankCash, isDepositoryHsa, onBankCash } from './balance';
 
 /** The ranges a forecast is shown for, in days from today. */
 export const FORECAST_RANGES = [30, 60, 90] as const;
@@ -396,8 +396,8 @@ export type ForecastEvent = {
 
 /** Whether the forecast counts a series at all: one on a cash account whose
  *  amount it can use (see WHAT MOVES IT). */
-export function countsInForecast(s: Pick<RecurringSeries, 'accountType' | 'agreement'>): boolean {
-  return s.accountType === 'depository' && s.agreement !== 'varies';
+export function countsInForecast(s: Pick<RecurringSeries, 'accountType' | 'accountHsa' | 'agreement'>): boolean {
+  return onBankCash(s) && s.agreement !== 'varies';
 }
 
 /** What forecastEvents leaves out but the notes name. */
@@ -453,8 +453,10 @@ export function forecastEvents(opts: {
       if (status !== 'ended' && s.agreement !== 'varies') named.unplaced.push(s);
       continue;
     }
-    // A card's, a loan's or an investment account's own: not cash.
-    if (s.accountType !== 'depository') continue;
+    // A card's, a loan's or an investment account's own, or a health
+    // savings account's a bank reports as a bank account: not cash, as its
+    // balance isn't (cashPosition).
+    if (!onBankCash(s)) continue;
     if (s.kind === 'income' && status === 'ended') {
       named.lapsed.push(s);
       continue;

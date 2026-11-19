@@ -117,6 +117,7 @@ import { conversionIn, totalsIn, type Conversion, type WasIn } from '../fx/total
 import type { FxTable, OwnRate } from '../fx/rates';
 import { summarize, tidy, type TotalsRow } from '../totals';
 import { legacyKind } from '../categories';
+import { onBankCash } from '../balance';
 import { addDays, daysFrom } from './period';
 
 /** The windows recent spending is read over, in full calendar months. */
@@ -378,7 +379,8 @@ function movesOut(
     const c = currencyOf(w) ?? currency;
     return `${c ?? ''}|${Math.round(sign * w.amount * minorScale(c))}`;
   };
-  const fromCash = (t: RunwayRow) => (cash ? t.account_type !== 'credit' && cash.some((a) => onAccount(t, a)) : t.account_type === 'depository');
+  const fromCash = (t: RunwayRow) =>
+    cash ? t.account_type !== 'credit' && cash.some((a) => onAccount(t, a)) : onBankCash({ accountType: t.account_type ?? null, accountHsa: t.account_hsa });
   const isCardPayment = (t: RunwayRow) => t.subcategory === CARD_PAYMENT;
 
   const outs: RunwayRow[] = [];
@@ -600,8 +602,8 @@ function latestByGroup(rows: readonly (RecurringRow & Countable)[]): Map<string,
 
 /**
  * The bills detection holds on a cash account that the spending rule leaves
- * out (see WHAT THE FORECAST CHANGES): a bill (never pay) on a depository
- * account, at an amount the forecast can use, not a card's payment, not one
+ * out (see WHAT THE FORECAST CHANGES): a bill (never pay) on a cash account
+ * (lib/balance.ts onBankCash: not a health savings account), at an amount the forecast can use, not a card's payment, not one
  * the person said isn't recurring (`dismissed`, the ids lib/recurring.ts
  * dismissedSeries gives), whose latest row is a transfer to every total (a
  * loan's payment, lib/spending.ts isTransfer). A loan payment the person
@@ -614,7 +616,7 @@ export function paymentsOutsideSpending(
 ): RecurringSeries[] {
   const latest = latestByGroup(rows);
   return series.filter((s) => {
-    if (s.kind !== 'bill' || s.accountType !== 'depository' || s.paysCard || s.agreement === 'varies' || dismissed.has(s.id)) return false;
+    if (s.kind !== 'bill' || !onBankCash(s) || s.paysCard || s.agreement === 'varies' || dismissed.has(s.id)) return false;
     const t = latest.get(s.group);
     return !!t && isTransfer(t);
   });

@@ -36,6 +36,7 @@ import { plannedDates, type PlannedCadence, type PlannedItem } from './planned';
 import { currencyOf, inCurrency, isExcluded } from './spending';
 import { bankRows } from './split-rows';
 import { minorScale } from './forecast';
+import { onBankCash } from './balance';
 import { totalsIn } from './fx/totals';
 import { convert, type FxTable } from './fx/rates';
 
@@ -253,7 +254,7 @@ export function calendarMonth(opts: {
       const off: CalendarEntry['off'] =
         s.accountType === null
           ? 'unknown-account'
-          : s.accountType !== 'depository'
+          : !onBankCash(s)
             ? 'not-cash'
             : s.agreement === 'varies'
               ? 'varies'

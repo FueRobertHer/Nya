@@ -116,16 +116,19 @@ describe('a day\'s entries and figures', () => {
     ]);
   });
 
-  test('what the forecast leaves out is listed with why, never added: a card\'s charge, an account of unknown type, varying pay', () => {
+  test('what the forecast leaves out is listed with why, never added: a card\'s charge, an account of unknown type, a bank-reported HSA, varying pay', () => {
     const card = detectRecurring(monthly('2026-04', 6, 18).map((d) => row(d, 10.99, { name: 'Spotify', account_name: 'Sapphire', account_type: 'credit' })));
     const unknown = detectRecurring(monthly('2026-04', 6, 18).map((d) => row(d, 40, { name: 'Gym', account_name: '', account_type: null })));
+    // On a health savings account its bank reports as a bank account.
+    const hsa = detectRecurring(monthly('2026-04', 6, 18).map((d) => row(d, 3.95, { name: 'HSA fee', account_name: 'Health savings', account_type: 'depository', account_hsa: true })));
     const gigs = [800, 2900, 1200, 2600, 900, 3000, 1100, 2500, 950, 2800, 1000, 2700];
     const varies = detectRecurring(gigs.map((a, i) => row(scheduleDates({ unit: 'day', every: 14, start: '2026-04-24' }, '2100-01-01', 12)[i], -a, { name: 'Gig pay', category: 'income' })));
-    const m = calendarMonth({ month: '2026-10', today: '2026-10-09', txns: [], series: [...card, ...unknown, ...varies], planned: [], currency: 'USD' });
+    const m = calendarMonth({ month: '2026-10', today: '2026-10-09', txns: [], series: [...card, ...unknown, ...hsa, ...varies], planned: [], currency: 'USD' });
     const day = m.days.get('2026-10-18')!;
     expect(day.entries.map((e) => [e.name, e.off, e.account, e.accountType])).toEqual([
       ['Gym', 'unknown-account', undefined, null],
       ['Spotify', 'not-cash', 'Sapphire', 'credit'],
+      ['HSA fee', 'not-cash', 'Health savings', 'depository'],
     ]);
     expect(day.expected).toBeNull();
     expect(m.days.get('2026-10-09')!.entries.map((e) => [e.name, e.off])).toEqual([['Gig pay', 'varies']]);

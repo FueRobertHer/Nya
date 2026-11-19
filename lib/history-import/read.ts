@@ -69,6 +69,7 @@ import {
   type RestoredForAccount,
 } from '../user-restore/restored';
 import { RECURRING_LOOKBACK_DAYS } from '../recurring';
+import { accountHsa } from '../balance';
 import { endDays, endOf, lifecycleStore, type LifecycleView } from '../lifecycle';
 import { StoredDataUnreadableError, UnreadableEntriesError, type MapStore } from '../repo';
 import { countedState, handedOverHeld, readHandover, NO_COUNTED, type Handover } from '../user-restore/answers';
@@ -82,7 +83,7 @@ import { historyImportSummaryStore, importedTwinsStore, importedTxnStore, type H
  *  connection it was on in the old copy (no such Item is stored here, so it
  *  has no bank rows). */
 export function countedAccountOf(account_id: string, a: RestoredAccount): LinkedAccount {
-  return { account_id, item_id: a.item_id, institution_name: a.institution_name, name: a.name ?? 'Account', mask: a.mask, type: a.type ?? 'other', currency: a.currency };
+  return { account_id, item_id: a.item_id, institution_name: a.institution_name, name: a.name ?? 'Account', mask: a.mask, type: a.type ?? 'other', subtype: a.subtype, currency: a.currency };
 }
 
 /** A linked account, as importing and reading name it. */
@@ -93,6 +94,9 @@ export type LinkedAccount = {
   name: string;
   mask: string | null;
   type: string;
+  /** Its subtype where known, which tells a health savings account a bank
+   *  reports as a bank account (lib/balance.ts accountHsa). */
+  subtype?: string | null;
   currency: string | null;
 };
 
@@ -124,6 +128,7 @@ export async function liveLinkedAccounts(
         name: a.name,
         mask: a.mask,
         type: a.type,
+        subtype: a.subtype,
         currency: a.currency,
       });
     }
@@ -589,6 +594,7 @@ export function toDisplay(row: HeldTxn, account: LinkedAccount, withAccountId: b
     pending: false,
     account_name: account.name,
     account_type: account.type,
+    ...accountHsa(account),
     institution_name: account.institution_name,
     category: row.category,
     iso_currency_code: row.currency,
@@ -632,6 +638,7 @@ function restoredDisplay(row: HeldTxn, bank: StoredTxn, account: LinkedAccount, 
     {
       account_name: account.name,
       account_type: account.type,
+      ...accountHsa(account),
       carried: carry?.categories,
       carriedExclusions: carry?.excluded,
       carriedAnnotations: carry?.annotations,
@@ -730,7 +737,7 @@ export async function importedForActivity(
         older.push({
           ...bankRowOlder(
             { ...row.restored, account_id: a.account.account_id },
-            { account_name: a.account.name, account_type: a.account.type, carried: opts.carry?.categories, carriedExclusions: opts.carry?.excluded, carriedAnnotations: opts.carry?.annotations }
+            { account_name: a.account.name, account_type: a.account.type, ...accountHsa(a.account), carried: opts.carry?.categories, carriedExclusions: opts.carry?.excluded, carriedAnnotations: opts.carry?.annotations }
           ),
           transaction_id: row.id,
         });
@@ -742,6 +749,7 @@ export async function importedForActivity(
           amount: t.amount,
           account_name: t.account_name,
           account_type: t.account_type,
+          ...(t.account_hsa ? { account_hsa: true as const } : {}),
           institution_name: t.institution_name,
           category: t.category,
           subcategory: t.subcategory,

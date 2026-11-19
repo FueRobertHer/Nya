@@ -20,7 +20,7 @@ import { shownName } from '@/lib/merchant-name';
 import { useAmountsHidden } from './hide-amounts';
 import { Masked } from './HideAmounts';
 import { SpendingNotes } from './NeedsAttention';
-import { isCashOnHand } from '@/lib/balance';
+import { isBankCash, isCashOnHand } from '@/lib/balance';
 import { RECONNECT_ALERT_DAYS } from '@/lib/connection-state';
 import { missingMonthNotes, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
@@ -370,10 +370,11 @@ export default function Insights({
     // name: two accounts can share a name (a manual account tracking the same
     // institution as a linked one), and a duplicate React key would drop an alert.
     // Not cash on hand (lib/balance.ts): a wallet running low is no risk of an
-    // overdraft.
+    // overdraft. Nor a health savings account its bank reports as a bank
+    // account (isBankCash): no bills are paid from it.
     // One row: the first, and how many more. Several small accounts kept on
     // purpose would otherwise push the month's own figures off the card.
-    const low = [...accounts.entries()].filter(([, a]) => a.type === 'depository' && !isCashOnHand(a) && a.balance != null && a.balance < LOW_BALANCE_THRESHOLD);
+    const low = [...accounts.entries()].filter(([, a]) => isBankCash(a) && !isCashOnHand(a) && a.balance != null && a.balance < LOW_BALANCE_THRESHOLD);
     if (low.length > 0) {
       const [i, a] = low[0];
       const more = low.length - 1;
