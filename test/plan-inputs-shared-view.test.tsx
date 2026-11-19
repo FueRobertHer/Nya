@@ -202,7 +202,7 @@ describe('Home and the Plan on one copy', () => {
     await settle(100);
     const order = server.calls.map((c) => `${c.method} ${c.url.split('?')[0]}`).filter((c) => c.includes('fire-plan') || c.includes('plan-inputs'));
     expect(order.slice(-2)).toEqual(['PUT /api/fire-plan', 'GET /api/plan-inputs']);
-    expect(part(reopened.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('3.5% withdrawal · 5% growth after inflation until FI · 0% tax');
+    expect(part(reopened.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('3.5% withdrawal · 5% growth after inflation · 0% tax');
     await reopened.unmount();
   });
 

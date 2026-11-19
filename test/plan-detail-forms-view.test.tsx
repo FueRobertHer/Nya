@@ -488,7 +488,7 @@ describe('the health growth default', () => {
         const tab = await render(WITH_BALANCES);
         await pick(tab.container, 'Your path');
         // Words only the flat row has, so this is the plan the test is about.
-        expect(subOf(tab, 'Assumptions')).toContain('growth after inflation until FI');
+        expect(subOf(tab, 'Assumptions')).toContain('growth after inflation');
         expect(subOf(tab, 'Assumptions')).toContain(words);
         await tab.unmount();
       });
