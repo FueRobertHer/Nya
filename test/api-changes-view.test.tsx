@@ -175,13 +175,28 @@ describe('sentences', () => {
 describe('asked first', () => {
   const sheet = (over: Partial<Parameters<typeof ChangeSheet>[0]> = {}) =>
     renderToStaticMarkup(<ChangeSheet asking={{ kind: 'undo', change: change(), id: change().id }} names={{}} busy={false} error={null} onCancel={() => {}} onConfirm={() => {}} {...over} />);
+  /** The sheet's footer (the end of its markup): each button's words, class,
+   *  whether it waits and what describes it, in order, and its note's id. */
+  const footer = (html: string) => {
+    const at = html.indexOf('<div class="sheet-footer">');
+    const foot = at < 0 ? '' : html.slice(at);
+    return {
+      buttons: [...foot.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].map(([, attrs, words]) => [words, /class="([^"]*)"/.exec(attrs)?.[1], attrs.includes('disabled'), /aria-describedby="([^"]*)"/.exec(attrs)?.[1] ?? null]),
+      note: /<div class="sheet-footer-note" id="([^"]+)">/.exec(foot)?.[1] ?? null,
+      text: text(foot),
+    };
+  };
 
   test('an undo says what it changes back, and that it is only if nothing changed it since', () => {
     const t = text(sheet());
     expect(t).toContain('Undo this change?');
     expect(t).toContain('Added Corner café');
     expect(t).toContain('It is changed back only if nothing has changed it since');
-    expect(sheet()).toContain('>Undo</button>');
+    // Cancel first, then Undo, in the footer.
+    expect(footer(sheet()).buttons).toEqual([
+      ['Cancel', 'btn secondary', false, null],
+      ['Undo', 'btn', false, null],
+    ]);
   });
 
   test('a forget says what it removes, and offers every change of the token', () => {
@@ -189,12 +204,34 @@ describe('asked first', () => {
     const t = text(html);
     expect(t).toContain('Forget what it changed?');
     expect(t).toContain('Forgetting removes the copy now. The change stays listed, without it, and can no longer be undone.');
-    expect(html).toContain('>Forget this one</button>');
+    expect(footer(html).buttons.map((b) => [b[0], b[1]])).toEqual([
+      ['Cancel', 'btn secondary'],
+      ['Forget this one', 'btn danger'],
+    ]);
+    // Every change of the token stays in the body, a link under what it says.
     expect(t).toContain('Forget every change Importer made');
+    expect(footer(html).text).not.toContain('Forget every change');
+  });
+
+  test('a change that can’t be read: Cancel, then Delete, in the footer', () => {
+    expect(footer(sheet({ asking: { kind: 'remove', change: null, id: 'x' } })).buttons.map((b) => [b[0], b[1]])).toEqual([
+      ['Cancel', 'btn secondary'],
+      ['Delete', 'btn danger'],
+    ]);
   });
 
   test('a failure is shown, and while it works both buttons wait', () => {
-    expect(sheet({ error: 'The transaction changed since this change was made' })).toContain('The transaction changed since this change was made');
-    expect(sheet({ busy: true }).match(/disabled=""/g)!.length).toBeGreaterThanOrEqual(2);
+    // Why it failed sits beside the buttons, and what it asks is described by it.
+    const failed = footer(sheet({ error: 'The transaction changed since this change was made' }));
+    expect(failed.text).toContain('The transaction changed since this change was made');
+    expect(failed.note).not.toBeNull();
+    expect(failed.buttons.map((b) => [b[0], b[3]])).toEqual([
+      ['Cancel', null],
+      ['Undo', failed.note],
+    ]);
+    expect(footer(sheet({ busy: true })).buttons.map((b) => [b[0], b[2]])).toEqual([
+      ['Cancel', true],
+      ['Working…', true],
+    ]);
   });
 });

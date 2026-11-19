@@ -10,7 +10,7 @@
 // where the institution's name has to be typed, and the server checks again
 // that the connection is still unused before it acts.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import { Sheet } from './Sheet';
 import { formatInstantDay } from '@/lib/format';
 import { Notice } from './TotalCaveats';
@@ -39,6 +39,7 @@ export default function AdminUnusedItems({ onRemoved }: { onRemoved?: () => void
   const [typed, setTyped] = useState('');
   const [removing, setRemoving] = useState(false);
   const [sheetError, setSheetError] = useState('');
+  const sheetErrorId = useId();
 
   const load = useCallback(async () => {
     try {
@@ -105,6 +106,31 @@ export default function AdminUnusedItems({ onRemoved }: { onRemoved?: () => void
 
   if (!data) return null;
   const name = shown?.institution_name ?? '';
+  // Cancel, then Disconnect once the name is typed, and why it was refused
+  // beside them.
+  const footer = shown && (
+    <>
+      {sheetError && (
+        <div className="sheet-footer-note" id={sheetErrorId}>
+          <Notice level="critical" role="alert">
+            {sheetError}
+          </Notice>
+        </div>
+      )}
+      <button type="button" className="btn secondary" onClick={() => setTarget(null)} disabled={removing}>
+        Cancel
+      </button>
+      <button
+        type="button"
+        className="btn danger"
+        disabled={removing || typed.trim().toLowerCase() !== name.trim().toLowerCase()}
+        onClick={remove}
+        aria-describedby={sheetError ? sheetErrorId : undefined}
+      >
+        {removing ? 'Checking and disconnecting…' : 'Disconnect'}
+      </button>
+    </>
+  );
 
   return (
     <>
@@ -153,7 +179,7 @@ export default function AdminUnusedItems({ onRemoved }: { onRemoved?: () => void
         </div>
       </div>
 
-      <Sheet open={!!target} title={shown ? `Disconnect ${name}?` : 'Disconnect'} onClose={() => !removing && setTarget(null)}>
+      <Sheet open={!!target} title={shown ? `Disconnect ${name}?` : 'Disconnect'} onClose={() => !removing && setTarget(null)} footer={footer}>
         {shown && (
           <>
             <p className="panel-note" style={{ marginTop: 0 }}>
@@ -173,23 +199,6 @@ export default function AdminUnusedItems({ onRemoved }: { onRemoved?: () => void
                 autoCorrect="off"
               />
             </label>
-            {sheetError && (
-              <Notice level="critical" role="alert">
-                {sheetError}
-              </Notice>
-            )}
-            <div className="button-pair" style={{ marginTop: 16 }}>
-              <button className="secondary" onClick={() => setTarget(null)} disabled={removing}>
-                Cancel
-              </button>
-              <button
-                className="danger"
-                disabled={removing || typed.trim().toLowerCase() !== name.trim().toLowerCase()}
-                onClick={remove}
-              >
-                {removing ? 'Checking and disconnecting…' : 'Disconnect'}
-              </button>
-            </div>
           </>
         )}
       </Sheet>

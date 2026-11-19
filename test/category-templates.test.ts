@@ -412,7 +412,7 @@ describe('the preview', () => {
     expect(text).toContain('Every transaction stays in its category');
     expect(text).toContain('Nothing is deleted or merged.');
     expect(text).toContain('Budgets stay with their categories: Travel’s, in Fun.');
-    const list = renderToStaticMarkup(CategoryTemplatesView({ step: { at: 'list' }, busy: false, error: null, onPreview: () => {}, onApply: () => {}, onUndo: () => {}, onList: () => {} }));
+    const list = renderToStaticMarkup(createElement(CategoryTemplatesView, { step: { at: 'list' }, busy: false, error: null, onPreview: () => {}, onApply: () => {}, onUndo: () => {}, onList: () => {} }));
     // Each button is named for its set, so a screen reader tells them apart.
     for (const id of TEMPLATE_IDS) expect(list).toContain(`See what ${TEMPLATES[id].name} changes</button>`);
     expect(list).toContain('it never deletes or merges one');

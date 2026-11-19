@@ -170,6 +170,17 @@ describe('API tokens, on screen', () => {
 describe('revoking, asked first', () => {
   const sheet = (over: Partial<Parameters<typeof RevokeSheet>[0]> = {}) =>
     renderToStaticMarkup(<RevokeSheet revoking={{ id: '0123456789abcdef', label: 'Claude', unreadable: false }} busy={false} error={null} onCancel={noop} onConfirm={noop} {...over} />);
+  /** The sheet's footer (the end of its markup): each button's words, class,
+   *  whether it waits and what describes it, in order, and its note's id. */
+  const footer = (html: string) => {
+    const at = html.indexOf('<div class="sheet-footer">');
+    const foot = at < 0 ? '' : html.slice(at);
+    return {
+      buttons: [...foot.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].map(([, attrs, words]) => [words, /class="([^"]*)"/.exec(attrs)?.[1], attrs.includes('disabled'), /aria-describedby="([^"]*)"/.exec(attrs)?.[1] ?? null]),
+      note: /<div class="sheet-footer-note" id="([^"]+)">/.exec(foot)?.[1] ?? null,
+      text: text(foot),
+    };
+  };
 
   test('nothing until a token is chosen', () => {
     expect(sheet({ revoking: null })).toBe('');
@@ -179,22 +190,34 @@ describe('revoking, asked first', () => {
     const t = text(sheet());
     expect(t).toContain('Revoke Claude?');
     expect(t).toContain('Anything using it loses access on its next request. This can’t be undone');
-    expect(sheet()).toContain('>Cancel</button>');
-    expect(sheet()).toMatch(/<button class="danger"[^>]*>Revoke<\/button>/);
+    // Cancel first, then Revoke, in the footer.
+    expect(footer(sheet()).buttons).toEqual([
+      ['Cancel', 'btn secondary', false, null],
+      ['Revoke', 'btn danger', false, null],
+    ]);
   });
 
   test('a record that can’t be read is deleted, not revoked', () => {
     const t = text(sheet({ revoking: { id: '00000000000000aa', label: 'the token that can’t be read', unreadable: true } }));
     expect(t).toContain('Delete the token?');
     expect(t).toContain('Its record can’t be read, so it doesn’t work now.');
-    expect(t).toContain('Delete');
+    expect(footer(sheet({ revoking: { id: '00000000000000aa', label: 'the token that can’t be read', unreadable: true } })).buttons.map((b) => b[0])).toEqual(['Cancel', 'Delete']);
   });
 
   test('while it works, both buttons wait; a failure is shown', () => {
     const busy = sheet({ busy: true });
-    expect(busy).toContain('Revoking…');
-    expect(busy.match(/<button class="(secondary|danger)" disabled/g)).toHaveLength(2);
-    expect(sheet({ error: 'It wasn’t revoked. Try again.' })).toContain('It wasn’t revoked. Try again.');
+    expect(footer(busy).buttons.map((b) => [b[0], b[2]])).toEqual([
+      ['Cancel', true],
+      ['Revoking…', true],
+    ]);
+    // Why it failed sits beside the buttons, and Revoke is described by it.
+    const failed = footer(sheet({ error: 'It wasn’t revoked. Try again.' }));
+    expect(failed.text).toContain('It wasn’t revoked. Try again.');
+    expect(failed.note).not.toBeNull();
+    expect(failed.buttons.map((b) => [b[0], b[3]])).toEqual([
+      ['Cancel', null],
+      ['Revoke', failed.note],
+    ]);
   });
 });
 
