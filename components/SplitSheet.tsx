@@ -14,8 +14,9 @@
 // imported from a file whose split was saved at the amount of the bank's
 // transaction that stood for it, once none does.
 
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
+import ActionRows from './ActionRows';
 import CategoryPicker from './CategoryPicker';
 import type { Txn } from './MonthBreakdown';
 import { fieldAmount, formatDay, formatMoney, hideAmountsIn, onDay } from '@/lib/format';
@@ -122,6 +123,20 @@ export default function SplitSheet({
   const [error, setError] = useState('');
   const [confirming, setConfirming] = useState(false);
   const ix = useMemo(() => indexTaxonomy(taxonomy), [taxonomy]);
+  const failedId = useId();
+  const askId = useId();
+  const saidId = useId();
+  const opener = useRef<HTMLButtonElement>(null);
+  const keep = useRef<HTMLButtonElement>(null);
+  const said = useRef<HTMLParagraphElement>(null);
+
+  // Asking to unsplit: focus on Keep the split, in the footer, and what goes
+  // with the split in view, under its row.
+  useEffect(() => {
+    if (!confirming) return;
+    keep.current?.focus();
+    said.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [confirming]);
 
   // A fresh form each time it opens on a transaction.
   useEffect(() => {
@@ -193,9 +208,58 @@ export default function SplitSheet({
         ...(d.excluded ? { excluded: true } : {}),
       })),
     });
+  const unsplit = () => send('DELETE', { transaction_id: kept, ...(seen !== undefined ? { updated_at: seen } : {}) });
+  // What one state's buttons said when they failed stays with them.
+  const ask = (on: boolean) => {
+    setConfirming(on);
+    setError('');
+    if (!on) opener.current?.focus();
+  };
+
+  // The buttons, and why the last press failed beside them; asked to
+  // unsplit, the question, then Keep the split and Unsplit in their place.
+  const failed = error ? failedId : undefined;
+  const footer = (
+    <>
+      {confirming && (
+        <p className="helper sheet-footer-note" id={askId}>
+          Unsplit {shownName(t)}?
+        </p>
+      )}
+      {/* The server's words can give the parts' amounts, each with its
+          currency (lib/splits.ts): those are hidden while amounts are, and
+          its counts stay. */}
+      {error && (
+        <div className="sheet-footer-note" id={failedId}>
+          <Notice level="critical" role="alert">
+            <Masked>{hideAmountsIn(error)}</Masked>
+          </Notice>
+        </div>
+      )}
+      {confirming ? (
+        <>
+          <button type="button" ref={keep} className="btn secondary" onClick={() => ask(false)} disabled={saving}>
+            Keep the split
+          </button>
+          <button type="button" className="btn danger" onClick={() => void unsplit()} disabled={saving} aria-describedby={[askId, saidId, failed].filter(Boolean).join(' ')}>
+            Unsplit
+          </button>
+        </>
+      ) : (
+        <>
+          <button type="button" className="btn secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button type="button" className="btn" onClick={() => void save()} disabled={!ready || saving} aria-describedby={failed}>
+            {saving ? 'Saving…' : 'Save split'}
+          </button>
+        </>
+      )}
+    </>
+  );
 
   return (
-    <Sheet open title={split ? 'Edit split' : 'Split transaction'} onClose={() => !saving && onClose()}>
+    <Sheet open title={split ? 'Edit split' : 'Split transaction'} onClose={() => !saving && onClose()} footer={footer}>
       <p className="panel-note" style={{ marginTop: 0 }}>
         {shownName(t)}: <Masked>{formatMoney(Math.abs(t.amount), currency)}</Masked> {direction === 'out' ? 'out' : 'in'}, {onDay(shownDay(t.date))}. Give each part its own category: the parts
         count in budgets and reports, and the transaction stays one, as the bank has it.
@@ -282,41 +346,17 @@ export default function SplitSheet({
       <p className={`split-left${left === 0 ? ' done' : ''}`} role="status">
         <Masked>{left === 0 ? 'The parts add up to the transaction.' : left > 0 ? `${money(left)} left to split` : `${money(left)} more than the transaction`}</Masked>
       </p>
-      {/* The server's words can give the parts' amounts, each with its
-          currency (lib/splits.ts): those are hidden while amounts are, and
-          its counts stay. */}
-      {error && (
-        <Notice level="critical" role="alert">
-          <Masked>{hideAmountsIn(error)}</Masked>
-        </Notice>
-      )}
-      <div className="button-pair">
-        <button onClick={save} disabled={!ready || saving}>
-          {saving ? 'Saving…' : 'Save split'}
-        </button>
-        <button className="secondary" onClick={onClose} disabled={saving}>
-          Cancel
-        </button>
-      </div>
-      {split && !confirming && (
-        <button className="secondary" style={{ marginTop: 12 }} onClick={() => setConfirming(true)} disabled={saving}>
-          Unsplit
-        </button>
-      )}
-      {split && confirming && (
-        <>
-          <p className="panel-note">
-            Unsplit {shownName(t)}? Its parts go, and it counts whole again, under {own ? displayName(own.name) : 'its own category'}.
-          </p>
-          <div className="button-pair">
-            <button className="danger" onClick={() => send('DELETE', { transaction_id: kept, ...(seen !== undefined ? { updated_at: seen } : {}) })} disabled={saving}>
-              Unsplit
-            </button>
-            <button className="secondary" onClick={() => setConfirming(false)} disabled={saving}>
-              Keep the split
-            </button>
-          </div>
-        </>
+      {/* Unsplitting, from its actions: last, asking in the footer first;
+          what goes with the split is said here, under its row. */}
+      {split && (
+        <div className="panel-section stack tight">
+          <ActionRows rows={[{ key: 'unsplit', title: 'Unsplit', sub: 'Asks first.', neg: true, ref: opener, onSelect: () => !saving && ask(true) }]} />
+          {confirming && (
+            <p className="panel-note" id={saidId} ref={said}>
+              Its parts go, and it counts whole again, under {own ? displayName(own.name) : 'its own category'}.
+            </p>
+          )}
+        </div>
       )}
     </Sheet>
   );

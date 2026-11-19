@@ -103,6 +103,15 @@ const render = (choices = { each: {} as Record<string, 'same' | 'new'> }, sent =
       onBack={noop}
     />
   );
+/** The review's footer, drawn in place outside a sheet (SheetFooter): its
+ *  notes' ids, and its buttons' words, classes and what describes them. */
+const footerOf = (html: string) => {
+  const foot = html.slice(html.indexOf('<div class="sheet-footer">'));
+  return {
+    notes: [...foot.matchAll(/class="([^"]*sheet-footer-note[^"]*)" id="([^"]+)"/g)].map((m) => ({ cls: m[1], id: m[2] })),
+    buttons: [...foot.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].map((m) => [m[2], /class="([^"]*)"/.exec(m[1])?.[1], /aria-describedby="([^"]*)"/.exec(m[1])?.[1] ?? null]),
+  };
+};
 const importButton = (html: string) => [...html.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].find((m) => /^(Import \d|Keep as|Nothing)/.test(m[2]))!;
 
 describe('the review', () => {
@@ -123,9 +132,45 @@ describe('the review', () => {
     const waiting = render();
     expect(importButton(waiting)[1]).toContain('disabled');
     expect(text(waiting)).toContain('Say what the row above is, then import.');
+    // What Import waits on is the footer's note, still a caution; Another file comes first.
+    const foot = footerOf(waiting);
+    expect(foot.notes.map((n) => n.cls)).toEqual(['stale-note sheet-footer-note']);
+    expect(foot.buttons).toEqual([
+      ['Another file', 'btn secondary', null],
+      ['Import 3 transactions', 'btn', foot.notes[0].id],
+    ]);
+    // A refused import beside it too, each note describing Import.
+    const refused = footerOf(
+      renderToStaticMarkup(
+        <ReviewView
+          review={REVIEW}
+          file={picked}
+          options={{}}
+          account={account}
+          busy={false}
+          error="The account changed since the review."
+          acknowledged={false}
+          onAcknowledge={noop}
+          choices={{ each: {} }}
+          sentChoices={{ each: {} }}
+          onChoose={noop}
+          onChooseAll={noop}
+          conflicts={{ each: {} }}
+          onConflict={noop}
+          onConflictAll={noop}
+          onCovers={noop}
+          onFlip={noop}
+          onImport={noop}
+          onBack={noop}
+        />
+      )
+    );
+    expect(refused.notes.map((n) => n.cls)).toEqual(['stale-note sheet-footer-note', 'sheet-footer-note']);
+    expect(refused.buttons[1][2]).toBe(refused.notes.map((n) => n.id).join(' '));
     const answered = render({ each: { '4': 'new' } });
     expect(importButton(answered)[1]).not.toContain('disabled');
     expect(importButton(answered)[2]).toBe('Import 4 transactions');
+    expect(footerOf(answered)).toEqual({ notes: [], buttons: [['Another file', 'btn secondary', null], ['Import 4 transactions', 'btn', null]] });
     expect(countsNow(REVIEW, { each: {} }, { each: { '4': 'same', '7': 'new' } })).toMatchObject({ new: 4, duplicates: 1, unanswered: 0 });
   });
 

@@ -12,6 +12,7 @@
 
 import { useEffect, useId, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
+import ActionRows from './ActionRows';
 import { Masked } from './HideAmounts';
 import FieldError, { amountExample } from './FieldError';
 import { shownName } from '@/lib/merchant-name';
@@ -189,6 +190,8 @@ export function ConfirmPaymentSheet({
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const failedId = useId();
+  const reopenId = useId();
 
   const currency = t ? currencyOf(t) : null;
   const scale = unitScale(currency);
@@ -239,35 +242,64 @@ export function ConfirmPaymentSheet({
     onClose();
   }
 
+  // Why the last press failed, beside the buttons.
+  const failed = error ? failedId : undefined;
+  const failure = error && (
+    <div className="sheet-footer-note" id={failedId}>
+      <Notice level="critical" role="alert">
+        <Masked>{hideAmountsIn(error)}</Masked>
+      </Notice>
+    </div>
+  );
+
   if (confirmed) {
+    // What Reopen does, beside it.
+    const footer = (
+      <>
+        <p className="helper sheet-footer-note" id={reopenId}>
+          Reopened, what it paid back is open again, and it counts as the bank shows it.
+        </p>
+        {failure}
+        <button type="button" className="btn secondary" onClick={onClose} disabled={saving}>
+          Close
+        </button>
+        <button
+          type="button"
+          className="btn secondary"
+          onClick={() => void act('DELETE', { transaction_id: keptUnder })}
+          disabled={saving}
+          aria-describedby={failed ? `${reopenId} ${failed}` : reopenId}
+        >
+          Reopen it
+        </button>
+      </>
+    );
     return (
-      <Sheet open title="Paid back" onClose={() => !saving && onClose()}>
+      <Sheet open title="Paid back" onClose={() => !saving && onClose()} footer={footer}>
         <div className="stack">
           <p className="panel-note">
             {shownName(t)}, {shownDay(t.date, true)}: you confirmed it {direction === 'to_you' ? 'paid back' : 'paid'}{' '}
             {confirmed.allocations.map((a) => card.items.find((i) => i.id === a.item)?.what ?? 'something no longer kept').join(', ')}.
           </p>
-          {error && (
-            <Notice level="critical" role="alert">
-              <Masked>{hideAmountsIn(error)}</Masked>
-            </Notice>
-          )}
         </div>
-        <div className="button-pair">
-          <button className="secondary" onClick={() => void act('DELETE', { transaction_id: keptUnder })} disabled={saving}>
-            Reopen it
-          </button>
-          <button className="secondary" onClick={onClose} disabled={saving}>
-            Close
-          </button>
-        </div>
-        <p className="panel-note">Reopened, what it paid back is open again, and it counts as the bank shows it.</p>
       </Sheet>
     );
   }
 
+  const footer = (
+    <>
+      {failure}
+      <button type="button" className="btn secondary" onClick={onClose} disabled={saving}>
+        Cancel
+      </button>
+      <button type="button" className="btn" onClick={() => void confirm()} disabled={!ready || saving} aria-describedby={failed}>
+        {saving ? 'Saving…' : 'Confirm'}
+      </button>
+    </>
+  );
+
   return (
-    <Sheet open title={direction === 'to_you' ? 'This paid back…' : 'This paid…'} onClose={() => !saving && onClose()}>
+    <Sheet open title={direction === 'to_you' ? 'This paid back…' : 'This paid…'} onClose={() => !saving && onClose()} footer={footer}>
       <p className="panel-note" style={{ marginTop: 0 }}>
         {shownName(t)}: <Masked>{formatMoney(Math.abs(rowAmount), currency)}</Masked> {direction === 'to_you' ? 'in' : 'out'} {onDay(shownDay(t.date, true))}.{' '}
         {direction === 'to_you'
@@ -294,24 +326,12 @@ export function ConfirmPaymentSheet({
                 : `${money(sum)} of it pays back what you chose; the other ${money(whole - sum)} counts as the bank shows it.`}
           </Masked>
         </p>
-        {error && (
-          <Notice level="critical" role="alert">
-            <Masked>{hideAmountsIn(error)}</Masked>
-          </Notice>
-        )}
       </div>
-      <div className="button-pair">
-        <button onClick={() => void confirm()} disabled={!ready || saving}>
-          {saving ? 'Saving…' : 'Confirm'}
-        </button>
-        <button className="secondary" onClick={onClose} disabled={saving}>
-          Cancel
-        </button>
-      </div>
+      {/* The proposal's other answer, from its actions: it acts at once. */}
       {fromProposal && (
-        <button className="secondary" style={{ marginTop: 12 }} onClick={() => void act('PATCH', { action: 'dismiss', transaction_id: t.transaction_id })} disabled={saving}>
-          Not a repayment
-        </button>
+        <div className="panel-section">
+          <ActionRows rows={[{ key: 'dismiss', title: 'Not a repayment', onSelect: () => !saving && void act('PATCH', { action: 'dismiss', transaction_id: t.transaction_id }) }]} />
+        </div>
       )}
     </Sheet>
   );
@@ -353,6 +373,8 @@ export function SettleSheet({
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const failedId = useId();
+  const yoursId = useId();
   const items = useMemo(() => (card && person ? card.items.filter((i) => i.person === person && i.currency === currency && i.open > 0) : []), [card, person, currency]);
   const places = Math.round(Math.log10(unitScale(currency)));
 
@@ -383,8 +405,28 @@ export function SettleSheet({
     onClose();
   }
 
+  // The buttons, and why the last press failed beside them.
+  const described = [lettingGoYours ? yoursId : '', error ? failedId : ''].filter(Boolean).join(' ') || undefined;
+  const footer = (
+    <>
+      {error && (
+        <div className="sheet-footer-note" id={failedId}>
+          <Notice level="critical" role="alert">
+            <Masked>{hideAmountsIn(error)}</Masked>
+          </Notice>
+        </div>
+      )}
+      <button type="button" className="btn secondary" onClick={onClose} disabled={saving}>
+        Cancel
+      </button>
+      <button type="button" className="btn" onClick={() => void save()} disabled={!ready || saving} aria-describedby={described}>
+        {saving ? 'Saving…' : kind === 'forgiven' ? 'Let it go' : 'Mark settled'}
+      </button>
+    </>
+  );
+
   return (
-    <Sheet open title={kind === 'forgiven' ? 'Let it go' : 'Mark settled'} onClose={() => !saving && onClose()}>
+    <Sheet open title={kind === 'forgiven' ? 'Let it go' : 'Mark settled'} onClose={() => !saving && onClose()} footer={footer}>
       <fieldset className="lifecycle-choices" disabled={saving}>
         <legend className="section-label">With {name}</legend>
         <label className="lifecycle-choice">
@@ -413,25 +455,14 @@ export function SettleSheet({
           <input className="text-input" value={note} maxLength={NOTE_MAX} onChange={(e) => setNote(e.target.value)} disabled={saving} />
         </label>
       </div>
+      {/* What letting go does, too long for the footer: here, and the
+          button described by it. */}
       <div className="stack tight">
         {lettingGoYours && (
-          <p className="panel-note">
+          <p className="panel-note" id={yoursId}>
             What {name} owed you of a shared transaction becomes your part, on the day you bought it: your spending that month goes up by it.
           </p>
         )}
-        {error && (
-          <Notice level="critical" role="alert">
-            <Masked>{hideAmountsIn(error)}</Masked>
-          </Notice>
-        )}
-      </div>
-      <div className="button-pair">
-        <button onClick={() => void save()} disabled={!ready || saving}>
-          {saving ? 'Saving…' : kind === 'forgiven' ? 'Let it go' : 'Mark settled'}
-        </button>
-        <button className="secondary" onClick={onClose} disabled={saving}>
-          Cancel
-        </button>
       </div>
     </Sheet>
   );
