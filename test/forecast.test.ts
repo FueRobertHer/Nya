@@ -89,6 +89,16 @@ describe('where it starts', () => {
     ]);
   });
 
+  test('a health savings account a bank reports as a bank account is not cash, whatever its subtype’s case', () => {
+    const p = cashPosition([
+      inst({
+        accounts: [acct(), acct({ account_id: 'hsa', name: 'Health savings', subtype: 'hsa', balance: 8000 }), acct({ account_id: 'hsa2', name: 'HSA 2', subtype: 'HSA', balance: 500 })],
+      }),
+    ]);
+    expect(p.included.map((a) => a.account_id)).toEqual(['chk']);
+    expect(p.start).toBe(1000);
+  });
+
   test('an account without a balance is named, not counted as zero', () => {
     const p = cashPosition([inst({ accounts: [acct(), acct({ account_id: 'x', name: 'Savings', balance: null })] })]);
     expect(p.start).toBe(1000);
@@ -451,6 +461,12 @@ describe('what it says it may be missing', () => {
 
   test('nothing, when nothing is wrong', () => {
     expect(notes([inst()])).toEqual([]);
+  });
+
+  test('a health savings account left out is named, as Runway names it; a hidden one is not', () => {
+    const hsa = acct({ account_id: 'hsa', name: 'Health savings', subtype: 'hsa', balance: 8000 });
+    expect(notes([inst({ accounts: [acct(), hsa] })])).toEqual(["Health savings at Chase is a health savings account, for health costs, so it isn't counted as cash."]);
+    expect(notes([inst({ accounts: [acct(), { ...hsa, hidden: true }] })])).toEqual([]);
   });
 
   test('a balance recovered from an earlier day, and an institution not reached', () => {

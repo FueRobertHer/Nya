@@ -39,8 +39,9 @@
 //     on which accounts;
 //   - money back in a spending category (a refund) is taken off spending
 //     rather than counted as income, which would overstate both. Only in a
-//     spending category: money in under income, a transfer or anything else
-//     is never a refund. The total, and the largest one, are shown beside
+//     spending category (one in a spending group, a category of the
+//     person's own included): money in under income, a transfer or the
+//     uncategorized category is never a refund. The total, and the largest one, are shown beside
 //     spending, so an odd large one (a deposit returned) can be seen.
 // Pending rows count, as they do on the Activity tab; a pending row whose
 // posted row has arrived was already dropped by /api/transactions
@@ -85,7 +86,7 @@
 import { type Txn } from '@/components/MonthBreakdown';
 import { categoryKey, currencyOf, inCurrency, isExcluded, isHistoryRow, isTransfer, totalsCurrency, transactionCounter, type LeftOut } from '@/lib/spending';
 import type { PlanFunding } from './plan';
-import { isCashOnHand, isInvestmentType } from '@/lib/balance';
+import { isBankCash, isCashOnHand, isDepositoryHsa, isInvestmentType } from '@/lib/balance';
 import { dominantCurrency } from '@/lib/format';
 import { isConnectorKind } from '@/lib/connectors/types';
 import { totalsIn, type Conversion } from '@/lib/fx/totals';
@@ -122,9 +123,19 @@ export type PlanFlow =
 const LOAN_DETAILS = new Set(['mortgage payment', 'car payment', 'student loan payment', 'personal loan payment']);
 /** Plaid's detail for paying a card off. */
 const CARD_PAYMENT = 'credit card payment';
-/** The categories money is spent in (Plaid's personal finance categories,
- *  humanized): money back in one of them is a refund. Not income, transfers,
- *  loan payments or "other". */
+/** The uncategorized category's text key (lib/categories.ts): a deposit that
+ *  says nothing of itself is filed there, so money in under it is no refund. */
+const UNCATEGORIZED = 'other';
+/** Plaid's primary for money borrowed (a student loan paid out, say): grown
+ *  into a spending group like any primary the seed doesn't name
+ *  (lib/categories.ts legacyKind), but money in under it is no money back on
+ *  spending, and taken off spending it could cut a year of it to nothing.
+ *  Income, as before kinds were read here. */
+const LOAN_DISBURSEMENTS = 'loan disbursements';
+/** For a row not filed under a category of the person's (one past
+ *  MAX_CATEGORIES, lib/category-store.ts fileRows): the categories money is
+ *  spent in (Plaid's personal finance categories, humanized), money back in
+ *  one of them a refund. Not income, transfers, loan payments or "other". */
 const SPENDING_CATEGORIES = new Set([
   'food and drink',
   'general merchandise',
@@ -168,9 +179,14 @@ export function planFlow(t: Txn): PlanFlow {
   // "income" category alone, as before.
   if (t.category_kind ? t.category_kind === 'income' : category === 'income') return 'income';
   if (t.amount > 0) return 'spending';
-  // Money in: back on something bought only in a spending category. Anything
-  // else (no category, "other") stays income, as it always was.
-  return category !== null && SPENDING_CATEGORIES.has(category) ? 'refund' : 'income';
+  // Money in: back on something bought only in a spending category, by the
+  // kind of the person's category once filed (a category of their own
+  // included, whose key is its name), as Runway reads it (lib/report/runway.ts
+  // filedKind). Anything else (no category, the uncategorized one) stays
+  // income, as it always was.
+  if (category === null || category === UNCATEGORIZED || category === LOAN_DISBURSEMENTS) return 'income';
+  if (t.category_kind) return t.category_kind === 'expense' ? 'refund' : 'income';
+  return SPENDING_CATEGORIES.has(category) ? 'refund' : 'income';
 }
 
 export type TrailingFlows = {
@@ -611,11 +627,15 @@ export type AssetsConversion = {
   unrated: { currency: string; why: NoRate; unrated: string }[];
 };
 
-const holds = (a: AssetAccount, includeCash: boolean) => isInvestmentType(a.type) || (includeCash && a.type === 'depository');
+/** An investment account, a health savings account a bank reports as a bank
+ *  account among them (lib/balance.ts isDepositoryHsa), or with `includeCash`
+ *  checking and savings. */
+const holds = (a: AssetAccount, includeCash: boolean) => isInvestmentType(a.type) || isDepositoryHsa(a) || (includeCash && isBankCash(a));
 
 /**
- * Invested assets: every investment account that is not hidden, plus
- * checking and savings when `includeCash`. Credit and loan balances are not
+ * Invested assets: every investment account that is not hidden (an HSA a
+ * bank reports as a bank account included), plus checking and savings when
+ * `includeCash`. Credit and loan balances are not
  * subtracted: the FI number is about what can be invested and drawn on, not
  * net worth.
  *

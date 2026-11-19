@@ -42,6 +42,25 @@ export function isInvestmentType(type: string): boolean {
 }
 
 /**
+ * A health savings account Plaid reports as a bank account (type depository,
+ * subtype hsa), as some institutions do: money for health costs, never cash to
+ * live on. The Plan counts it with the investment accounts, in the HSA bucket
+ * (lib/fire/inputs.ts, lib/fire/buckets-today.ts); the cash forecast and Runway
+ * leave it out of the cash they start from (lib/forecast.ts cashPosition). One
+ * reported as an investment account is one already. Not in isInvestmentType,
+ * which decides whether holdings are asked for.
+ */
+export function isDepositoryHsa(a: { type: string | null; subtype?: string | null }): boolean {
+  return a.type === 'depository' && (a.subtype ?? '').toLowerCase() === 'hsa';
+}
+
+/** Checking, savings and cash on hand: a depository account that isn't a
+ *  health savings account. */
+export function isBankCash(a: { type: string | null; subtype?: string | null }): boolean {
+  return a.type === 'depository' && !isDepositoryHsa(a);
+}
+
+/**
  * The subtype a manual account is saved with when the person says it is cash
  * on hand (a wallet, a jar): a depository account, like checking, that holds
  * the cash taken out at an ATM. The Plan reads it to count withdrawals and the

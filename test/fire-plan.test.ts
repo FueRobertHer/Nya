@@ -625,6 +625,43 @@ describe('spending and savings from the trailing year', () => {
     expect(flow({ amount: -10, category: null })).toBe('income'); // no telling: stays income
   });
 
+  // A category of the person's own has its name for a key (lib/categories.ts
+  // addCategory), so only its kind says it is spending.
+  test('money back in a spending category of your own is a refund, by its kind', () => {
+    const flow = (over: Partial<Txn>) => planFlow(txn(over));
+    const own = { category: 'pet care', category_id: 'c-pets', category_name: 'Pet care' };
+    expect(flow({ amount: -25, ...own, category_kind: 'expense' })).toBe('refund');
+    expect(flow({ amount: 25, ...own, category_kind: 'expense' })).toBe('spending');
+    // In an income group it is income; in a transfer group, a transfer.
+    expect(flow({ amount: -25, ...own, category_kind: 'income' })).toBe('income');
+    expect(flow({ amount: -25, ...own, category_kind: 'transfer' })).toBe('transfer');
+    // A seeded spending category Plaid's own words never named one in.
+    expect(flow({ amount: -25, category: 'government and non profit', category_kind: 'expense' })).toBe('refund');
+    // The uncategorized category counts as spending, but a deposit filed there
+    // says nothing of itself (a paycheck from SimpleFIN): it stays income.
+    expect(flow({ amount: -25, category: null, category_id: 'c-other', category_kind: 'expense' })).toBe('income');
+    expect(flow({ amount: -25, category: 'other', category_id: 'c-other', category_kind: 'expense' })).toBe('income');
+    // Unfiled, a category of one's own words is no refund, as before.
+    expect(flow({ amount: -25, category: 'pet care' })).toBe('income');
+    // Filed, the kind wins over Plaid's words: a spending category moved to
+    // an income group is income.
+    expect(flow({ amount: -25, category: 'general services', category_kind: 'income' })).toBe('income');
+    // Money borrowed is grown into a spending group, but is no refund.
+    expect(flow({ amount: -20_000, category: 'loan disbursements', category_kind: 'expense' })).toBe('income');
+
+    const r = trailingFlows(
+      [
+        txn({ date: yearAgo, amount: 300, ...own, category_kind: 'expense' }),
+        txn({ date: '2026-05-10', amount: -100, ...own, category_kind: 'expense' }),
+        txn({ date: today, amount: -1_000, category: 'income', category_kind: 'income' }),
+      ],
+      today
+    )!;
+    expect(r.refunds).toBe(100);
+    expect(r.spending).toBe(200);
+    expect(r.income).toBe(1_000);
+  });
+
   // Recategorizing replaces the category but keeps Plaid's detail
   // (app/api/transactions/route.ts), so a card payoff filed by Plaid as a
   // transfer and moved to "loan payments" still says "account transfer".
@@ -797,6 +834,21 @@ describe('invested assets', () => {
 
   test('counts checking and savings when asked', () => {
     expect(investedAssets([inst([acct({ balance: 100_000 }), acct({ type: 'depository', balance: 20_000 })])], true).total).toBe(120_000);
+  });
+
+  // Some banks report an HSA as a bank account (lib/balance.ts isDepositoryHsa).
+  test('an HSA a bank reports as a bank account counts, once, with or without checking and savings', () => {
+    const hsa = acct({ account_id: 'hsa', type: 'depository', subtype: 'hsa', balance: 8_000 });
+    const checking = acct({ account_id: 'chk', type: 'depository', subtype: 'checking', balance: 2_000 });
+    const without = investedAssets([inst([acct({ balance: 100_000 }), hsa, checking])], false);
+    expect(without.total).toBe(108_000);
+    expect(without.accounts.map((a) => a.account_id)).toContain('hsa');
+    const withCash = investedAssets([inst([acct({ balance: 100_000 }), hsa, checking])], true);
+    expect(withCash.total).toBe(110_000);
+    expect(withCash.accounts.filter((a) => a.account_id === 'hsa')).toHaveLength(1);
+    // Its subtype in any case; hidden, it is out.
+    expect(investedAssets([inst([acct({ type: 'depository', subtype: 'HSA', balance: 500 })])], false).total).toBe(500);
+    expect(investedAssets([inst([acct({ type: 'depository', subtype: 'hsa', balance: 500, hidden: true })])], false).total).toBeNull();
   });
 
   test('an account without a balance is counted as unknown, not as zero', () => {
