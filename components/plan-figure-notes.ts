@@ -104,12 +104,15 @@ export type FigureArgs = {
  * Assumptions where that row isn't drawn), and repeated on the answer
  * (`answer`), as the inputs that may be low are. Nothing while detailed tax
  * is saved and on hold (taxOnHold says it), nor where the health part can't
- * matter: both of you 65 or over at the stop.
+ * matter: both of you 65 or over at the stop. Nor without a worked-out FI
+ * number (`workedOut` false: your own typed one, which no rate moves, or none
+ * yet, whose answer names what it needs).
  *   where: 'here' on your plan in dollars, whose Tax after you stop row
  *   works both out; 'copy' in a copy, which does it on your plan; 'rate'
  *   where worked-out tax can't be had, only a rate.
  */
 export function flatCostsNotes(a: {
+  workedOut: boolean;
   taxRate: number;
   taxOnHold: boolean;
   inDollars: boolean;
@@ -119,17 +122,18 @@ export function flatCostsNotes(a: {
   spendingMeasured: boolean;
   where: 'here' | 'copy' | 'rate';
 }): { row: FigureNote | null; answer: string | null } {
-  if (a.taxOnHold) return { row: null, answer: null };
+  if (a.taxOnHold || !a.workedOut) return { row: null, answer: null };
   const tax = a.taxRate === 0;
-  const atStop = (age: number | null) => (a.age !== null && a.stopAge !== null && age !== null ? age + (a.stopAge - a.age) : null);
-  const bothOnMedicare = (atStop(a.age) ?? 0) >= 65 && (a.partnerAge === null || (atStop(a.partnerAge) ?? 0) >= 65);
+  // The stop is your own age then; a partner's needs both ages.
+  const partnerAtStop = a.partnerAge !== null && a.age !== null && a.stopAge !== null ? a.partnerAge + (a.stopAge - a.age) : null;
+  const bothOnMedicare = (a.stopAge ?? 0) >= 65 && (a.partnerAge === null || (partnerAtStop ?? 0) >= 65);
   const health = a.inDollars && a.where !== 'rate' && !bothOnMedicare;
   if (!tax && !health) return { row: null, answer: null };
   const coverage = a.spendingMeasured ? 'measured spending leaves out coverage through work' : 'unless your spending includes it';
   const what = tax && health ? 'no tax after you stop and no health coverage before Medicare' : tax ? 'no tax after you stop' : 'no health coverage before Medicare';
   const lead = tax && health ? `Your FI number counts ${what} (${coverage}).` : tax ? `Your FI number counts ${what}.` : `Your FI number counts ${what}${a.spendingMeasured ? ': ' : ', '}${coverage}.`;
-  const count = tax && health ? ' to count both' : health ? ' to count it' : '';
-  const rate = tax ? ', or set a tax rate in Assumptions' : '';
+  const count = tax && health ? ' to count both' : health ? ' to count coverage' : '';
+  const rate = tax && health ? '. A tax rate in Assumptions counts tax alone' : tax ? ', or set a tax rate in Assumptions' : '';
   const fix =
     a.where === 'here' ? `Work out tax from your accounts here${count}${rate}.` : a.where === 'copy' ? `Work out tax from your accounts on your plan${count}${rate}.` : 'Set a tax rate in Assumptions.';
   const kind = tax && health ? NOTE_KINDS.flatBoth : tax ? NOTE_KINDS.flatTax : NOTE_KINDS.flatHealth;

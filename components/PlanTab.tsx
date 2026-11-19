@@ -1481,6 +1481,7 @@ export default function PlanTab({
   const flatCosts =
     shared.factsKnown && !detailShown
       ? flatCostsNotes({
+          workedOut: plan.fiNumber == null && view.workedOut !== null,
           taxRate: plan.taxRate,
           taxOnHold: figureArgs.taxOnHold,
           inDollars: taxInDollars,

@@ -442,7 +442,7 @@ describe('ages and assumptions', () => {
 });
 
 describe('what a flat plan’s FI number leaves out after you stop', () => {
-  const base = { taxRate: 0, taxOnHold: false, inDollars: true, age: 40, partnerAge: null, stopAge: 55, spendingMeasured: true, where: 'here' as const };
+  const base = { workedOut: true, taxRate: 0, taxOnHold: false, inDollars: true, age: 40, partnerAge: null, stopAge: 55, spendingMeasured: true, where: 'here' as const };
   const of = (over: Partial<Parameters<typeof flatCostsNotes>[0]> = {}) => {
     const n = flatCostsNotes({ ...base, ...over });
     return n.row ? [n.row.level, n.row.kind, n.row.text, n.answer] : null;
@@ -452,21 +452,21 @@ describe('what a flat plan’s FI number leaves out after you stop', () => {
     expect(of()).toEqual([
       'caution',
       'no tax or health coverage',
-      'Your FI number counts no tax after you stop and no health coverage before Medicare (measured spending leaves out coverage through work). Work out tax from your accounts here to count both, or set a tax rate in Assumptions.',
+      'Your FI number counts no tax after you stop and no health coverage before Medicare (measured spending leaves out coverage through work). Work out tax from your accounts here to count both. A tax rate in Assumptions counts tax alone.',
       'Counts no tax after you stop and no health coverage before Medicare (below).',
     ]);
     // A copy works it out on your plan; spending typed may already hold coverage.
     expect(of({ where: 'copy', spendingMeasured: false })?.[2]).toBe(
-      'Your FI number counts no tax after you stop and no health coverage before Medicare (unless your spending includes it). Work out tax from your accounts on your plan to count both, or set a tax rate in Assumptions.'
+      'Your FI number counts no tax after you stop and no health coverage before Medicare (unless your spending includes it). Work out tax from your accounts on your plan to count both. A tax rate in Assumptions counts tax alone.'
     );
   });
 
   test('a rate set, in dollars: only health coverage', () => {
-    expect(of({ taxRate: 0.15, spendingMeasured: false })?.[2]).toBe('Your FI number counts no health coverage before Medicare, unless your spending includes it. Work out tax from your accounts here to count it.');
+    expect(of({ taxRate: 0.15, spendingMeasured: false })?.[2]).toBe('Your FI number counts no health coverage before Medicare, unless your spending includes it. Work out tax from your accounts here to count coverage.');
     expect(of({ taxRate: 0.15 })).toEqual([
       'caution',
       'no health coverage',
-      'Your FI number counts no health coverage before Medicare: measured spending leaves out coverage through work. Work out tax from your accounts here to count it.',
+      'Your FI number counts no health coverage before Medicare: measured spending leaves out coverage through work. Work out tax from your accounts here to count coverage.',
       'Counts no health coverage before Medicare (below).',
     ]);
   });
@@ -483,8 +483,16 @@ describe('what a flat plan’s FI number leaves out after you stop', () => {
     expect(of({ stopAge: 65 })?.[1]).toBe('no tax after you stop');
     // A younger partner is still short of it.
     expect(of({ taxRate: 0.15, stopAge: 65, partnerAge: 37 })?.[1]).toBe('no health coverage');
-    // Ages not known: said, as the gap may be there.
+    // Your age not known: the stop is your age then, so only it decides.
     expect(of({ taxRate: 0.15, age: null })?.[1]).toBe('no health coverage');
+    expect(of({ taxRate: 0.15, age: null, stopAge: 67 })).toBeNull();
+    // A partner's age at the stop needs yours: not known, the gap may be there.
+    expect(of({ taxRate: 0.15, age: null, stopAge: 67, partnerAge: 60 })?.[1]).toBe('no health coverage');
+  });
+
+  test('no worked-out FI number: your own, which no rate moves, or none yet, says nothing', () => {
+    expect(of({ workedOut: false })).toBeNull();
+    expect(of({ workedOut: false, taxRate: 0.15 })).toBeNull();
   });
 });
 
@@ -549,7 +557,7 @@ describe('the notes’ kinds and keys', () => {
     );
     // A flat plan's, drawn by the Plan tab on its own row (flatCostsNotes).
     for (const o of [{ taxRate: 0, inDollars: false }, { taxRate: 0.15, inDollars: true }, { taxRate: 0, inDollars: true }]) {
-      const n = flatCostsNotes({ ...o, taxOnHold: false, age: 40, partnerAge: null, stopAge: 55, spendingMeasured: true, where: o.inDollars ? 'here' : 'rate' }).row;
+      const n = flatCostsNotes({ ...o, workedOut: true, taxOnHold: false, age: 40, partnerAge: null, stopAge: 55, spendingMeasured: true, where: o.inDollars ? 'here' : 'rate' }).row;
       if (n) kinds.add(n.kind);
     }
     const notice: string[] = [NOTE_KINDS.spendingLow, NOTE_KINDS.assetsLow];

@@ -408,7 +408,7 @@ describe('Your figures', () => {
     await seedPlan({ ...PLAN, taxRate: 0 });
     const tab = await render(WITH_BALANCES);
     const said =
-      'Your FI number counts no tax after you stop and no health coverage before Medicare (unless your spending includes it). Work out tax from your accounts here to count both, or set a tax rate in Assumptions.';
+      'Your FI number counts no tax after you stop and no health coverage before Medicare (unless your spending includes it). Work out tax from your accounts here to count both. A tax rate in Assumptions counts tax alone.';
     const notes = (title: string) => (tab.row(title)!.parentNode as Node).findAll((e) => classOf(e).includes('notice'));
     expect(notes('Tax after you stop').map((n) => [classOf(n).join(' '), n.textContent])).toEqual([['notice caution', `Caution: ${said}`]]);
     expect(notes('Assumptions')).toEqual([]);
@@ -432,14 +432,32 @@ describe('Your figures', () => {
     await openCopy(tab, 'No tax');
     expect(tab.row('Tax after you stop')).toBeNull();
     const under = (tab.row('Assumptions')!.parentNode as Node).textContent ?? '';
-    expect(under).toContain('Work out tax from your accounts on your plan to count both, or set a tax rate in Assumptions.');
+    expect(under).toContain('Work out tax from your accounts on your plan to count both. A tax rate in Assumptions counts tax alone.');
+    await tab.unmount();
+  }, 30_000);
+
+  test('flat at 0% with your own FI number: no rate moves it, so nothing is said', async () => {
+    await seedPlan({ ...PLAN, taxRate: 0, fiNumber: 1_500_000 });
+    const tab = await render(WITH_BALANCES);
+    expect(tab.row('Tax after you stop')).not.toBeNull();
+    expect(tab.text()).not.toContain('Your FI number counts no');
+    expect(tab.text()).not.toContain('Counts no tax');
+    await tab.unmount();
+  }, 30_000);
+
+  test('flat at 0% with no FI number yet (no spending): the answer names what it needs, and the caution waits', async () => {
+    await seedPlan({ ...PLAN, taxRate: 0, spending: null });
+    const tab = await render({ ...WITH_BALANCES, txns: [], txnNotes: ['Chase: needs to be reconnected'] });
+    expect(tab.text()).toContain("Transactions from Chase couldn't be read");
+    expect(tab.text()).not.toContain('Your FI number counts no');
+    expect(tab.text()).not.toContain('Counts no tax');
     await tab.unmount();
   }, 30_000);
 
   test('flat at a rate: only health coverage is said', async () => {
     await seedPlan({ ...PLAN, taxRate: 0.15 });
     const tab = await render(WITH_BALANCES);
-    expect(tab.text()).toContain('Your FI number counts no health coverage before Medicare, unless your spending includes it. Work out tax from your accounts here to count it.');
+    expect(tab.text()).toContain('Your FI number counts no health coverage before Medicare, unless your spending includes it. Work out tax from your accounts here to count coverage.');
     expect(tab.text()).toContain('Counts no health coverage before Medicare (below).');
     expect(tab.text()).not.toContain('no tax after you stop');
     await tab.unmount();
