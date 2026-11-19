@@ -619,7 +619,7 @@ describe('each account’s growth', () => {
     expect(server.saved().map((p: any) => p.accounts)).toEqual([[{ account_id: 'brk', growth: 0.07, yield: null }]]);
     expect(tab.dialog()).toBeNull();
     // After the save: the plan runs at it, and the sheet opens on it.
-    expect(tab.container.textContent).toContain('5.58% growth after inflation until FI, 1 account at its own');
+    expect(tab.container.textContent).toContain('5.58% growth after inflation, 1 account at its own');
     await openAssets(tab);
     expect(subOf(tab, 'Brokerage')).toBe('Cost basis $105,000 · gain $35,000 · grows 7%');
     expect(tab.shown()).toContain('With 1 account’s own rate, they grow 5.58% a year together.');

@@ -348,7 +348,7 @@ describe('Your figures, under the FI card', () => {
       ['Annual savings', 'Estimated from a year', '$24,000', '40% savings rate'],
       // Their figures are their subs, with no value beside them.
       ['Household', '40 now, stop at 55', null, null],
-      ['Assumptions', '4% withdrawal · 5% growth after inflation until FI · 0% tax', null, null],
+      ['Assumptions', '4% withdrawal · 5% growth after inflation · 0% tax', null, null],
     ]);
     for (const r of tab.rows()) {
       // Named by its own words, a button that opens a sheet, ending in a chevron.
@@ -365,7 +365,7 @@ describe('Your figures, under the FI card', () => {
     serve({ plan: { plan: { ...PLAN, age: null, targetAge: null, partTimeIncome: 28_000 }, currency: 'USD' } });
     const none = await mount();
     expect(part(none.row('Household')!, 'list-row-sub')?.textContent).toBe('Add them for Coast FI and to place what’s on your Timeline');
-    expect(part(none.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('4% withdrawal · 5% growth after inflation until FI · 0% tax · $28,000 part-time');
+    expect(part(none.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('4% withdrawal · 5% growth after inflation · 0% tax · $28,000 part-time');
     await none.unmount();
     serve({ plan: { plan: { ...PLAN, age: null }, currency: null } });
     const one = await mount();
@@ -1057,9 +1057,11 @@ describe('the Assumptions sheet, and Drawdown’s rows', () => {
     const sheet = tab.dialog()!;
     expect(sheet.getAttribute('aria-label')).toBe('Assumptions');
     expect(sheet.findAll((e) => e.tagName === 'H3' && has(e, 'plan-heading')).map((e) => e.textContent)).toEqual(['FI number', 'Drawdown']);
-    for (const label of ['Withdrawal rate', 'Growth after inflation until FI', 'Tax on withdrawals', 'Part-time income', 'Method', 'Withdrawal rule', 'Start with', 'Length in years', 'Stocks %', 'Bonds %', 'Rebalancing', 'Fund fees']) {
+    for (const label of ['Withdrawal rate', 'Growth after inflation', 'Tax on withdrawals', 'Part-time income', 'Method', 'Withdrawal rule', 'Start with', 'Length in years', 'Stocks %', 'Bonds %', 'Rebalancing', 'Fund fees']) {
       expect([label, field(sheet, label) !== null]).toEqual([label, true]);
     }
+    // The rate counts after the stop too, so its label has no until FI.
+    expect(sheet.findAll((e) => e.tagName === 'LABEL' && e.textContent.startsWith('Growth after inflation'))[0]?.textContent).toStartWith('Growth after inflation (% a year)');
     // Each says what it changes, under it.
     expect(sheet.textContent).toContain("How much you'd draw each year, as a share of what you have: it sets the FI number (spending divided by it) and the rate the simulation tests.");
     // The rule is said at the rate typed, as it is typed.
@@ -1079,7 +1081,7 @@ describe('the Assumptions sheet, and Drawdown’s rows', () => {
     // plan's P) and on its row.
     expect(tab.panel('drawdown').textContent).toMatch(/Stress test\d+(\.\d)?%of 5,000 Monte Carlo runs lasted/);
     expect(part(drawdownRow(tab, 'Assumptions')!, 'list-row-sub')?.textContent).toBe('Monte Carlo · 75/25/0 · Constant · 0.2% fee');
-    expect(part(tab.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('3.5% withdrawal · 5% growth after inflation until FI · 0% tax');
+    expect(part(tab.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('3.5% withdrawal · 5% growth after inflation · 0% tax');
     await tab.unmount();
   });
 

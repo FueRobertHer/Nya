@@ -232,8 +232,8 @@ describe('the FI card on Home', () => {
     expect(home(rated, two)).toContain(`FI around age ${age}`);
     expect(planTab(rated, two)).toContain(`Financial independence ${head.headline}`);
     expect(home(rated, two)).toContain('and 6.13% growth after inflation');
-    expect(planTab(rated, two)).toContain('6.13% growth after inflation until FI, 1 account at its own');
-    expect(planTab(base, two)).toContain('5% growth after inflation until FI ·');
+    expect(planTab(rated, two)).toContain('6.13% growth after inflation, 1 account at its own');
+    expect(planTab(base, two)).toContain('5% growth after inflation ·');
   });
 
   test('with savings typed into the plan, both show the rate the transactions measure, and Home says it is that', () => {
