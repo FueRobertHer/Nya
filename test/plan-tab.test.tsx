@@ -6,7 +6,7 @@ import PlanFanChart from '@/components/PlanFanChart';
 import { DrawnWidth } from '@/components/drawn-width';
 import { FigureForm } from '@/components/PlanForms';
 import { TimelineCard } from '@/components/PlanTimeline';
-import PlanGrid from '@/components/PlanGrid';
+import PlanGrid, { withOwnRate } from '@/components/PlanGrid';
 import { PlanUnavailable, loadPlanTab } from '@/components/PlanTabLoader';
 import { dayName, monthName, pct, progressText, successText, wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, enginePlan, fiView, type FirePlan, type Measured } from '@/lib/fire/plan';
@@ -796,6 +796,22 @@ describe('the grid', () => {
       ['num plan-grid-cell', null],
     ]);
     expect(html).not.toContain('--accent');
+  });
+
+  test('a worked-out rate said like a grid row is that row, still your plan’s, not a second one', () => {
+    const grid = [0.03, 0.035, 0.04, 0.045, 0.05];
+    // 3.49997% prints as 3.5%: it takes that row's place.
+    expect(withOwnRate(grid, 0.0349997)).toEqual([0.03, 0.0349997, 0.04, 0.045, 0.05]);
+    expect(withOwnRate(grid, 0.04)).toEqual(grid);
+    // One that reads differently joins in order.
+    expect(withOwnRate(grid, 0.0425)).toEqual([0.03, 0.035, 0.04, 0.0425, 0.045, 0.05]);
+    const rates = withOwnRate(grid, 0.0349997);
+    const html = renderToStaticMarkup(
+      <PlanGrid cells={rates.map((r) => cell(r, 30, 0.9))} rates={rates} horizons={[30]} current={{ rate: 0.0349997, years: 30 }} flexible={false} pathsNoun="starts" />
+    );
+    expect(html.match(/>3\.5%</g)).toHaveLength(1);
+    expect(html.match(/plan-grid-cell own/g)).toHaveLength(1);
+    expect(html).toContain('title="3.5% for 30 years: 90%');
   });
 
   test("a flexible rule's cells carry how far spending fell", () => {

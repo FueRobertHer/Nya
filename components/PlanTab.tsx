@@ -62,7 +62,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExtern
 import type { Txn } from './MonthBreakdown';
 import { Sheet, focusInsteadOf } from './Sheet';
 import PlanFanChart from './PlanFanChart';
-import PlanGrid, { type FailedCell } from './PlanGrid';
+import PlanGrid, { withOwnRate, type FailedCell } from './PlanGrid';
 import { AboutForm, AssumptionsForm, FiNumberForm, FigureForm, type AssumptionsAt, type DetailForm, type FigureKind } from './PlanForms';
 import { Why } from './Why';
 import { createPlanRunner, type PlanRunner, type WorkerLike } from './plan-runner';
@@ -202,6 +202,7 @@ const GRID_YEARS = [20, 30, 40, 50];
  *  below the spending implies a rate no row would help to show. */
 const GRID_MAX_OWN_RATE = 0.2;
 
+/** The grid's lengths with the plan's own, a whole number of years, among them. */
 function withOwn(values: number[], own: number): number[] {
   return values.some((v) => Math.abs(v - own) < 1e-9) ? values : [...values, own].sort((a, b) => a - b);
 }
@@ -1011,7 +1012,7 @@ export default function PlanTab({
   const vpw = plan.rule === 'vpw';
   const ownRate = 'rate' in engine ? engine.rate : plan.withdrawalRate;
   const gridRates = useMemo<(number | null)[]>(
-    () => (vpw ? [null] : ownRate <= GRID_MAX_OWN_RATE ? withOwn(GRID_RATES, ownRate) : GRID_RATES),
+    () => (vpw ? [null] : ownRate <= GRID_MAX_OWN_RATE ? withOwnRate(GRID_RATES, ownRate) : GRID_RATES),
     [vpw, ownRate]
   );
   const gridYears = useMemo(() => withOwn(GRID_YEARS, sim?.years ?? 30), [sim?.years]);
@@ -1333,9 +1334,9 @@ export default function PlanTab({
       basePlan.age !== null &&
       progressSeries.answer.currency === displayCurrency &&
       progressSaved.plan.includeCash === basePlan.includeCash
-        ? progressOverlay(progressSaved, progressSeries.answer, basePlan.age, todayUtc, savedItems)
+        ? progressOverlay(progressSaved, progressSeries.answer, basePlan.age, todayUtc, savedItems, measured.spending)
         : null,
-    [entry, progressSaved, progressSeries, basePlan.age, basePlan.includeCash, displayCurrency, todayUtc, savedItems]
+    [entry, progressSaved, progressSeries, basePlan.age, basePlan.includeCash, displayCurrency, todayUtc, savedItems, measured.spending]
   );
   // Why "This is my plan" can't save now: as the Plan's own saves wait.
   const progressBlocked =
@@ -2157,6 +2158,7 @@ export default function PlanTab({
             blocked={progressBlocked}
             copyOpen={entry !== null}
             items={savedItems}
+            spending={measured.spending}
             flatLine={progressFlatLine}
           />
         )}

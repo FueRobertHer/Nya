@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
-import { changedSince, isSavedPlan, parseSavedDraft, plannedAt, upgradeSavedPlan, yearsBetween, type SavedItems, type SavedPlan } from '@/lib/fire/saved-plan';
+import { changedSince, isSavedPlan, parseSavedDraft, plannedAt, savedStop, upgradeSavedPlan, yearsBetween, type SavedItems, type SavedPlan } from '@/lib/fire/saved-plan';
+import { planOf } from '@/lib/fire/plan-v2';
+import { atAge, planItem } from '@/lib/demo-seed/extras';
 import { resolveSaved } from '@/lib/fire/plan-figures';
 
 // The plan saved as your plan (lib/fire/saved-plan.ts): what a save must
@@ -106,6 +108,97 @@ describe('where the saved plan has you on a day', () => {
 
   test('a growth rate the formula doesn’t take gives nothing, never a guess', () => {
     expect(plannedAt({ ...SAVED, plan: { ...PLAN, realReturn: -1 } }, start, '2025-10-26')).toBeNull();
+  });
+});
+
+describe('a plan saved before its stop', () => {
+  // No growth and no inflation, so each figure is plain sums: saved at 35,
+  // stopping at 37 (two years of 365.25 days on), saving 10,000 a year,
+  // spending 30,000 at a 25% tax rate (40,000 taken out a year).
+  const flat: SavedPlan = { ...SAVED, plan: { ...PLAN, realReturn: 0, targetAge: 37, spending: 30_000, taxRate: 0.25 }, inflation: 0 };
+  const start = { day: '2024-10-26', total: 100_000 };
+  /** Years from the saved day. */
+  const t = (day: string) => yearsBetween(SAVED.day, day);
+  /** The flat line by hand: 10,000 a year to the stop, `draw` a year after. */
+  const line = (day: string, draw = 40_000, from = 0) => 100_000 + 10_000 * Math.max(0, Math.min(t(day), 2) - from) - draw * Math.max(0, t(day) - Math.max(2, from));
+
+  test('saves until the stop, then takes out its spending, grossed up for tax', () => {
+    expect(plannedAt(flat, start, '2025-10-26')).toBeCloseTo(line('2025-10-26'), 6);
+    // Four years is 1,461 days, two after the stop: 120,000 less 80,000.
+    expect(plannedAt(flat, start, '2028-10-26')).toBeCloseTo(40_000, 6);
+    expect(plannedAt(flat, start, '2027-10-26')).toBeCloseTo(line('2027-10-26'), 6);
+    // Never below zero.
+    expect(plannedAt(flat, start, '2030-10-26')).toBe(0);
+  });
+
+  test('by hand at 5% and 3% inflation: two years saving, two taking out', () => {
+    const grown = { ...SAVED, plan: { ...PLAN, targetAge: 37, spending: 40_000 } };
+    // 100,000 x 1.1025 + 10,000 x 2.05 = 130,750 at the stop; x 1.1025 less
+    // 40,000 x 2.05 = 62,151.875; x 1.03^4.
+    expect(plannedAt(grown, start, '2028-10-26')).toBeCloseTo(62_151.875 * 1.03 ** 4, 6);
+  });
+
+  test('with no spending typed, today’s measured; with neither, it stops saving and takes nothing out', () => {
+    const untyped = { ...flat, plan: { ...flat.plan, spending: null } };
+    expect(plannedAt(untyped, start, '2028-10-26', null, 15_000)).toBeCloseTo(80_000, 6);
+    expect(plannedAt(untyped, start, '2028-10-26')).toBeCloseTo(120_000, 6);
+    // Typed wins over measured.
+    expect(plannedAt(flat, start, '2028-10-26', null, 15_000)).toBeCloseTo(40_000, 6);
+    expect(savedStop(untyped, null)).toEqual({ age: 37, years: 2, draw: 0 });
+  });
+
+  test('the stop counts from the day it was saved: a later start day comes to it sooner', () => {
+    const later = { day: '2025-10-26', total: 100_000 };
+    expect(plannedAt(flat, later, '2028-10-26')).toBeCloseTo(line('2028-10-26', 40_000, t(later.day)), 6);
+    // A stop that came before the start: taking out from the start.
+    const after = { day: '2027-10-26', total: 100_000 };
+    expect(plannedAt(flat, after, '2028-10-26')).toBeCloseTo(100_000 - 40_000 * yearsBetween(after.day, '2028-10-26'), 6);
+  });
+
+  const items = (over: Partial<SavedItems['walk']>, jobs?: SavedItems['jobs']): SavedItems => ({ from: SAVED.day, age: 35, walk: { moneyIn: [], costs: [], spans: [], ...over }, ...(jobs ? { jobs } : {}) });
+
+  test('pay and part-time work end at the stop; other changes and one-offs go on', () => {
+    const span = { from: 1, to: null, delta: 5_000 };
+    // A lower cost for good: 5,000 a year from year 1, through the stop and after.
+    expect(plannedAt(flat, start, '2028-10-26', items({ spans: [span] }))).toBeCloseTo(55_000, 6);
+    // A raise: only its year before the stop.
+    expect(plannedAt(flat, start, '2028-10-26', items({ spans: [span] }, [span]))).toBeCloseTo(45_000, 6);
+    expect(plannedAt(flat, start, '2028-10-26', items({ costs: [{ year: 3, amount: 10_000 }] }))).toBeCloseTo(30_000, 6);
+  });
+
+  test('run out, it stays at zero until money comes in, and grows from what came', () => {
+    // 120,000 at the stop, 40,000 a year out: gone at 5; 50,000 in at 8.
+    const windfall = items({ moneyIn: [{ year: 8, amount: 50_000 }] });
+    expect(plannedAt(flat, start, '2031-10-26', windfall)).toBe(0);
+    expect(plannedAt(flat, start, '2032-10-26', windfall)).toBeCloseTo(50_000, 6);
+    expect(plannedAt(flat, start, '2033-10-26', windfall)).toBeCloseTo(50_000 - 40_000 * yearsBetween('2032-10-26', '2033-10-26'), 6);
+  });
+
+  test('a plan already below zero at its stop goes on from there, never jumping to zero', () => {
+    const short = { ...flat, savings: -60_000 };
+    const before = plannedAt(short, start, '2026-10-25')!;
+    expect(before).toBeLessThan(0);
+    expect(plannedAt(short, start, '2026-10-27')!).toBeLessThan(before);
+    expect(plannedAt(short, start, '2026-10-27')!).toBeCloseTo(before, -3);
+  });
+
+  test('a saved plan’s work is told apart from its other items, placed as its walk places them', () => {
+    const plan = planOf({ ...flat.plan, realReturn: 0.05 });
+    const work = { ...SAVED, rev: 'jobs', plan: { ...plan, items: [planItem({ id: 'raise', label: 'Raise', kind: 'pay', from: atAge(36), yearly: 5_000 }), planItem({ id: 'kid', label: 'Kid', kind: 'child', from: atAge(36), until: { years: 10 }, yearly: 8_000 })] } };
+    const placed = resolveSaved(work, start, 30_000, { planInWalk: true })!;
+    expect(placed.walk.spans).toHaveLength(2);
+    expect(placed.jobs).toEqual([placed.walk.spans.find((s) => s.delta === 5_000)!]);
+  });
+
+  test('saved at or after the stop, or stopping at FI (no stop kept): the savings it was saved with go on', () => {
+    const retired = { ...flat, plan: { ...flat.plan, age: 60, targetAge: 55 }, savings: -20_000 };
+    expect(savedStop(retired, null)).toBeNull();
+    expect(plannedAt(retired, start, '2028-10-26')).toBeCloseTo(20_000, 6);
+    const atFi = { ...flat, plan: { ...planOf(flat.plan), stopAtFi: true } };
+    expect(savedStop(atFi, 30_000)).toBeNull();
+    expect(plannedAt(atFi, start, '2028-10-26')).toBeCloseTo(140_000, 6);
+    // No age: nothing to place the stop from.
+    expect(plannedAt({ ...flat, plan: { ...flat.plan, age: null } }, start, '2028-10-26')).toBeCloseTo(140_000, 6);
   });
 });
 

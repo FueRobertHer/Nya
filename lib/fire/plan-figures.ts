@@ -43,7 +43,7 @@
 import { projectBalance, projectionShort } from './fi';
 import { compileItems, conditionalFlows, type CompiledItems, type Count, type ItemAges, type ItemNote } from './compile';
 import { hasWalk, lastChange, savingsIn, walkBalanceAt, walkToFi, type CompiledEvents, type Shortfall, type WalkChanges } from './events';
-import { MONEY_KINDS } from './items';
+import { MONEY_KINDS, type ItemKind } from './items';
 import { enginePlan, fiView, formulasTake, planYears, projectFrom, startAge, unmeasuredOf, type EnginePlan, type FiView, type Measured, type Missing, type PlanCore, type StartChoice, type WorkedOut } from './plan';
 import { planOf, type FirePlanV2 } from './plan-v2';
 import type { Drawdown } from './drawdown';
@@ -360,6 +360,8 @@ export function planFigures(plan: FirePlanV2, measured: Measured, { count, detai
 }
 
 const savedKept = new Map<string, SavedItems | null>();
+/** Items whose walk spans are work: they end at the stop. */
+const JOB_KINDS: readonly ItemKind[] = ['pay', 'part-time'];
 
 /**
  * A saved plan's items where its own steady path has them, for Progress
@@ -379,7 +381,16 @@ export function resolveSaved(saved: Pick<SavedPlan, 'plan' | 'savings' | 'day' |
   let out: SavedItems | null = null;
   if (plan.age !== null && plan.items.length > 0) {
     const f = planFigures({ ...plan, savings: saved.savings, assets: start.total }, { spending, savings: saved.savings, assets: start.total }, { count });
-    if (!('refused' in f) && f.events !== null && hasWalk(f.events.walk)) out = { from: saved.day, age: plan.age, walk: f.events.walk };
+    if (!('refused' in f) && f.events !== null && hasWalk(f.events.walk)) {
+      out = { from: saved.day, age: plan.age, walk: f.events.walk };
+      // Pay and part-time work end at the stop (saved-plan.ts plannedAt): their spans alone, placed as the walk placed them.
+      if (plan.items.some((x) => JOB_KINDS.includes(x.kind))) {
+        const stop = f.view.stopAge;
+        const at = { age: plan.age, startAge: startAge(plan, stop), stop, years: planYears(plan, stop), taxRate: plan.taxRate };
+        const jobs = compileItems(plan.items, f.resolution.ages.map((x, i) => (JOB_KINDS.includes(plan.items[i].kind) ? x : null)), at, count).walk.spans;
+        if (jobs.length > 0) out = { ...out, jobs };
+      }
+    }
   }
   if (savedKept.size >= 16) savedKept.clear();
   savedKept.set(key, out);

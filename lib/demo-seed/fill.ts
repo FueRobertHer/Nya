@@ -71,7 +71,7 @@ import { checkGroupName, checkMembers, createGroup } from '../groups';
 import { recordWarning } from '../connection-health';
 import { markNewAccounts } from '../new-accounts';
 import { DEFAULT_PLAN, parsePlan } from '../fire/plan';
-import { parsePlanV2, planOf, type FirePlanV2 } from '../fire/plan-v2';
+import { NEW_PLAN_START, parsePlanV2, planOf, type FirePlanV2 } from '../fire/plan-v2';
 import { factsOf, holdsAmounts } from '../fire/copies';
 import { DEFAULT_TAX_CHOICES, parseTaxChoices, type TaxChoices } from '../fire/tax-choices';
 import { DEFAULT_TAX_FACTS, householdOf, parseHousehold, parseTaxFactOp, type TaxFactOp, type TaxHousehold } from '../fire/tax-facts';
@@ -140,9 +140,10 @@ function rowRefs(x: SeedExtras): (RowRef | null)[] {
 
 /** The profile's plan, its copies and what working tax out changes, as the
  *  Plan's own save checks them (parsePlanV2): `idOf` names a workplace plan's
- *  account by its mask. */
+ *  account by its mask. Each starts where a new plan does (NEW_PLAN_START),
+ *  unless the profile says otherwise. */
 export function plansOf(profile: DemoProfile, idOf: (mask: string) => string): SeededPlans {
-  const v1 = parsePlan({ ...DEFAULT_PLAN, ...profile.plan });
+  const v1 = parsePlan({ ...DEFAULT_PLAN, start: NEW_PLAN_START, ...profile.plan });
   if ('error' in v1) throw new Error(`The profile's plan is refused: ${v1.error}`);
   const base = planOf(v1.plan);
   const p = profile.extras?.plan ?? {};

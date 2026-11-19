@@ -108,9 +108,22 @@ describe('saved, set against what was recorded', () => {
     expect(t).toContain('Started from $100,000, recorded on Jan 1, 2024.');
     expect(t).toContain('Invested on Jan 1, 2028 $190,000 Where your plan has you $185,317');
     expect(t).toContain('$4,683 ahead of it.');
-    expect(t).toContain('Growing a steady 5% a year after inflation, saving $10,000 a year, with prices rising 3% a year.');
+    expect(t).toContain('Growing a steady 5% a year after inflation, saving $10,000 a year until 55, then taking nothing out (no spending to go by), with prices rising 3% a year.');
     expect(t).toContain('Hypothetical: a steady return and steady prices, not a prediction, and not advice.');
     expect(view()).toContain('Progress options');
+  });
+
+  test('across the stop: saving until it, then taking out the spending, grossed up for tax (typed, else today’s measured)', () => {
+    // Saved at 35 with the stop at 37: two years of 10,000 at 5%, then two of
+    // 40,000 taken out (30,000 grossed up at 25%), raised by 3% a year.
+    const across = { ...SAVED, plan: { ...PLAN, targetAge: 37, spending: 30_000, taxRate: 0.25 } };
+    const t = text(view({ savedState: { kind: 'ready', saved: across, problem: null }, plan: across.plan }));
+    expect(t).toContain('saving $10,000 a year until 37, then taking out $40,000 a year, with prices');
+    // (130,750 x 1.1025 - 82,000) x 1.03^4 = 62,151.875 x 1.12550881 = 69,952.
+    expect(t).toContain('Where your plan has you $69,952');
+    // None typed: today's measured spending.
+    const measured = { ...across, plan: { ...across.plan, spending: null } };
+    expect(text(view({ savedState: { kind: 'ready', saved: measured, problem: null }, plan: measured.plan, spending: 15_000 }))).toContain('until 37, then taking out $20,000 a year');
   });
 
   test('behind, and level', () => {

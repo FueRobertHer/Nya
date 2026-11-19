@@ -128,7 +128,7 @@ const { getGoals } = await import('@/lib/goals');
 const { loadBudgets } = await import('@/lib/budget-store');
 const { readTaxonomy } = await import('@/lib/category-store');
 const { firePlansStore, planFactsStore, readPlanAnswer } = await import('@/lib/plan-copies');
-const { parsePlanV2, planOf } = await import('@/lib/fire/plan-v2');
+const { NEW_PLAN_START, parsePlanV2, planOf } = await import('@/lib/fire/plan-v2');
 const { MAIN_ID, factsOf, holdsAmounts } = await import('@/lib/fire/copies');
 const { readStoredTxns } = await import('@/lib/transactions');
 const { secretsStore } = await import('@/lib/connectors/store');
@@ -138,7 +138,9 @@ const { resetDemoAccount, resetState, ResetLimited, SEED_VERSION } = await impor
 const { seedRecordStore } = await import('@/lib/demo-seed/store');
 const { createInvite, acceptInvite, myConnections } = await import('@/lib/sharing');
 const { keptWhenEmptied, classOfKey } = await import('@/lib/user-restore/classes');
-const { checkProfile, categoryKeys } = await import('@/lib/demo-seed/fill');
+const { checkProfile, categoryKeys, plansOf } = await import('@/lib/demo-seed/fill');
+const { planFigures } = await import('@/lib/fire/plan-figures');
+const { planPath } = await import('@/lib/fire/path');
 const { RECORDED_DAYS, holdingsDays, recordedYear, yearlySavings } = await import('@/lib/demo-seed/recorded');
 const { historyMonths, lastDay, on } = await import('@/lib/demo-seed/profiles');
 const { readTagSet } = await import('@/lib/tags-store');
@@ -186,6 +188,24 @@ const NAMES = ['Alex', 'Sam'] as const;
 const everyProfile = () => SCENARIOS.map((x) => x.build(TODAY));
 
 describe('the profiles', () => {
+  test('start every plan and copy where a new plan starts, so a copy that spends more ends with less', () => {
+    for (const x of SCENARIOS) {
+      const { first, main, copies } = plansOf(x.build(TODAY), (mask) => `seed-${mask}`);
+      expect([x.id, [first, main, ...copies.map((c) => c.plan)].map((p) => p.start)]).toEqual([x.id, Array(2 + copies.length).fill(NEW_PLAN_START)]);
+    }
+    // The early retiree's "Spend 10% more", from the same balance at the stop.
+    const { main, copies } = plansOf(scenarioById('early-retiree')!.build(TODAY), (mask) => `seed-${mask}`);
+    const more = copies.find((c) => c.name === 'Spend 10% more')!.plan;
+    const end = (plan: typeof main) => {
+      const f = planFigures(plan, { spending: null, savings: -30_000, assets: 1_400_000 }, { count: { planInWalk: true } });
+      if ('refused' in f) throw new Error('refused');
+      const after = planPath(f)!.after!;
+      return after.points[after.points.length - 1];
+    };
+    expect(end(more).age).toBe(end(main).age);
+    expect(end(more).balance).toBeLessThan(end(main).balance);
+  });
+
   test('are the same every time for the same day', () => {
     for (const name of NAMES) expect(JSON.stringify(demoProfile(name, TODAY))).toBe(JSON.stringify(demoProfile(name, TODAY)));
   });

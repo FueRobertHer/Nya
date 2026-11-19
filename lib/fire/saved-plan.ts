@@ -23,6 +23,15 @@
 // (the one it was saved with where it has one, savedGrowth),
 // adding its savings steadily through the year (lib/fire/fi.ts
 // projectBalance, which is exact at whole years and smooth between them).
+// A plan saved before its stop age (stopOf: a typed age; under "stop when I
+// reach FI" the stop isn't kept, so its savings go on) stops adding them
+// there, the stop's year counted from the day it was saved as its items'
+// are, and from then on takes out its spending (the typed figure, else
+// today's measured one, as its items read it), grossed up at its tax rate,
+// never below zero. Its items go on as the walk counts them, but for pay and
+// part-time work, which end at the stop. A plan saved at or after its stop
+// keeps the savings it was saved with, which for someone retired are
+// already what they take out.
 // That is in the start day's dollars; snapshots are in each day's own, so
 // the plan's balance is raised by the inflation rate saved with it
 // (compounded yearly, smooth between) before the two are set side by side.
@@ -45,8 +54,8 @@
 
 import { projectBalance } from './fi';
 import type { WalkChanges } from './events';
-import { LIMITS, parsePlan, type PlanCore } from './plan';
-import { isStoredPlan, parsePlanV2, upgradeStoredPlan, type StoredPlan } from './plan-v2';
+import { LIMITS, parsePlan, stopOf, type PlanCore } from './plan';
+import { isStoredPlan, parsePlanV2, planOf, upgradeStoredPlan, type StoredPlan } from './plan-v2';
 
 export type SavedPlan = {
   version: 1;
@@ -164,8 +173,9 @@ export function yearsBetween(from: string, to: string): number {
 
 /** A saved plan's items on its own steady path: the walk's changes, in
  *  years from `from`, the day it was saved, when it was `age` (lib/fire/
- *  plan-figures.ts resolveSaved). */
-export type SavedItems = { from: string; age: number; walk: WalkChanges };
+ *  plan-figures.ts resolveSaved), and of its spans those of pay and part-time
+ *  work (`jobs`, held only while there are any), which end at the stop. */
+export type SavedItems = { from: string; age: number; walk: WalkChanges; jobs?: WalkChanges['spans'] };
 
 /** The growth after inflation a saved plan grows at: the one it was saved
  *  with, else its plan's. */
@@ -173,31 +183,88 @@ export function savedGrowth(saved: Pick<SavedPlan, 'plan' | 'growth'>): number {
   return saved.growth ?? saved.plan.realReturn;
 }
 
+/** Where a plan saved before its stop age stops saving (see the top of this
+ *  file): the age, the years from the day it was saved, and what it takes out
+ *  a year from then, `spending` (today's measured) where it typed none. Null
+ *  when it was saved at or after its stop, or without an age or a kept stop. */
+export function savedStop(saved: Pick<SavedPlan, 'plan'>, spending: number | null): { age: number; years: number; draw: number } | null {
+  const plan = planOf(saved.plan);
+  const stop = stopOf(plan);
+  if (plan.age === null || stop === null || !(stop > plan.age)) return null;
+  const spend = plan.spending ?? spending;
+  const draw = spend !== null && spend > 0 && plan.taxRate < 1 ? spend / (1 - plan.taxRate) : 0;
+  return { age: stop, years: stop - plan.age, draw };
+}
+
 /** Where the saved plan has invested assets on `day`, in that day's own
  *  money, growing from `start`, the measured balance on the `from` day (see
  *  the top of this file), with its items where `items` places them (none
- *  when left out). The one function for the card's words and any line drawn
- *  from it. Null for a day before `from`, or a growth rate the formula
- *  doesn't take. */
-export function plannedAt(saved: Pick<SavedPlan, 'plan' | 'savings' | 'inflation' | 'growth'>, start: { day: string; total: number }, day: string, items: SavedItems | null = null): number | null {
+ *  when left out), and after its stop taking out its spending, `spending`
+ *  (today's measured) where it typed none. The one function for the card's
+ *  words and any line drawn from it. Null for a day before `from`, or a
+ *  growth rate the formula doesn't take. */
+export function plannedAt(
+  saved: Pick<SavedPlan, 'plan' | 'savings' | 'inflation' | 'growth' | 'day'>,
+  start: { day: string; total: number },
+  day: string,
+  items: SavedItems | null = null,
+  spending: number | null = null
+): number | null {
   const years = yearsBetween(start.day, day);
   if (!(years >= 0)) return null;
   const g = savedGrowth(saved);
   if (!(g > -0.99 && g <= 1)) return null;
-  let total = projectBalance(start.total, saved.savings, g, years);
-  if (items) {
-    // Years from the start day: the walk's year k is k - shift of them.
-    const shift = yearsBetween(items.from, start.day);
-    const grown = (at: number) => (1 + g) ** (years - at);
-    for (const m of items.walk.moneyIn) if (m.year - shift >= 0 && m.year - shift <= years) total += m.amount * grown(m.year - shift);
-    for (const c of items.walk.costs) if (c.year - shift >= 0 && c.year - shift <= years) total -= c.amount * grown(c.year - shift);
-    for (const s of items.walk.spans) {
-      const a = Math.max(s.from - shift, 0);
-      const b = Math.min(s.to === null ? Infinity : s.to - shift, years);
-      if (b > a) total += projectBalance(0, s.delta, g, b - a) * grown(b);
-    }
+  // The stop in years from the start day (0 where it came before it);
+  // Infinity where savings go on.
+  const after = savedStop(saved, spending);
+  const stop = after ? Math.max(0, after.years - yearsBetween(saved.day, start.day)) : Infinity;
+  // Years from the start day: the walk's year k is k - shift of them.
+  const shift = items ? yearsBetween(items.from, start.day) : 0;
+  const walk = items?.walk ?? { moneyIn: [], costs: [], spans: [] };
+  // To the day, or to the stop when it comes first.
+  const to = Math.min(years, stop);
+  const grown = (at: number) => (1 + g) ** (to - at);
+  let total = projectBalance(start.total, saved.savings, g, to);
+  for (const m of walk.moneyIn) if (m.year - shift >= 0 && m.year - shift <= to) total += m.amount * grown(m.year - shift);
+  for (const c of walk.costs) if (c.year - shift >= 0 && c.year - shift <= to) total -= c.amount * grown(c.year - shift);
+  for (const s of walk.spans) {
+    const a = Math.max(s.from - shift, 0);
+    const b = Math.min(s.to === null ? Infinity : s.to - shift, to);
+    if (b > a) total += projectBalance(0, s.delta, g, b - a) * grown(b);
   }
+  if (after && years > stop) total = drawn(total, stop, years, g, after.draw, walk, items?.jobs ?? [], shift);
   return total * (1 + saved.inflation) ** years;
+}
+
+type Span = WalkChanges['spans'][number];
+
+/** The years after the stop, from `balance` at `stop` to `years` (both from
+ *  the start day): its spending taken out steadily, its items' changes going
+ *  on but for pay and part-time work (`jobs`), which end at the stop, and its
+ *  one-offs at their years' start, money in first, as the walk has them.
+ *  Never taken below zero by the spending: between two changes the balance
+ *  only rises or only falls, so one that would end below zero ran out there,
+ *  and stays at zero until money comes in. */
+function drawn(balance: number, stop: number, years: number, g: number, draw: number, walk: WalkChanges, jobs: readonly Span[], shift: number): number {
+  const at = (k: number) => k - shift;
+  const within = (x: number) => x > stop && x <= years;
+  const cuts = new Set<number>([years]);
+  for (const x of [...walk.moneyIn, ...walk.costs]) if (within(at(x.year))) cuts.add(at(x.year));
+  for (const s of [...walk.spans, ...jobs]) for (const k of [s.from, s.to]) if (k !== null && within(at(k))) cuts.add(at(k));
+  const on = (s: Span, x: number) => at(s.from) <= x && (s.to === null || x < at(s.to));
+  const flow = (x: number) => walk.spans.reduce((sum, s) => (on(s, x) ? sum + s.delta : sum), -draw) - jobs.reduce((sum, s) => (on(s, x) ? sum + s.delta : sum), 0);
+  let b = balance;
+  let t = stop;
+  for (const p of [...cuts].sort((x, y) => x - y)) {
+    if (p > t) {
+      const next = b * (1 + g) ** (p - t) + projectBalance(0, flow((t + p) / 2), g, p - t);
+      b = b >= 0 && next < 0 ? 0 : next;
+    }
+    for (const m of walk.moneyIn) if (at(m.year) === p) b += m.amount;
+    for (const c of walk.costs) if (at(c.year) === p) b -= c.amount;
+    t = p;
+  }
+  return b;
 }
 
 /** Each account's own growth in a plan, by account (dividends don't move the comparison). */
