@@ -126,6 +126,12 @@ const CARD_PAYMENT = 'credit card payment';
 /** The uncategorized category's text key (lib/categories.ts): a deposit that
  *  says nothing of itself is filed there, so money in under it is no refund. */
 const UNCATEGORIZED = 'other';
+/** Plaid's primary for money borrowed (a student loan paid out, say): grown
+ *  into a spending group like any primary the seed doesn't name
+ *  (lib/categories.ts legacyKind), but money in under it is no money back on
+ *  spending, and taken off spending it could cut a year of it to nothing.
+ *  Income, as before kinds were read here. */
+const LOAN_DISBURSEMENTS = 'loan disbursements';
 /** For a row not filed under a category of the person's (one past
  *  MAX_CATEGORIES, lib/category-store.ts fileRows): the categories money is
  *  spent in (Plaid's personal finance categories, humanized), money back in
@@ -178,7 +184,7 @@ export function planFlow(t: Txn): PlanFlow {
   // included, whose key is its name), as Runway reads it (lib/report/runway.ts
   // filedKind). Anything else (no category, the uncategorized one) stays
   // income, as it always was.
-  if (category === null || category === UNCATEGORIZED) return 'income';
+  if (category === null || category === UNCATEGORIZED || category === LOAN_DISBURSEMENTS) return 'income';
   if (t.category_kind) return t.category_kind === 'expense' ? 'refund' : 'income';
   return SPENDING_CATEGORIES.has(category) ? 'refund' : 'income';
 }

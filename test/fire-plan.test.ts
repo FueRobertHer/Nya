@@ -643,6 +643,11 @@ describe('spending and savings from the trailing year', () => {
     expect(flow({ amount: -25, category: 'other', category_id: 'c-other', category_kind: 'expense' })).toBe('income');
     // Unfiled, a category of one's own words is no refund, as before.
     expect(flow({ amount: -25, category: 'pet care' })).toBe('income');
+    // Filed, the kind wins over Plaid's words: a spending category moved to
+    // an income group is income.
+    expect(flow({ amount: -25, category: 'general services', category_kind: 'income' })).toBe('income');
+    // Money borrowed is grown into a spending group, but is no refund.
+    expect(flow({ amount: -20_000, category: 'loan disbursements', category_kind: 'expense' })).toBe('income');
 
     const r = trailingFlows(
       [
