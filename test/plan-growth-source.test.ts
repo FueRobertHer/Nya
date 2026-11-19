@@ -18,10 +18,10 @@ import { join, relative } from 'node:path';
 
 const ALLOWED: Record<string, { reads: number; why: string }> = {
   'lib/fire/plan.ts': { reads: 2, why: 'version 1’s reader, and formulasTake' },
-  'lib/fire/account-growth.ts': { reads: 6, why: 'the blend, from the plan’s rate, and the gap from it that moves the stress test’s history, flat and by bucket' },
+  'lib/fire/account-growth.ts': { reads: 7, why: 'the blend, from the plan’s rate, the gap from it that moves the stress test’s history, flat and by bucket, and the rate that gap is said against' },
   'lib/fire/bucket-growth.ts': { reads: 1, why: 'each bucket’s blend, from the plan’s rate, as the plan’s own is' },
   'lib/fire/saved-plan.ts': { reads: 4, why: 'a save keeps growth only where it differs, savedGrowth, and changedSince, which compares the setting' },
-  'components/PlanForms.tsx': { reads: 2, why: 'the Assumptions sheet, where the plan’s rate is typed, and Invested assets, which says it as the rate an account without its own grows at' },
+  'components/PlanForms.tsx': { reads: 3, why: 'the Assumptions sheet, where the plan’s rate is typed and, as saved, says whether any account grows at its own, and Invested assets, which says it as the rate an account without its own grows at' },
 };
 
 const READS = [/(?<!LIMITS)\??\.realReturn\b/g, /\[\s*'realReturn'\s*\]/g];

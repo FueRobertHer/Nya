@@ -27,7 +27,7 @@ const SETTINGS = SET_FIELDS.filter((f): f is Exclude<SetField, 'targetAge'> => f
 
 /** The fields said above, or the same in every plan: anything else that
  *  differs is "Other settings differ". */
-const SAID = new Set<string>([...SET_FIELDS, 'version', 'items', 'stopAtFi', 'fiNumber', 'lastsIn', 'accounts', 'stocksPct', 'bondsPct', 'age', 'partnerAge', 'includeCash', 'planFunding', 'method']);
+const SAID = new Set<string>([...SET_FIELDS, 'version', 'items', 'stopAtFi', 'fiNumber', 'lastsIn', 'accounts', 'stocksPct', 'bondsPct', 'age', 'partnerAge', 'includeCash', 'planFunding', 'method', 'historyMoved']);
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -37,6 +37,11 @@ function valueOf(p: FirePlanV2, field: Exclude<SetField, 'targetAge'>): unknown 
 
 /** One of a plan's accounts' own rates, by account, for comparing two plans (both lists are sorted by id). */
 const ownRates = (p: FirePlanV2, k: 'growth' | 'yield') => JSON.stringify((p.accounts ?? []).filter((x) => x[k] !== null).map((x) => [x.account_id, x[k]]));
+
+/** The stress test's history moved by the accounts' own growth, where it can be:
+ *  an account has its own rate and invested assets aren't typed. Kept off, or
+ *  with nothing to move it, the history is as it ran, so the two read the same. */
+const movesHistory = (p: FirePlanV2) => p.historyMoved === true && p.assets === null && (p.accounts ?? []).some((x) => x.growth !== null);
 
 /** What a plan's FI date is (D9): when the walk reaches the number, or the earliest stop that lasts. */
 function fiDateText(p: FirePlanV2): string {
@@ -82,6 +87,7 @@ export function copyDiffParts(main: FirePlanV2, copy: FirePlanV2, money: Money, 
   if (copy.lastsIn !== main.lastsIn) parts.push(`Your FI date: ${fiDateText(copy)} (your plan: ${fiDateText(main)})`);
   if (ownRates(copy, 'growth') !== ownRates(main, 'growth')) parts.push('Account growth differs');
   if (ownRates(copy, 'yield') !== ownRates(main, 'yield')) parts.push('Account dividends differ');
+  if (movesHistory(copy) !== movesHistory(main)) parts.push('Stress test differs');
   const mainItems = new Map(main.items.map((x) => [x.id, x]));
   const copyIds = new Set(copy.items.map((x) => x.id));
   for (const x of copy.items) {

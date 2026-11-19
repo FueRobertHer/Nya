@@ -7,6 +7,7 @@ import { PLAN_TO_AGE, formulasTake, type FiView } from '@/lib/fire/plan';
 import { amountsHidden, formatDay, hiddenMoney, MINUS, trueMinus } from '@/lib/format';
 import type { Method, Rebalance } from '@/lib/fire/simulate';
 import type { PathAfter } from '@/lib/fire/path';
+import type { BucketMove, HistoryMove } from '@/lib/fire/account-growth';
 
 /** Whole currency units: plan figures are estimates, and cents would claim
  *  a precision they don't have. */
@@ -346,6 +347,72 @@ export function leftOutText(leftOut: PathAfter['leftOut']): string | null {
 /** The definition shown beside every success rate. */
 export function successDefinition(years: number): string {
   return `It counts as lasting if every year’s withdrawal is paid in full, for all ${years} years.`;
+}
+
+/** A gap as the points a year said for it: to a tenth, or a hundredth where a
+ *  tenth rounds to nothing; 0 where that does too, said as unmoved. */
+export function gapPoints(gap: number): number {
+  const p = Math.abs(gap) * 100;
+  const tenth = Math.round(p * 10) / 10;
+  return tenth > 0 ? tenth : Math.round(p * 100) / 100;
+}
+
+const HELD_NAMES: Record<BucketMove['bucket'], string> = { taxable: 'taxable', deferred: 'tax-deferred', deferred457: '457(b)', roth: 'Roth', hsa: 'HSA' };
+const way = (gap: number) => (gap > 0 ? 'higher' : 'lower');
+const pointsOf = (n: number, aYear: boolean) => `${n} ${n === 1 ? 'point' : 'points'}${aYear ? ' a year' : ''}`;
+const andList = (parts: string[]) => (parts.length <= 2 ? parts.join(' and ') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`);
+
+/** The buckets that move, the first with its unit: "taxable 1 point a year
+ *  higher, tax-deferred 0.3 lower". */
+function movedList(buckets: readonly BucketMove[], aYear: boolean): string[] {
+  const out: string[] = [];
+  for (const b of buckets) {
+    const n = gapPoints(b.gap);
+    if (n > 0) out.push(`${HELD_NAMES[b.bucket]} ${out.length === 0 ? pointsOf(n, aYear) : n} ${way(b.gap)}`);
+  }
+  return out;
+}
+
+const nothingMoves = (m: HistoryMove) => gapPoints(m.together) === 0 && (m.buckets ?? []).every((b) => gapPoints(b.gap) === 0);
+
+/** Moved a point a year or more higher, as said: the stress test's line is a
+ *  caution instead. Lower is a harder test, so it stays a line. */
+export const historyFar = (m: HistoryMove) => m.on && m.together > 0 && gapPoints(m.together) >= 1;
+
+/** What the caution adds to historyLine's words, for historical starts or
+ *  Monte Carlo runs. */
+export const historyFarText = (runs: boolean) =>
+  runs ? 'Every run does far better than the history it’s drawn from, and a rate from a few strong years rarely repeats.' : 'Every start does far better than it did, and a rate from a few strong years rarely repeats.';
+
+/** The stress test's line on its history and your accounts' own growth, under
+ *  what counts as lasting: as it ran, or what it is moved by (by bucket with tax
+ *  worked out, then together). */
+export function historyLine(m: HistoryMove): string {
+  if (nothingMoves(m)) return `History as it ran: your accounts’ own growth comes to the plan’s ${pct(m.rate)}.`;
+  if (!m.on) return `History as it ran: your accounts’ own growth (${pct(m.blend)} together) counts only in the steady years. Assumptions can move history by it.`;
+  const n = gapPoints(m.together);
+  if (!m.buckets) return `History moved ${pointsOf(n, true)} ${way(m.together)} by your accounts’ own growth: ${pct(m.blend)} together, against the plan’s ${pct(m.rate)}.`;
+  const list = movedList(m.buckets, true);
+  const together = n === 0 ? 'unmoved together' : `${list.length === 0 ? pointsOf(n, true) : n} ${way(m.together)} together`;
+  return `History moved by your accounts’ own growth: ${[...list, together].join(', ')}.`;
+}
+
+/** The note under History as it ran, in Assumptions, for historical starts or
+ *  Monte Carlo runs. */
+export function historyAsItRanNote(runs: boolean): string {
+  return `${runs ? 'Every run is drawn from the market as it was' : 'Every start lives through the market as it was'}, for your mix. Your accounts’ own growth counts only in the steady years.`;
+}
+
+/** The note under Moved by their rates, in Assumptions, at the plan's rate as
+ *  typed: null while it isn't a rate. */
+export function historyMovedNote(m: HistoryMove | null): string {
+  const tail = ' A point a year can move the answer by 10 points or more.';
+  if (m === null) return `Every year of history moves by your accounts’ gap from the plan’s rate.${tail}`;
+  if (nothingMoves(m)) return `Your accounts grow at the plan’s ${pct(m.rate)} together, so nothing moves.${tail}`;
+  if (!m.buckets) return `Every year of history ${pointsOf(gapPoints(m.together), false)} ${way(m.together)}: your accounts grow ${pct(m.blend)} together, against the plan’s ${pct(m.rate)}.${tail}`;
+  const still = m.buckets.filter((b) => gapPoints(b.gap) === 0).map((b) => HELD_NAMES[b.bucket]);
+  const parts = [...movedList(m.buckets, false), ...(still.length > 0 ? [`${andList(still)} unmoved`] : [])];
+  return `Every year of history moves by your accounts’ gap from the plan’s ${pct(m.rate)}: ${parts.join(', ')}.${tail}`;
 }
 
 /** The short label every result keeps (rollout 6d); the full statement,
