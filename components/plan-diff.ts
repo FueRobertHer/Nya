@@ -51,8 +51,10 @@ function stopText(p: FirePlanV2): string {
 
 /** An item in words: as version 1's income, one-offs and life events said
  *  it, for one of those, and otherwise as the Timeline says it (its anchor
- *  read in `plan`, the plan that holds it). */
+ *  read in `plan`, the plan that holds it). A milestone says it is one, since
+ *  its sentence is only what reaches it. */
 function itemWords(x: PlanItem, plan: FirePlanV2, money: Money): string {
+  if (x.kind === 'milestone') return `a milestone, ${itemSentence(x, plan, money)}`;
   const income = asIncome(x);
   if (income) return itemText('income', income, money);
   const expense = asExpense(x);

@@ -108,6 +108,8 @@ export function compileItems(items: readonly PlanItem[], ages: readonly ItemAges
   const { age: a, startAge: S, years: Y, stop, taxRate } = at;
   const comesBack = takeHomeBack(items, ages, a, stop);
   for (const [i, x] of items.entries()) {
+    // A milestone holds no money: it counts nowhere, and says nothing.
+    if (x.kind === 'milestone') continue;
     const placed = ages[i];
     if (placed === null) continue;
     const { start, end } = placed;
@@ -317,7 +319,7 @@ export function conditionalFlows(items: readonly PlanItem[], perRun: PerRun, age
   const out: ConditionalItem[] = [];
   for (const [i, x] of items.entries()) {
     const edges = perRun.edges[i];
-    if (!edges || x.kind === 'pay') continue;
+    if (!edges || x.kind === 'pay' || x.kind === 'milestone') continue;
     const add = (over: Partial<ConditionalItem>) => out.push({ start: edge(edges.start), end: edges.end === null ? null : edge(edges.end), once: [], moneyIn: 0, income: null, yearly: 0, ...over });
     const once = (x.once ?? 0) > 0 ? repeats(x, 0).map((after) => ({ amount: x.once as number, after })) : [];
     const afterTax = (v: number) => (x.beforeTax ? v * (1 - at.taxRate) : v);

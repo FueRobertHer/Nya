@@ -307,10 +307,10 @@ describe('what the plan’s inputs cost', () => {
     expect(home.text()).not.toContain('Working it out');
     await unmount(home.root);
 
-    // A milestone on a balance goes through the same run, at the same cost.
+    // An item on a balance goes through the same run, at the same cost.
     const read = await (await firePlan.GET()).json();
-    const milestone = { id: 'm', label: 'Part time', kind: 'part-time', from: { anchor: { at: 'balance', amount: 900_000 }, offset: 0 }, until: { anchor: { at: 'age', age: 70 }, offset: 0 }, once: null, yearly: 20_000, replaces: null, every: null, times: null, inflationAdjusted: true, owner: 'you', beforeTax: true };
-    const changed = await firePlan.PUT(new Request('http://nya.test/api/fire-plan', { method: 'PUT', body: JSON.stringify({ plan: { ...read.plan, items: [milestone] }, currency: 'USD', facts_were: factsOf(read.plan), based_on: read.updated_at }) }));
+    const onBalance = { id: 'm', label: 'Part time', kind: 'part-time', from: { anchor: { at: 'balance', amount: 900_000 }, offset: 0 }, until: { anchor: { at: 'age', age: 70 }, offset: 0 }, once: null, yearly: 20_000, replaces: null, every: null, times: null, inflationAdjusted: true, owner: 'you', beforeTax: true };
+    const changed = await firePlan.PUT(new Request('http://nya.test/api/fire-plan', { method: 'PUT', body: JSON.stringify({ plan: { ...read.plan, items: [onBalance] }, currency: 'USD', facts_were: factsOf(read.plan), based_on: read.updated_at }) }));
     expect(changed.status).toBe(200);
     const cost = await measure(async () => (home = await mountHome(createPlanInputsStore())));
     expect(cost.others).toEqual({ 'GET /api/allocation-settings': 1 });

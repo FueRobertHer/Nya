@@ -10,7 +10,7 @@
 //     scaled to its balance (Year by year, and the rule's split and rate the stress
 //     test runs with, lib/fire/taxed-paths.ts);
 //   - `whole`, from the balance projected at the stop (Whole path's years after
-//     the stop, and the milestones that fire on them);
+//     the stop, and the balance anchors that fire on them);
 //   - `fiRun`, from the FI number itself, at the stop, whose tax and health go in
 //     that number (lib/fire/plan-figures.ts), so the number doesn't move with the
 //     plan's start.

@@ -40,18 +40,30 @@ import {
   timelinePoints,
   unplacedText,
   whereItCountsText,
+  workedOutAmount,
+  milestoneWords,
   type ItemTemplate,
 } from './plan-items';
 import type { Count } from '@/lib/fire/compile';
 import { itemRules, withItem, withoutItem, type PlanItem } from '@/lib/fire/items';
 import { planPath } from '@/lib/fire/path';
-import { stopOf, type Measured } from '@/lib/fire/plan';
+import { PLAN_TO_AGE, stopOf, type Measured } from '@/lib/fire/plan';
 import { planFigures, type PlanFigures } from '@/lib/fire/plan-figures';
 import type { DetailedAnswer } from './plan-detailed';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { FiredResult, SimPlan } from '@/lib/fire/simulate';
 
 type Money = (n: number) => string;
+const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
+
+/** A milestone row's mark: a flag, neutral, since it reports nothing and
+ *  doesn't act; a word says it to a screen reader. */
+const FLAG = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M5 21V4" />
+    <path d="M5 4h11l-2 4 2 4H5" />
+  </svg>
+);
 
 /** A new item, or a change to one, tried in a copy of your plan. */
 export type TimelineTry = {
@@ -191,14 +203,15 @@ export function TimelineCard({
     fallback(from);
     begin({ at: 'add' }, null, null, null, false);
   };
+  const milestoneIds = new Set(plan.items.filter((y) => y.kind === 'milestone').map((y) => y.id));
   const openNew = (t: ItemTemplate, from: HTMLElement | null, viaAdd: boolean) => {
     if (from) fallback(from);
-    begin({ at: 'item' }, draftOf(null, t), t, null, viaAdd);
+    begin({ at: 'item' }, draftOf(null, t, milestoneIds), t, null, viaAdd);
   };
   const openItem = (x: PlanItem, from: HTMLElement) => {
     fallback(from);
     const t = templateOf(x);
-    begin({ at: 'item' }, draftOf(x, t), t, x, false);
+    begin({ at: 'item' }, draftOf(x, t, milestoneIds), t, x, false);
   };
 
   // The plan shown changed (on another device, or another plan opened): what
@@ -357,7 +370,7 @@ export function TimelineCard({
     const warn = figures ? itemWarnings(x, figures, i) : [];
     const plain: string[] = [];
     const perRun = !!figures?.resolution.perRun?.edges[i];
-    if ((at !== null || perRun) && onSteadyPath(x, plan)) {
+    if ((at !== null || perRun) && x.kind !== 'milestone' && onSteadyPath(x, plan)) {
       const every = everyRunText(at, plan, perRun);
       if (every) plain.push(every);
     }
@@ -372,7 +385,9 @@ export function TimelineCard({
     const v = itemAmount(x);
     const start = figures?.resolution.ages[i]?.start ?? null;
     const n = refused ? { warn: [], caution: [], plain: [] } : notesOf(x, i);
-    const atMost = notReached ? nearest(figures, money) : null;
+    // Said once, on what waits on the balance itself: not on what follows it.
+    const atMost = notReached && x.from.anchor.at !== 'item' ? nearest(figures, money) : null;
+    const mark = x.kind === 'milestone';
     const said = [...n.plain, ...(unplaced ? [unplaced] : []), ...(atMost ? [atMost] : [])];
     const noted = n.warn.length + n.caution.length + said.length > 0;
     return (
@@ -390,18 +405,24 @@ export function TimelineCard({
             if (!reloading) openItem(x, e.currentTarget);
           }}
         >
+          {mark && <span className="list-row-icon">{FLAG}</span>}
           <span className="list-row-text">
-            <span className="list-row-title">{itemTitle(x, plan)}</span>
+            <span className="list-row-title">
+              {mark && <span className="visually-hidden">Milestone: </span>}
+              {itemTitle(x, plan)}
+            </span>
             <span className="list-row-sub">
               <Masked>{rowSub(x, plan, money, { start, inWalk: figures ? countsInFiDate(figures, i) : false })}</Masked>
             </span>
           </span>
-          <span className="list-row-value money plan-input-value">
-            <span>
-              <Masked>{money(v.amount)}</Masked>
+          {v && (
+            <span className="list-row-value money plan-input-value">
+              <span>
+                <Masked>{money(v.amount)}</Masked>
+              </span>
+              <span className="plan-input-line">{v.line}</span>
             </span>
-            <span className="plan-input-line">{v.line}</span>
-          </span>
+          )}
           {chevron(RIGHT)}
         </button>
         {noted && (
@@ -584,9 +605,12 @@ export function TimelineCard({
           savings,
           runsOutAt: worked?.key === checkedKey ? worked.runsOutAt : null,
           across: acrossNow,
+          milestone: draft.kind === 'milestone',
         })
       : null;
   const changed = !!(editing && checked && 'ok' in checked && JSON.stringify(checked.ok) !== JSON.stringify(editing));
+  // A milestone moves no figure, so there is nothing to try in a copy.
+  const isMilestone = draft?.kind === 'milestone';
   const dependents = editing ? plan.items.filter((y) => y.id !== editing.id && timedBy(y, editing.id)) : [];
   const removeRefused = editing ? itemRules(withoutItem(plan, editing.id)) !== null : false;
 
@@ -604,7 +628,7 @@ export function TimelineCard({
           </>
         ) : (
           <>
-            {tryIt && (
+            {tryIt && !isMilestone && (
               <button type="button" className="btn secondary" onClick={() => void tryItem()} disabled={off || !tryIt.can}>
                 Try it in a copy
               </button>
@@ -633,6 +657,15 @@ export function TimelineCard({
         )}
       </div>
     ) : undefined;
+
+  /** Where a milestone falls on the steady path, for Starts and Ends. */
+  const milestoneAt = (id: string): string => {
+    const i = plan.items.findIndex((y) => y.id === id);
+    if (i < 0 || !figures) return '';
+    const at = figures.resolution.ages[i]?.start;
+    if (at !== undefined) return plan.items[i].from.anchor.at === 'balance' ? `${at} on your steady path` : lower(milestoneWords(plan.items[i], plan, money));
+    return figures.resolution.why[i] === 'not-reached' ? `not by ${PLAN_TO_AGE}` : '';
+  };
 
   const fiAge = (() => {
     const w = worked?.key === checkedKey && worked.f !== 'refused' ? fiWhen(worked.f) : fiWhen(figures);
@@ -717,16 +750,17 @@ export function TimelineCard({
               onEnds={() => setLevel({ at: 'ends' })}
               startsRef={startsRef}
               endsRef={endsRef}
+              workedOut={figures ? (spending) => workedOutAmount(spending, figures, money) : undefined}
             />
             {preview && <ItemPreview lines={preview} id={previewId} />}
-            {!editing && tryIt && !tryIt.can && tryIt.why}
+            {!editing && tryIt && !isMilestone && !tryIt.can && tryIt.why}
             {editing && <AlsoChange choices={alsoFor(editing.id)} checked={alsoIn} onChange={setAlsoIn} disabled={saving} />}
             {errorNotice}
             {pausedLine}
             {editing && (
               <ActionRows
                 rows={[
-                  ...(tryIt && changed && tryIt.can && editable
+                  ...(tryIt && !isMilestone && changed && tryIt.can && editable
                     ? [
                         {
                           key: 'try',
@@ -755,7 +789,7 @@ export function TimelineCard({
         )}
         {(level.at === 'starts' || level.at === 'ends') && draft && (
           <div className="stack">
-            <AnchorLevel side={level.at} draft={draft} set={set} plan={plan} stop={stopOf(plan)} fiAge={fiAge} saving={saving} />
+            <AnchorLevel side={level.at} draft={draft} set={set} plan={plan} stop={stopOf(plan)} fiAge={fiAge} saving={saving} milestoneAt={milestoneAt} />
           </div>
         )}
         {level.at === 'remove' && editing && (

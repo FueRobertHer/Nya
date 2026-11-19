@@ -22,9 +22,10 @@ import type { PlanItem } from '@/lib/fire/items';
 // and which its saves keep. It writes what T2 read a release
 // ahead: `model: 'detailed'`, each plan's choices, the household and `at-stop`.
 // And it writes `lastsIn`, your FI date as the earliest stop that lasts (D9),
-// which the release before reads and its saves keep. Accounts' own rates, and a
-// saved plan's growth, it writes with no reader a release before: the release
-// before refuses a plan or saved plan holding them (see their tests).
+// which the release before reads and its saves keep. Accounts' own rates, a
+// saved plan's growth, and milestones (an item of kind `milestone`), it writes
+// with no reader a release before: the release before refuses a plan, copy or
+// saved plan holding them (see their tests).
 // And its restore (test/fixtures/release-before/user-restore/parts.ts) knows
 // every part of a download this release makes, plans and all, but money in
 // and out's, new in this release (see the test): it refuses a file with a
@@ -281,6 +282,25 @@ describe('the release before reads every plan this release writes', () => {
     expect(Object.hasOwn(entries.get(MAIN_ID)!.plan, 'accounts')).toBe(false);
   });
 
+  // Milestones shipped the same way (docs/operations.md, rolling back): the
+  // release before refuses a plan or copy holding one, and a saved plan holding
+  // one, and reads them once it is removed.
+  test('a milestone: a plan, a copy and a saved plan it refuses while one is there, and reads once it is gone', async () => {
+    const flag: PlanItem = { id: 'lean', label: 'Lean FI', kind: 'milestone', from: { anchor: { at: 'balance', amount: 1_000_000 }, offset: 0 }, until: null, once: null, yearly: null, replaces: null, every: null, times: null, inflationAdjusted: true, owner: null, beforeTax: false };
+    const marked: FirePlanV2 = { ...TYPED, items: [income, flag] };
+    const main = ok(await save(marked, null, DEFAULTS)).updated_at as string;
+    const copy = ok(await plans('POST', { from: MAIN_ID, name: 'Stop at 52', plan: { ...marked, targetAge: 52 }, currency: 'USD' })).plan;
+    expect((await readAsBefore()).refused.sort()).toEqual([MAIN_ID, copy.id].sort());
+    ok(await save(TYPED, main, factsOf(TYPED)));
+    ok(await plans('PUT', { saves: [{ id: copy.id, plan: { ...TYPED, targetAge: 52 }, currency: 'USD', based_on: copy.updated_at }], facts_were: factsOf(TYPED) }));
+    await readsAll(MAIN_ID, 'your plan and the copy without it');
+    const put = async (plan: FirePlanV2) => (await call(savedRoute.PUT, 'saved-plan', 'PUT', { saved: { plan, savings: 20_000, currency: 'USD', inflation: 0.03 }, based_on: (await savedPlanStore.get(ctx))?.rev ?? null })).status;
+    expect(await put(marked)).toBe(200);
+    expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(false);
+    expect(await put(TYPED)).toBe(200);
+    expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(true);
+  });
+
   test('a saved plan with the growth its accounts ran at: one it refuses; without, one it reads', async () => {
     const rated: FirePlanV2 = { ...TYPED, accounts: [{ account_id: 'acc-1', growth: 0.07, yield: null }] };
     const put = async (saved: object) => (await call(savedRoute.PUT, 'saved-plan', 'PUT', { saved, based_on: (await savedPlanStore.get(ctx))?.rev ?? null })).status;
@@ -344,7 +364,7 @@ describe('the tax facts this release writes, as the release before reads them', 
     const facts = await storedFacts();
     const { entries } = await readAsBefore();
     // lib/plan-writes.ts at TF: { ...base, ...to }, `to` the plan's facts.
-    const saved = { ...facts, ...oCopies.factsOf(oCopies.withFacts(entries.get(MAIN_ID)!.plan, { ...oCopies.factsOf(TYPED), age: 44 })) };
+    const saved = { ...facts, ...oCopies.factsOf(oCopies.withFacts(entries.get(MAIN_ID)!.plan, { ...oCopies.factsOf(TYPED as unknown as Parameters<typeof oCopies.factsOf>[0]), age: 44 })) };
     expect(oCopies.isPlanFacts(saved)).toBe(true);
     expect(saved).toMatchObject({ version: 2, age: 44, main: MAIN_ID });
     expect(saved.version === 2 && saved.tax).toEqual(facts.version === 2 && facts.tax);

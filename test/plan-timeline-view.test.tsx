@@ -157,7 +157,7 @@ describe('a row’s notes', () => {
     });
   });
 
-  test('a milestone never reached is last, with the nearest the steady path comes', () => {
+  test('a balance never reached is last, with the nearest the steady path comes', () => {
     const html = card({ ...PLAN, items: [ROOF, mk('Yacht', 'one-off', { anchor: { at: 'balance', amount: 900_000_000 }, offset: 0 }, { once: 1_000 })] });
     const t = text(html);
     expect(t).toContain('Invested assets reach $900,000,000 · not by 95');
@@ -176,6 +176,36 @@ describe('a row’s notes', () => {
     expect(ends).toContain('Waits on Boat, which never starts on your steady path.');
     const noYears = text(card({ ...PLAN, items: [mk('Short', 'spending', at(45), { yearly: 100, until: { anchor: { at: 'item', id: 'Later', edge: 'start' }, offset: 0 } }), mk('Later', 'spending', at(44), { yearly: 100 })] }));
     expect(noYears).toContain('Ends before it starts, so it runs no years.');
+  });
+});
+
+describe('a milestone', () => {
+  const fund = (amount: number) => mk('Travel fund', 'milestone', { anchor: { at: 'balance', amount }, offset: 0 });
+  const TRAVEL = mk('Travel more', 'spending', { anchor: { at: 'item', id: 'Travel fund', edge: 'start' }, offset: 0 }, { yearly: 5_000 });
+  const heads = (html: string) => [...html.matchAll(/<(h4|p) class="section-label">(.*?)<\/\1>/g)].map((m) => m[2].replace(/<[^>]+>/g, ''));
+
+  test('leads with a flag, says it is one to a screen reader, has no amount, and what is timed on it goes under its point', () => {
+    const html = card({ ...PLAN, items: [ROOF, fund(600_000), TRAVEL, mk('At 50', 'milestone', at(50))] });
+    const t = text(html);
+    const point = heads(html).find((l) => /^\d+ on your steady path$/.test(l));
+    expect(point).toBeDefined();
+    // The milestone first under its point, then what waits on it.
+    expect(t).toContain(`${point} Milestone: Travel fund Invested assets reach $600,000 Travel more Starts at Travel fund · for good`);
+    expect(html.match(/class="list-row-icon"/g)?.length).toBe(2);
+    expect(html).toContain('<span class="visually-hidden">Milestone: </span>Travel fund');
+    // No value: only the cost and the change in spending have one.
+    expect(html.match(/list-row-value/g)?.length).toBe(2);
+    expect(t).toContain('Milestone: At 50 At 50');
+    // It moves nothing, so it never says it counts.
+    expect(t).not.toMatch(/Travel fund [^·]*Counts in/);
+  });
+
+  test('never reached, it is last with what is timed on it, and says the nearest once', () => {
+    const t = text(card({ ...PLAN, items: [ROOF, fund(900_000_000), TRAVEL] }));
+    expect(t).toMatch(/Travel fund · not by 95 Milestone: Travel fund Invested assets reach \$900,000,000 At most \$[\d,]+, at \d+\. Travel more Starts at Travel fund · for good/);
+    expect(t.match(/At most/g)?.length).toBe(1);
+    expect(t.indexOf('You stop at 55')).toBeLessThan(t.indexOf('not by 95'));
+    expect(t).not.toContain('Not placed yet');
   });
 });
 
