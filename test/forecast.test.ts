@@ -317,6 +317,27 @@ describe('what moves it', () => {
     expect(out.lapsed.map((x) => x.name)).toEqual(['Old job']);
   });
 
+  test('bills and pay on a health savings account a bank reports as a bank account move nothing, as its balance doesn’t', () => {
+    const onHsa = { account_name: 'Health savings', account_hsa: true as const };
+    const s = [
+      ...detectRecurring(monthly('2026-04', 6, 1).map((d) => row(d, -250, { ...onHsa, name: 'Payroll HSA', category: 'income' }))),
+      ...detectRecurring(monthly('2026-04', 6, 12).map((d) => row(d, 3.95, { ...onHsa, name: 'HSA fee' }))),
+      // Varied pay and pay that stopped, on it: not named as the cash's.
+      ...detectRecurring([800, 2900, 1200, 2600, 900, 3000, 1100, 2500, 950, 2800, 1000, 2700].map((a, i) => row(addDays('2026-04-24', i * 14), -a, { ...onHsa, name: 'Gig pay', category: 'income' }))),
+      ...detectRecurring(monthly('2026-03', 5, 1).map((d) => row(d, -100, { ...onHsa, name: 'Old match', category: 'income' }))),
+    ];
+    expect(s.map((x) => x.accountHsa)).toEqual([true, true, true, true]);
+    expect(s.map((x) => x.accountType)).toEqual(['depository', 'depository', 'depository', 'depository']);
+    expect(s.some(countsInForecast)).toBe(false);
+    const out = forecastEvents({ series: s, planned: [], currency: 'USD', today: '2026-10-09', until: '2026-11-08' });
+    expect(out.events).toEqual([]);
+    expect([out.varied, out.lapsed, out.unplaced]).toEqual([[], [], []]);
+    // The same on checking does move it.
+    const onChecking = detectRecurring(monthly('2026-04', 6, 1).map((d) => row(d, -250, { name: 'Payroll HSA', category: 'income' })));
+    expect(onChecking[0].accountHsa).toBeUndefined();
+    expect(forecastEvents({ series: onChecking, planned: [], currency: 'USD', today: '2026-10-09', until: '2026-11-08' }).events.map((x) => x.amount)).toEqual([250]);
+  });
+
   const series = () => [
     ...detectRecurring(monthly('2026-04', 6, 12).map((d) => row(d, 15.49))),
     ...detectRecurring(monthly('2026-04', 6, 1).map((d) => row(d, -3000, { name: 'Payroll', category: 'income' }))),

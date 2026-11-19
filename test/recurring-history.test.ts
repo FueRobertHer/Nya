@@ -19,6 +19,7 @@ mock.module('@/lib/plaid', () => ({
         accounts: [
           { account_id: 'acct_chk', name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '0001', balances: { current: 1000, available: 1000, limit: null, iso_currency_code: 'USD' } },
           { account_id: 'acct_biz', name: 'Business', official_name: null, type: 'depository', subtype: 'checking', mask: '0002', balances: { current: 50, available: 50, limit: null, iso_currency_code: 'USD' } },
+          { account_id: 'acct_hsa', name: 'Health savings', official_name: null, type: 'depository', subtype: 'hsa', mask: '0003', balances: { current: 4000, available: 4000, limit: null, iso_currency_code: 'USD' } },
         ],
         next_cursor: 'cursor-1',
         has_more: false,
@@ -40,6 +41,7 @@ const { setOverride } = await import('@/lib/overrides');
 const { setRename } = await import('@/lib/renames');
 const { writeCache, CacheKey } = await import('@/lib/cache');
 const { detectRecurring } = await import('@/lib/recurring');
+const { forecastEvents } = await import('@/lib/forecast');
 const transactions = await import('@/app/api/transactions/route');
 const manualTxns = await import('@/app/api/manual-transactions/route');
 const annotations = await import('@/app/api/transaction-annotations/route');
@@ -158,6 +160,33 @@ describe('the history before the loaded year', () => {
     expect(ids((await list()).recurring_history).filter((id: string) => id.startsWith('dom'))).toEqual(['dom_430', 'dom_460', 'dom_490']);
   });
 
+  test('rows on a health savings account a bank reports as a bank account say so, this year and before it, and its series move no forecast', async () => {
+    plaidRows.push(
+      // Payroll's contribution, every two weeks; a yearly fee, seen twice only with the older row.
+      ...Array.from({ length: 20 }, (_, i) => plaid({ transaction_id: `hsa_pay_${i}`, account_id: 'acct_hsa', date: daysAgo(5 + 14 * i), amount: -250, name: 'PAYROLL HSA', merchant_name: 'Employer HSA', category: undefined })),
+      plaid({ transaction_id: 'hsa_fee_now', account_id: 'acct_hsa', date: daysAgo(25), amount: 45, name: 'HSA ANNUAL FEE', merchant_name: 'HSA Fee' }),
+      plaid({ transaction_id: 'hsa_fee_then', account_id: 'acct_hsa', date: daysAgo(390), amount: 45, name: 'HSA ANNUAL FEE', merchant_name: 'HSA Fee' })
+    );
+    const body = await list();
+    const flagged = (rows: { transaction_id: string; account_hsa?: true }[]) => rows.filter((t) => t.account_hsa).map((t) => t.transaction_id);
+    expect(flagged(body.transactions).length).toBe(21);
+    expect(flagged(body.transactions).every((id: string) => id.startsWith('hsa_'))).toBe(true);
+    expect(flagged(body.recurring_history)).toEqual(['hsa_fee_then']);
+    const series = detectRecurring([...body.transactions, ...body.recurring_history]);
+    const onHsa = series.filter((s) => s.account === 'Health savings');
+    expect(onHsa.map((s) => [s.name, s.cadence, s.accountHsa]).sort()).toEqual([
+      ['Employer HSA', 'biweekly', true],
+      ['HSA Fee', 'yearly', true],
+    ]);
+    expect(series.filter((s) => s.account !== 'Health savings').every((s) => s.accountHsa === undefined)).toBe(true);
+    const { events } = forecastEvents({ series: onHsa, planned: [], currency: 'USD', today: daysAgo(0), until: daysAgo(-370) });
+    expect(events).toEqual([]);
+    // A payload cached before rows carried the flag is synced again.
+    await writeCache(ctx, CacheKey.Transactions, { plaid_only: true, account_types: true, category_facts: true, layer_facts: true, content_keys: true, loading: [], transactions: [], notes: [], as_of: 'then' });
+    expect((await list(false)).from_cache).toBe(false);
+    expect((await list(false)).from_cache).toBe(true);
+  });
+
   test('from the cache too; a payload cached before rows carried their account is synced again', async () => {
     await list();
     let body = await list(false);
@@ -181,5 +210,18 @@ describe('the history before the loaded year', () => {
     expect(licence[0].date).toBe(daysAgo(385));
     expect(body.transactions.filter((t: { name: string }) => t.name === 'Fishing licence')).toHaveLength(1);
     expect(detectRecurring([...body.transactions, ...body.recurring_history]).find((s) => s.name === 'Fishing licence')?.cadence).toBe('yearly');
+  });
+
+  test('a manual health savings account a bank would report as a bank account: its rows say so, this year and before it', async () => {
+    await saveManualAccount(ctx, { account_id: 'manual_hsa-1', name: 'My HSA', institution_name: 'HSA Bank', type: 'depository', subtype: 'hsa', balance: 3000, updated_at: '2026-10-01T12:00:00.000Z' });
+    const add = (date: string) => call(manualTxns.POST, 'POST', { account_id: 'manual_hsa-1', date, amount: 45, currency: 'USD', name: 'HSA fee', category: 'general services', note: null });
+    await add(daysAgo(20));
+    await add(daysAgo(385));
+    const body = await list();
+    const fee = (rows: { name: string; account_hsa?: true }[]) => rows.filter((t) => t.name === 'HSA fee').map((t) => t.account_hsa);
+    expect(fee(body.transactions)).toEqual([true]);
+    expect(fee(body.recurring_history)).toEqual([true]);
+    expect(detectRecurring([...body.transactions, ...body.recurring_history]).find((s) => s.name === 'HSA fee')).toMatchObject({ cadence: 'yearly', accountHsa: true });
+    expect(body.transactions.filter((t: { account_hsa?: true }) => t.account_hsa).every((t: { name: string }) => t.name === 'HSA fee')).toBe(true);
   });
 });

@@ -490,6 +490,21 @@ describe('the runway from stored data', () => {
     expect((await quiet(() => tool('get_runway', { months: 3 }))).content[0].text).toBe('No runway: there are no transactions from 2026-07-01 to 2026-09-30 to go by. See notes.');
   });
 
+  test('a health savings account a bank reports as a bank account: a loan’s payment from it isn’t a payment from cash', async () => {
+    await seed();
+    await saveItem(ctx, { item_id: 'item_hsa', institution_name: 'HSA Bank', encrypted_access_token: await encrypt(TEST_CTX, 'a5') });
+    await fake.hset(ctxKey('accounts:meta'), { item_hsa: await remembered([{ account_id: 'acc_hsa', name: 'Health savings', type: 'depository', subtype: 'hsa' }]) });
+    const atHsa = { institution_name: 'HSA Bank', account_name: 'Health savings' };
+    // A steady payment out of it that would be a payment outside spending,
+    // were it cash, as the mortgage from checking is.
+    const rows = ['06', '07', '08', '09', '10'].map((m) => on(`2026-${m}-08`, `hsa-loan-${m}`, 'acc_hsa', 120, { ...atHsa, name: 'Medical Loan', category: 'loan payments' }));
+    await fake.set(ctxKey('txns:item_hsa'), await store(rows, { acc_hsa: plaidAccount('Health savings', 'depository', 'hsa') }, RECENT));
+    await syncsStore.set(ctx, 'item_hsa', { at: RECENT });
+    const r = (await quiet(() => get(runwayRoute, '/api/reports/runway', `tz=${NY}`))).body.runway;
+    expect(r.outside.map((o: any) => o.name)).toEqual(['Home Loans']);
+    expect(r.cash_accounts.map((x: any) => x.name)).not.toContain('Health savings');
+  });
+
   test('today is the person’s own day: in New York it is still October when UTC is in November', async () => {
     await seed();
     // 22:00 on Oct 31 in New York; Nov 1 in UTC.

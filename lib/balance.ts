@@ -60,6 +60,21 @@ export function isBankCash(a: { type: string | null; subtype?: string | null }):
   return a.type === 'depository' && !isDepositoryHsa(a);
 }
 
+/** What a transaction row carries of its account's being a depository HSA
+ *  (lib/transactions.ts Txn.account_hsa), the subtype being on the account,
+ *  not the row: the flag when it is one, else nothing. */
+export function accountHsa(a: { type: string | null; subtype?: string | null } | null | undefined): { account_hsa?: true } {
+  return a && isDepositoryHsa(a) ? { account_hsa: true } : {};
+}
+
+/** Whether a recurring series is on bill-paying cash, as isBankCash tells an
+ *  account: on a depository account not flagged a health savings account
+ *  (lib/recurring.ts RecurringSeries.accountHsa). What the cash forecast and
+ *  Runway count a series by, and the calendar and the Recurring card say. */
+export function onBankCash(s: { accountType: string | null; accountHsa?: true }): boolean {
+  return s.accountType === 'depository' && !s.accountHsa;
+}
+
 /**
  * The subtype a manual account is saved with when the person says it is cash
  * on hand (a wallet, a jar): a depository account, like checking, that holds

@@ -186,6 +186,9 @@ export type RecurringRow = {
    *  investment), as /api/transactions sends them. */
   account_name?: string;
   account_type?: string | null;
+  /** Its account is a health savings account its bank reports as a bank
+   *  account (lib/transactions.ts Txn.account_hsa). */
+  account_hsa?: true;
   /** `name` is the bank's own descriptor (lib/transactions.ts), shown
    *  readably (lib/merchant-name.ts shownName). */
   name_from_bank?: true;
@@ -235,6 +238,10 @@ export type RecurringSeries = {
   /** The account's type (Plaid's: depository, credit, loan, investment), or
    *  null when the rows didn't say. */
   accountType: string | null;
+  /** On a health savings account its bank reports as a bank account: not
+   *  bill-paying cash, though its type is depository (lib/balance.ts
+   *  onBankCash). Absent otherwise. */
+  accountHsa?: true;
   cadence: Cadence;
   /** The typical amount, positive whichever way the money goes: the median of
    *  the last three at its amount now (the latest of two), an amount actually
@@ -911,6 +918,7 @@ function toSeries(
     institution: latest.institution_name,
     account: latest.account_name ?? '',
     accountType: latest.account_type ?? null,
+    ...(latest.account_hsa ? { accountHsa: true as const } : {}),
     cadence: found.cadence,
     amount,
     agreement,

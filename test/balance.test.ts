@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { isBankCash, isDepositoryHsa, isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
+import { accountHsa, isBankCash, isDepositoryHsa, isInvestmentType, isOwedType, onBankCash, signedContribution } from '@/lib/balance';
 
 // Small surface, but it is now the single definition behind net worth, the
 // history subtraction, manual-account validation and every figure the Dashboard
@@ -71,6 +71,19 @@ describe('isInvestmentType', () => {
   // normalizes before the call.
   test('is case-sensitive', () => {
     expect(isInvestmentType('Investment')).toBe(false);
+  });
+});
+
+describe('accountHsa and onBankCash', () => {
+  test('a row carries the flag only from a depository HSA', () => {
+    expect(accountHsa({ type: 'depository', subtype: 'HSA' })).toEqual({ account_hsa: true });
+    for (const a of [{ type: 'depository', subtype: 'checking' }, { type: 'investment', subtype: 'hsa' }, { type: null, subtype: 'hsa' }, null, undefined]) expect(accountHsa(a)).toEqual({});
+  });
+
+  test('a series is on bank cash when on a depository account not flagged an HSA', () => {
+    expect(onBankCash({ accountType: 'depository' })).toBe(true);
+    expect(onBankCash({ accountType: 'depository', accountHsa: true })).toBe(false);
+    for (const accountType of ['credit', 'loan', 'investment', null]) expect(onBankCash({ accountType })).toBe(false);
   });
 });
 

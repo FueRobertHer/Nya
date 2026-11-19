@@ -7202,13 +7202,6 @@ button.tag-color.chosen {
   margin: -4px 0 12px;
 }
 
-.goal-sheet-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 12px;
-}
-
 /* Restore and delete beside an archived goal, kept on one line while its
    name wraps. */
 .goal-archived-actions {

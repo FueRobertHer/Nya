@@ -45,6 +45,14 @@ describe('the Low balance alert', () => {
     expect(both).not.toContain('Wallet');
   });
 
+  test('never for a health savings account a bank reports as a bank account: no bills are paid from it', () => {
+    const hsa: InsightAccount = { name: 'Health savings', type: 'depository', subtype: 'hsa', balance: 30, currency: 'USD' };
+    expect(alerts([hsa])).toBe('');
+    const both = alerts([hsa, checking]);
+    expect(both).toContain('Low balance: Checking');
+    expect(both).not.toContain('Health savings');
+  });
+
   test("the dashboard passes each account's subtype, so cash on hand can be told apart", () => {
     expect(mount).toContain('accounts={insightAccounts}');
     expect(insightAccounts).toContain('subtype: a.subtype,');
