@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
-import { NOTE_KINDS, figureNotes, inputFlags, stressNotice, windowText, type FigureArgs, type FigureNote, type FigureText } from '@/components/plan-figure-notes';
+import { NOTE_KINDS, figureNotes, flatCostsNotes, inputFlags, stressNotice, windowText, type FigureArgs, type FigureNote, type FigureText } from '@/components/plan-figure-notes';
 import { FiCard } from '@/components/PlanTab';
 import { PAYROLL_NOTE, wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
@@ -441,6 +441,53 @@ describe('ages and assumptions', () => {
   });
 });
 
+describe('what a flat plan’s FI number leaves out after you stop', () => {
+  const base = { taxRate: 0, taxOnHold: false, inDollars: true, age: 40, partnerAge: null, stopAge: 55, spendingMeasured: true, where: 'here' as const };
+  const of = (over: Partial<Parameters<typeof flatCostsNotes>[0]> = {}) => {
+    const n = flatCostsNotes({ ...base, ...over });
+    return n.row ? [n.row.level, n.row.kind, n.row.text, n.answer] : null;
+  };
+
+  test('0% in dollars: no tax and no health coverage, as one caution under the row, pointing at what counts both', () => {
+    expect(of()).toEqual([
+      'caution',
+      'no tax or health coverage',
+      'Your FI number counts no tax after you stop and no health coverage before Medicare (measured spending leaves out coverage through work). Work out tax from your accounts here to count both, or set a tax rate in Assumptions.',
+      'Counts no tax after you stop and no health coverage before Medicare (below).',
+    ]);
+    // A copy works it out on your plan; spending typed may already hold coverage.
+    expect(of({ where: 'copy', spendingMeasured: false })?.[2]).toBe(
+      'Your FI number counts no tax after you stop and no health coverage before Medicare (unless your spending includes it). Work out tax from your accounts on your plan to count both, or set a tax rate in Assumptions.'
+    );
+  });
+
+  test('a rate set, in dollars: only health coverage', () => {
+    expect(of({ taxRate: 0.15, spendingMeasured: false })?.[2]).toBe('Your FI number counts no health coverage before Medicare, unless your spending includes it. Work out tax from your accounts here to count it.');
+    expect(of({ taxRate: 0.15 })).toEqual([
+      'caution',
+      'no health coverage',
+      'Your FI number counts no health coverage before Medicare: measured spending leaves out coverage through work. Work out tax from your accounts here to count it.',
+      'Counts no health coverage before Medicare (below).',
+    ]);
+  });
+
+  test('outside dollars: only a 0% rate, as Medicare is a US cover and worked-out tax needs dollars', () => {
+    expect(of({ inDollars: false, where: 'rate' })).toEqual(['caution', 'no tax after you stop', 'Your FI number counts no tax after you stop. Set a tax rate in Assumptions.', 'Counts no tax after you stop (below).']);
+    expect(of({ inDollars: false, where: 'rate', taxRate: 0.15 })).toBeNull();
+    // Detailed tax on hold says it already, on the same row.
+    expect(of({ inDollars: false, where: 'rate', taxOnHold: true })).toBeNull();
+  });
+
+  test('stopping at 65 or later, both of you: no gap before Medicare to say', () => {
+    expect(of({ taxRate: 0.15, stopAge: 65 })).toBeNull();
+    expect(of({ stopAge: 65 })?.[1]).toBe('no tax after you stop');
+    // A younger partner is still short of it.
+    expect(of({ taxRate: 0.15, stopAge: 65, partnerAge: 37 })?.[1]).toBe('no health coverage');
+    // Ages not known: said, as the gap may be there.
+    expect(of({ taxRate: 0.15, age: null })?.[1]).toBe('no health coverage');
+  });
+});
+
 describe('the notes’ kinds and keys', () => {
   test('two notes that say the same have keys of their own, from the row, the kind and the place, never the text', () => {
     const workplace = { ...noPlans, partial: [{ name: 'Fidelity 401(k)', from: '2026-01-10' }, { name: 'Fidelity 401(k)', from: '2026-01-10' }] } as WorkplaceSavings;
@@ -500,6 +547,11 @@ describe('the notes’ kinds and keys', () => {
         }),
       ].flatMap((a) => Object.values(figureNotes(a)).flatMap((t) => t.notes.map((n) => n.kind)))
     );
+    // A flat plan's, drawn by the Plan tab on its own row (flatCostsNotes).
+    for (const o of [{ taxRate: 0, inDollars: false }, { taxRate: 0.15, inDollars: true }, { taxRate: 0, inDollars: true }]) {
+      const n = flatCostsNotes({ ...o, taxOnHold: false, age: 40, partnerAge: null, stopAge: 55, spendingMeasured: true, where: o.inDollars ? 'here' : 'rate' }).row;
+      if (n) kinds.add(n.kind);
+    }
     const notice: string[] = [NOTE_KINDS.spendingLow, NOTE_KINDS.assetsLow];
     expect(Object.values(NOTE_KINDS).filter((k) => !notice.includes(k) && !kinds.has(k))).toEqual([]);
   });

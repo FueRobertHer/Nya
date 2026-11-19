@@ -94,6 +94,48 @@ export type FigureArgs = {
   taxOnHold: boolean;
 };
 
+/**
+ * What a flat plan's FI number leaves out after you stop, said rather than
+ * left for the person to find: a 0% rate (the default) counts no tax on what
+ * is withdrawn, and in dollars nothing counts health coverage before
+ * Medicare, which measured spending leaves out while it comes through work.
+ * A caution, not critical: the number is what the plan says, only kinder than
+ * it may be. Under the row it qualifies (`row`, Tax after you stop, or
+ * Assumptions where that row isn't drawn), and repeated on the answer
+ * (`answer`), as the inputs that may be low are. Nothing while detailed tax
+ * is saved and on hold (taxOnHold says it), nor where the health part can't
+ * matter: both of you 65 or over at the stop.
+ *   where: 'here' on your plan in dollars, whose Tax after you stop row
+ *   works both out; 'copy' in a copy, which does it on your plan; 'rate'
+ *   where worked-out tax can't be had, only a rate.
+ */
+export function flatCostsNotes(a: {
+  taxRate: number;
+  taxOnHold: boolean;
+  inDollars: boolean;
+  age: number | null;
+  partnerAge: number | null;
+  stopAge: number | null;
+  spendingMeasured: boolean;
+  where: 'here' | 'copy' | 'rate';
+}): { row: FigureNote | null; answer: string | null } {
+  if (a.taxOnHold) return { row: null, answer: null };
+  const tax = a.taxRate === 0;
+  const atStop = (age: number | null) => (a.age !== null && a.stopAge !== null && age !== null ? age + (a.stopAge - a.age) : null);
+  const bothOnMedicare = (atStop(a.age) ?? 0) >= 65 && (a.partnerAge === null || (atStop(a.partnerAge) ?? 0) >= 65);
+  const health = a.inDollars && a.where !== 'rate' && !bothOnMedicare;
+  if (!tax && !health) return { row: null, answer: null };
+  const coverage = a.spendingMeasured ? 'measured spending leaves out coverage through work' : 'unless your spending includes it';
+  const what = tax && health ? 'no tax after you stop and no health coverage before Medicare' : tax ? 'no tax after you stop' : 'no health coverage before Medicare';
+  const lead = tax && health ? `Your FI number counts ${what} (${coverage}).` : tax ? `Your FI number counts ${what}.` : `Your FI number counts ${what}${a.spendingMeasured ? ': ' : ', '}${coverage}.`;
+  const count = tax && health ? ' to count both' : health ? ' to count it' : '';
+  const rate = tax ? ', or set a tax rate in Assumptions' : '';
+  const fix =
+    a.where === 'here' ? `Work out tax from your accounts here${count}${rate}.` : a.where === 'copy' ? `Work out tax from your accounts on your plan${count}${rate}.` : 'Set a tax rate in Assumptions.';
+  const kind = tax && health ? NOTE_KINDS.flatBoth : tax ? NOTE_KINDS.flatTax : NOTE_KINDS.flatHealth;
+  return { row: { key: `flat:${kind}`, level: 'caution', kind, text: `${lead} ${fix}` }, answer: `Counts ${what} (below).` };
+}
+
 /** What Tax says while detailed tax is saved and can't be worked out: the flat
  *  rate, never silently. */
 export const taxOnHoldText = (rate: number) => `Worked-out tax needs US dollars; using a flat ${pct(rate)}.`;
@@ -178,6 +220,9 @@ export function assetCaveatLines(caveats: AssetCaveat[]): string[] {
  *  (components/budget-notes.ts). */
 export const NOTE_KINDS = {
   taxOnHold: 'worked-out tax needs US dollars',
+  flatTax: 'no tax after you stop',
+  flatHealth: 'no health coverage',
+  flatBoth: 'no tax or health coverage',
   spendingGap: 'spending not measured',
   rateGap: 'savings rate not measured',
   yearGap: 'savings not measured',

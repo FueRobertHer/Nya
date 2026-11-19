@@ -404,6 +404,47 @@ describe('Your figures', () => {
     await tab.unmount();
   }, 30_000);
 
+  test('flat at 0%: a caution under the row that no tax or health coverage is counted, repeated on the answer', async () => {
+    await seedPlan({ ...PLAN, taxRate: 0 });
+    const tab = await render(WITH_BALANCES);
+    const said =
+      'Your FI number counts no tax after you stop and no health coverage before Medicare (unless your spending includes it). Work out tax from your accounts here to count both, or set a tax rate in Assumptions.';
+    const notes = (title: string) => (tab.row(title)!.parentNode as Node).findAll((e) => classOf(e).includes('notice'));
+    expect(notes('Tax after you stop').map((n) => [classOf(n).join(' '), n.textContent])).toEqual([['notice caution', `Caution: ${said}`]]);
+    expect(notes('Assumptions')).toEqual([]);
+    expect(tab.text()).toContain('Counts no tax after you stop and no health coverage before Medicare (below).');
+    await tab.unmount();
+  }, 30_000);
+
+  test('worked out: tax and health coverage are in the number, so neither caution is said', async () => {
+    const worked = await detailed({ ...PLAN, taxRate: 0 }, WITH_ACCOUNTS);
+    await pick(worked.container, 'Your path');
+    expect(subOf(worked.row('Tax after you stop'))).toMatch(/^Share of your costs after/);
+    expect(worked.text()).not.toContain('Your FI number counts no');
+    expect(worked.text()).not.toContain('Counts no tax');
+    await worked.unmount();
+  }, 30_000);
+
+  test('a flat copy has no Tax after you stop row: the caution sits under Assumptions, pointing at your plan', async () => {
+    await seedPlan({ ...PLAN, taxRate: 0 });
+    await seedCopy('No tax', { taxRate: 0 }, { ...PLAN, taxRate: 0 });
+    const tab = await render(WITH_BALANCES);
+    await openCopy(tab, 'No tax');
+    expect(tab.row('Tax after you stop')).toBeNull();
+    const under = (tab.row('Assumptions')!.parentNode as Node).textContent ?? '';
+    expect(under).toContain('Work out tax from your accounts on your plan to count both, or set a tax rate in Assumptions.');
+    await tab.unmount();
+  }, 30_000);
+
+  test('flat at a rate: only health coverage is said', async () => {
+    await seedPlan({ ...PLAN, taxRate: 0.15 });
+    const tab = await render(WITH_BALANCES);
+    expect(tab.text()).toContain('Your FI number counts no health coverage before Medicare, unless your spending includes it. Work out tax from your accounts here to count it.');
+    expect(tab.text()).toContain('Counts no health coverage before Medicare (below).');
+    expect(tab.text()).not.toContain('no tax after you stop');
+    await tab.unmount();
+  }, 30_000);
+
   test('Tax after you stop, beside your own number and with a rule: it says whose number and that conversions are in it', async () => {
     const tab = await detailed({ ...PLAN, fiNumber: 1_500_000 }, WITH_ACCOUNTS);
     await press(tab.row('Roth conversions'));
