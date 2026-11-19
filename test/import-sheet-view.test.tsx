@@ -81,6 +81,20 @@ const preview = (over: Partial<Preview> = {}, props: Partial<Parameters<typeof P
       {...props}
     />
   );
+/** A view's footer, drawn in place outside a sheet (SheetFooter): its notes'
+ *  ids, and its buttons' words, classes and what describes them, in order. */
+const footerOf = (html: string) => {
+  const at = html.indexOf('<div class="sheet-footer">');
+  const foot = at < 0 ? '' : html.slice(at);
+  return {
+    notes: [...foot.matchAll(/class="([^"]*sheet-footer-note[^"]*)" id="([^"]+)"/g)].map((m) => ({ cls: m[1], id: m[2] })),
+    buttons: [...foot.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].map((m) => ({
+      words: m[2],
+      cls: /class="([^"]*)"/.exec(m[1])?.[1],
+      describedBy: /aria-describedby="([^"]*)"/.exec(m[1])?.[1] ?? null,
+    })),
+  };
+};
 /** The preview's main button: Import, Update, Set the balance, or Nothing. */
 const importButton = (html: string) => [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].find((m) => /^(Import \d|Update \d|Nothing|Set the balance)/.test(m[1]))!;
 
@@ -105,6 +119,14 @@ describe('the preview', () => {
     expect(t).toContain('listed twice in the file');
     expect(importButton(html)[1]).toBe('Import 8 transactions');
     expect(importButton(html)[0]).not.toContain('disabled');
+    // In the footer, the way back first, nothing it waits on.
+    expect(footerOf(html)).toEqual({
+      notes: [],
+      buttons: [
+        { words: 'Another file', cls: 'btn secondary', describedBy: null },
+        { words: 'Import 8 transactions', cls: 'btn', describedBy: null },
+      ],
+    });
     // Lists, never a table wider than a phone.
     expect(html).not.toContain('<table');
   });
@@ -168,6 +190,13 @@ describe('the mapping step of a CSV file', () => {
     expect(text(html)).toContain('Every date in this file could be month first or day first (09/01/2026, 09/02/2026). Which is it?');
     const next = [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].find((m) => m[1].startsWith('Check against'))!;
     expect(next[0]).toContain('disabled');
+    // Its one button, in the footer: the way back is the sheet's back arrow.
+    expect(footerOf(html).buttons.map((b) => [b.words, b.cls])).toEqual([['Check against Visa', 'btn']]);
+    const refused = footerOf(
+      renderToStaticMarkup(<CsvMapping file={picked(ambiguous, 'csv')} read={read} options={options} setOptions={noop} account="Visa" busy={false} error="It couldn’t be checked." onNext={noop} />)
+    );
+    expect(refused.notes.length).toBe(1);
+    expect(refused.buttons[0].describedBy).toBe(refused.notes[0].id);
   });
 });
 
@@ -273,6 +302,17 @@ describe('rows whose bank id is on another transaction here', () => {
     expect(t).toContain('Choose what to do with the transaction above whose bank id is already here, then import.');
     expect(html).toMatch(/aria-pressed="false"[^>]*>Import as new</);
     expect(importButton(html)[0]).toContain('disabled');
+    // What Import waits on is the footer's note, still a caution, and Import is described by it.
+    const foot = footerOf(html);
+    expect(foot.notes.map((n) => n.cls)).toEqual(['stale-note sheet-footer-note']);
+    expect(foot.buttons.map((b) => [b.words, b.cls, b.describedBy])).toEqual([
+      ['Another file', 'btn secondary', null],
+      ['Import 2 transactions', 'btn', foot.notes[0].id],
+    ]);
+    // A refused import beside it too, each note describing Import.
+    const refused = footerOf(preview(asking, { error: 'The account changed since the preview.' }));
+    expect(refused.notes.map((n) => n.cls)).toEqual(['stale-note sheet-footer-note', 'sheet-footer-note']);
+    expect(refused.buttons[1].describedBy).toBe(refused.notes.map((n) => n.id).join(' '));
   });
 
   test('a choice made moves the counts at once, and lets Import go', () => {

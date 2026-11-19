@@ -31,8 +31,8 @@
 // the list it shows, and the count of rows read is worked out a moment after
 // the taps stop, never once per tap.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Sheet } from './Sheet';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Sheet, SheetFooter } from './Sheet';
 import { Masked, spokenLabel } from './HideAmounts';
 import type { SheetInstitution } from './ManualTxnSheet';
 import { formatDay, formatInstantDay, formatMoney, hideAmountsIn, hideFiguresIn, onDay, plainNumber, signedMoney } from '@/lib/format';
@@ -334,6 +334,8 @@ export default function ImportSheet({
 
   const account = accounts.find((a) => a.account_id === accountId) ?? null;
   const thisYear = new Date().getFullYear();
+  // Why Next failed, beside it in the footer.
+  const errorId = useId();
 
   const loadPast = useCallback(async (id: string) => {
     if (!id) return;
@@ -603,9 +605,40 @@ export default function ImportSheet({
       : step === 'preview'
         ? () => (file?.format === 'csv' ? setStep('mapping') : chooseAgain())
         : undefined;
+  // The step's buttons, in the footer: the way out first. The mapping and the
+  // preview give theirs from inside (SheetFooter). Done's error is Undo's, on
+  // a past import, so it stays with the list in the body.
+  const failed = error ? errorId : undefined;
+  const footer =
+    step === 'order' && file ? (
+      <>
+        {error && (
+          <div className="sheet-footer-note" id={errorId}>
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          </div>
+        )}
+        <button type="button" className="btn secondary" onClick={chooseAgain} disabled={busy}>
+          Another file
+        </button>
+        <button type="button" className="btn" onClick={() => void requestPreview(options)} disabled={busy || read?.status !== 'ready'} aria-describedby={failed}>
+          {busy ? 'Checking…' : 'Next'}
+        </button>
+      </>
+    ) : step === 'done' && done ? (
+      <>
+        <button type="button" className="btn secondary" onClick={chooseAgain} disabled={busy}>
+          Import another
+        </button>
+        <button type="button" className="btn" onClick={onClose} disabled={busy}>
+          Done
+        </button>
+      </>
+    ) : undefined;
 
   return (
-    <Sheet open={!!target} title={step === 'done' ? 'Imported' : 'Import a file'} onClose={() => !busy && onClose()} onBack={busy ? undefined : back}>
+    <Sheet open={!!target} title={step === 'done' ? 'Imported' : 'Import a file'} onClose={() => !busy && onClose()} onBack={busy ? undefined : back} footer={footer}>
       {step === 'pick' && (
         <>
           <p className="panel-note" style={{ marginTop: 0 }}>
@@ -694,24 +727,7 @@ export default function ImportSheet({
         </div>
       )}
 
-      {step === 'order' && file && (
-        <>
-          <DateOrderQuestion read={read} options={options} onChange={(o) => setOptions(o)} />
-          {error && (
-            <Notice level="critical" role="alert">
-              {error}
-            </Notice>
-          )}
-          <div className="button-pair" style={{ marginTop: 16 }}>
-            <button className="secondary" onClick={chooseAgain} disabled={busy}>
-              Another file
-            </button>
-            <button onClick={() => void requestPreview(options)} disabled={busy || read?.status !== 'ready'}>
-              {busy ? 'Checking…' : 'Next'}
-            </button>
-          </div>
-        </>
-      )}
+      {step === 'order' && file && <DateOrderQuestion read={read} options={options} onChange={(o) => setOptions(o)} />}
 
       {step === 'mapping' && file && (
         <CsvMapping
@@ -811,14 +827,6 @@ export default function ImportSheet({
             )}
             {notice && <p className="status-note">{notice}</p>}
           </div>
-          <div className="button-pair" style={{ marginTop: 16 }}>
-            <button className="secondary" onClick={chooseAgain} disabled={busy}>
-              Import another
-            </button>
-            <button onClick={onClose} disabled={busy}>
-              Done
-            </button>
-          </div>
         </>
       )}
     </Sheet>
@@ -914,6 +922,8 @@ export function CsvMapping({
   };
   const today = localDate();
   const thisYear = new Date().getFullYear();
+  // Why checking the file failed, beside the button in the footer.
+  const errorId = useId();
   const currency = options.currency && isCurrencyCode(options.currency) ? options.currency : keptIn;
   const live = useMemo(() => (read?.status === 'ready' ? normalizeRecords(read.records, { today, currency }) : null), [read, today, currency]);
   // Every row counted once the taps stop: what the list's note says, and
@@ -945,6 +955,7 @@ export function CsvMapping({
       </>
     );
   }
+  const failed = error ? errorId : undefined;
   const columnSelect = (role: keyof CsvColumns, optional: boolean) => (
     <label className="field" key={role}>
       {ROLE_LABELS[role]}
@@ -1125,16 +1136,25 @@ export function CsvMapping({
           </p>
         </>
       )}
-      {error && (
-        <Notice level="critical" role="alert">
-          {error}
-        </Notice>
-      )}
-      <div className="button-pair" style={{ marginTop: 16 }}>
-        <button onClick={onNext} disabled={busy || read?.status !== 'ready' || !live || live.rows.length === 0 || !isCurrencyCode(options.currency ?? keptIn)}>
+      {/* Its one button, in the footer: the way back is the sheet's back arrow. */}
+      <SheetFooter>
+        {error && (
+          <div className="sheet-footer-note" id={errorId}>
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          </div>
+        )}
+        <button
+          type="button"
+          className="btn"
+          onClick={onNext}
+          disabled={busy || read?.status !== 'ready' || !live || live.rows.length === 0 || !isCurrencyCode(options.currency ?? keptIn)}
+          aria-describedby={failed}
+        >
           {busy ? 'Checking…' : `Check against ${account}`}
         </button>
-      </div>
+      </SheetFooter>
     </>
   );
 }
@@ -1184,6 +1204,9 @@ export function PreviewView({
 }) {
   const [allProblems, setAllProblems] = useState(false);
   const [currencyText, setCurrencyText] = useState<string | null>(null);
+  // What Import waits on and why it failed, beside it in the footer.
+  const waitId = useId();
+  const errorId = useId();
   const name = account?.name ?? 'the account';
   const owed = account ? isOwedType(account.type) : false;
   // The currency the account's balance is kept in (lib/manual.ts).
@@ -1209,6 +1232,9 @@ export function PreviewView({
   // change it (a CSV file's is chosen with its columns).
   const currencyChoice = p.format !== 'csv' && p.currency_from !== 'file';
   const kinds = kindsText(p.kinds);
+  const waits = unanswered > 0;
+  const refused = !!error;
+  const describedBy = [waits ? waitId : null, refused ? errorId : null].filter(Boolean).join(' ') || undefined;
   const importLabel =
     c.new > 0 && c.replaced > 0
       ? `Import ${plural(c.new, 'transaction')}, update ${plainNumber(c.replaced)}`
@@ -1400,21 +1426,27 @@ export function PreviewView({
         {offered ? ' unless you tick the box' : ''}. You can undo an import from this sheet.
       </p>
 
-      {unanswered > 0 && <p className="stale-note">Choose what to do with {unanswered === 1 ? 'the transaction' : `the ${unanswered.toLocaleString()} transactions`} above whose bank id is already here, then import.</p>}
-      {/* A refusal can name the balance (one changed since the preview). */}
-      {error && (
-        <Notice level="critical" role="alert">
-          <Masked>{hideAmountsIn(error)}</Masked>
-        </Notice>
-      )}
-      <div className="button-pair" style={{ marginTop: 16 }}>
-        <button className="secondary" onClick={onBack} disabled={busy}>
+      <SheetFooter>
+        {unanswered > 0 && (
+          <p className="stale-note sheet-footer-note" id={waitId}>
+            Choose what to do with {unanswered === 1 ? 'the transaction' : `the ${unanswered.toLocaleString()} transactions`} above whose bank id is already here, then import.
+          </p>
+        )}
+        {/* A refusal can name the balance (one changed since the preview). */}
+        {error && (
+          <div className="sheet-footer-note" id={errorId}>
+            <Notice level="critical" role="alert">
+              <Masked>{hideAmountsIn(error)}</Masked>
+            </Notice>
+          </div>
+        )}
+        <button type="button" className="btn secondary" onClick={onBack} disabled={busy}>
           {file.format === 'csv' ? 'Columns' : 'Another file'}
         </button>
-        <button onClick={onImport} disabled={busy || !canImport || blocked}>
+        <button type="button" className="btn" onClick={onImport} disabled={busy || !canImport || blocked} aria-describedby={describedBy}>
           {busy ? 'Importing…' : importLabel}
         </button>
-      </div>
+      </SheetFooter>
     </>
   );
 }
