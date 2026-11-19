@@ -746,9 +746,12 @@ function sam(today: string): DemoProfile {
           planItem({ id: 'maya', label: 'Maya', kind: 'child', from: atAge(38), until: { years: 14 }, yearly: 9_000 }),
           planItem({ id: 'sam-consulting', label: 'Sam consulting', kind: 'part-time', owner: 'you', from: atStop(), until: { years: 5 }, yearly: 30_000, replaces: 0 }),
           planItem({ id: 'jordan-tutoring', label: 'Jordan tutoring', kind: 'part-time', owner: 'partner', from: atStop(1), until: { years: 5 }, yearly: 18_000, replaces: 0 }),
-          // Two milestones, which move no figure: one to watch, one to time on.
+          // Milestones, which move no figure: on an amount, one to watch and
+          // one to time on; on the FI number, half of it and Coast FI.
           planItem({ id: 'lean-fi', label: 'Lean FI', kind: 'milestone', from: atBalance(1_500_000) }),
           planItem({ id: 'travel-fund', label: 'Travel fund', kind: 'milestone', from: atBalance(2_500_000) }),
+          planItem({ id: 'halfway', label: 'Halfway', kind: 'milestone', from: { anchor: { at: 'share', percent: 50 }, offset: 0 } }),
+          planItem({ id: 'coast-fi', label: 'Coast FI', kind: 'milestone', from: { anchor: { at: 'coast' }, offset: 0 } }),
         ],
         payroll: ['1182', '5530'],
         copies: [

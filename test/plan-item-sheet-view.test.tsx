@@ -719,6 +719,40 @@ describe('a milestone', () => {
   }, 30_000);
 });
 
+describe('a milestone on your FI number', () => {
+  const radioOn = (within: Parameters<typeof choice>[0], words: string) => choice(within, words)?.findAll((e) => e.tagName === 'INPUT')[0].checked;
+
+  test('a share: what it is of today’s FI number as it is typed, saved as a share; Coast FI, saved with nothing more', async () => {
+    await seedPlan({ ...PLAN, items: [ROOF] });
+    const tab = await render();
+    await addTemplate(tab, 'A milestone');
+    await pick(tab.dialog()!, 'A share of your FI number');
+    expect(tab.dialog()!.textContent).toContain('It follows your FI number as that changes');
+    await fill(tab.dialog()!, 'Share, %', '50');
+    await fill(tab.dialog()!, 'Name', 'Halfway');
+    await rest();
+    expect(tab.dialog()!.textContent).toMatch(/50% of \$[\d,]+ is about \$[\d,]+,000 today\./);
+    expect(tab.dialog()!.textContent).toContain('Checked on the balance at the start of each year against your FI number as it stands then');
+    await press(button(tab.dialog(), 'Add to your plan'));
+    await settle(400);
+    let items = (await stored()).byName['First plan'].plan.items as PlanItem[];
+    expect(items.find((x) => x.label === 'Halfway')).toMatchObject({ kind: 'milestone', from: { anchor: { at: 'share', percent: 50 }, offset: 0 }, owner: null });
+    await addTemplate(tab, 'A milestone');
+    await pick(tab.dialog()!, 'Coast FI');
+    expect(tab.dialog()!.textContent).toContain(`What you have would grow to your FI number by your stop at ${PLAN.targetAge}, with nothing more added`);
+    await fill(tab.dialog()!, 'Name', 'Coast FI');
+    await rest();
+    await press(button(tab.dialog(), 'Add to your plan'));
+    await settle(400);
+    items = (await stored()).byName['First plan'].plan.items as PlanItem[];
+    expect(items.find((x) => x.label === 'Coast FI')).toMatchObject({ kind: 'milestone', from: { anchor: { at: 'coast' }, offset: 0 }, owner: null });
+    // Each reopens on its own option.
+    await press(tab.row('Milestone: Halfway'));
+    expect([radioOn(tab.dialog()!, 'A share of your FI number'), field(tab.dialog()!, 'Share, %')?.value]).toEqual([true, '50']);
+    await tab.unmount();
+  }, 30_000);
+});
+
 describe('Try it in a copy', () => {
   test('from a chip, with the copy’s name from its anchor and never an amount', async () => {
     await seedPlan();

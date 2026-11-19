@@ -331,7 +331,9 @@ export function planFigures(plan: FirePlanV2, measured: Measured, { count, detai
       const f = assemble(plan, b, { ages, why: [], stop, fi: null, searched: 'none' }, shares);
       const p = planPath(detailed ? { ...f, detail: detailed.forPath(f) } : f);
       if (p === null) return null;
-      return [...p.points.map((x) => x.balance), ...(p.after?.points.slice(1).map((x) => x.balance) ?? [])];
+      // The FI number and growth as this build has them: what a share of the
+      // FI number, or Coast FI, is checked against (lib/fire/steady.ts).
+      return { balances: [...p.points.map((x) => x.balance), ...(p.after?.points.slice(1).map((x) => x.balance) ?? [])], fiNumber: b.view.fiNumber, growth: b.view.growth };
     },
     fiAge(ages, stop, opts) {
       const b = build(plan, measured, ages, stop, count, opts, undefined, detailed, sharesFor(ages, stop));

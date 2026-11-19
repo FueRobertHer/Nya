@@ -8,8 +8,14 @@
 // `lastsIn` (D9: the answer is the earliest stop that lasts) is the one field a
 // plan holds only while it is set: absent is decision 25's answer, so a plan
 // without it is stored, upgraded and downloaded exactly as before it, and the
-// release before (test/fixtures/release-before) reads every one of them. It is
-// read here a release before anything writes it (docs/operations.md).
+// release before (test/fixtures/release-before) reads every one of them. It was
+// read a release (#242) before the FI number's sheet wrote it (docs/operations.md).
+//
+// `accounts` (each account's own growth and dividends, lib/fire/account-growth.ts)
+// is held the same way, only while it lists one, so a plan without it is stored
+// as before. It shipped with its writer in one release, with no reader before
+// it: the release before refuses a plan that holds one (docs/operations.md,
+// rolling back).
 //
 // WHAT IS STORED STAYS AS IT WAS. The store (an entry's plan in `fire-plans`,
 // lib/plan-copies.ts) reads either version and its upgrade (upgradeStoredPlan)
@@ -24,7 +30,7 @@
 //
 // Imports no data and no storage: the route and the browser both use it.
 
-import { DEFAULT_PLAN, LIMITS, isFirePlan, readPlan, repairPlan, upgradePlan, type FirePlan, type Repair } from './plan';
+import { DEFAULT_PLAN, LIMITS, isFirePlan, readPlan, repairPlan, upgradePlan, type AccountRate, type FirePlan, type Repair } from './plan';
 import { ITEM_LIMITS, asExpense, asIncome, expensesOf, incomeOf, isPlanItem, itemFromExpense, itemFromIncome, itemRules, parseItem, type PlanItem } from './items';
 
 export type FirePlanV2 = Omit<FirePlan, 'version' | 'income' | 'expenses'> & {
@@ -40,17 +46,21 @@ export type FirePlanV2 = Omit<FirePlan, 'version' | 'income' | 'expenses'> & {
   /** Your own FI number; null works it out from spending. */
   fiNumber: number | null;
   /** D9: the answer is the earliest stop whose money lasts in at least this
-   *  share of Will it last?'s starts (lib/fire/earliest.ts), one of
+   *  share of the stress test's starts (lib/fire/earliest.ts), one of
    *  LASTS_IN_CHOICES. Absent: when the walk reaches the FI number (decision 25).
    *  Never in DEFAULT_PLAN_V2, so never filled in by an upgrade. */
   lastsIn?: number;
+  /** Accounts' own rates in this plan (lib/fire/plan.ts AccountRate), sorted by
+   *  account id, each with at least one rate; absent while none has one. An
+   *  account that goes away is kept, within LIMITS.accountRates, and ignored. */
+  accounts?: AccountRate[];
 };
 
 /** The shares a plan's answer can be asked to last in (D9). */
 export const LASTS_IN_CHOICES: readonly number[] = [0.8, 0.9, 0.95];
 
 /** Fields a version 2 plan holds only while they are set. */
-const OPTIONAL_KEYS = ['lastsIn'];
+const OPTIONAL_KEYS = ['lastsIn', 'accounts'];
 
 /** A plan as either version stores it. */
 export type StoredPlan = FirePlan | FirePlanV2;
@@ -92,13 +102,41 @@ export function toStored(plan: FirePlanV2, version: 1 | 2): { plan: StoredPlan }
 export function toStored(plan: FirePlanV2, version: 1 | 2): { plan: StoredPlan } | { error: string } {
   if (version === 2) return { plan };
   if (plan.items.some((x) => asIncome(x) === null && asExpense(x) === null)) return { error: 'This plan holds items only a newer version of Nya can save.' };
-  if (plan.partnerAge !== null || plan.stopAtFi || plan.fiNumber !== null || plan.lastsIn !== undefined) return { error: 'This plan holds settings only a newer version of Nya can save.' };
+  if (plan.partnerAge !== null || plan.stopAtFi || plan.fiNumber !== null || plan.lastsIn !== undefined || plan.accounts !== undefined) return { error: 'This plan holds settings only a newer version of Nya can save.' };
   const income = incomeOf(plan);
   const expenses = expensesOf(plan);
   if (income.length > LIMITS.incomes) return { error: `A plan takes ${LIMITS.incomes} incomes at most.` };
   if (expenses.length > LIMITS.expenses) return { error: `A plan takes ${LIMITS.expenses} one-off expenses at most.` };
-  const { version: _version, items: _items, partnerAge: _partner, stopAtFi: _stop, fiNumber: _fi, lastsIn: _lasts, planFunding, ...rest } = plan;
+  const { version: _version, items: _items, partnerAge: _partner, stopAtFi: _stop, fiNumber: _fi, lastsIn: _lasts, accounts: _accounts, planFunding, ...rest } = plan;
   return { plan: { version: 1, ...rest, income, expenses, planFunding } };
+}
+
+const ACCOUNT_KEYS = ['account_id', 'growth', 'yield'];
+
+/** `accounts` as read: each entry an object of exactly its fields, an account
+ *  id and two rates, each a number or null; for a save (`input`), an id as
+ *  accounts carry them, the rates in range and at most LIMITS.accountRates.
+ *  Clean either way: one entry per account, the last said, none with neither
+ *  rate, sorted by id, and none at all as absent (undefined), so two plans that
+ *  say the same compare the same. */
+function readAccounts(raw: unknown, input: boolean): { accounts: AccountRate[] | undefined } | { error: string; field: string } {
+  if (!Array.isArray(raw) || (input && raw.length > LIMITS.accountRates)) return { error: `accounts must be a list of at most ${LIMITS.accountRates}`, field: 'accounts' };
+  const byId = new Map<string, AccountRate>();
+  for (const [i, x] of raw.entries()) {
+    const field = `accounts[${i}]`;
+    if (typeof x !== 'object' || x === null || Array.isArray(x)) return { error: `${field} must be an object`, field };
+    const e = x as Record<string, unknown>;
+    const keys = Object.keys(e);
+    if (keys.length !== ACCOUNT_KEYS.length || !ACCOUNT_KEYS.every((k) => Object.hasOwn(e, k))) return { error: `${field} has exactly account_id, growth and yield`, field };
+    if (typeof e.account_id !== 'string' || (input && !/^[A-Za-z0-9_.:-]{1,100}$/.test(e.account_id))) return { error: `${field}.account_id must be an account id`, field };
+    const rate = (v: unknown, [min, max]: readonly [number, number]) => v === null || (typeof v === 'number' && Number.isFinite(v) && (!input || (v >= min && v <= max)));
+    if (!rate(e.growth, LIMITS.realReturn)) return { error: `${field}.growth must be null or a rate from ${LIMITS.realReturn[0]} to ${LIMITS.realReturn[1]}`, field };
+    if (!rate(e.yield, LIMITS.accountYield)) return { error: `${field}.yield must be null or a rate from ${LIMITS.accountYield[0]} to ${LIMITS.accountYield[1]}`, field };
+    byId.delete(e.account_id);
+    if (e.growth !== null || e.yield !== null) byId.set(e.account_id, { account_id: e.account_id, growth: e.growth as number | null, yield: e.yield as number | null });
+  }
+  const accounts = [...byId.values()].sort((a, b) => (a.account_id < b.account_id ? -1 : a.account_id > b.account_id ? 1 : 0));
+  return { accounts: accounts.length > 0 ? accounts : undefined };
 }
 
 /** A clean copy of a version 2 plan, or why it is not one: the fields it
@@ -138,6 +176,12 @@ function readPlanV2(raw: unknown, input: boolean): { plan: FirePlanV2 } | { erro
   if (Object.hasOwn(o, 'lastsIn') && (typeof lastsIn !== 'number' || !Number.isFinite(lastsIn) || (input && !LASTS_IN_CHOICES.includes(lastsIn)))) {
     return { error: 'lastsIn must be one of 0.8, 0.9 or 0.95', field: 'lastsIn' };
   }
+  let accounts: AccountRate[] | undefined;
+  if (Object.hasOwn(o, 'accounts')) {
+    const r = readAccounts(o.accounts, input);
+    if ('error' in r) return r;
+    accounts = r.accounts;
+  }
   if (!Array.isArray(o.items) || (input && o.items.length > ITEM_LIMITS.items)) return { error: `items must be a list of at most ${ITEM_LIMITS.items}`, field: 'items' };
   const items: PlanItem[] = [];
   for (const [i, x] of o.items.entries()) {
@@ -161,6 +205,7 @@ function readPlanV2(raw: unknown, input: boolean): { plan: FirePlanV2 } | { erro
     stopAtFi: o.stopAtFi,
     fiNumber: fi as number | null,
     ...(Object.hasOwn(o, 'lastsIn') ? { lastsIn: lastsIn as number } : {}),
+    ...(accounts !== undefined ? { accounts } : {}),
   };
   if (input) {
     const broken = itemRules(plan);
@@ -230,6 +275,15 @@ export function repairPlanV2(plan: FirePlanV2): { plan: FirePlanV2; fixed: Repai
       const n = /^planFunding\[(\d+)\]/.exec(field);
       fixed.push({ field: 'planFunding' });
       p = { ...p, planFunding: n ? p.planFunding.filter((_, i) => i !== Number(n[1])) : p.planFunding.slice(0, LIMITS.planFunding) };
+    } else if (/^accounts\[\d+\]/.test(field) || field === 'accounts') {
+      // An entry it can't use left out, or the list cut to the cap; never the plan's defaults.
+      const n = /^accounts\[(\d+)\]/.exec(field);
+      // Named once, however many entries go.
+      if (!fixed.some((f) => f.field === 'accounts')) fixed.push({ field: 'accounts' });
+      const list: unknown[] = Array.isArray(p.accounts) ? p.accounts : [];
+      const { accounts: _accounts, ...without } = p;
+      const kept = n ? list.filter((_, i) => i !== Number(n[1])) : list.slice(0, LIMITS.accountRates);
+      p = kept.length > 0 ? { ...without, accounts: kept as AccountRate[] } : without;
     } else if (field === 'allocation') {
       fixed.push({ field });
       p = { ...p, stocksPct: DEFAULT_PLAN_V2.stocksPct, bondsPct: DEFAULT_PLAN_V2.bondsPct };

@@ -19,14 +19,15 @@ import { Masked, NO_EXAMPLE } from './HideAmounts';
 import { Notice } from './TotalCaveats';
 import { chevron, RIGHT } from './MonthStepper';
 import { BREAK_HELP, ITEM_TEMPLATES, TEMPLATE_GROUPS, itemRuleText, onMilestone, templateHelp, type ItemTemplate, type PreviewLines, type WorkedOut } from './plan-items';
-import { INCOME_KINDS, ONCE_KINDS, parseItem, withItem, type ItemKind, type PlanItem, type When } from '@/lib/fire/items';
+import { INCOME_KINDS, ITEM_LIMITS, ONCE_KINDS, parseItem, withItem, type ItemKind, type PlanItem, type When } from '@/lib/fire/items';
 import { LIMITS } from '@/lib/fire/plan';
 import { parsePlanV2, type FirePlanV2 } from '@/lib/fire/plan-v2';
 
 type Money = (n: number) => string;
 
 export type StartPick = 'age' | 'stop' | 'fi' | 'milestone' | 'item' | 'balance';
-export type EndPick = StartPick | 'good' | 'years';
+/** Ends' picks, and a milestone's own: a share of the FI number, or Coast FI. */
+export type EndPick = StartPick | 'good' | 'years' | 'share' | 'coast';
 
 /** A start or an end as typed: what is picked, and each pick's own fields,
  *  kept while another is picked so going back to it finds them. */
@@ -42,6 +43,8 @@ export type WhenDraft = {
    *  carries a milestone into it. */
   milestone: string;
   amount: string;
+  /** A milestone's share of the FI number, a whole percent. */
+  percent: string;
   /** For how many years. */
   span: string;
 };
@@ -88,7 +91,7 @@ function Switch<T extends string>({ text, options, value, onChange, disabled }: 
   );
 }
 
-const EMPTY_WHEN: WhenDraft = { pick: 'age', age: '', years: '', before: false, item: '', edge: 'start', milestone: '', amount: '', span: '' };
+const EMPTY_WHEN: WhenDraft = { pick: 'age', age: '', years: '', before: false, item: '', edge: 'start', milestone: '', amount: '', percent: '', span: '' };
 
 /** Kinds whose amount says whose it is. */
 const OWNED: readonly ItemKind[] = [...INCOME_KINDS, 'pay'];
@@ -111,6 +114,10 @@ function whenDraft(w: When | { years: number } | null, milestones: ReadonlySet<s
       return { ...EMPTY_WHEN, ...off, pick: 'item', item: a.id, edge: a.edge };
     case 'balance':
       return { ...EMPTY_WHEN, ...off, pick: 'balance', amount: String(a.amount) };
+    case 'share':
+      return { ...EMPTY_WHEN, pick: 'share', percent: String(a.percent) };
+    case 'coast':
+      return { ...EMPTY_WHEN, pick: 'coast' };
   }
 }
 
@@ -201,6 +208,10 @@ function whenOf(w: WhenDraft, what: 'starts' | 'stops' | 'is reached'): When {
     case 'balance':
       // A milestone is reached at its amount, with no years after.
       return { anchor: { at: 'balance', amount: need(w.amount, what === 'is reached' ? 'the amount' : 'the balance invested assets reach') }, offset: what === 'is reached' ? 0 : (read(w.years) ?? 0) };
+    case 'share':
+      return { anchor: { at: 'share', percent: need(w.percent, 'the share of your FI number') }, offset: 0 };
+    case 'coast':
+      return { anchor: { at: 'coast' }, offset: 0 };
     default:
       throw new Missing(`Pick when it ${what}.`);
   }
@@ -307,6 +318,10 @@ export function pickWords(w: WhenDraft, plan: FirePlanV2, money: Money, stop: nu
       const reach = amount === null ? 'When invested assets reach a figure' : `When invested assets reach ${money(amount)}`;
       return n === 0 ? reach : `${reach}, ${n} year${n === 1 ? '' : 's'} after`;
     }
+    case 'share':
+      return read(w.percent) === null ? 'At a share of your FI number' : `At ${w.percent}% of your FI number`;
+    case 'coast':
+      return 'At Coast FI';
     case 'good':
       return 'For good';
     case 'years':
@@ -329,6 +344,7 @@ export function ItemFields({
   startsRef,
   endsRef,
   workedOut,
+  fiNumber = null,
 }: {
   draft: ItemDraft;
   set: (next: Partial<ItemDraft>) => void;
@@ -347,6 +363,8 @@ export function ItemFields({
   /** A milestone's amount worked out from a spending a year, as the FI
    *  number works its own out (components/plan-items.ts workedOutAmount). */
   workedOut?: (spending: number) => WorkedOut | null;
+  /** The plan's FI number today, for what a milestone's share of it is. */
+  fiNumber?: number | null;
 }) {
   const d = draft;
   const k = d.kind;
@@ -379,7 +397,7 @@ export function ItemFields({
     const now = choices?.find((c) => c.kind === kind);
     set({ kind, ...(was && now && d.label === was.name ? { label: now.name } : {}) });
   };
-  if (k === 'milestone') return <MilestoneFields draft={d} set={set} plan={plan} saving={saving} where={where} workedOut={workedOut} field={field} />;
+  if (k === 'milestone') return <MilestoneFields draft={d} set={set} plan={plan} money={money} stop={stop} fiNumber={fiNumber} saving={saving} where={where} workedOut={workedOut} field={field} />;
   return (
     <>
       {choices && (
@@ -614,11 +632,15 @@ export function AnchorLevel({
 }
 
 /** A milestone's fields: its name and what reaches it, an amount (which a
- *  spending a year can work out, once) or an age. */
+ *  spending a year can work out, once), a share of the FI number, Coast FI or
+ *  an age. */
 function MilestoneFields({
   draft: d,
   set,
   plan,
+  money,
+  stop,
+  fiNumber,
   saving,
   where,
   workedOut,
@@ -627,6 +649,9 @@ function MilestoneFields({
   draft: ItemDraft;
   set: (next: Partial<ItemDraft>) => void;
   plan: FirePlanV2;
+  money: Money;
+  stop: number | null;
+  fiNumber: number | null;
   saving: boolean;
   where: string;
   workedOut?: (spending: number) => WorkedOut | null;
@@ -636,6 +661,8 @@ function MilestoneFields({
   const spending = read(d.workOut);
   const worked = spending !== null && spending > 0 && workedOut ? workedOut(spending) : null;
   const partner = plan.partnerAge !== null || d.owner === 'partner';
+  const percent = read(d.from.percent);
+  const share = fiNumber !== null && percent !== null && Number.isInteger(percent) && percent >= ITEM_LIMITS.share[0] && percent <= ITEM_LIMITS.share[1] ? `${percent}% of ${money(fiNumber)} is about ${money(Math.round(((percent / 100) * fiNumber) / 1000) * 1000)} today.` : null;
   const options: RadioOption[] = [
     {
       value: 'balance',
@@ -663,6 +690,26 @@ function MilestoneFields({
           <p className="helper">Worked out once: the amount stays as it is if your plan changes.</p>
         </>
       ),
+    },
+    {
+      value: 'share',
+      name: 'A share of your FI number',
+      note: 'It follows your FI number as that changes',
+      detail: (
+        <>
+          {field('Share, %', d.from.percent, (v) => put({ percent: v }))}
+          {share && (
+            <p className="helper">
+              <Masked>{share}</Masked>
+            </p>
+          )}
+        </>
+      ),
+    },
+    {
+      value: 'coast',
+      name: 'Coast FI',
+      note: `What you have would grow to your FI number by ${stop !== null ? `your stop at ${stop}` : 'your stop'}, with nothing more added`,
     },
     {
       value: 'age',

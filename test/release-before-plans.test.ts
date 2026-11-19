@@ -4,7 +4,7 @@ import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import type { PlanEntry, PlanFacts } from './fixtures/release-before/fire/copies';
 import type { PlanItem } from '@/lib/fire/items';
 
-// The release before (the last merge before this one, 221c0d7c, D9's reader, whose readers
+// The release before (the last merge before this one, e26aab8c, whose readers
 // of the plans as copies are in test/fixtures/release-before/fire/copies.ts byte
 // for byte, pinned by test/release-before.test.ts) reading what this release
 // writes, so a rollback to it loses no plan. Every write this release makes
@@ -23,14 +23,14 @@ import type { PlanItem } from '@/lib/fire/items';
 // ahead: `model: 'detailed'`, each plan's choices, the household and `at-stop`.
 // And it writes `lastsIn`, your FI date as the earliest stop that lasts (D9),
 // which the release before reads and its saves keep. Accounts' own rates, a
-// saved plan's growth, and milestones (an item of kind `milestone`), it writes
-// with no reader a release before: the release before refuses a plan, copy or
-// saved plan holding them (see their tests).
+// saved plan's growth, and milestones on an amount or an age, which the
+// release before reads too. A milestone on a share of the FI number or at
+// Coast FI it writes with no reader a release before: the release before
+// refuses a plan, copy or saved plan holding one (see its test).
 // And its restore (test/fixtures/release-before/user-restore/parts.ts) knows
-// every part of a download this release makes, plans and all, but money in
-// and out's, new in this release (see the test): it refuses a file with a
-// part it doesn't know, or without one of its header parts, and reads each
-// store part as the kind its own list says.
+// every part of a download this release makes, plans and all: it refuses a
+// file with a part it doesn't know, or without one of its header parts, and
+// reads each store part as the kind its own list says.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -268,49 +268,56 @@ describe('the release before reads every plan this release writes', () => {
     expect(Object.hasOwn(entries.get(MAIN_ID)!.plan, 'lastsIn')).toBe(false);
   });
 
-  // Accounts' own rates shipped with their writer, with no reader a release
-  // before (no rollbacks are planned): the release before refuses a plan that
-  // holds them, and reads it again once they are taken off
-  // (docs/operations.md, rolling back). A plan without them is written as before.
-  test('accounts’ own rates: an entry it refuses while they are there, and reads once they are gone', async () => {
+  test('accounts’ own rates: an entry it reads with them', async () => {
     const rated: FirePlanV2 = { ...TYPED, accounts: [{ account_id: 'acc-1', growth: 0.07, yield: null }] };
-    const main = ok(await save(rated, null, DEFAULTS)).updated_at as string;
-    const { refused } = await readAsBefore();
-    expect(refused).toEqual([MAIN_ID]);
-    ok(await save(TYPED, main, factsOf(TYPED)));
-    const entries = await readsAll(MAIN_ID, 'your plan without them');
-    expect(Object.hasOwn(entries.get(MAIN_ID)!.plan, 'accounts')).toBe(false);
+    ok(await save(rated, null, DEFAULTS));
+    const entries = await readsAll(MAIN_ID, 'your plan with them');
+    expect((entries.get(MAIN_ID)!.plan as FirePlanV2).accounts).toEqual(rated.accounts);
   });
 
-  // Milestones shipped the same way (docs/operations.md, rolling back): the
-  // release before refuses a plan or copy holding one, and a saved plan holding
-  // one, and reads them once it is removed.
-  test('a milestone: a plan, a copy and a saved plan it refuses while one is there, and reads once it is gone', async () => {
-    const flag: PlanItem = { id: 'lean', label: 'Lean FI', kind: 'milestone', from: { anchor: { at: 'balance', amount: 1_000_000 }, offset: 0 }, until: null, once: null, yearly: null, replaces: null, every: null, times: null, inflationAdjusted: true, owner: null, beforeTax: false };
-    const marked: FirePlanV2 = { ...TYPED, items: [income, flag] };
-    const main = ok(await save(marked, null, DEFAULTS)).updated_at as string;
-    const copy = ok(await plans('POST', { from: MAIN_ID, name: 'Stop at 52', plan: { ...marked, targetAge: 52 }, currency: 'USD' })).plan;
-    expect((await readAsBefore()).refused.sort()).toEqual([MAIN_ID, copy.id].sort());
-    ok(await save(TYPED, main, factsOf(TYPED)));
-    ok(await plans('PUT', { saves: [{ id: copy.id, plan: { ...TYPED, targetAge: 52 }, currency: 'USD', based_on: copy.updated_at }], facts_were: factsOf(TYPED) }));
-    await readsAll(MAIN_ID, 'your plan and the copy without it');
-    const put = async (plan: FirePlanV2) => (await call(savedRoute.PUT, 'saved-plan', 'PUT', { saved: { plan, savings: 20_000, currency: 'USD', inflation: 0.03 }, based_on: (await savedPlanStore.get(ctx))?.rev ?? null })).status;
-    expect(await put(marked)).toBe(200);
-    expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(false);
-    expect(await put(TYPED)).toBe(200);
+  const milestone = (id: string, from: PlanItem['from'], owner: PlanItem['owner'] = null): PlanItem => ({ id, label: id, kind: 'milestone', from, until: null, once: null, yearly: null, replaces: null, every: null, times: null, inflationAdjusted: true, owner, beforeTax: false });
+  const travel: PlanItem = { ...child, id: 'more', label: 'Travel more', kind: 'spending', from: { anchor: { at: 'item', id: 'lean', edge: 'start' }, offset: 1 }, until: null };
+
+  test('milestones on an amount and an age, with an item timed on one: a plan, a copy and a saved plan it reads', async () => {
+    const lean = milestone('lean', { anchor: { at: 'balance', amount: 1_000_000 }, offset: 0 });
+    const abroad = milestone('abroad', { anchor: { at: 'age', age: 55 }, offset: 0 }, 'partner');
+    const marked: FirePlanV2 = { ...TYPED, partnerAge: 38, items: [income, lean, abroad, travel] };
+    ok(await save(marked, null, DEFAULTS));
+    ok(await plans('POST', { from: MAIN_ID, name: 'Stop at 52', plan: { ...marked, targetAge: 52 }, currency: 'USD' }));
+    await readsAll(MAIN_ID, 'your plan and a copy with them');
+    const put = { saved: { plan: marked, savings: 20_000, currency: 'USD', inflation: 0.03 }, based_on: null };
+    expect((await call(savedRoute.PUT, 'saved-plan', 'PUT', put)).status).toBe(200);
     expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(true);
   });
 
-  test('a saved plan with the growth its accounts ran at: one it refuses; without, one it reads', async () => {
+  // A milestone on a share of the FI number or at Coast FI shipped with no
+  // reader a release before (docs/operations.md, rolling back): the release
+  // before refuses a plan, copy or saved plan holding one, and reads them once
+  // it is removed.
+  test('a share or Coast FI milestone: a plan, a copy and a saved plan it refuses while one is there, and reads once it is gone', async () => {
+    for (const from of [{ anchor: { at: 'share', percent: 50 }, offset: 0 }, { anchor: { at: 'coast' }, offset: 0 }] as PlanItem['from'][]) {
+      fake.reset();
+      await registerTestContainer(fake);
+      const marked: FirePlanV2 = { ...TYPED, items: [income, milestone('half', from), { ...travel, from: { anchor: { at: 'item', id: 'half', edge: 'start' }, offset: 0 } }] };
+      const main = ok(await save(marked, null, DEFAULTS)).updated_at as string;
+      const copy = ok(await plans('POST', { from: MAIN_ID, name: 'Stop at 52', plan: { ...marked, targetAge: 52 }, currency: 'USD' })).plan;
+      expect((await readAsBefore()).refused.sort()).toEqual([MAIN_ID, copy.id].sort());
+      ok(await save(TYPED, main, factsOf(TYPED)));
+      ok(await plans('PUT', { saves: [{ id: copy.id, plan: { ...TYPED, targetAge: 52 }, currency: 'USD', based_on: copy.updated_at }], facts_were: factsOf(TYPED) }));
+      await readsAll(MAIN_ID, 'your plan and the copy without it');
+      const put = async (plan: FirePlanV2) => (await call(savedRoute.PUT, 'saved-plan', 'PUT', { saved: { plan, savings: 20_000, currency: 'USD', inflation: 0.03 }, based_on: (await savedPlanStore.get(ctx))?.rev ?? null })).status;
+      expect(await put(marked)).toBe(200);
+      expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(false);
+      expect(await put(TYPED)).toBe(200);
+      expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(true);
+    }
+  });
+
+  test('a saved plan with the growth its accounts ran at: one it reads', async () => {
     const rated: FirePlanV2 = { ...TYPED, accounts: [{ account_id: 'acc-1', growth: 0.07, yield: null }] };
     const put = async (saved: object) => (await call(savedRoute.PUT, 'saved-plan', 'PUT', { saved, based_on: (await savedPlanStore.get(ctx))?.rev ?? null })).status;
     expect(await put({ plan: rated, savings: 20_000, currency: 'USD', inflation: 0.03, growth: 0.061 })).toBe(200);
-    expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(false);
-    // Either alone is refused: the plan's rates, or the growth.
-    expect(await put({ plan: rated, savings: 20_000, currency: 'USD', inflation: 0.03 })).toBe(200);
-    expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(false);
-    expect(await put({ plan: TYPED, savings: 20_000, currency: 'USD', inflation: 0.03, growth: 0.061 })).toBe(200);
-    expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(false);
+    expect(oSaved.isSavedPlan(await savedPlanStore.get(ctx))).toBe(true);
     // The plan's own rate sent as its growth isn't kept.
     expect(await put({ plan: TYPED, savings: 20_000, currency: 'USD', inflation: 0.03, growth: TYPED.realReturn })).toBe(200);
     const stored = await savedPlanStore.get(ctx);
@@ -485,15 +492,7 @@ describe('a download this release makes, as the release before’s restore reads
     ok(await plans('POST', { from: MAIN_ID, name: 'Stop at 52', plan: { ...TYPED, targetAge: 52 }, currency: 'USD' }));
     const keys = Object.keys(buildUserExport(await collectUserData({ ctx, userId: null }), new Date('2026-11-04T12:00:00.000Z')));
     expect(keys).toContain('fire-plans');
-    // But three: money in and out (lib/money-in-out-store.ts), the months
-    // imported for an investment account (lib/investment-months-store.ts)
-    // and the transactions imported for one (lib/investment-imports-store.ts)
-    // are newer than the release before, and every download has their parts,
-    // empty or not, so the release before refuses them all. Shipped without a
-    // reader a release ahead, since no rollback is planned
-    // (docs/operations.md). Moving the fixtures to this release's merge
-    // empties this list again.
-    expect(keys.filter((k) => !oParts.isKnownPart(k))).toEqual(['investment-imports', 'investment-months', 'money-in-out']);
+    expect(keys.filter((k) => !oParts.isKnownPart(k))).toEqual([]);
     expect(oParts.HEADER_PARTS.filter((p) => !keys.includes(p))).toEqual([]);
     const shared = Object.keys(SEAM).filter((name) => Object.hasOwn(oParts.SEAM, name));
     expect(shared.length).toBeGreaterThan(30);
