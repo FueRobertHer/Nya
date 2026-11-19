@@ -3395,6 +3395,9 @@ span.meter-fill {
    footer never squeezes it. */
 .sheet-footer-note {
   flex-basis: 100%;
+  /* A note that keeps its own class (.stale-note) keeps its color, not its
+     margin: the footer spaces it. */
+  margin: 0;
 }
 
 /* Where SheetFooter draws a level's buttons, after the sheet's own: laid out
