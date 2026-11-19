@@ -7,7 +7,7 @@ import { planOf } from '@/lib/fire/plan-v2';
 import * as oldFigures from './fixtures/before-d15/fire/plan-figures';
 import * as oldPath from './fixtures/before-d15/fire/path';
 import * as oldSaved from './fixtures/before-d15/fire/saved-plan';
-import { plannedAt } from '@/lib/fire/saved-plan';
+import { plannedAt, savedStop, yearsBetween } from '@/lib/fire/saved-plan';
 import { resolveSaved } from '@/lib/fire/plan-figures';
 import { figuresOf, genEvents, genMeasured, genPlan, ON, rand } from './plan-gen';
 
@@ -93,14 +93,21 @@ describe('with one-offs and income out of the walk, the release before’s figur
     }
   });
 
-  test('Progress’s line: a saved copy of each plan, placed and evaluated, is where the release before had it', () => {
+  test('Progress’s line: a saved copy of each plan, placed and evaluated, is where the release before had it up to its stop', () => {
     const days = ['2024-03-01', '2024-09-15', '2025-03-01', '2027-06-30', '2031-01-01'];
+    let after = 0;
     for (const [i, { p, m }] of cases.entries()) {
       const saved = { version: 1 as const, plan: p, savings: m.savings ?? 0, currency: 'USD', inflation: 0.03, day: '2024-03-01', savedAt: '2024-03-01T12:00:00.000Z', rev: `r${i}` };
       const start = { day: '2024-03-01', total: m.assets ?? 0 };
       const items = resolveSaved(saved, start, m.spending, { planInWalk: false });
-      for (const d of days) expect(plannedAt(saved, start, d, items)).toBe(oldSaved.plannedAt(saved, start, d));
+      // The release before went on saving past the stop (lib/fire/saved-plan.ts savedStop).
+      const stop = savedStop(saved, m.spending)?.years ?? Infinity;
+      for (const d of days) {
+        if (yearsBetween(saved.day, d) > stop) after++;
+        else expect(plannedAt(saved, start, d, items)).toBe(oldSaved.plannedAt(saved, start, d));
+      }
     }
+    expect(after).toBeLessThan(cases.length * days.length);
   });
 });
 
