@@ -3,7 +3,8 @@
 // The Timeline's item sheet (the tax plan's E2, timeline.md "The item
 // sheet"): one form for every kind of item, its fields from the kind as
 // lib/fire/items.ts FIELDS has them, and its Starts and Ends as rows that
-// open a level of their own (AnchorLevel). Add to your Timeline's templates
+// open a level of their own (AnchorLevel); a milestone has no Starts, only
+// what reaches it (Reached when). Add to your Timeline's templates
 // (TemplateList), and what is possible as it is typed (ItemPreview, its
 // words in components/plan-items.ts previewLines). The draft is strings while
 // typed and lives with the Timeline's sheet (components/PlanTimeline.tsx), so
@@ -11,20 +12,20 @@
 // person's own: nothing is filled in but the item's name, no field holds an
 // example, and nothing suggests what something "usually" costs.
 
-import type { Ref } from 'react';
+import type { ReactNode, Ref } from 'react';
 import RadioRows, { type RadioOption } from './RadioRows';
 import { Segmented } from './Segmented';
 import { Masked, NO_EXAMPLE } from './HideAmounts';
 import { Notice } from './TotalCaveats';
 import { chevron, RIGHT } from './MonthStepper';
-import { BREAK_HELP, ITEM_TEMPLATES, TEMPLATE_GROUPS, itemRuleText, templateHelp, type ItemTemplate, type PreviewLines } from './plan-items';
+import { BREAK_HELP, ITEM_TEMPLATES, TEMPLATE_GROUPS, itemRuleText, onMilestone, templateHelp, type ItemTemplate, type PreviewLines, type WorkedOut } from './plan-items';
 import { INCOME_KINDS, ONCE_KINDS, parseItem, withItem, type ItemKind, type PlanItem, type When } from '@/lib/fire/items';
 import { LIMITS } from '@/lib/fire/plan';
 import { parsePlanV2, type FirePlanV2 } from '@/lib/fire/plan-v2';
 
 type Money = (n: number) => string;
 
-export type StartPick = 'age' | 'stop' | 'fi' | 'item' | 'balance';
+export type StartPick = 'age' | 'stop' | 'fi' | 'milestone' | 'item' | 'balance';
 export type EndPick = StartPick | 'good' | 'years';
 
 /** A start or an end as typed: what is picked, and each pick's own fields,
@@ -37,6 +38,9 @@ export type WhenDraft = {
   before: boolean;
   item: string;
   edge: 'start' | 'end';
+  /** The milestone it is timed on: apart from `item`, so another pick never
+   *  carries a milestone into it. */
+  milestone: string;
   amount: string;
   /** For how many years. */
   span: string;
@@ -61,6 +65,8 @@ export type ItemDraft = {
   beforeTax: boolean;
   from: WhenDraft;
   until: WhenDraft;
+  /** A milestone's spending a year, to work an amount out from: never saved. */
+  workOut: string;
 };
 
 /** The draft as it would be saved, or why it can't be: `missing` when a
@@ -82,13 +88,13 @@ function Switch<T extends string>({ text, options, value, onChange, disabled }: 
   );
 }
 
-const EMPTY_WHEN: WhenDraft = { pick: 'age', age: '', years: '', before: false, item: '', edge: 'start', amount: '', span: '' };
+const EMPTY_WHEN: WhenDraft = { pick: 'age', age: '', years: '', before: false, item: '', edge: 'start', milestone: '', amount: '', span: '' };
 
 /** Kinds whose amount says whose it is. */
 const OWNED: readonly ItemKind[] = [...INCOME_KINDS, 'pay'];
 const REPEATS: readonly ItemKind[] = ['car', 'one-off'];
 
-function whenDraft(w: When | { years: number } | null): WhenDraft {
+function whenDraft(w: When | { years: number } | null, milestones: ReadonlySet<string>): WhenDraft {
   if (w === null) return { ...EMPTY_WHEN, pick: 'good' };
   if ('years' in w) return { ...EMPTY_WHEN, pick: 'years', span: String(w.years) };
   const a = w.anchor;
@@ -101,14 +107,16 @@ function whenDraft(w: When | { years: number } | null): WhenDraft {
     case 'fi':
       return { ...EMPTY_WHEN, ...off, pick: a.at };
     case 'item':
+      if (milestones.has(a.id)) return { ...EMPTY_WHEN, pick: 'milestone', milestone: a.id, years: w.offset === 0 ? '' : String(w.offset) };
       return { ...EMPTY_WHEN, ...off, pick: 'item', item: a.id, edge: a.edge };
     case 'balance':
       return { ...EMPTY_WHEN, ...off, pick: 'balance', amount: String(a.amount) };
   }
 }
 
-/** A new item's draft from its template, or one there as it is. */
-export function draftOf(x: PlanItem | null, t: ItemTemplate): ItemDraft {
+/** A new item's draft from its template, or one there as it is, with the
+ *  plan's milestones (by id) so one timed on a milestone opens on it. */
+export function draftOf(x: PlanItem | null, t: ItemTemplate, milestones: ReadonlySet<string> = new Set()): ItemDraft {
   if (x) {
     return {
       id: x.id,
@@ -125,8 +133,9 @@ export function draftOf(x: PlanItem | null, t: ItemTemplate): ItemDraft {
       inflationAdjusted: x.inflationAdjusted,
       owner: x.owner,
       beforeTax: x.beforeTax,
-      from: whenDraft(x.from),
-      until: ONCE_KINDS.includes(x.kind) || x.kind === 'loan-end' ? { ...EMPTY_WHEN, pick: 'good' } : whenDraft(x.until),
+      from: whenDraft(x.from, milestones),
+      until: ONCE_KINDS.includes(x.kind) || x.kind === 'loan-end' || x.kind === 'milestone' ? { ...EMPTY_WHEN, pick: 'good' } : whenDraft(x.until, milestones),
+      workOut: '',
     };
   }
   const end: EndPick = t.kind === 'part-time' ? 'age' : 'good';
@@ -146,22 +155,24 @@ export function draftOf(x: PlanItem | null, t: ItemTemplate): ItemDraft {
     owner: null,
     // Statements quote income before tax.
     beforeTax: INCOME_KINDS.includes(t.kind),
-    from: { ...EMPTY_WHEN },
+    // A milestone opens on an amount, the first of what reaches it.
+    from: { ...EMPTY_WHEN, pick: t.kind === 'milestone' ? 'balance' : 'age' },
     until: { ...EMPTY_WHEN, pick: end },
+    workOut: '',
   };
 }
 
 /** Whether the draft has an end to set: not for what happens once, a loan
  *  paid off (for good), or a home that changes no spending. */
 export function hasEnds(d: Pick<ItemDraft, 'kind' | 'yearly'>): boolean {
-  if (ONCE_KINDS.includes(d.kind) || d.kind === 'loan-end') return false;
+  if (ONCE_KINDS.includes(d.kind) || d.kind === 'loan-end' || d.kind === 'milestone') return false;
   if (d.kind === 'home') return (read(d.yearly) ?? 0) !== 0;
   return true;
 }
 
 /** Ends' choices for the kind: part-time work and a child always end. */
 export function endPicks(kind: ItemKind): EndPick[] {
-  const all: EndPick[] = ['age', 'stop', 'fi', 'item', 'balance', 'good', 'years'];
+  const all: EndPick[] = ['age', 'stop', 'fi', 'milestone', 'item', 'balance', 'good', 'years'];
   return kind === 'part-time' || kind === 'child' ? all.filter((p) => p !== 'good') : all;
 }
 
@@ -173,7 +184,7 @@ const need = (t: string, what: string) => {
   return n;
 };
 
-function whenOf(w: WhenDraft, what: 'starts' | 'stops'): When {
+function whenOf(w: WhenDraft, what: 'starts' | 'stops' | 'is reached'): When {
   const offset = (read(w.years) ?? 0) * (w.before ? -1 : 1);
   switch (w.pick) {
     case 'age':
@@ -181,11 +192,15 @@ function whenOf(w: WhenDraft, what: 'starts' | 'stops'): When {
     case 'stop':
     case 'fi':
       return { anchor: { at: w.pick }, offset };
+    case 'milestone':
+      if (!w.milestone) throw new Missing(`Pick the milestone it ${what} at.`);
+      return { anchor: { at: 'item', id: w.milestone, edge: 'start' }, offset: read(w.years) ?? 0 };
     case 'item':
       if (!w.item) throw new Missing(`Pick the item it ${what} by.`);
       return { anchor: { at: 'item', id: w.item, edge: w.edge }, offset };
     case 'balance':
-      return { anchor: { at: 'balance', amount: need(w.amount, 'the balance invested assets reach') }, offset: read(w.years) ?? 0 };
+      // A milestone is reached at its amount, with no years after.
+      return { anchor: { at: 'balance', amount: need(w.amount, what === 'is reached' ? 'the amount' : 'the balance invested assets reach') }, offset: what === 'is reached' ? 0 : (read(w.years) ?? 0) };
     default:
       throw new Missing(`Pick when it ${what}.`);
   }
@@ -219,6 +234,8 @@ function buildItem(d: ItemDraft): PlanItem {
     case 'pay':
       yearly = yearlyOf('the change a year');
       break;
+    case 'milestone':
+      break;
     default:
       yearly = need(d.yearly, 'the income a year');
   }
@@ -228,7 +245,7 @@ function buildItem(d: ItemDraft): PlanItem {
     id: d.id,
     label: d.label,
     kind: k,
-    from: whenOf(d.from, 'starts'),
+    from: whenOf(d.from, k === 'milestone' ? 'is reached' : 'starts'),
     until,
     once,
     yearly,
@@ -236,7 +253,8 @@ function buildItem(d: ItemDraft): PlanItem {
     every: repeat ? need(d.every, 'every how many years') : null,
     times: repeat ? need(d.times, 'how many in all') : k === 'car' ? 1 : null,
     inflationAdjusted: INCOME_KINDS.includes(k) ? d.inflationAdjusted : true,
-    owner: OWNED.includes(k) ? d.owner : null,
+    // A milestone says whose only for an age.
+    owner: OWNED.includes(k) || (k === 'milestone' && d.from.pick === 'age') ? d.owner : null,
     beforeTax: INCOME_KINDS.includes(k) ? d.beforeTax : false,
   };
 }
@@ -252,6 +270,8 @@ export function checkDraft(d: ItemDraft, plan: FirePlanV2): Checked {
     if (!(err instanceof Missing)) throw err;
     return { error: err.message, missing: true };
   }
+  // Years after a milestone, as after a balance: the sheet offers no before.
+  if ([built.from, built.until].some((w) => w !== null && !('years' in w) && onMilestone(w, plan) && w.offset < 0)) return { error: 'Years after a milestone can’t be below 0.' };
   const parsed = parseItem(built, 'This item');
   if ('error' in parsed) return { error: `${parsed.error.replace(/^This item: /, '').replace(/^./, (c) => c.toUpperCase())}.` };
   const next = withItem(plan, parsed.ok);
@@ -271,6 +291,11 @@ export function pickWords(w: WhenDraft, plan: FirePlanV2, money: Money, stop: nu
       return `${by('you stop') ?? 'When you stop'}${!plan.stopAtFi && stop !== null ? ` · at ${stop}, your stop age` : ''}`;
     case 'fi':
       return by('FI') ?? 'When you reach FI';
+    case 'milestone': {
+      const other = plan.items.find((x) => x.id === w.milestone);
+      if (!other) return 'At a milestone';
+      return n === 0 ? `At ${other.label}` : `${n} year${n === 1 ? '' : 's'} after ${other.label}`;
+    }
     case 'item': {
       const other = plan.items.find((x) => x.id === w.item);
       if (!other) return 'When another item starts or ends';
@@ -303,6 +328,7 @@ export function ItemFields({
   onEnds,
   startsRef,
   endsRef,
+  workedOut,
 }: {
   draft: ItemDraft;
   set: (next: Partial<ItemDraft>) => void;
@@ -318,6 +344,9 @@ export function ItemFields({
   onEnds: () => void;
   startsRef?: Ref<HTMLButtonElement>;
   endsRef?: Ref<HTMLButtonElement>;
+  /** A milestone's amount worked out from a spending a year, as the FI
+   *  number works its own out (components/plan-items.ts workedOutAmount). */
+  workedOut?: (spending: number) => WorkedOut | null;
 }) {
   const d = draft;
   const k = d.kind;
@@ -350,6 +379,7 @@ export function ItemFields({
     const now = choices?.find((c) => c.kind === kind);
     set({ kind, ...(was && now && d.label === was.name ? { label: now.name } : {}) });
   };
+  if (k === 'milestone') return <MilestoneFields draft={d} set={set} plan={plan} saving={saving} where={where} workedOut={workedOut} field={field} />;
   return (
     <>
       {choices && (
@@ -470,6 +500,7 @@ export function AnchorLevel({
   stop,
   fiAge,
   saving,
+  milestoneAt,
 }: {
   side: 'starts' | 'ends';
   draft: ItemDraft;
@@ -480,11 +511,16 @@ export function AnchorLevel({
   /** FI on the steady path with the draft in, as the answer rounds it. */
   fiAge: number | null;
   saving: boolean;
+  /** Where a milestone falls on the steady path: "76 on your steady path". */
+  milestoneAt?: (id: string) => string;
 }) {
   const key = side === 'starts' ? 'from' : 'until';
   const w = draft[key];
   const put = (next: Partial<WhenDraft>) => set({ [key]: { ...w, ...next } } as Partial<ItemDraft>);
-  const others = plan.items.filter((x) => x.id !== draft.id);
+  const others = plan.items.filter((x) => x.id !== draft.id && x.kind !== 'milestone');
+  const milestones = plan.items.filter((x) => x.id !== draft.id && x.kind === 'milestone');
+  const markWhere = (id: string) => milestoneAt?.(id) ?? '';
+  const mark = milestones.find((x) => x.id === w.milestone);
   const noStop = stop === null && !plan.stopAtFi;
   const field = (text: string, value: string, onChange: (v: string) => void, amount = false) => (
     <label className="field">
@@ -503,6 +539,28 @@ export function AnchorLevel({
     { value: 'age', name: 'At an age', detail: field(draft.owner === 'partner' ? 'Your partner’s age' : 'Age', w.age, (v) => put({ age: v })) },
     { value: 'stop', name: 'When you stop', note: sameAtFi ?? (stop !== null ? `At ${stop}` : undefined), disabled: noStop, detail: offset },
     { value: 'fi', name: 'When you reach FI', note: sameAtFi ?? (fiAge !== null ? `Around ${fiAge}` : undefined), detail: offset },
+    {
+      value: 'milestone',
+      name: 'At a milestone',
+      note: mark ? [mark.label, markWhere(mark.id)].filter(Boolean).join(', ') : undefined,
+      disabled: milestones.length === 0,
+      detail: (
+        <>
+          <label className="field">
+            Milestone
+            <select value={w.milestone} onChange={(e) => put({ milestone: e.target.value })} disabled={saving}>
+              <option value="">Pick one</option>
+              {milestones.map((x) => (
+                <option key={x.id} value={x.id}>
+                  {[x.label, markWhere(x.id)].filter(Boolean).join(' · ')}
+                </option>
+              ))}
+            </select>
+          </label>
+          {field('Years after', w.years, (v) => put({ years: v, before: false }))}
+        </>
+      ),
+    },
     {
       value: 'item',
       name: 'When another item starts or ends',
@@ -540,8 +598,8 @@ export function AnchorLevel({
   if (side === 'ends') {
     options.push({ value: 'good', name: 'For good' }, { value: 'years', name: 'After some years', detail: field('For how many years', w.span, (v) => put({ span: v })) });
   }
-  const picks = side === 'ends' ? endPicks(draft.kind) : (['age', 'stop', 'fi', 'item', 'balance'] as EndPick[]);
-  const reasons = [noStop && 'Set when you stop in Household first.', others.length === 0 && 'To time it by another item, add that one first.'].filter(Boolean).join(' ');
+  const picks = side === 'ends' ? endPicks(draft.kind) : (['age', 'stop', 'fi', 'milestone', 'item', 'balance'] as EndPick[]);
+  const reasons = [noStop && 'Set when you stop in Household first.', milestones.length === 0 && 'To time it at a milestone, add one first.', others.length === 0 && 'To time it by another item, add that one first.'].filter(Boolean).join(' ');
   return (
     <RadioRows
       legend={side === 'starts' ? 'It starts' : 'It ends'}
@@ -552,6 +610,85 @@ export function AnchorLevel({
       disabled={saving}
       helper={reasons || undefined}
     />
+  );
+}
+
+/** A milestone's fields: its name and what reaches it, an amount (which a
+ *  spending a year can work out, once) or an age. */
+function MilestoneFields({
+  draft: d,
+  set,
+  plan,
+  saving,
+  where,
+  workedOut,
+  field,
+}: {
+  draft: ItemDraft;
+  set: (next: Partial<ItemDraft>) => void;
+  plan: FirePlanV2;
+  saving: boolean;
+  where: string;
+  workedOut?: (spending: number) => WorkedOut | null;
+  field: (text: string, value: string, onChange: (v: string) => void, amount?: boolean) => ReactNode;
+}) {
+  const put = (next: Partial<WhenDraft>) => set({ from: { ...d.from, ...next } });
+  const spending = read(d.workOut);
+  const worked = spending !== null && spending > 0 && workedOut ? workedOut(spending) : null;
+  const partner = plan.partnerAge !== null || d.owner === 'partner';
+  const options: RadioOption[] = [
+    {
+      value: 'balance',
+      name: 'Invested assets reach an amount',
+      note: 'In today’s dollars',
+      detail: (
+        <>
+          {field('Amount', d.from.amount, (v) => put({ amount: v }), true)}
+          <div className="stack tight">
+            <p className="section-label">Work it out from a spending</p>
+            {field('Spending a year', d.workOut, (v) => set({ workOut: v }), true)}
+            {worked && (
+              <>
+                <p className="helper">
+                  <Masked>{worked.line}</Masked>
+                </p>
+                <div className="btn-row">
+                  <button type="button" className="btn ghost" onClick={() => put({ amount: String(worked.amount) })} disabled={saving}>
+                    Use it
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+          <p className="helper">Worked out once: the amount stays as it is if your plan changes.</p>
+        </>
+      ),
+    },
+    {
+      value: 'age',
+      name: 'An age',
+      note: 'One point to time several items on, so they move together',
+      detail: (
+        <>
+          {partner && <Switch text="Whose" options={[['you', 'You'], ['partner', 'Your partner']] as const} value={d.owner === 'partner' ? 'partner' : 'you'} onChange={(v) => set({ owner: v })} disabled={saving} />}
+          {field(d.owner === 'partner' ? 'Your partner’s age' : 'Age', d.from.age, (v) => put({ age: v }))}
+        </>
+      ),
+    },
+  ];
+  return (
+    <>
+      <p className="helper">
+        {templateHelp('milestone')} Your own figures: Nya suggests none. {where}
+      </p>
+      <div className="sheet-form">
+        <label className="field">
+          Name
+          <input value={d.label} onChange={(e) => set({ label: e.target.value })} maxLength={LIMITS.label} disabled={saving} />
+        </label>
+      </div>
+      <RadioRows legend="Reached when" name="milestone-reached" options={options} value={d.from.pick} onChange={(v) => put({ pick: v as EndPick })} disabled={saving} />
+    </>
   );
 }
 
@@ -601,7 +738,7 @@ export function ItemPreview({ lines, id }: { lines: PreviewLines; id: string }) 
   );
 }
 
-/** Add to your Timeline: the templates in their three groups. */
+/** Add to your Timeline: the templates in their four groups. */
 export function TemplateList({ onPick, disabled, refFor }: { onPick: (t: ItemTemplate) => void; disabled: boolean; refFor?: (id: string) => Ref<HTMLButtonElement> | undefined }) {
   return (
     <>

@@ -558,8 +558,9 @@ describe('seeding', () => {
     // What working tax out reads is said, so Preview offers it and then shows everything.
     expect(mine!.tax).toMatchObject({ state: 'NV', stateRate: 0, health: { beforeMedicare: { kind: 'aca', adult: 11_000, quotedAge: 50, child: null } } });
     expect(plan.items.map((x) => [x.kind, x.beforeTax, x.from])[0]).toEqual(['social-security', true, { anchor: { at: 'age', age: 67 }, offset: 0 }]);
-    // Then the child and the two of them working part-time after the stop.
-    expect(plan.items.map((x) => x.id)).toEqual(['social-security', 'maya', 'sam-consulting', 'jordan-tutoring']);
+    // Then the child, the two of them working part-time after the stop, and
+    // two milestones (Travel more, timed on one, is in a copy).
+    expect(plan.items.map((x) => x.id)).toEqual(['social-security', 'maya', 'sam-consulting', 'jordan-tutoring', 'lean-fi', 'travel-fund']);
     // Version 2, with the tax facts the profile holds: a partner's Roth, a basis
     // typed for the joint brokerage, and the 529 left out, to show that group.
     expect(plan.partnerAge).toBe(37);
@@ -851,7 +852,7 @@ describe('what a seed sets up', () => {
     expect((await lifecycleStore.get(TEST_CTX, idOf('4402')))!.lifecycle).toEqual({ state: 'closed', on: x.ended![0].on, note: 'Closed once the family card came' });
     expect(await moneyInOutStore.get(TEST_CTX, idOf('9013'))).toMatchObject({ in: 104_000, out: 8_500 });
     const copies = [...(await firePlansStore.getAll(TEST_CTX)).values()].map((e) => e.name).sort();
-    expect(copies).toEqual(['A bigger home', 'First plan', 'Jordan part-time at 48']);
+    expect(copies).toEqual(['A bigger home', 'First plan', 'Jordan part-time at 48', 'Travel more at Travel fund']);
   });
 
   test('a row whose bank’s history hasn’t all come is passed over, and the report says so', async () => {

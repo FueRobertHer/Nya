@@ -95,12 +95,13 @@ describe('what moved the walk', () => {
 });
 
 describe('templates', () => {
-  test('7 in three groups, each with a line on what it covers, four as chips', () => {
-    expect(ITEM_TEMPLATES).toHaveLength(7);
+  test('8 in four groups, each with a line on what it covers, four as chips', () => {
+    expect(ITEM_TEMPLATES).toHaveLength(8);
     expect(TEMPLATE_GROUPS.map((g) => [g.name, ITEM_TEMPLATES.filter((t) => t.group === g.id).map((t) => t.label)])).toEqual([
       ['Money out', ['A cost', 'A change in spending', 'Buy a home']],
       ['Money in', ['Income', 'A windfall']],
       ['Work', ['A change in pay', 'Part-time work']],
+      ['Milestones', ['A milestone']],
     ]);
     for (const t of ITEM_TEMPLATES) expect([t.id, t.sub.length > 0]).toEqual([t.id, true]);
     expect(CHIP_TEMPLATES.map((t) => t.label)).toEqual(['Income', 'Part-time work', 'Buy a home', 'A cost']);
@@ -131,6 +132,7 @@ describe('templates', () => {
       windfall: 'windfall',
       pay: 'pay',
       'part-time': 'part-time',
+      milestone: 'milestone',
     };
     for (const kind of ITEM_KINDS) expect([kind, templateOf(mk('x', kind, at(45))).id]).toEqual([kind, shown[kind]]);
     expect(templateOf(mk('b', 'pay', at(45), { yearly: -20_000, until: { years: 1 } })).id).toBe('pay');
@@ -430,5 +432,60 @@ describe('what is possible', () => {
     const pay = mk('pay', 'pay', at(45), { yearly: -20_000 });
     const p = previewLines({ draft: { ok: pay }, before: figures({}, ON), after: figures({ items: [pay] }, ON), without: null, where: 'plan', money, startAge: 50, most: null, savings: 50_000, runsOutAt: null });
     expect(p.rows).toContainEqual({ key: 'You’d save', value: '$30,000 a year, not $50,000' });
+  });
+});
+
+describe('a milestone in words', () => {
+  const lean = mk('lean', 'milestone', { anchor: { at: 'balance', amount: 1_265_000 }, offset: 0 }, { label: 'Lean FI' });
+  const fifty = mk('fifty', 'milestone', at(50), { label: 'At fifty' });
+  const travel = mk('travel', 'spending', { anchor: { at: 'item', id: 'lean', edge: 'start' }, offset: 0 }, { yearly: 5_000, label: 'Travel more' });
+  const plan = { ...base, items: [lean, fifty, travel] };
+
+  test('it is reached, never starts, and has no amount, end or sentence of money', () => {
+    expect(rowSub(lean, plan, money, { start: 47, inWalk: true })).toBe('Invested assets reach $1,265,000');
+    expect(rowSub(fifty, plan, money, { start: 50, inWalk: true })).toBe('At 50');
+    expect([itemAmount(lean), endWords(lean, plan, money), reachesStart(lean, { start: 47, end: null }, 40)]).toEqual([null, null, false]);
+    expect(itemSentence(lean, plan, money)).toBe('when invested assets reach $1,265,000');
+    expect(itemSentence(fifty, plan, money)).toBe('at 50');
+    expect(templateOf(lean).id).toBe('milestone');
+    expect(templateHelp('milestone')).toContain('It changes no figure');
+  });
+
+  test('what is timed on it says it by name, as a start and in a copy’s name', () => {
+    expect(whenWords(travel.from, travel, plan, money)).toBe('At Lean FI');
+    expect(rowSub(travel, plan, money, { start: 47, inWalk: false })).toBe('Starts at Lean FI · for good');
+    expect(whenWords({ anchor: { at: 'item', id: 'lean', edge: 'start' }, offset: 2 }, travel, plan, money)).toBe('2 years after Lean FI');
+    const spending = ITEM_TEMPLATES.find((t) => t.id === 'spending')!;
+    expect(copyNameFor(spending, { ...travel, label: spending.name }, plan, [])).toBe('A change in spending at Lean FI');
+  });
+
+  test('a milestone reached keeps what waits on something else under Not placed yet, saying what', () => {
+    const m = mk('m', 'milestone', { anchor: { at: 'balance', amount: 600_000 }, offset: 0 }, { label: 'M' });
+    const y = mk('y', 'spending', { anchor: { at: 'item', id: 'm', edge: 'start' }, offset: 0 }, { yearly: 1_000, label: 'Y', until: { anchor: { at: 'balance', amount: 900_000_000 }, offset: 0 } });
+    const x = mk('x', 'one-off', { anchor: { at: 'item', id: 'y', edge: 'end' }, offset: 0 }, { once: 1_000, label: 'X' });
+    const f = figures({ items: [m, y, x] });
+    const { notReached, unplaced } = timelinePoints(f.plan, f, money);
+    expect([notReached, unplaced]).toEqual([[], [2]]);
+    expect(unplacedText(x, f.resolution.why[2], f.plan)).toBe('Waits on Y, which never ends on your steady path.');
+  });
+
+  test('a point names a milestone’s age once, after any other balance that year', () => {
+    const at44 = mk('b', 'spending', { anchor: { at: 'balance', amount: 800_000 }, offset: 0 }, { yearly: 1 });
+    const m = mk('m', 'milestone', { anchor: { at: 'balance', amount: 810_000 }, offset: 0 }, { label: 'M' });
+    const f = figures({ items: [at44, m] });
+    const [b, mark] = f.resolution.ages as { start: number }[];
+    expect(mark.start).toBe(b.start);
+    const labels = timelinePoints(f.plan, f, money).points.map((p) => p.label);
+    expect(labels).toContain(`Invested assets reach $800,000 · ${b.start} on your steady path`);
+    const alone = figures({ items: [m] });
+    expect(timelinePoints(alone.plan, alone, money).points.map((p) => p.label)).toContain(`${mark.start} on your steady path`);
+  });
+
+  test('one never reached: its followers wait on it, under its own point, last', () => {
+    const far = { ...lean, from: { anchor: { at: 'balance' as const, amount: 900_000_000 }, offset: 0 } };
+    const f = figures({ items: [far, travel] });
+    expect(unplacedText(travel, f.resolution.why[1], f.plan)).toBe('Waits on Lean FI, which isn’t reached on your steady path.');
+    const { notReached, unplaced } = timelinePoints(f.plan, f, money);
+    expect([notReached.map((x) => [x.label, x.items]), unplaced]).toEqual([[['Lean FI · not by 95', [0, 1]]], []]);
   });
 });

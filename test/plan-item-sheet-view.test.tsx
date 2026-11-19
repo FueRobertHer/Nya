@@ -48,15 +48,22 @@ describe('each template', () => {
     'part-time': ['Name', 'A year', 'The take-home it replaces, a year'],
   };
 
-  test('7 of them, each with its own helper, its fields, its name filled in and nothing else, and whether it has an end', async () => {
+  test('8 of them, each with its own helper, its fields, its name filled in and nothing else, and whether it has an end', async () => {
     await seedPlan({ ...PLAN, items: [ROOF] });
     const tab = await render();
-    expect(ITEM_TEMPLATES.length).toBe(7);
+    expect(ITEM_TEMPLATES.length).toBe(8);
     for (const t of ITEM_TEMPLATES) {
       const sheet = await addTemplate(tab, t.label);
       expect([t.id, sheet.getAttribute('aria-label')]).toEqual([t.id, t.label]);
       expect(sheet.textContent).toContain((templateHelp(t.id) ?? templateHelp(t.kind))!);
       expect(sheet.textContent).toContain('Your own figures: Nya suggests none.');
+      if (t.id === 'milestone') {
+        // Reached when takes the place of Starts and Ends (its own tests below).
+        expect([labelsIn(sheet), tab.sheetRow('Starts') === null, tab.sheetRow('Ends') === null, field(sheet, 'Name')?.value]).toEqual([['Name', 'Amount', 'Spending a year'], true, true, t.name]);
+        await press(sheet.findAll((e) => e.getAttribute('aria-label') === 'Close')[0]);
+        await settle(400);
+        continue;
+      }
       // The age field under Starts follows them.
       expect([t.id, labelsIn(sheet)]).toEqual([t.id, [...FIELDS[t.id], 'Starts at age']]);
       expect(field(sheet, 'Name')?.value).toBe(t.name);
@@ -605,6 +612,111 @@ describe('the Honesty cautions', () => {
     expect(caution).toContain('In your FI date after 0% tax, your plan’s rate on withdrawals. It may keep less: give its take-home for a closer date');
     await tab.unmount();
   }, 20_000);
+});
+
+describe('a milestone', () => {
+  const LEAN = mk('lean', 'milestone', at(50), { label: 'Lean FI' });
+  const radioOn = (within: Parameters<typeof choice>[0], words: string) => choice(within, words)?.findAll((e) => e.tagName === 'INPUT')[0].checked;
+
+  test('an amount: worked out from a spending with Use it, saved with no money, and no Starts row or Try it in a copy', async () => {
+    await seedPlan({ ...PLAN, items: [ROOF] });
+    const tab = await render();
+    const sheet = await addTemplate(tab, 'A milestone');
+    expect(radioOn(sheet, 'Invested assets reach an amount')).toBe(true);
+    expect([tab.sheetRow('Starts'), button(sheet, 'Try it in a copy')]).toEqual([null, null]);
+    expect(sheet.textContent).toContain('Worked out once: the amount stays as it is if your plan changes.');
+    expect(button(sheet, 'Use it')).toBeNull();
+    expect(sheet.textContent).toContain('Fill in the figures to see where it falls.');
+    await fill(sheet, 'Spending a year', '30000');
+    await rest();
+    expect(tab.dialog()!.textContent).toMatch(/At your [\d.]+% withdrawal rate: about \$[\d,]+,000\./);
+    await press(button(tab.dialog(), 'Use it'));
+    const amount = Number(field(tab.dialog()!, 'Amount')?.value);
+    expect(amount % 1000).toBe(0);
+    expect(amount).toBeGreaterThan(30_000 * 20);
+    await fill(tab.dialog()!, 'Name', 'Lean FI');
+    await rest();
+    expect(tab.dialog()!.textContent).toContain('To time an item on it, pick Lean FI under that item’s Starts or Ends.');
+    await press(button(tab.dialog(), 'Add to your plan'));
+    await settle(400);
+    const added = (await stored()).byName['First plan'].plan.items.find((x: PlanItem) => x.label === 'Lean FI');
+    expect(added).toMatchObject({ kind: 'milestone', from: { anchor: { at: 'balance', amount }, offset: 0 }, until: null, once: null, yearly: null, owner: null });
+    await tab.unmount();
+  }, 30_000);
+
+  test('an age, with whose when there is a partner', async () => {
+    await seedPlan({ ...PLAN, partnerAge: 38, items: [ROOF] });
+    const tab = await render();
+    await addTemplate(tab, 'A milestone');
+    await pick(tab.dialog()!, 'An age');
+    await pick(tab.dialog()!, 'Your partner');
+    await fill(tab.dialog()!, 'Your partner’s age', '60');
+    await fill(tab.dialog()!, 'Name', 'Partner at 60');
+    await rest();
+    expect(tab.dialog()!.textContent).toContain('Items timed on it move together when you change the age.');
+    await press(button(tab.dialog(), 'Add to your plan'));
+    await settle(400);
+    const added = (await stored()).byName['First plan'].plan.items.find((x: PlanItem) => x.label === 'Partner at 60');
+    expect(added).toMatchObject({ kind: 'milestone', from: { anchor: { at: 'age', age: 60 }, offset: 0 }, owner: 'partner' });
+    await tab.unmount();
+  }, 30_000);
+
+  test('a saved one offers Save and Remove, never Try it in a copy', async () => {
+    await seedPlan({ ...PLAN, items: [ROOF, LEAN] });
+    const tab = await render();
+    await press(tab.row('Milestone: Lean FI'));
+    const sheet = tab.dialog()!;
+    expect(radioOn(sheet, 'An age')).toBe(true);
+    await fill(sheet, 'Age', '51');
+    await rest();
+    expect([button(tab.dialog(), 'Save') !== null, button(tab.dialog(), 'Try it in a copy'), tab.dialog()!.textContent.includes('Try this change in a copy')]).toEqual([true, null, false]);
+    expect(removeRow(tab.dialog()!)).toBeDefined();
+    await tab.unmount();
+  }, 20_000);
+
+  test('a milestone at your partner’s age says whose age in Starts', async () => {
+    await seedPlan({ ...PLAN, partnerAge: 37, items: [ROOF, mk('theirs', 'milestone', at(55), { label: 'Partner at 55', owner: 'partner' })] });
+    const tab = await render();
+    await addTemplate(tab, 'A cost');
+    await press(tab.sheetRow('Starts'));
+    const level = tab.dialog()!;
+    await pick(level, 'At a milestone');
+    const select = level.findAll((e) => e.tagName === 'LABEL' && e.textContent.startsWith('Milestone'))[0].findAll((e) => e.tagName === 'SELECT')[0];
+    expect(select.findAll((e) => e.tagName === 'OPTION').map((e) => e.textContent)).toEqual(['Pick one', 'Partner at 55 · at your partner’s 55']);
+    await tab.unmount();
+  }, 20_000);
+
+  test('At a milestone in Starts and Ends, with where each falls; a follower reopens on it; and milestones are not another item', async () => {
+    await seedPlan({ ...PLAN, items: [ROOF, LEAN] });
+    const tab = await render();
+    const sheet = await addTemplate(tab, 'A change in spending');
+    await fill(sheet, 'By, a year', '4000');
+    await fill(sheet, 'Name', 'Travel more');
+    await press(tab.sheetRow('Starts'));
+    let level = tab.dialog()!;
+    await pick(level, 'When another item starts or ends');
+    expect(level.findAll((e) => e.tagName === 'OPTION').map((e) => e.getAttribute('value'))).not.toContain('lean');
+    await pick(level, 'At a milestone');
+    const select = level.findAll((e) => e.tagName === 'LABEL' && e.textContent.startsWith('Milestone'))[0].findAll((e) => e.tagName === 'SELECT')[0];
+    expect(select.findAll((e) => e.tagName === 'OPTION').map((e) => e.textContent)).toEqual(['Pick one', 'Lean FI · at 50']);
+    await page.act(async () => page.type(select, 'lean'));
+    await settle();
+    await fill(level, 'Years after', '1');
+    await press(button(level, 'Done'));
+    expect(tab.dialog()!.textContent).toContain('1 year after Lean FI');
+    await press(tab.sheetRow('Ends'));
+    expect(choice(tab.dialog()!, 'At a milestone')).not.toBeNull();
+    await press(button(tab.dialog(), 'Done'));
+    await press(button(tab.dialog(), 'Add to your plan'));
+    await settle(400);
+    const added = (await stored()).byName['First plan'].plan.items.find((x: PlanItem) => x.label === 'Travel more');
+    expect(added?.from).toEqual({ anchor: { at: 'item', id: 'lean', edge: 'start' }, offset: 1 });
+    await press(tab.row('Travel more'));
+    await press(tab.sheetRow('Starts'));
+    level = tab.dialog()!;
+    expect(radioOn(level, 'At a milestone')).toBe(true);
+    await tab.unmount();
+  }, 30_000);
 });
 
 describe('Try it in a copy', () => {

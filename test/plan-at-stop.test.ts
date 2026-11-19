@@ -173,6 +173,23 @@ describe('the oracle: on a market that never changes, each run is the steady pat
     const run = balancesOf(sim(f), REAL);
     for (let y = 0; y < steady.balances.length; y++) expect(run[y]).toBeCloseTo(steady.balances[y], 5);
   });
+
+  test('a milestone after the stop: its trigger waits per run with no flow of its own, and what is timed on it waits on that trigger', () => {
+    const lean = onBalance('lean', { kind: 'milestone', owner: null }, 1_250_000);
+    const alone = figures(plan({ items: [lean] }));
+    // On the steady path it is reached after the stop, as an item on that balance would be.
+    expect(alone.resolution.ages[0]!.start).toBeGreaterThan(50);
+    expect([alone.resolution.perRun?.triggers, sim(alone).conditional]).toEqual([[1_250_000], { triggers: [1_250_000], items: [] }]);
+    const travel: PlanItem = { ...onBalance('travel', { kind: 'spending', yearly: 5_000 }, 0), from: { anchor: { at: 'item', id: 'lean', edge: 'start' }, offset: 1 } };
+    const p = plan({ items: [lean, travel] });
+    const f = figures(p);
+    expect(f.resolution.perRun?.triggers).toEqual([1_250_000]);
+    expect(f.resolution.perRun?.edges[1]?.start).toEqual({ trigger: 0, offset: 1 });
+    expect(sim(f).conditional?.items.map((x) => x.start)).toEqual([{ trigger: 0, offset: 1 }]);
+    const steady = steadyRun(sim(figures(asFixed(p, f))), REAL);
+    const run = balancesOf(sim(f), REAL);
+    for (let y = 0; y < steady.balances.length; y++) expect(run[y]).toBeCloseTo(steady.balances[y], 5);
+  });
 });
 
 describe('what stays as the steady path has it', () => {

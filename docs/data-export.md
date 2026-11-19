@@ -704,7 +704,7 @@ Only what you chose or typed: nothing Nya measures, and no result. A plan saved 
 | `stocksPct`, `bondsPct`, `rebalance`, `fee`, `floor`, `ceiling` | The mix in whole percents (cash is the rest), how often it is rebalanced, the fund fee, and the floor and ceiling rule's bounds. |
 | `income[]` | Version 1: `id`, `label`, `amount` a year after tax, `fromAge`, `inflationAdjusted`. |
 | `expenses[]` | Version 1: `id`, `label`, `amount`, `atAge`. |
-| `items[]` | Version 2, in place of `income[]` and `expenses[]`: each income, one-off and life event, up to 25: `id`, `label`, `kind`, when it starts and stops, its amounts once and a year, how often it repeats, and whose it is. |
+| `items[]` | Version 2, in place of `income[]` and `expenses[]`: each income, one-off, life event and milestone, up to 25: `id`, `label`, `kind`, when it starts and stops, its amounts once and a year, how often it repeats, and whose it is. A milestone (`kind` `milestone`) holds no amounts and no end: it is reached when invested assets reach an amount or at an age, and other items can start or end on it. |
 | `partnerAge`, `stopAtFi`, `fiNumber` | Version 2: your partner's age, or `null`; whether you stop when you reach FI; and your own FI number, or `null` to work it out. |
 | `lastsIn` | Version 2, only while it is set: your FI date is the earliest stop whose money lasts in at least this share of Will it last?'s starts (`0.8`, `0.9` or `0.95`). Absent, your FI date is when your invested assets reach the FI number. |
 | `planFunding[]` | How you said each workplace plan is paid into: `account_id`, and `paidFrom`, `payroll` or `bank`. A plan not listed is not set. |

@@ -22,6 +22,11 @@
 //   - With D9 (a plan's `lastsIn`), FI is the earliest stop that lasts, found by
 //     simulation (lib/fire/earliest.ts), and placed here as given (resolveAt):
 //     the edges on FI at it, and under the stop at FI the stop too.
+//   - A MILESTONE (an item with no money) on a balance fires as any balance
+//     anchor does. One that nothing is timed on moves nothing, so the passes
+//     and the searches leave it out (D9's candidates too: withoutIdle), and
+//     one path at the answer places it: that path is the same up to its
+//     crossing whenever it fired.
 //
 // With D11's start (Will it last? from what you'd have at your stop age), a
 // balance anchor not fired by then fires per run instead, and an edge on one
@@ -192,13 +197,36 @@ function balanceAnchors(plan: Plan): { node: string; amount: number; offset: num
   return out;
 }
 
+/** The start of each milestone on a balance that nothing is timed on, by node. */
+function unwatched(plan: Plan): Set<string> {
+  const timed = new Set<string>();
+  for (const x of plan.items) {
+    for (const w of x.until !== null && !('years' in x.until) ? [x.from, x.until] : [x.from]) if (w.anchor.at === 'item') timed.add(w.anchor.id);
+  }
+  const out = new Set<string>();
+  plan.items.forEach((x, i) => {
+    if (x.kind === 'milestone' && x.from.anchor.at === 'balance' && !timed.has(x.id)) out.add(`${i}:start`);
+  });
+  return out;
+}
+
+/** The plan's items without the milestones on a balance that nothing is
+ *  timed on: what D9's search runs each candidate with (lib/fire/earliest.ts),
+ *  since they move no run, so no candidate builds a path to place one. */
+export function withoutIdle(plan: Plan): PlanItem[] {
+  const idle = unwatched(plan);
+  return plan.items.filter((_, i) => !idle.has(`${i}:start`));
+}
+
 /** Every edge at a stop and FI, the balance anchors fired one crossing at
- *  a time on the path the ages so far make. */
-function settle(plan: Plan, world: SteadyWorld, stop: number | null, fi: number | null) {
-  const pending = balanceAnchors(plan);
+ *  a time on the path the ages so far make; a milestone nothing is timed on
+ *  only with `final`, from one path at the end. */
+function settle(plan: Plan, world: SteadyWorld, stop: number | null, fi: number | null, final: boolean): Settled {
+  const idle = unwatched(plan);
+  const pending = balanceAnchors(plan).filter((m) => !idle.has(m.node));
   const fired = new Map<string, number>();
   let placed = place(plan, stop, fi, fired);
-  if (pending.length === 0 || plan.age === null) return { ...placed, fired };
+  if (pending.length === 0 || plan.age === null) return final ? finish(plan, world, { ...placed, fired }, stop, fi) : { ...placed, fired };
   const today = plan.age;
   for (let pass = 0; pass < pending.length; pass++) {
     const balances = world.path(placed.ages, stop);
@@ -218,14 +246,32 @@ function settle(plan: Plan, world: SteadyWorld, stop: number | null, fi: number 
     }
     placed = place(plan, stop, fi, fired);
   }
-  return { ...placed, fired };
+  return final ? finish(plan, world, { ...placed, fired }, stop, fi) : { ...placed, fired };
+}
+
+type Settled = ReturnType<typeof place> & { fired: Map<string, number> };
+
+/** The milestones nothing is timed on, placed on one path at the answer:
+ *  they move nothing, so the path is the one every other edge settled on. */
+function finish(plan: Plan, world: SteadyWorld, r: Settled, stop: number | null, fi: number | null): Settled {
+  const idle = unwatched(plan);
+  if (idle.size === 0 || plan.age === null) return r;
+  const balances = world.path(r.ages, stop);
+  if (!balances) return r;
+  const fired = new Map(r.fired);
+  for (const m of balanceAnchors(plan)) {
+    if (!idle.has(m.node)) continue;
+    const k = balances.findIndex((b) => b >= m.amount);
+    if (k >= 0) fired.set(m.node, plan.age + k);
+  }
+  return { ...place(plan, stop, fi, fired), fired };
 }
 
 /** With D11's start, the edges that wait on a run's own balance: on a balance
  *  anchor the steady path hasn't fired by the time Will it last? starts. A
  *  run's first balance is the steady path's there, so none of these fires before
  *  its second year. Nothing for any other start. */
-function perRunOf(plan: Plan, r: ReturnType<typeof settle>, stop: number | null): Pick<Resolution, 'perRun'> {
+function perRunOf(plan: Plan, r: Settled, stop: number | null): Pick<Resolution, 'perRun'> {
   if (plan.start !== 'at-stop' || stop === null || plan.age === null) return {};
   const by = Math.max(stop, plan.age);
   const amounts = new Map(balanceAnchors(plan).map((m) => [m.node, m.amount]));
@@ -261,7 +307,7 @@ function perRunOf(plan: Plan, r: ReturnType<typeof settle>, stop: number | null)
  *  placed. Nothing is searched for. */
 export function resolveAt(plan: Plan, world: SteadyWorld, k: number | null): Resolution {
   const stop = plan.stopAtFi ? k : stopOf(plan);
-  const r = settle(plan, world, stop, k);
+  const r = settle(plan, world, stop, k, true);
   return { ages: r.ages, why: r.why, stop, fi: k, searched: 'lasts', ...perRunOf(plan, r, stop) };
 }
 
@@ -271,7 +317,7 @@ export function resolveItems(plan: Plan, world: SteadyWorld): Resolution {
   const fixedStop = stopOf(plan);
   const onFi = anchoredOn(plan, 'fi');
   if (!plan.stopAtFi && !onFi) {
-    const r = settle(plan, world, fixedStop, null);
+    const r = settle(plan, world, fixedStop, null, true);
     return { ages: r.ages, why: r.why, stop: fixedStop, fi: null, searched: 'none', ...perRunOf(plan, r, fixedStop) };
   }
   const today = plan.age;
@@ -279,14 +325,17 @@ export function resolveItems(plan: Plan, world: SteadyWorld): Resolution {
   if (today !== null) {
     for (let k = Math.ceil(today); k <= Math.max(PLAN_TO_AGE, Math.ceil(today)); k++) {
       const stop = plan.stopAtFi ? k : fixedStop;
-      const r = settle(plan, world, stop, k);
+      const r = settle(plan, world, stop, k, false);
       // What starts on FI after k comes after FI: left out of the walk that
       // dates it, so a cost after FI can't leave it with no answer.
       const skip = new Set([...r.onFi].filter((i) => (r.ages[i] as { start: number }).start > k));
       const fiAge = world.fiAge(r.ages, stop, { through: plan.stopAtFi ? k : null, skip });
-      if (fiAge !== null && Math.round(fiAge) <= k) return { ages: r.ages, why: r.why, stop, fi: k, searched, ...perRunOf(plan, r, stop) };
+      if (fiAge !== null && Math.round(fiAge) <= k) {
+        const done = finish(plan, world, r, stop, k);
+        return { ages: done.ages, why: done.why, stop, fi: k, searched, ...perRunOf(plan, done, stop) };
+      }
     }
   }
-  const r = settle(plan, world, fixedStop, null);
+  const r = settle(plan, world, fixedStop, null, true);
   return { ages: r.ages, why: r.why, stop: fixedStop, fi: null, searched, ...perRunOf(plan, r, fixedStop) };
 }

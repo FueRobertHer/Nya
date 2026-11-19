@@ -789,7 +789,8 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
 }
 
 /* A row's leading icon, for a status (Home's Needs attention): a tinted
-   square whose shape says the level too, never color alone. */
+   square whose shape says the level too, never color alone. A Timeline
+   milestone's flag uses it neutral, with no level. */
 .list-row-icon {
   display: grid;
   place-items: center;

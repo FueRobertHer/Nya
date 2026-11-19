@@ -26,7 +26,7 @@ import type { FirePlan } from '../fire/plan';
 import type { BeforeMedicare } from '../fire/tax-choices';
 import type { Filing, StateCode } from '../fire/tax/law/types';
 import type { DEMO_NAMES } from '../demo';
-import { atAge, atStop, planItem, ref, type SeedExtras } from './extras';
+import { atAge, atBalance, atStop, planItem, ref, type SeedExtras } from './extras';
 
 export type DemoName = (typeof DEMO_NAMES)[number];
 
@@ -746,6 +746,9 @@ function sam(today: string): DemoProfile {
           planItem({ id: 'maya', label: 'Maya', kind: 'child', from: atAge(38), until: { years: 14 }, yearly: 9_000 }),
           planItem({ id: 'sam-consulting', label: 'Sam consulting', kind: 'part-time', owner: 'you', from: atStop(), until: { years: 5 }, yearly: 30_000, replaces: 0 }),
           planItem({ id: 'jordan-tutoring', label: 'Jordan tutoring', kind: 'part-time', owner: 'partner', from: atStop(1), until: { years: 5 }, yearly: 18_000, replaces: 0 }),
+          // Two milestones, which move no figure: one to watch, one to time on.
+          planItem({ id: 'lean-fi', label: 'Lean FI', kind: 'milestone', from: atBalance(1_500_000) }),
+          planItem({ id: 'travel-fund', label: 'Travel fund', kind: 'milestone', from: atBalance(2_500_000) }),
         ],
         payroll: ['1182', '5530'],
         copies: [
@@ -755,6 +758,10 @@ function sam(today: string): DemoProfile {
             add: [planItem({ id: 'jordan-part-time', label: 'Jordan part-time', kind: 'part-time', owner: 'partner', from: atAge(48), until: { years: 8 }, yearly: 40_000, replaces: 90_000 })],
           },
           { name: 'A bigger home', add: [planItem({ id: 'bigger-home', label: 'A bigger home', kind: 'home', from: atAge(42), once: 150_000, yearly: 6_000 })] },
+          {
+            name: 'Travel more at Travel fund',
+            add: [planItem({ id: 'travel-more', label: 'Travel more', kind: 'spending', from: { anchor: { at: 'item', id: 'travel-fund', edge: 'start' }, offset: 0 }, yearly: 12_000 })],
+          },
         ],
         dependents: [{ id: 'maya', untilAge: 52 }],
       },

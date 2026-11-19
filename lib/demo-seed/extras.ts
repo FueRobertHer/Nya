@@ -47,6 +47,8 @@ export const planItem = (item: Pick<PlanItem, 'id' | 'label' | 'kind' | 'from'> 
 export const atAge = (age: number, offset = 0) => ({ anchor: { at: 'age' as const, age }, offset });
 /** From the plan's stop. */
 export const atStop = (offset = 0) => ({ anchor: { at: 'stop' as const }, offset });
+/** When invested assets reach an amount (a milestone's own, with no offset). */
+export const atBalance = (amount: number) => ({ anchor: { at: 'balance' as const, amount }, offset: 0 });
 
 /** A rule, matching the words a transaction's name contains (or is). */
 export type SeedRule = {

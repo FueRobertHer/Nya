@@ -188,9 +188,9 @@ describe('stop when I reach FI', () => {
   });
 });
 
-test('the longest search, 25 items with balance anchors, under 50 ms', () => {
+test('the longest search, 25 items with balance anchors and a milestone nothing is timed on, under 50 ms', () => {
   const items: PlanItem[] = Array.from({ length: 25 }, (_, i) =>
-    i % 3 === 0 ? spend(`s${i}`, when({ at: 'balance', amount: 600_000 + i * 50_000 }), 500) : i % 3 === 1 ? cost(`c${i}`, when({ at: 'fi' }, i % 5), 1_000) : cost(`a${i}`, when({ at: 'stop' }, -(i % 4)), 1_000)
+    i === 24 ? { ...spend('m', when({ at: 'balance', amount: 5_000_000 }), 0), kind: 'milestone', yearly: null } : i % 3 === 0 ? spend(`s${i}`, when({ at: 'balance', amount: 600_000 + i * 50_000 }), 500) : i % 3 === 1 ? cost(`c${i}`, when({ at: 'fi' }, i % 5), 1_000) : cost(`a${i}`, when({ at: 'stop' }, -(i % 4)), 1_000)
   );
   // A stop no walk reaches: every candidate to 95 is tried.
   const slow = { stopAtFi: true, targetAge: null, items, savings: 1_000, assets: 10_000 };

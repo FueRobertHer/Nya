@@ -93,6 +93,15 @@ describe('how a copy differs from your plan', () => {
     expect(copyDiffParts(plan(), copy, money)).toEqual([]);
   });
 
+  test('a milestone says it is one and what reaches it, its name once', () => {
+    const flag = (from: PlanItem['from']): PlanItem => ({ ...itemFromExpense({ id: 'lean', label: 'Lean FI', amount: 1, atAge: 50 }), kind: 'milestone', from, once: null });
+    const amount = flag({ anchor: { at: 'balance', amount: 1_265_000 }, offset: 0 });
+    expect(copyDiffParts(plan(), plan({ items: [amount] }), money)).toEqual(['Adds “Lean FI”: a milestone, when invested assets reach $1,265,000']);
+    expect(copyDiffParts(plan({ items: [amount] }), plan(), money)).toEqual(['Leaves out “Lean FI” (a milestone, when invested assets reach $1,265,000)']);
+    const age = flag({ anchor: { at: 'age', age: 50 }, offset: 0 });
+    expect(copyDiffParts(plan({ items: [amount] }), plan({ items: [age] }), money)).toEqual(['“Lean FI”: a milestone, at 50, instead of a milestone, when invested assets reach $1,265,000']);
+  });
+
   test('every amount goes through the money given, so hidden amounts stay hidden', () => {
     const hidden = () => '$•••';
     const parts = copyDiffParts(plan({ items: [ROOF] }), plan({ spending: 45_000, fiNumber: 900_000, items: [itemFromEvent(WINDFALL)] }), hidden);

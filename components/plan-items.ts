@@ -1,7 +1,7 @@
 // components/plan-items.ts
 //
 // The Timeline's words (the tax plan's E2: components/PlanTimeline.tsx and
-// components/PlanItemSheet.tsx): Add's templates in their three groups, the
+// components/PlanItemSheet.tsx): Add's templates in their four groups, the
 // empty Timeline's chips, an item's start and end in words, each row's sub
 // and amount, the points in time the card hangs its rows on, the name a copy
 // made from an item takes, a refusal of itemRules with the items' names, and
@@ -12,6 +12,7 @@
 
 import type { ItemAges } from '@/lib/fire/compile';
 import { INCOME_KINDS, ITEM_LIMITS, ONCE_KINDS, type Anchor, type ItemKind, type PlanItem, type When } from '@/lib/fire/items';
+import { fiNumber } from '@/lib/fire/fi';
 import { PLAN_TO_AGE } from '@/lib/fire/plan';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import type { FiredResult, SimPlan } from '@/lib/fire/simulate';
@@ -26,12 +27,13 @@ type Money = (n: number) => string;
 /** What the words read of a plan: its items and the ages that place them. */
 type Facts = Pick<FirePlanV2, 'items' | 'age' | 'partnerAge' | 'targetAge' | 'stopAtFi'>;
 
-export type TemplateGroup = 'out' | 'in' | 'work';
+export type TemplateGroup = 'out' | 'in' | 'work' | 'milestones';
 
 export const TEMPLATE_GROUPS: readonly { id: TemplateGroup; name: string }[] = [
   { id: 'out', name: 'Money out' },
   { id: 'in', name: 'Money in' },
   { id: 'work', name: 'Work' },
+  { id: 'milestones', name: 'Milestones' },
 ];
 
 /** One of the kinds a template's sheet asks between ("What it is"): a kind
@@ -62,11 +64,12 @@ export const INCOME_CHOICES: readonly KindChoice[] = [
   { kind: 'other-income', name: 'Other income', note: 'Rent, a business, an annuity' },
 ];
 
-/** Add to your Timeline's 7 templates (timeline.md), in their groups'
+/** Add to your Timeline's 8 templates (timeline.md), in their groups'
  *  order. A template fills in nothing but the item's name and its kind's
  *  direction: every amount, age and length is the person's own. A car, a
  *  child, a loan paid off and a career break have no row of their own: they
- *  are a cost, a change in spending and a change in pay. */
+ *  are a cost, a change in spending and a change in pay. A milestone holds
+ *  no money: it is a point items can start or end on. */
 export const ITEM_TEMPLATES: readonly ItemTemplate[] = [
   { id: 'cost', group: 'out', kind: 'one-off', label: 'A cost', sub: 'Once or every few years: a car, a roof, a wedding', name: 'A cost' },
   { id: 'spending', group: 'out', kind: 'spending', label: 'A change in spending', sub: 'More or less a year: a child, a loan paid off, travel', name: 'A change in spending' },
@@ -75,6 +78,7 @@ export const ITEM_TEMPLATES: readonly ItemTemplate[] = [
   { id: 'windfall', group: 'in', kind: 'windfall', label: 'A windfall', sub: 'Once: an inheritance, a sale', name: 'A windfall' },
   { id: 'pay', group: 'work', kind: 'pay', label: 'A change in pay', sub: 'A raise, a pay cut or a break', name: 'A change in pay' },
   { id: 'part-time', group: 'work', kind: 'part-time', label: 'Part-time work', sub: 'In place of your job, or after you stop', name: 'Part-time work' },
+  { id: 'milestone', group: 'milestones', kind: 'milestone', label: 'A milestone', sub: 'A point to watch for; items can start or end on it', name: 'A milestone' },
 ];
 
 /** The empty Timeline's four chips, the rest in Add. */
@@ -96,6 +100,7 @@ const TEMPLATE_FOR: Record<ItemKind, string> = {
   windfall: 'windfall',
   pay: 'pay',
   'part-time': 'part-time',
+  milestone: 'milestone',
 };
 
 /** The template an item there is shown with. */
@@ -118,7 +123,25 @@ export const TEMPLATE_HELP: Record<string, string> = {
   windfall: 'Money that comes in once (an inheritance, a sale), after tax, added to your investments at that age. From where Will it last? starts, it takes it as money in that year.',
   pay: 'Your own take-home pay, up or down: a raise, a pay cut, a new job, or a break for some years. It moves your FI date and what you’d have when you stop: it never changes your spending in retirement, or your FI number.',
   'part-time': 'Work in place of your job, or after you stop. Started before you stop, it also asks the take-home it replaces, so it counts in your FI date. The FI card’s Barista FI uses your plan’s own part-time income, not this.',
+  milestone: 'A point on your path to watch for. It changes no figure: the Timeline says when you reach it, and items can start or end on it.',
 };
+
+/** A milestone's amount worked out from a spending a year, and its line. */
+export type WorkedOut = { amount: number; line: string };
+
+/** The amount a spending a year needs, as the FI number works its own out
+ *  (lib/fire/plan.ts fiView): with the plan's tax, and with the detailed
+ *  model its health coverage and tax share too, at its withdrawal rate;
+ *  to the nearest $1,000, said as about that. */
+export function workedOutAmount(spending: number, f: Pick<PlanFigures, 'plan' | 'shares'>, money: Money): WorkedOut | null {
+  const s = f.shares;
+  const rate = f.plan.withdrawalRate;
+  if (!(rate > 0)) return null;
+  const amount = Math.round(fiNumber(s ? spending + s.h : spending, rate, s ? s.t : f.plan.taxRate) / 1000) * 1000;
+  const pct = `${Math.round(rate * 1000) / 10}%`;
+  const lead = s ? 'With health coverage and tax as in your FI number, at' : f.plan.taxRate > 0 ? 'With tax as in your FI number, at' : 'At';
+  return { amount, line: `${lead} your ${pct} withdrawal rate: about ${money(amount)}.` };
+}
 
 /** What a break's amount is, under pay's when it is less. */
 export const BREAK_HELP = 'For a break, what you would have saved each year of it, plus anything you would spend from savings, and its years under Ends. Once you have stopped working it changes nothing.';
@@ -150,11 +173,18 @@ function anchorWords(a: Anchor, x: PlanItem, plan: Facts, money: Money): string 
       return 'you reach FI';
     case 'item': {
       const other = plan.items.find((y) => y.id === a.id);
+      if (other?.kind === 'milestone') return other.label;
       return `${other ? other.label : 'another item'} ${a.edge === 'start' ? 'starts' : 'ends'}`;
     }
     case 'balance':
       return `invested assets reach ${money(a.amount)}`;
   }
+}
+
+/** Whether a start or an end is timed on reaching a milestone. */
+export function onMilestone(w: When, plan: Pick<Facts, 'items'>): boolean {
+  const a = w.anchor;
+  return a.at === 'item' && plan.items.some((y) => y.id === a.id && y.kind === 'milestone');
 }
 
 /** When an item starts or stops, in words: "At 45", "When you stop", "2
@@ -166,7 +196,7 @@ export function whenWords(w: When, x: PlanItem, plan: Facts, money: Money, until
     const at = x.owner === 'partner' ? `your partner’s ${age}` : `${age}`;
     return until ? `Until ${at}` : `At ${at}`;
   }
-  if (w.offset === 0) return `${until ? 'Until' : 'When'} ${anchorWords(a, x, plan, money)}`;
+  if (w.offset === 0) return `${until ? 'Until' : onMilestone(w, plan) ? 'At' : 'When'} ${anchorWords(a, x, plan, money)}`;
   const n = Math.abs(w.offset);
   const dir = w.offset < 0 ? 'before' : 'after';
   const what = a.at === 'fi' ? 'FI' : anchorWords(a, x, plan, money);
@@ -176,6 +206,7 @@ export function whenWords(w: When, x: PlanItem, plan: Facts, money: Money, until
 /** How it ends, or repeats: "Until 55", "For good", "For 18 years", "Every 8
  *  years, 4 times"; null for something that happens once. */
 export function endWords(x: PlanItem, plan: Facts, money: Money): string | null {
+  if (x.kind === 'milestone') return null;
   if (ONCE_KINDS.includes(x.kind)) return x.every !== null && x.times !== null ? `Every ${x.every} years, ${x.times} times` : null;
   if (x.kind === 'loan-end') return 'For good';
   if (x.kind === 'home' && x.yearly === 0) return null;
@@ -187,7 +218,9 @@ export function endWords(x: PlanItem, plan: Facts, money: Money): string | null 
 /** An amount's line under it: a year, once, each, or a change's way. */
 export type ItemAmount = { amount: number; line: string };
 
-export function itemAmount(x: PlanItem): ItemAmount {
+/** Null for a milestone, which holds no money. */
+export function itemAmount(x: PlanItem): ItemAmount | null {
+  if (x.kind === 'milestone') return null;
   const yearly = x.yearly ?? 0;
   const change = (v: number) => (v < 0 ? 'less a year' : 'more a year');
   switch (x.kind) {
@@ -227,18 +260,21 @@ export function templateHelp(id: string): string | undefined {
  *  starts there or later, a repeat lands there, or its years run on past it.
  *  A change in pay never does: the job ends when you stop. */
 export function reachesStart(x: PlanItem, ages: { start: number; end: number | null }, startAge: number): boolean {
-  if (x.kind === 'pay') return false;
+  if (x.kind === 'pay' || x.kind === 'milestone') return false;
   if (ages.start + (x.every ?? 0) * ((x.times ?? 1) - 1) >= startAge) return true;
   return !!x.yearly && (ages.end === null || ages.end > startAge);
 }
 
 /** A Timeline row's sub: how it starts when its point doesn't say it (an
- *  offset, or a start before today), how it ends or repeats, "before tax",
- *  and "counts in your FI date" exactly when the walk counts it. */
+ *  offset, a start before today, or a milestone it follows), how it ends or
+ *  repeats, "before tax", and "counts in your FI date" exactly when the walk
+ *  counts it. A milestone's is what reaches it. */
 export function rowSub(x: PlanItem, plan: Facts, money: Money, at: { start: number | null; inWalk: boolean }): string {
+  if (x.kind === 'milestone') return milestoneWords(x, plan, money);
   const parts: string[] = [];
   const before = at.start !== null && plan.age !== null && at.start < plan.age;
-  if (x.from.offset !== 0 || before) parts.push(whenWords(x.from, x, plan, money));
+  if (onMilestone(x.from, plan)) parts.push(`Starts ${lower(whenWords(x.from, x, plan, money))}`);
+  else if (x.from.offset !== 0 || before) parts.push(whenWords(x.from, x, plan, money));
   const end = endWords(x, plan, money);
   if (end) parts.push(end);
   if (x.beforeTax) parts.push('before tax');
@@ -246,10 +282,19 @@ export function rowSub(x: PlanItem, plan: Facts, money: Money, at: { start: numb
   return cap(parts.map(lower).join(' · '));
 }
 
+/** What reaches a milestone: "Invested assets reach $1,265,000", "At 55",
+ *  "At your partner’s 55". */
+export function milestoneWords(x: PlanItem, plan: Facts, money: Money): string {
+  const a = x.from.anchor;
+  return a.at === 'balance' ? `Invested assets reach ${money(a.amount)}` : whenWords(x.from, x, plan, money);
+}
+
 /** An item in one line, for how a copy differs and Also change it in:
- *  "$18,000 a year, at your partner’s 67, for good, before tax". */
+ *  "$18,000 a year, at your partner’s 67, for good, before tax"; a
+ *  milestone's is what reaches it, "when invested assets reach $1,265,000". */
 export function itemSentence(x: PlanItem, plan: Facts, money: Money): string {
   const v = itemAmount(x);
+  if (v === null) return x.from.anchor.at === 'balance' ? lower(whenWords(x.from, x, plan, money)) : lower(milestoneWords(x, plan, money));
   let amount: string;
   if (x.kind === 'home') {
     const yearly = x.yearly ?? 0;
@@ -279,7 +324,8 @@ export type TimelineLayout = {
   /** In order of the steady path's years; a point with nothing under it is
    *  a marker (the stop, FI). */
   points: TimelinePoint[];
-  /** Balances the steady path never reaches, last, with their items. */
+  /** Balances and milestones the steady path never reaches, last, with
+   *  their items: a milestone's, it and what is timed on it. */
   notReached: TimelinePoint[];
   /** Items that can't be placed, in the order they were added. */
   unplaced: number[];
@@ -307,11 +353,11 @@ export function timelinePoints(plan: FirePlanV2, f: PlanFigures | null, money: M
   const fi = fiAt(f);
   const shift = plan.partnerAge !== null ? today - plan.partnerAge : null;
 
-  type Year = { items: number[]; balances: string[]; edges: string[]; partner: boolean };
+  type Year = { items: number[]; balances: string[]; edges: string[]; partner: boolean; mark: boolean };
   const byYear = new Map<number, Year>();
   const year = (age: number): Year => {
     let y = byYear.get(age);
-    if (!y) byYear.set(age, (y = { items: [], balances: [], edges: [], partner: false }));
+    if (!y) byYear.set(age, (y = { items: [], balances: [], edges: [], partner: false, mark: false }));
     return y;
   };
   const todayItems: number[] = [];
@@ -323,12 +369,39 @@ export function timelinePoints(plan: FirePlanV2, f: PlanFigures | null, money: M
     return p;
   };
 
+  /** The milestone an item waits on, through what it is timed on, if any,
+   *  and only one the steady path never reaches: an item that waits on
+   *  something else along the way stays under Not placed yet, saying what. */
+  const milestoneOf = (x: PlanItem): PlanItem | null => {
+    const seen = new Set<string>();
+    let y: PlanItem | undefined = x;
+    while (y && !seen.has(y.id)) {
+      if (y.kind === 'milestone') {
+        const j = plan.items.indexOf(y);
+        return res.ages[j] == null && res.why[j] === 'not-reached' ? y : null;
+      }
+      seen.add(y.id);
+      const a: Anchor = y.from.anchor;
+      y = a.at === 'item' ? plan.items.find((o) => o.id === a.id) : undefined;
+    }
+    return null;
+  };
+  const neverReached = (m: PlanItem) => {
+    const key = `milestone:${m.id}`;
+    let p = notReached.get(key);
+    if (!p) notReached.set(key, (p = { key, label: `${m.label} · not by ${PLAN_TO_AGE}`, items: [] }));
+    return p;
+  };
+
   plan.items.forEach((x, i) => {
     const ages: ItemAges = res.ages[i] ?? null;
     const why: Unplaced | null = res.why[i] ?? null;
     const a = x.from.anchor;
+    const mark = why === 'not-reached' ? milestoneOf(x) : null;
     if (ages === null) {
-      if (why === 'not-reached' && a.at === 'balance') {
+      if (mark && mark.from.anchor.at === 'balance') {
+        neverReached(mark).items.push(i);
+      } else if (why === 'not-reached' && a.at === 'balance') {
         const key = `balance:${a.amount}`;
         let p = notReached.get(key);
         if (!p) notReached.set(key, (p = { key, label: `Invested assets reach ${money(a.amount)} · not by ${PLAN_TO_AGE}`, items: [] }));
@@ -347,10 +420,16 @@ export function timelinePoints(plan: FirePlanV2, f: PlanFigures | null, money: M
     const y = year(ages.start);
     y.items.push(i);
     if (x.from.offset === 0 && a.at === 'balance') {
-      const label = `Invested assets reach ${money(a.amount)} · ${ages.start} on your steady path`;
-      if (!y.balances.includes(label)) y.balances.push(label);
+      // A milestone's row says its amount, so its point says only the age,
+      // and only when no other balance names that year.
+      if (x.kind === 'milestone') y.mark = true;
+      else {
+        const label = `Invested assets reach ${money(a.amount)} · ${ages.start} on your steady path`;
+        if (!y.balances.includes(label)) y.balances.push(label);
+      }
     }
-    if (x.from.offset === 0 && a.at === 'item') {
+    // On a milestone, its own point says it.
+    if (x.from.offset === 0 && a.at === 'item' && !onMilestone(x.from, plan)) {
       const other = plan.items.find((o) => o.id === a.id);
       const label = `${other ? other.label : 'Another item'} ${a.edge === 'start' ? 'starts' : 'ends'} at ${ages.start}`;
       if (!y.edges.includes(label)) y.edges.push(label);
@@ -375,6 +454,12 @@ export function timelinePoints(plan: FirePlanV2, f: PlanFigures | null, money: M
   if ((fi.now || (fi.age !== null && fi.age <= today)) && !(couldStop && stopped)) todayParts.push(couldStop ? 'you could stop now' : 'you’re at FI');
   if (todayItems.length > 0 || todayParts.length > 1) points.push({ key: 'today', label: todayParts.join(' · '), items: todayItems });
 
+  // A milestone leads its point, what is timed on it under it.
+  const first = (i: number) => (plan.items[i].kind === 'milestone' ? 0 : 1);
+  todayItems.sort((p, q) => first(p) - first(q));
+  for (const y of byYear.values()) y.items.sort((p, q) => first(p) - first(q));
+  for (const p of notReached.values()) p.items.sort((p1, q) => first(p1) - first(q));
+
   for (const age of [...byYear.keys()].sort((p, q) => p - q)) {
     const y = byYear.get(age)!;
     const parts: string[] = [];
@@ -382,7 +467,9 @@ export function timelinePoints(plan: FirePlanV2, f: PlanFigures | null, money: M
     const isFi = fiFuture && age === fi.age;
     if (isStop) parts.push(plan.stopAtFi ? `You stop at FI, around ${age}` : `You stop at ${age}`);
     if (isFi && !(isStop && plan.stopAtFi)) parts.push(`FI around ${age}`);
-    parts.push(...y.balances, ...y.edges);
+    parts.push(...y.balances);
+    if (y.mark && y.balances.length === 0) parts.push(`${age} on your steady path`);
+    parts.push(...y.edges);
     if (parts.length === 0) parts.push(y.partner && shift !== null ? `At ${age} · your partner’s ${age - shift}` : `At ${age}`);
     points.push({ key: `age:${age}`, label: parts.join(' · '), items: y.items });
   }
@@ -408,6 +495,7 @@ export function unplacedText(x: PlanItem, why: Unplaced | null, plan: Facts): st
       const a = x.from.anchor;
       if (a.at === 'item') {
         const other = plan.items.find((y) => y.id === a.id);
+        if (other?.kind === 'milestone') return `Waits on ${other.label}, which isn’t reached on your steady path.`;
         return `Waits on ${other ? other.label : 'another item'}, which never ${a.edge === 'start' ? 'starts' : 'ends'} on your steady path.`;
       }
       return `Not reached on your steady path by ${PLAN_TO_AGE}.`;
@@ -573,7 +661,7 @@ export function copyNameFor(template: ItemTemplate, x: PlanItem, plan: Facts, ot
       break;
     case 'item': {
       const other = plan.items.find((y) => y.id === a.id);
-      when = `when ${other ? other.label : 'another item'} ${a.edge === 'start' ? 'starts' : 'ends'}`;
+      when = other?.kind === 'milestone' ? `at ${other.label}` : `when ${other ? other.label : 'another item'} ${a.edge === 'start' ? 'starts' : 'ends'}`;
       break;
     }
   }
@@ -643,6 +731,9 @@ export type PreviewInput = {
   runsOutAt: number | null;
   /** Where it falls across the runs, for a start that waits on a run's own balance. */
   across?: AcrossAnswer | null;
+  /** The draft is a milestone, which moves no FI age: the lines before it can
+   *  be worked out say where it falls instead. */
+  milestone?: boolean;
 };
 
 /** Across history, while it is worked out and once it has been. */
@@ -658,14 +749,16 @@ export function waitingStart(f: PlanFigures, id: string): { sim: SimPlan; trigge
   return { sim: f.engine.sim, trigger: edge.trigger, offset: edge.offset, startAge: f.engine.startAge };
 }
 
-/** "It starts in 74% of runs, by 62 in half of those; in 26% of runs it never does." */
-export function acrossText({ fired, startAge }: { fired: FiredResult; startAge: number }): string {
-  if (fired.fired === 0 || fired.byHalf === null) return 'It never starts, in any run';
+/** "It starts in 74% of runs, by 62 in half of those; in 26% of runs it never does";
+ *  for a milestone, "It is reached in 74% of runs, ...". */
+export function acrossText({ fired, startAge }: { fired: FiredResult; startAge: number }, reached = false): string {
+  const [is, never] = reached ? ['is reached', 'is never reached'] : ['starts', 'never starts'];
+  if (fired.fired === 0 || fired.byHalf === null) return `It ${never}, in any run`;
   const by = startAge + fired.byHalf;
-  if (fired.fired === fired.runs) return `It starts in every run, by ${by} in half of them`;
+  if (fired.fired === fired.runs) return `It ${is} in every run, by ${by} in half of them`;
   // Some and not all stay so, whatever the rounding says.
   const share = Math.min(99, Math.max(1, Math.round((fired.fired / fired.runs) * 100)));
-  return `It starts in ${share}% of runs, by ${by} in half of those; in ${100 - share}% of runs it never does`;
+  return `It ${is} in ${share}% of runs, by ${by} in half of those; in ${100 - share}% of runs it ${reached ? 'never is' : 'never does'}`;
 }
 
 export type PreviewLines = {
@@ -687,19 +780,66 @@ function fiWords(when: FiWhen): string {
   return lifeChoiceText(when, { kind: 'none' }).replace(/^./, (c) => c.toLowerCase());
 }
 
+/** Where a milestone falls against the stop: "49, 1 year before you stop at
+ *  50", "At 55, 5 years after you stop at 50". */
+function againstStop(start: number, stop: number | null): string {
+  if (stop === null) return '';
+  if (start === stop) return `, when you stop at ${stop}`;
+  return `, ${start < stop ? `${years(stop - start)} before` : `${years(start - stop)} after`} you stop at ${stop}`;
+}
+
+/** A milestone's What's possible: where the steady path reaches it, across the
+ *  runs when that is after the stop, that it moves no FI date, and how items
+ *  are timed on it. */
+function milestoneLines(p: PreviewInput, x: PlanItem, f: PlanFigures): PreviewLines {
+  const i = f.plan.items.findIndex((y) => y.id === x.id);
+  const ages = i >= 0 ? (f.resolution.ages[i] ?? null) : null;
+  const why = i >= 0 ? (f.resolution.why[i] ?? null) : null;
+  const today = f.plan.age;
+  const balance = x.from.anchor.at === 'balance';
+  const rows: { key: string; value: string }[] = [];
+  const lines: string[] = [];
+  const key = 'On your steady path';
+  if (ages) {
+    const at = balance ? `${ages.start}` : `At ${ages.start}`;
+    if (today !== null && ages.start <= today && balance) rows.push({ key, value: 'Already reached today' });
+    else if (today !== null && ages.start < today) rows.push({ key, value: `${at}, before today` });
+    else rows.push({ key, value: `${at}${againstStop(ages.start, f.resolution.stop)}` });
+  } else if (why === 'not-reached' && balance) {
+    rows.push({ key, value: `Not by ${PLAN_TO_AGE}` });
+    if (p.most) lines.push(`On your steady path invested assets start a year with at most ${p.money(p.most.amount)}, at ${p.most.age}, so it isn’t reached.`);
+  } else {
+    const text = unplacedText(x, why, f.plan);
+    if (text) rows.push({ key, value: text.replace(/\.$/, '') });
+  }
+  if (p.across) rows.push({ key: f.plan.method === 'historical' ? 'Across history' : 'Across simulated runs', value: 'working' in p.across ? 'Working it out' : acrossText(p.across, true) });
+  // It moves nothing, so the date is the plan's.
+  const fi = fiWhen(f);
+  const whose = p.where === 'copy' ? 'this copy’s' : 'your';
+  if (fi.kind === 'age') rows.push({ key: `${cap(whose)} FI date`, value: `Stays around ${fi.age}` });
+  else if (fi.kind !== 'none' && fi.kind !== 'not-run') rows.push({ key: `${cap(whose)} FI date`, value: cap(fiWords(fi)) });
+  if (balance) lines.push('Checked on the balance at the start of each year, and reached once, so a cost after it can’t undo it.');
+  // Last, since only the first line is said as it changes, and this one
+  // changes only with the name.
+  lines.push(balance ? `To time an item on it, pick ${x.label} under that item’s Starts or Ends.` : 'Items timed on it move together when you change the age.');
+  return { rows, lines, cautions: [], warnings: [] };
+}
+
 /** What the sheet says the draft does (timeline.md "What is possible"). */
 export function previewLines(p: PreviewInput): PreviewLines {
   const whose = p.where === 'copy' ? 'this copy’s' : 'your';
   if ('error' in p.draft) {
+    if (p.milestone) return { rows: [], lines: [p.draft.missing ? 'Fill in the figures to see where it falls.' : 'Once the figures are in range, this says where it falls.'], cautions: [], warnings: [] };
     return { rows: [], lines: [p.draft.missing ? `Fill in the figures to see how it moves ${whose} FI age.` : `Once the figures are in range, this says how they move ${whose} FI age.`], cautions: [], warnings: [] };
   }
   if (p.after === 'refused') return { rows: [], lines: ['With this item, the figures can’t be worked out: its lasting change takes your spending in retirement below zero.'], cautions: [], warnings: [] };
   // A detailed plan's search takes a moment, and what it finds replaces this.
   if (p.working) return { rows: [], lines: ['Working it out'], cautions: [], warnings: [] };
-  if (p.failed) return { rows: [], lines: [`Tax on this plan couldn’t be worked out on this page, so this can’t say how it moves ${whose} FI age.`], cautions: [], warnings: [] };
+  if (p.failed) return { rows: [], lines: [`Tax on this plan couldn’t be worked out on this page, so this can’t say ${p.milestone ? 'where it falls' : `how it moves ${whose} FI age`}.`], cautions: [], warnings: [] };
   if (!p.after) return { rows: [], lines: [], cautions: [], warnings: [] };
   const x = p.draft.ok;
   const f = p.after;
+  if (x.kind === 'milestone') return milestoneLines(p, x, f);
   const i = f.plan.items.findIndex((y) => y.id === x.id);
   const ages = i >= 0 ? (f.resolution.ages[i] ?? null) : null;
   const why = i >= 0 ? (f.resolution.why[i] ?? null) : null;
