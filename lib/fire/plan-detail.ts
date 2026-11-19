@@ -44,6 +44,7 @@ import { runDrawdown, type Drawdown, type DrawdownHealth } from './drawdown';
 import type { WalkChanges } from './events';
 import { planPath } from './path';
 import { planYears, projectFrom, ruleSpec, type FiView } from './plan';
+import { bucketShift } from './account-growth';
 import { bucketGrowth, planYield, type BucketGrowth } from './bucket-growth';
 import type { PlanFigures } from './plan-figures';
 import type { FirePlanV2 } from './plan-v2';
@@ -302,6 +303,8 @@ export function detailWork(input: DetailedInput): DetailWork {
       const at: CompileAt = { age: plan.age, startAge: first, stop: first, years: end - first, taxRate: t };
       // Only the simulation's parts are read here, so nothing goes in the walk.
       const fixed = compileItems(plan.items, ages.map((x, i) => (perRun?.edges[i] ? null : x)), at, { planInWalk: false });
+      // The stress test's buckets moved by the rates the steady years grow them at.
+      const moved = bucketShift(plan, f.view, growthOf(plan, f.view)?.year);
       const tax: SimTax = {
         startAge: first,
         today: { age: plan.age, partnerAge: plan.partnerAge, calendarYear: input.calendarYear },
@@ -320,6 +323,7 @@ export function detailWork(input: DetailedInput): DetailWork {
         strategy: input.strategy,
         t,
         h,
+        ...(moved ? { historyShift: moved } : {}),
       };
       const { conditional: _flat, ...sim } = engine.sim;
       return {

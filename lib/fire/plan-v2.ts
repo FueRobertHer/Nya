@@ -17,6 +17,11 @@
 // it: the release before refuses a plan that holds one (docs/operations.md,
 // rolling back).
 //
+// `historyMoved` (the stress test's history moved by those rates,
+// lib/fire/account-growth.ts historyShift) is held the same way, only while it is
+// on: absent is history as it ran. A false is read as absent. Like `accounts`, it
+// has no reader before it.
+//
 // WHAT IS STORED STAYS AS IT WAS. The store (an entry's plan in `fire-plans`,
 // lib/plan-copies.ts) reads either version and its upgrade (upgradeStoredPlan)
 // never changes one into the other, since the seam checks a value and its
@@ -54,13 +59,17 @@ export type FirePlanV2 = Omit<FirePlan, 'version' | 'income' | 'expenses'> & {
    *  account id, each with at least one rate; absent while none has one. An
    *  account that goes away is kept, within LIMITS.accountRates, and ignored. */
   accounts?: AccountRate[];
+  /** The stress test moves market history by the accounts' own growth
+   *  (lib/fire/account-growth.ts historyShift); absent while it doesn't. Each
+   *  plan and copy has its own, an assumption like the rates. */
+  historyMoved?: true;
 };
 
 /** The shares a plan's answer can be asked to last in (D9). */
 export const LASTS_IN_CHOICES: readonly number[] = [0.8, 0.9, 0.95];
 
 /** Fields a version 2 plan holds only while they are set. */
-const OPTIONAL_KEYS = ['lastsIn', 'accounts'];
+const OPTIONAL_KEYS = ['lastsIn', 'accounts', 'historyMoved'];
 
 /** A plan as either version stores it. */
 export type StoredPlan = FirePlan | FirePlanV2;
@@ -102,12 +111,12 @@ export function toStored(plan: FirePlanV2, version: 1 | 2): { plan: StoredPlan }
 export function toStored(plan: FirePlanV2, version: 1 | 2): { plan: StoredPlan } | { error: string } {
   if (version === 2) return { plan };
   if (plan.items.some((x) => asIncome(x) === null && asExpense(x) === null)) return { error: 'This plan holds items only a newer version of Nya can save.' };
-  if (plan.partnerAge !== null || plan.stopAtFi || plan.fiNumber !== null || plan.lastsIn !== undefined || plan.accounts !== undefined) return { error: 'This plan holds settings only a newer version of Nya can save.' };
+  if (plan.partnerAge !== null || plan.stopAtFi || plan.fiNumber !== null || plan.lastsIn !== undefined || plan.accounts !== undefined || plan.historyMoved !== undefined) return { error: 'This plan holds settings only a newer version of Nya can save.' };
   const income = incomeOf(plan);
   const expenses = expensesOf(plan);
   if (income.length > LIMITS.incomes) return { error: `A plan takes ${LIMITS.incomes} incomes at most.` };
   if (expenses.length > LIMITS.expenses) return { error: `A plan takes ${LIMITS.expenses} one-off expenses at most.` };
-  const { version: _version, items: _items, partnerAge: _partner, stopAtFi: _stop, fiNumber: _fi, lastsIn: _lasts, accounts: _accounts, planFunding, ...rest } = plan;
+  const { version: _version, items: _items, partnerAge: _partner, stopAtFi: _stop, fiNumber: _fi, lastsIn: _lasts, accounts: _accounts, historyMoved: _moved, planFunding, ...rest } = plan;
   return { plan: { version: 1, ...rest, income, expenses, planFunding } };
 }
 
@@ -176,6 +185,7 @@ function readPlanV2(raw: unknown, input: boolean): { plan: FirePlanV2 } | { erro
   if (Object.hasOwn(o, 'lastsIn') && (typeof lastsIn !== 'number' || !Number.isFinite(lastsIn) || (input && !LASTS_IN_CHOICES.includes(lastsIn)))) {
     return { error: 'lastsIn must be one of 0.8, 0.9 or 0.95', field: 'lastsIn' };
   }
+  if (Object.hasOwn(o, 'historyMoved') && typeof o.historyMoved !== 'boolean') return { error: 'historyMoved must be true or false', field: 'historyMoved' };
   let accounts: AccountRate[] | undefined;
   if (Object.hasOwn(o, 'accounts')) {
     const r = readAccounts(o.accounts, input);
@@ -206,6 +216,7 @@ function readPlanV2(raw: unknown, input: boolean): { plan: FirePlanV2 } | { erro
     fiNumber: fi as number | null,
     ...(Object.hasOwn(o, 'lastsIn') ? { lastsIn: lastsIn as number } : {}),
     ...(accounts !== undefined ? { accounts } : {}),
+    ...(o.historyMoved === true ? { historyMoved: true as const } : {}),
   };
   if (input) {
     const broken = itemRules(plan);
@@ -291,6 +302,11 @@ export function repairPlanV2(plan: FirePlanV2): { plan: FirePlanV2; fixed: Repai
       // Never set to a default: without it is the answer before D9.
       fixed.push({ field });
       const { lastsIn: _lasts, ...without } = p;
+      p = without;
+    } else if (field === 'historyMoved') {
+      // Without it is history as it ran.
+      fixed.push({ field });
+      const { historyMoved: _moved, ...without } = p;
       p = without;
     } else if ((V2_KEYS as string[]).includes(field) && field !== 'version') {
       fixed.push({ field });

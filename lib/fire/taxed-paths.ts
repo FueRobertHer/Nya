@@ -23,6 +23,11 @@
 //     rata, so only the markets move them, and a balance of nothing resets them, as
 //     the flat branch does.
 //
+// HISTORY MOVED BY THE ACCOUNTS' OWN GROWTH (the run plan's `historyShift`): each
+// bucket's year is the market's plus its own gap (`tax.historyShift`), and the whole
+// balance's, which last year's return and the mix read, the market's plus the blend's
+// (`plan.historyShift`), as the drawdown's buckets and blend are. None, history as it ran.
+//
 // WHAT WAITS ON A RUN'S OWN BALANCE fires as in the flat branch: each run checks its
 // balance against each trigger before that year's money, once.
 //
@@ -40,7 +45,7 @@ import type { Owner } from './tax-facts';
 import type { Filing, StateCode, TaxLaw } from './tax/law/types';
 import { peopleOf, type MixSlot } from './tax/mix';
 import { defaultUntil, yearRule, type Strategy } from './tax/rules';
-import { checkYearInput, newYearResult, runYear, runYearFilling, splitConversion, startFilling, type PersonYear, type YearInput } from './tax/year';
+import { checkYearInput, newYearResult, runYear, runYearFilling, splitConversion, startFilling, type PersonYear, type YearGrowth, type YearInput } from './tax/year';
 
 /** What a run's years need beyond the flat plan's parts. Plain data, as a job carries
  *  it to a worker. Amounts are the drawdown's: before tax, as typed. */
@@ -67,6 +72,10 @@ export type SimTax = {
   /** The rule's split: tax's share of what it withdraws, and the yearly health cost it holds. */
   t: number;
   h: number;
+  /** Each bucket's gap from the plan's rate, added to the market's year for it
+   *  (lib/fire/account-growth.ts bucketShift); every bucket said. Absent: every
+   *  bucket grows as the whole balance does. */
+  historyShift?: YearGrowth;
 };
 
 /** A person's balances, at a year's start or close. */
@@ -93,6 +102,9 @@ export function taxedPaths(plan: SimPlan, market: Market, source: PathSource, ke
   const count = source.count;
   const g = growthTables(plan, market);
   const afterFee = 1 - plan.fee;
+  // Zero is history as it ran: x + 0 is x, and a year's growth is above zero.
+  const shift = plan.historyShift ?? 0;
+  const apart = tax.historyShift ?? null;
   const target = plan.allocation;
   const drift = plan.rebalance === 'none';
   const joint = tax.filing === 'joint' && today.partnerAge !== null;
@@ -158,6 +170,9 @@ export function taxedPaths(plan: SimPlan, market: Market, source: PathSource, ke
     growth: 0,
     inflation: 0,
   };
+  // Each bucket's year, refilled; never set with no gap of their own, as the drawdown.
+  const bucketGrowth: YearGrowth | null = apart ? { taxable: 0, deferred: 0, deferred457: 0, roth: 0, hsa: 0 } : null;
+  if (bucketGrowth) input.bucketGrowth = bucketGrowth;
   // The price level at the start of each year, relative to the plan's start.
   const priceAt = new Float64Array(years + 1);
   const priceBefore = (1 + tax.inflation) ** (tax.startAge - today.age);
@@ -191,6 +206,14 @@ export function taxedPaths(plan: SimPlan, market: Market, source: PathSource, ke
     let shareStocks = target.stocks;
     let shareBonds = target.bonds;
     let shareCash = target.cash;
+    // A bucket's year, its own gap moving each asset as the blend's gap moves
+    // them below, so a drifting mix holds each asset at nothing or more.
+    const movedBy = (m: number, gap: number) =>
+      (drift
+        ? shareStocks * Math.max(0, g.stocks[m] + gap) + shareBonds * Math.max(0, g.bonds[m] + gap) + shareCash * Math.max(0, g.cash + gap)
+        : Math.max(0, (g.portfolio as Float64Array)[m] + gap)) *
+        afterFee -
+      1;
     let lowest = Infinity;
     let failed = -1;
     // IRMAA's MAGI from one and two years before.
@@ -256,7 +279,18 @@ export function taxedPaths(plan: SimPlan, market: Market, source: PathSource, ke
         shareCash = target.cash;
       }
       const m = source.monthAt(p, y);
-      const factor = drift ? shareStocks * g.stocks[m] + shareBonds * g.bonds[m] + shareCash * g.cash : (g.portfolio as Float64Array)[m];
+      // Each asset's year, moved as the flat branch moves it.
+      const fs = drift ? Math.max(0, g.stocks[m] + shift) : 0;
+      const fb = drift ? Math.max(0, g.bonds[m] + shift) : 0;
+      const fc = drift ? Math.max(0, g.cash + shift) : 0;
+      const factor = drift ? shareStocks * fs + shareBonds * fb + shareCash * fc : Math.max(0, (g.portfolio as Float64Array)[m] + shift);
+      if (bucketGrowth && apart) {
+        bucketGrowth.taxable = movedBy(m, apart.taxable);
+        bucketGrowth.deferred = movedBy(m, apart.deferred);
+        bucketGrowth.deferred457 = movedBy(m, apart.deferred457);
+        bucketGrowth.roth = movedBy(m, apart.roth);
+        bucketGrowth.hsa = movedBy(m, apart.hsa);
+      }
 
       people[0].age = age;
       people[0].socialSecurity = socialSecurity[0];
@@ -316,9 +350,9 @@ export function taxedPaths(plan: SimPlan, market: Market, source: PathSource, ke
       magiBefore = magiLast;
       magiLast = result.federal.magiIrmaa.v;
       if (drift && factor > 0) {
-        shareStocks = (shareStocks * g.stocks[m]) / factor;
-        shareBonds = (shareBonds * g.bonds[m]) / factor;
-        shareCash = (shareCash * g.cash) / factor;
+        shareStocks = (shareStocks * fs) / factor;
+        shareBonds = (shareBonds * fb) / factor;
+        shareCash = (shareCash * fc) / factor;
       }
       state.lastNominalReturn = bal > 0 ? factor * afterFee * g.inflation[m] - 1 : 0;
       state.lastInflation = g.inflation[m] - 1;

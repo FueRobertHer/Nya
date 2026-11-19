@@ -842,7 +842,9 @@ function finish(inp: YearInput, law: TaxLaw, out: YearResult): YearResult {
       if (w === 0) held = v - t;
       else e.window[w - 1] = (v - t) / infl;
     }
-    e.taxable = Math.max(0, taxable) * (1 + (bg ? bg.taxable : g) - inp.taxableYield);
+    // A year that takes all of it (history moved down past nothing) leaves
+    // nothing, not less, after the yield it paid.
+    e.taxable = Math.max(0, taxable) * Math.max(0, 1 + (bg ? bg.taxable : g) - inp.taxableYield);
     e.basis = Math.max(0, basis) / infl;
     e.deferred = Math.max(0, deferred) * (1 + (bg ? bg.deferred : g));
     e.deferred457 = Math.max(0, plan457) * (1 + (bg ? bg.deferred457 : g));
