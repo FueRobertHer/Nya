@@ -76,7 +76,7 @@ describe('with one-offs and income out of the walk, the release before’s figur
     expect(drawn).toBeGreaterThan(100);
   });
 
-  test('Will it last?’s incomes and one-offs, and the card’s notes, are the ones it placed', () => {
+  test('The stress test’s incomes and one-offs, and the card’s notes, are the ones it placed', () => {
     for (const { p, m, events } of cases) {
       const was = oldFigures.planFigures(p, m, events);
       const now = figuresOf(p, m, events);

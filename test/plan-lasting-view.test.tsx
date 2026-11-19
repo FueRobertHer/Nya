@@ -65,13 +65,13 @@ describe('the answer, with lastsIn and without', () => {
     await tab.unmount();
   }, 30_000);
 
-  test('under the stop at FI, the stop is the age found, and Will it last? runs from it', async () => {
+  test('under the stop at FI, the stop is the age found, and the stress test runs from it', async () => {
     await seedPlan({ ...PLAN, stopAtFi: true, start: 'at-stop', lastsIn: 0.8 });
     const tab = await render();
     await settle(400);
     expect(answerOf(tab)).toContain('FI and your stop: around 51');
     expect(answerOf(tab)).toContain('The earliest stop that lasts to 95 in at least 80% of historical starts');
-    // Will it last? from 51: 82% of historical starts, the run the search found to last.
+    // The stress test from 51: 82% of historical starts, the run the search found to last.
     await pick(tab.container, 'Drawdown');
     await settle(400);
     expect(tab.text()).toMatch(/82\.5%\s*of 1,302 historical starts \(Jan 1871 to Jun 1979\) lasted 44 years, from 51/);
@@ -221,7 +221,7 @@ describe('Your FI date, in the FI number’s sheet', () => {
     await pick(tab.dialog()!, 'Earliest stop that lasts');
     expect(chosen(tab, 'Lasts in at least')).toBe('90%');
     expect(tab.dialog()!.textContent).toContain(
-      'The earliest age you could stop with your money lasting to 95 in at least this share of Will it last?’s historical starts, from what you’d have then. This number stays as it is: Home’s meter and the line on your path still measure against it.'
+      'The earliest age you could stop with your money lasting to 95 in at least this share of the stress test’s historical starts, from what you’d have then. This number stays as it is: Home’s meter and the line on your path still measure against it.'
     );
     await save(tab);
     expect(writes()).toEqual(['PUT /api/fire-plan']);
@@ -257,10 +257,10 @@ describe('Your FI date, in the FI number’s sheet', () => {
     const tab = await render();
     await press(tab.row('FI number'));
     const t = tab.dialog()!.textContent;
-    expect(t).toContain('The earliest age you could stop with your money lasting 30 years in at least this share of Will it last?’s historical starts');
-    expect(t).toContain('If you set one, Home’s meter and the line on your path use it, and Will it last? tests your spending from it. Your FI date stays the earliest stop that lasts.');
+    expect(t).toContain('The earliest age you could stop with your money lasting 30 years in at least this share of the stress test’s historical starts');
+    expect(t).toContain('If you set one, Home’s meter and the line on your path use it, and the stress test starts from it. Your FI date stays the earliest stop that lasts.');
     await pick(tab.dialog()!, 'When you reach it');
-    expect(tab.dialog()!.textContent).toContain('If you set one, your FI date and Home use it, and Will it last? tests your spending from it. Nothing else changes.');
+    expect(tab.dialog()!.textContent).toContain('If you set one, your FI date and Home use it, and the stress test starts from it. Nothing else changes.');
     await tab.unmount();
   }, 40_000);
 
@@ -273,10 +273,10 @@ describe('Your FI date, in the FI number’s sheet', () => {
     expect(tab.text()).not.toContain('Your FI number leaves out');
     await press(tab.row('FI number'));
     const why = tab.dialog()!.findAll((e) => e.tagName === 'DETAILS')[0];
-    expect(why?.textContent).toContain('Social Security from 67: your path, Will it last? and your FI date count it.');
+    expect(why?.textContent).toContain('Social Security from 67: your path, the stress test and your FI date count it.');
     // Chosen back in the sheet, before a save: as it is said today.
     await pick(tab.dialog()!, 'When you reach it');
-    expect(tab.dialog()!.findAll((e) => e.tagName === 'DETAILS')[0]?.textContent).toContain('Social Security from 67: your path and Will it last? count it.');
+    expect(tab.dialog()!.findAll((e) => e.tagName === 'DETAILS')[0]?.textContent).toContain('Social Security from 67: your path and the stress test count it.');
     await tab.unmount();
   }, 40_000);
 });

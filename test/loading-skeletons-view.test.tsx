@@ -142,10 +142,10 @@ describe('Your path while the plan loads', () => {
     expect(html.startsWith('<div class="stack loose" aria-busy="true"><section class="stack hero plan-hero" aria-hidden="true"><div><h3 class="total-label">Financial independence</h3><div class="total-value plan-answer">')).toBe(true);
     expect(html.indexOf('plan-skeleton-chart')).toBeLessThan(html.indexOf('<section class="card stack"'));
     expect(renderToStaticMarkup(<PlanSkeleton segment="path" />)).toContain(html);
-    // Drawdown's answer is on the page too since the tax plan's P: Will it
-    // last?, its rate at the hero size, then the grid's card.
+    // Drawdown's answer is on the page too since the tax plan's P: the
+    // stress test, its rate at the hero size, then the grid's card.
     const drawdown = renderToStaticMarkup(<PlanPanelSkeleton segment="drawdown" />);
-    expect(drawdown.startsWith('<div class="stack loose" aria-busy="true"><section class="stack hero drawdown-hero" aria-hidden="true"><div><h3 class="total-label">Will it last?</h3><div class="total-value"><span class="skeleton drawdown-skeleton-figure"></span></div>')).toBe(true);
+    expect(drawdown.startsWith('<div class="stack loose" aria-busy="true"><section class="stack hero drawdown-hero" aria-hidden="true"><div><h3 class="total-label">Stress test</h3><div class="total-value"><span class="skeleton drawdown-skeleton-figure"></span></div>')).toBe(true);
     expect(drawdown.indexOf('drawdown-hero')).toBeLessThan(drawdown.indexOf('<section class="card stack"'));
     const other = renderToStaticMarkup(<PlanPanelSkeleton segment="portfolio" />);
     expect(other.startsWith('<div aria-busy="true"><section class="card stack" aria-hidden="true">')).toBe(true);

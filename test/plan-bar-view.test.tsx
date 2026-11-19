@@ -402,7 +402,7 @@ describe('the segments', () => {
     expect(tab.shown()).toEqual(['Your path']);
     expect(tab.titles(tab.panelOf('Your path'))).toEqual(['Financial independence', 'Your figures', 'Timeline', 'Progress']);
     const drawdown = tab.titles(tab.panelOf('Drawdown'));
-    expect(drawdown).toEqual(['Will it last?', 'By withdrawal rate and length']);
+    expect(drawdown).toEqual(['Stress test', 'By withdrawal rate and length']);
     // Then its settings and About these numbers, as rows (rollout 6d).
     expect(drawdownRows(tab)).toEqual(['Assumptions', 'About these numbers']);
     expect(tab.titles(tab.panelOf('Portfolio'))[0]).toBe('Allocation');
@@ -552,16 +552,21 @@ describe('where the Plan opens', () => {
     await tab.unmount();
   });
 
-  test('nothing on screen says "stress test" any more: the three segments, and the sheets that point there', async () => {
+  test('no segment is called Stress test any more: the three segments, and the sheets that point there; the name is Drawdown’s hero’s', async () => {
     /** What a person reads or hears of an element: its text and every label. */
     const said = (el: FakeElement) => [el.textContent, ...el.findAll((e) => e.hasAttribute('aria-label')).map((e) => e.getAttribute('aria-label'))].join(' ');
+    /** Anywhere but the hero's heading, the stress test is named in a sentence, never as a place to go. */
+    const asPlace = /(?<!the )stress test/i;
     for (const row of ['Assumptions', 'Household']) {
       serve({ copies: [RETIRE] });
       const tab = await mount();
-      expect(said(tab.container)).not.toMatch(/stress/i);
+      expect(tab.tabs().map((e) => e.textContent)).toEqual(['Your path', 'Drawdown', 'Portfolio']);
+      const hero = tab.container.findAll((e) => e.getAttribute('id') === 'plan-last-title')[0];
+      expect(hero?.textContent).toBe('Stress test');
+      expect(said(tab.container).replace('Stress test', '')).not.toMatch(asPlace);
       await press(tab.row(row));
       expect(tab.dialog()).not.toBeNull();
-      expect(said(tab.dialog()!)).not.toMatch(/stress/i);
+      expect(said(tab.dialog()!)).not.toMatch(asPlace);
       await tab.unmount();
     }
   });
@@ -841,7 +846,7 @@ describe('the copy’s card, on every segment', () => {
       expect(tab.card()).toBe(card);
     }
     // Worked out, on the values it shows.
-    expect(tab.titles(tab.panelOf('Drawdown'))[0]).toBe('Will it last?');
+    expect(tab.titles(tab.panelOf('Drawdown'))[0]).toBe('Stress test');
     await tab.unmount();
   });
 
@@ -854,7 +859,7 @@ describe('the copy’s card, on every segment', () => {
     const edit = slot.findAll((e) => e.tagName === 'BUTTON' && e.textContent.startsWith('Mortgage paid off'));
     expect(edit.length).toBe(1);
     for (const p of tab.panels()) expect(p.textContent).not.toContain('Mortgage paid off');
-    expect(tab.text()).not.toContain('Will it last?');
+    expect(tab.text()).not.toMatch(/stress test/i);
     await tab.unmount();
   });
 
@@ -952,7 +957,7 @@ describe('where a switch scrolls to, under the pinned bar', () => {
     // the card, the copy worked out still.
     expect(tab.sheet('Household')).toBeNull();
     expect(tab.card()!.textContent).toContain(stale);
-    expect(tab.titles(tab.panelOf('Drawdown'))[0]).toBe('Will it last?');
+    expect(tab.titles(tab.panelOf('Drawdown'))[0]).toBe('Stress test');
     layout({ card: -500, panel: -900 });
     await act(async () => click(tab.tab('Drawdown')));
     expect(scrolls).toEqual([-628]);

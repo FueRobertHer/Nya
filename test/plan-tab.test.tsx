@@ -494,7 +494,7 @@ describe('the simulation card', () => {
     const html = render(plan({ targetAge: 65, horizon: 30 }), measured, {});
     const t = text(html);
     const r = simulate('historical', (enginePlan(plan({ targetAge: 65, horizon: 30 }), fiView(plan({ targetAge: 65, horizon: 30 }), measured)) as { sim: Parameters<typeof simulate>[1] }).sim, us);
-    expect(html.startsWith('<section class="stack hero drawdown-hero" aria-labelledby="plan-last-title"><div><h3 id="plan-last-title" class="total-label">Will it last?</h3>')).toBe(true);
+    expect(html.startsWith('<section class="stack hero drawdown-hero" aria-labelledby="plan-last-title"><div><h3 id="plan-last-title" class="total-label">Stress test</h3>')).toBe(true);
     expect(html).toContain(`<div class="total-value">${successText(r.successRate, 1)}</div>`);
     expect(html).not.toContain('class="card');
     expect(html).not.toContain('class="meta"');
@@ -541,7 +541,7 @@ describe('the simulation card', () => {
 
   test('Monte Carlo says how it was made, in the line under the rate', () => {
     const t = read(plan({ method: 'monte-carlo', horizon: 30 }));
-    expect(t).not.toContain('Will it last? Monte Carlo');
+    expect(t).not.toContain('Stress test Monte Carlo');
     expect(t).toContain('of 5,000 Monte Carlo runs lasted 30 years');
     expect(t).not.toContain('Worst starting years');
   });
@@ -596,7 +596,7 @@ describe('the simulation card', () => {
     expect(t).toContain("The simulation couldn't be loaded. It needs a connection the first time it runs after an update.");
     // The figures that don't depend on it are on the other segments.
     expect(t).toContain("The figures on Your path and Portfolio don't depend on it.");
-    expect(t).toContain('Will it last? Not worked out');
+    expect(t).toContain('Stress test Not worked out');
     expect(t).toContain('Try again');
     expect(t).not.toContain("This plan can't be simulated");
     const refused = read(plan({ horizon: 30 }), measured, { outcome: { error: 'a plan runs 1 to 60 years' } });
@@ -837,14 +837,14 @@ describe('the grid', () => {
   });
 
   // The screen review: "Hypothetical, from US history" twice in one view.
-  test('the grid says its figures are hypothetical only while "Will it last?" above it has no answer to say it with', () => {
+  test('the grid says its figures are hypothetical only while the stress test above it has no answer to say it with', () => {
     const p = plan({ horizon: 30 });
     const e = enginePlan(p, fiView(p, measured));
     if (!('sim' in e)) throw new Error('expected a simulation');
     const grid = (say: boolean) =>
       renderToStaticMarkup(<GridCard plan={p} cells={null} rates={[0.04]} years={[30]} current={{ rate: 0.04, years: 30 }} startBalance={1} money={money} sayHypothetical={say} />);
     const LABEL = 'Hypothetical, from US history: not a prediction, and not advice.';
-    // An answer: "Will it last?" says it, the grid doesn't.
+    // An answer: the stress test says it, the grid doesn't.
     const answered: Outcome = { result: simulate(p.method, e.sim, usMarket()) };
     expect(simulationAnswered(e, answered)).toBe(true);
     expect(grid(!simulationAnswered(e, answered))).not.toContain(LABEL);
@@ -934,7 +934,7 @@ describe('income and one-offs on the Timeline', () => {
     expect(card(plan({ ...p, age: 40, targetAge: 50, spending: 40_000, horizon: 5 }))).toContain('After the plan ends at 55: only the grid’s longer columns reach it.');
   });
 
-  test('says where they count, from where Will it last? starts; a one-off before then nowhere, and one before today not at all', () => {
+  test('says where they count, from where the stress test starts; a one-off before then nowhere, and one before today not at all', () => {
     const p = plan({
       age: 40,
       targetAge: 50,
@@ -943,8 +943,8 @@ describe('income and one-offs on the Timeline', () => {
       expenses: [{ id: 'roof', label: 'Roof', amount: 30_000, atAge: 45 }],
     });
     const t = card(p);
-    expect(t).toContain('Will it last? counts costs, windfalls and income, from 50, where it starts.');
-    expect(t).toContain('Before 50, where Will it last? starts, so it isn’t counted anywhere.');
+    expect(t).toContain('The stress test counts costs, windfalls and income, from 50, where it starts.');
+    expect(t).toContain('Before 50, where the stress test starts, so it isn’t counted anywhere.');
     // One before today: already spent, so your measured figures may count it.
     expect(card(plan({ age: 40, targetAge: 50, spending: 40_000, expenses: [{ id: 'car', label: 'Car', amount: 20_000, atAge: 38 }] }))).toContain('Before today, so it isn’t counted: your measured figures may already count it.');
   });

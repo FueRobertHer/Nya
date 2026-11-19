@@ -10,7 +10,7 @@
 // No React here, so it can be tested on its own.
 //
 // D9's earliest stop that lasts (lib/fire/earliest.ts) has its own one (planLasting),
-// on the simulator's worker, since it runs Will it last? at each stop it tries: one
+// on the simulator's worker, since it runs the stress test at each stop it tries: one
 // per page too, so Home and the Plan ask once, and nothing the Plan tab's own runner
 // does (Try again, leaving the tab) stops it.
 

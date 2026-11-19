@@ -549,7 +549,7 @@ describe('Assumptions', () => {
     const form = await sheet(on, 'Assumptions');
     expect(form.textContent).toContain('A flat share of every withdrawal');
     expect(form.textContent).toContain('What I’d have at my stop age');
-    expect(form.textContent).toContain('Will it last? uses market history for its returns.');
+    expect(form.textContent).toContain('Only for the years until FI: years to FI, Coast FI and the balance at your stop age. The stress test uses market history for its returns instead.');
     expect(form.textContent).not.toContain('each year’s tax');
     await on.unmount();
   }, 30_000);

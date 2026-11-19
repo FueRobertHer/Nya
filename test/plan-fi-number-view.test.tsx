@@ -48,7 +48,7 @@ describe('its sheet', () => {
     expect(t).toContain('What you’d draw each year$47,059');
     expect(t).toContain('At a 4% withdrawal rate$1,176,471');
     expect(t).toContain('Each is a row on Your figures, or under Assumptions.');
-    expect(t).toContain('Will it last? starts from this number.');
+    expect(t).toContain('The stress test starts from this number.');
     expect(button(form, 'Use the worked-out number')).toBeNull();
     await tab.unmount();
   }, 20_000);
@@ -59,7 +59,7 @@ describe('its sheet', () => {
     await press(tab.row('FI number'));
     const why = tab.dialog()!.findAll((e) => e.tagName === 'DETAILS')[0];
     expect(why.textContent).toContain('What it leaves out');
-    expect(why.textContent).toContain('Social Security from 67: your path and Will it last? count it.');
+    expect(why.textContent).toContain('Social Security from 67: your path and the stress test count it.');
     await tab.unmount();
   }, 20_000);
 

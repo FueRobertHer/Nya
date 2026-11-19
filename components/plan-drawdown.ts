@@ -671,7 +671,7 @@ export function householdNotes(a: { facts: Pick<TaxFacts, 'dependents'>; choices
 /** About these numbers, under a detailed plan: how tax is worked out, what stands in
  *  for what, and what isn't modeled. */
 export const ABOUT_DETAIL = {
-  how: 'Drawdown works out each year from your accounts at a steady return: federal income tax, your state’s one rate, penalties, required withdrawals and health coverage, under one year’s law held in today’s dollars. Your FI number takes its tax and health coverage from those years run from the FI number itself, so it doesn’t move with where a plan starts. Will it last? works out the same years in every start, on that start’s own returns and inflation. Its grid does that for every sixth start, or 250 runs, to keep it quick.',
+  how: 'Drawdown works out each year from your accounts at a steady return: federal income tax, your state’s one rate, penalties, required withdrawals and health coverage, under one year’s law held in today’s dollars. Your FI number takes its tax and health coverage from those years run from the FI number itself, so it doesn’t move with where a plan starts. The stress test works out the same years in every start, on that start’s own returns and inflation. Its grid does that for every sixth start, or 250 runs, to keep it quick.',
   standIns: [
     'Of dividends and interest, 75% counts as qualified.',
     'Only premiums count as health costs: deductibles, coinsurance, dental, vision and hearing don’t. Premiums are about 45% of a 65-year-old’s lifetime health costs (Fidelity’s 2026 estimate).',

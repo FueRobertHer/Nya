@@ -2,11 +2,11 @@
 //
 // D9: the earliest stop that lasts. For a plan with `lastsIn` (lib/fire/plan-v2.ts),
 // its answer is the earliest whole age at which stopping lasts in at least that share
-// of Will it last?'s starts, by the plan's own method, in place of the age the walk
+// of the stress test's starts, by the plan's own method, in place of the age the walk
 // reaches the FI number (decision 25).
 //
 // A stop at k is the plan with FI at k, the stop at k (so what is timed on either
-// starts there) and Will it last? starting from what the steady path has then (D11's
+// starts there) and the stress test starting from what the steady path has then (D11's
 // start): the only start that changes with the stop. It lasts when its share of
 // starts that last reaches `lastsIn`. Each candidate settles its own tax and health
 // in the FI number, as a search's candidates do.

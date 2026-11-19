@@ -93,8 +93,8 @@ describe('its points and rows', () => {
   });
 
   test('the where line follows the plan’s start', () => {
-    expect(text(card({ ...PLAN, items: [ROOF] }))).toContain('Will it last? counts costs, windfalls and income, from 55, where it starts.');
-    expect(text(card({ ...PLAN, items: [ROOF], start: 'assets' }))).toContain('Will it last? counts costs, windfalls and income, from 40, where it starts.');
+    expect(text(card({ ...PLAN, items: [ROOF] }))).toContain('The stress test counts costs, windfalls and income, from 55, where it starts.');
+    expect(text(card({ ...PLAN, items: [ROOF], start: 'assets' }))).toContain('The stress test counts costs, windfalls and income, from 40, where it starts.');
   });
 });
 
@@ -105,10 +105,10 @@ describe('a row’s notes', () => {
     expect(html).toContain(`<span class="plan-warning">${EVENT_PART_TEXT.past}</span>`);
   });
 
-  test('part-time before Will it last? starts: with what it replaces, its years before count in your FI date; without it, the caution says what to do', () => {
+  test('part-time before the stress test starts: with what it replaces, its years before count in your FI date; without it, the caution says what to do', () => {
     const job = (replaces: number | null) => mk('Job', 'part-time', at(50), { until: at(60), yearly: 20_000, replaces });
     const said = text(card({ ...PLAN, items: [job(25_000)] }));
-    expect(said).toContain('Its years before 55 count in your FI date, not in Will it last?, which starts at 55.');
+    expect(said).toContain('Its years before 55 count in your FI date, not in the stress test, which starts at 55.');
     expect(said).not.toContain('Say what take-home it replaces');
     const unsaid = card({ ...PLAN, items: [job(null)] });
     expect(text(unsaid)).toContain('Say what take-home it replaces, so it counts in your FI date');
@@ -124,9 +124,9 @@ describe('a row’s notes', () => {
 
   test('an item on FI or a balance starts where the steady path has it, in every run, and why', () => {
     const onFi = text(card({ ...PLAN, items: [mk('Trip', 'one-off', on('fi'), { once: 10_000 })] }));
-    expect(onFi).toMatch(/Starts at \d+ in every run, as on your steady path: Will it last\? starts from your FI number, not your own path\./);
+    expect(onFi).toMatch(/Starts at \d+ in every run, as on your steady path: the stress test starts from your FI number, not your own path\./);
     const onBalance = text(card({ ...PLAN, start: 'custom', startBalance: 900_000, items: [mk('Trip', 'one-off', { anchor: { at: 'balance', amount: 700_000 }, offset: 0 }, { once: 10_000 })] }));
-    expect(onBalance).toMatch(/Starts at \d+ in every run, as on your steady path: Will it last\? starts from the balance you typed, not your own path\./);
+    expect(onBalance).toMatch(/Starts at \d+ in every run, as on your steady path: the stress test starts from the balance you typed, not your own path\./);
   });
 
   describe('two part-time jobs that meet on the steady path', () => {
@@ -148,7 +148,7 @@ describe('a row’s notes', () => {
       expect(plan(job('None', at(45), on('fi', -20)))).not.toContain('It overlaps');
     });
 
-    test('nothing for years that count nowhere: all before today, or in neither the FI date nor Will it last?', () => {
+    test('nothing for years that count nowhere: all before today, or in neither the FI date nor the stress test', () => {
       expect(text(card({ ...PLAN, items: [job('Over', at(30), at(38)), job('Now', at(36), on('fi', -1))] }))).not.toContain('It overlaps');
       const unsaid = { replaces: null };
       const neither = text(card({ ...PLAN, items: [job('Shop', at(41), on('fi', -1), unsaid), job('Gig', at(45), on('fi', -1), unsaid)] }));

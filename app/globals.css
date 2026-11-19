@@ -4805,7 +4805,7 @@ button.plan-edit:disabled {
 }
 
 /* A heading inside a Plan card or sheet (rollout 6d): the Assumptions
-   sheet's two parts, "From Your path" on Will it last?, and Portfolio's "For
+   sheet's two parts, "From Your path" on the stress test, and Portfolio's "For
    your plan". 13px, as a secondary line, in sentence case: .plan-subhead's
    11px capitals are what it replaces. */
 .plan-heading {
@@ -4881,7 +4881,7 @@ button.plan-edit:disabled {
   right: 0;
 }
 
-/* Will it last? as Drawdown's hero (the tax plan's P): while a new answer
+/* The stress test as Drawdown's hero (the tax plan's P): while a new answer
    is worked out, its last rate and the line under it are held hidden too,
    the label kept, and the result's one status says so. */
 .drawdown-hero.drawdown-pending .total-value,

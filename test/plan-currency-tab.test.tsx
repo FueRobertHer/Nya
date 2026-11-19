@@ -575,7 +575,7 @@ describe('copies against your plan’s currency', () => {
     await open('In dollars');
     expect(tab.text()).toContain('Copy: In dollars');
     expect(tab.buttons('They’re in USD').length).toBe(0);
-    expect(tab.text()).toContain('Will it last?');
+    expect(tab.text()).toContain('Stress test');
     // The other is listed with why it isn't worked out, in the sheet's
     // Compare, opened from the open copy's card.
     await press(tab.buttons('Plans (3)')[0]);
@@ -587,7 +587,7 @@ describe('copies against your plan’s currency', () => {
     await press(tab.container.findAll((e) => e.getAttribute('class') === 'plan-bar')[0].findAll((e) => e.getAttribute('aria-label') === 'Back to your plan')[0]);
     await open('In euros');
     expect(tab.text()).toContain('Copy: In euros');
-    expect(tab.text()).not.toContain('Will it last?');
+    expect(tab.text()).not.toMatch(/stress test/i);
     // Offered at once: your plan's currency is recorded, so it can't move.
     expect(tab.buttons('They’re in USD').length).toBe(1);
     await tab.unmount();
@@ -708,7 +708,7 @@ describe('each side of the year, the rates at hand, and the simulation card (rev
     // Once on each segment's answer: Your path's, and Drawdown's hero (the tax
     // plan's P), which can't be worked out without it either.
     expect(tab.text().match(/Needs your annual spending/g)?.length).toBe(2);
-    expect(tab.text()).toContain('Will it last?Needs your annual spendingThe simulation withdraws your annual spending');
+    expect(tab.text()).toContain('Stress testNeeds your annual spendingThe simulation withdraws your annual spending');
     expect(tab.text()).toContain('The simulation withdraws your annual spending, which isn’t measured (Your path says why). Type it on Your path.');
     expect(tab.text()).not.toContain('connect accounts with transactions');
     expect(tab.text()).not.toContain('$1,097');
