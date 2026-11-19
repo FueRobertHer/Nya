@@ -318,7 +318,8 @@ function RateHint({ measured, inflation, balancesAt, typed, disabled, onUse }: {
   // As said, to a tenth of a percent, and then within what a plan takes.
   const said = Number(real.toFixed(3));
   const use = Math.min(max, Math.max(min, said));
-  const held = typed === null ? null : Number(typed) * 0.01;
+  // An empty field holds nothing (Number would read it as 0).
+  const held = typed === null || typed.trim() === '' ? null : Number(typed) * 0.01;
   const offers = held === null || !(Math.abs(held - use) < 1e-9);
   const stale = balancesAt !== null && (Date.parse(balancesAt) - Date.parse(`${measured.to}T00:00:00Z`)) / 86_400_000 > STALE_DAYS;
   const span = stale ? `from ${monthName(measured.since.slice(0, 7))} to ${monthName(measured.to.slice(0, 7))}` : `since ${monthName(measured.since.slice(0, 7))}`;
@@ -409,8 +410,9 @@ function AccountLevel({
   // Its facts can't change here, but its growth can: the button hands it over.
   const handsOnly = !!locked && settable;
   // Its own rate of return, as a guide beside its growth: asked for only where
-  // its growth can be set.
-  const measured = useMeasuredRate(id, account?.item_id ?? null, !!rates);
+  // its growth can be set, and never for checking or savings, which have no
+  // investment activity to ask a bank for.
+  const measured = useMeasuredRate(id, account?.item_id ?? null, account?.currency ?? null, !!rates && account?.basisFrom !== 'cash');
   const showsBasis = account?.bucket === 'taxable' && account.basisFrom !== 'cash';
   // Its own dividends, where they count: with tax worked out.
   const dividends = showsBasis && rates ? rates.dividends : null;

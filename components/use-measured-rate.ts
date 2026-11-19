@@ -19,7 +19,7 @@ export type RateState = { kind: 'off' } | { kind: 'loading' } | MeasuredRate;
  * The rate for `accountId`, or `off` when nothing is to be asked (`ask`
  * false). An account with no item has no investment activity, so none.
  */
-export function useMeasuredRate(accountId: string, itemId: string | null, ask: boolean): RateState {
+export function useMeasuredRate(accountId: string, itemId: string | null, currency: string | null, ask: boolean): RateState {
   const [state, setState] = useState<{ key: string; rate: RateState } | null>(null);
   const key = `${itemId ?? ''}:${accountId}`;
   useEffect(() => {
@@ -31,9 +31,8 @@ export function useMeasuredRate(accountId: string, itemId: string | null, ask: b
     });
     Promise.all([history, loadInvestmentActivity(accountId, itemId)])
       .then(([h, activity]) => {
-        // Vanguard's months are in dollars, and the Plan's rows don't carry an
-        // account's own currency: null reads as US dollars.
-        if (!cancelled) setState({ key, rate: measuredRate(h.points ?? [], activity, null) });
+        // Its own currency, as Investments checks a brokerage's months against.
+        if (!cancelled) setState({ key, rate: measuredRate(h.points ?? [], activity, currency) });
       })
       .catch(() => {
         if (!cancelled) setState({ key, rate: { kind: 'failed' } });
@@ -41,7 +40,7 @@ export function useMeasuredRate(accountId: string, itemId: string | null, ask: b
     return () => {
       cancelled = true;
     };
-  }, [accountId, itemId, ask, key]);
+  }, [accountId, itemId, currency, ask, key]);
   if (!ask) return { kind: 'off' };
   if (!itemId) return { kind: 'none' };
   return state?.key === key ? state.rate : { kind: 'loading' };

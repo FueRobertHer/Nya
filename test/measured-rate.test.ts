@@ -60,6 +60,17 @@ describe('an account’s own rate of return', () => {
     expect(measuredRate(points, activity(flows, day('2025-11-01', 300), '2026-11-01'), null)).toEqual({ kind: 'none' });
   });
 
+  test('a year’s rate only: activity that ends before its last day, or counts under a year of a longer range, has none', () => {
+    const year = history('2025-09-01', '2026-11-01', 0.091);
+    expect(measuredRate(year.points, activity(year.flows, '2025-09-01', '2026-11-01'), null).kind).toBe('rate');
+    // Its activity stops 3 days before the last balance: not the whole year.
+    expect(measuredRate(year.points, activity(year.flows, '2025-09-01', day('2026-11-01', -3)), null)).toEqual({ kind: 'none' });
+    // 3Y is offered, but its activity covers the last 300 days only: a part
+    // year's return, under 3Y and 1Y alike.
+    const three = history('2022-06-01', '2026-11-01', 0.05);
+    expect(measuredRate(three.points, activity(three.flows, day('2026-11-01', -300), '2026-11-01'), null)).toEqual({ kind: 'none' });
+  });
+
   test('under a year of history, or no investment activity, has none', () => {
     const { points, flows } = history('2026-02-01', '2026-11-01', 0.091);
     expect(measuredRate(points, activity(flows, '2026-02-01', '2026-11-01'), null)).toEqual({ kind: 'none' });

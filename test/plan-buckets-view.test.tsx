@@ -1199,6 +1199,20 @@ describe('each account’s own rate of return', () => {
     await tab.unmount();
   });
 
+  test('checking and savings, counted, ask nothing: a bank has no investment activity to give', async () => {
+    const cash = { ...INSTITUTIONS[0], item_id: 'r6', accounts: [...INSTITUTIONS[0].accounts, { account_id: 'chk', name: 'Checking', type: 'depository', subtype: 'checking', balance: 5_000, currency: 'USD' }] };
+    const server = serve({ plan: { ...PLAN, includeCash: true } });
+    const tab = await mount({ institutions: [cash, INSTITUTIONS[1]] });
+    await openAssets(tab);
+    await openRow(tab, 'Checking');
+    expect(tab.title()).toBe('Checking');
+    expect(tab.shown()).toContain('Growth after inflation');
+    expect(tab.shown()).not.toContain('rate of return');
+    expect(tab.shown()).not.toContain(NONE);
+    expect(server.calls.filter((c) => c.url.includes('id=chk'))).toEqual([]);
+    await tab.unmount();
+  });
+
   test('nothing is asked where its growth can’t be set: with your own figure for invested assets', async () => {
     const server = serve({ plan: { ...PLAN, assets: 200_000 }, histories: { 'r5:brk': grown('2020-06-01', '2026-10-01', 0.091) } });
     const tab = await mount({ institutions: under('r5') });
