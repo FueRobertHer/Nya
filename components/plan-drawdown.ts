@@ -679,7 +679,7 @@ export const ABOUT_DETAIL = {
     'Medicare’s income surcharge (IRMAA) reads your income from two years before, and nothing for a year with no such year in the plan.',
     'Where a flexible rule’s spending falls to your average health cost in a run, it holds there: all of it goes to coverage, with nothing left to live on.',
     'An education account you count stands in as tax-deferred.',
-    'What’s left at the end takes taxable at full value, Roth as it is, and tax-deferred and an HSA after the federal tax on drawing them evenly over ten years, bracket by bracket on top of the last year’s income, the way most heirs must draw an IRA. An heir’s own income, a state’s tax and an HSA taxed all at once aren’t counted, which favours a rule that leaves more tax-deferred.',
+    'What’s left at the end takes taxable at full value, Roth as it is, and tax-deferred and an HSA after the federal tax on drawing them evenly over ten years, bracket by bracket on top of the last year’s income, the way most heirs must draw an IRA. An heir’s own income, a state’s tax and an HSA taxed all at once aren’t counted, which favors a rule that leaves more tax-deferred.',
     'A year you’d draw before you stop has no wages counted beside it.',
     'Tune to a goal keeps a setting only if it stays inside the limits you set in every year, and shows the closest where none does. It holds your stop, your start and what’s timed on them where they are. Where settings tie, to the dollar, it keeps your plan’s own, then takes the lower conversion, then the earlier end.',
   ],

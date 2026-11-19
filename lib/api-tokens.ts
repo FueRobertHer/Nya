@@ -155,11 +155,9 @@ export function cleanLabel(raw: unknown): string | { error: string } {
   return label;
 }
 
-/** Why a demo account can't make a token: everyone who tries the demo shares
- *  its data (lib/demo.ts), so a token would go on reading what later visitors
- *  type. A sandbox for developers is a later step. */
-export const DEMO_REFUSAL =
-  'Demo accounts can’t make API tokens: everyone who tries the demo shares its data, so a token would go on reading what later visitors type. Try the API on your own copy of Nya.';
+/** Why a demo account can't make a token (lib/api-limits.ts, where the card
+ *  reads it too). */
+export { DEMO_REFUSAL } from './api-limits';
 
 /** A token refused for the limit: nothing was saved. */
 export class TokenLimitError extends Error {

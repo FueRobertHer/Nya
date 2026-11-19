@@ -411,12 +411,15 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
  *  their amounts and shares. Negative amounts (a margin loan) can't be part of
  *  a bar of the whole: they are in the rows, and named under the bar. */
 export function ShareTable<K extends string>({
+  caption,
   totals,
   order,
   colors,
   label,
   money,
 }: {
+  /** The table's name for a screen reader: what its rows are by. */
+  caption: string;
   totals: Record<K, number>;
   order: readonly K[];
   colors: Record<K, string>;
@@ -436,7 +439,7 @@ export function ShareTable<K extends string>({
         ))}
       </div>
       <table className="alloc-table">
-        <caption className="visually-hidden">By class</caption>
+        <caption className="visually-hidden">{caption}</caption>
         <tbody>
           {rows.map((r) => (
             <tr key={r.slot}>
@@ -547,7 +550,7 @@ export function ClassView({
   };
   return (
     <>
-      <ShareTable totals={alloc.classes} order={SLOTS} colors={CLASS_COLORS} label={(s: Slot) => CLASS_NAMES[s]} money={money} />
+      <ShareTable caption="By asset class" totals={alloc.classes} order={SLOTS} colors={CLASS_COLORS} label={(s: Slot) => CLASS_NAMES[s]} money={money} />
       {(unclassifiedSecurities.length > 0 || gaps.length > 0) && (
         <>
           <div className="plan-subhead">
@@ -648,7 +651,7 @@ export function gainNote(amount: number | null, basis: number | null, money: (n:
 export function BucketView({ alloc, money, editable, open, typedBasis = NO_BASIS }: { alloc: Allocation; money: (n: number) => string; editable: boolean; open: (s: SheetState) => void; typedBasis?: ReadonlyMap<string, number> }) {
   return (
     <>
-      <ShareTable totals={alloc.buckets} order={BUCKET_SLOTS} colors={BUCKET_COLORS} label={(b) => BUCKET_NAMES[b]} money={money} />
+      <ShareTable caption="By tax bucket" totals={alloc.buckets} order={BUCKET_SLOTS} colors={BUCKET_COLORS} label={(b) => BUCKET_NAMES[b]} money={money} />
       <div className="plan-subhead">Accounts</div>
       <p className="panel-note">
         From each account&apos;s type. A 401(k) can hold Roth money, which its type doesn&apos;t say: change any account that is in another bucket.

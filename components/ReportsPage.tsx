@@ -367,8 +367,8 @@ export default function ReportsPage() {
               </button>
             </div>
             <p className="panel-note">
-              To save a PDF, choose Save as PDF in the print window. Days and times are read in {zone}. The report reads what Nya has stored, so open Nya first to
-              bring your connections up to date.
+              To save a PDF, choose Save as PDF in the print window. Days and times are read in {zone}. The report reads what Nya has stored: to bring your
+              connections up to date first, go back to Activity and use Refresh at the top.
             </p>
           </div>
         )}

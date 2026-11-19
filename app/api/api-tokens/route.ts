@@ -73,12 +73,21 @@ function failure(err: unknown, doing: string): NextResponse {
 
 const noStore = { 'Cache-Control': 'no-store' };
 
+/** The signed-in Clerk account is one of Preview's demo accounts. */
+async function demo(): Promise<boolean> {
+  if (!clerkEnabled()) return false;
+  const { auth } = await import('@clerk/nextjs/server');
+  const { userId } = await auth();
+  return !!userId && isDemoUser(userId);
+}
+
 export async function GET() {
   try {
     const ctx = await dataCtx();
     const { tokens, unreadable, unrecognised } = await listTokens(ctx);
-    const writes = await flagOnCached('api-writes', await requestWho(ctx));
-    return NextResponse.json({ tokens, unreadable, unrecognised, limit: MAX_TOKENS, writes }, { headers: noStore });
+    const [writes, isDemo] = await Promise.all([flagOnCached('api-writes', await requestWho(ctx)), demo()]);
+    // A demo account is told up front that it can't make one (POST refuses it).
+    return NextResponse.json({ tokens, unreadable, unrecognised, limit: MAX_TOKENS, writes, ...(isDemo ? { demo: true } : {}) }, { headers: noStore });
   } catch (err) {
     return failure(err, 'read');
   }
@@ -109,11 +118,7 @@ export async function POST(req: Request) {
   }
 
   // Before the sign-in, so a demo visitor isn't asked to confirm it's them for nothing.
-  if (clerkEnabled()) {
-    const { auth } = await import('@clerk/nextjs/server');
-    const { userId } = await auth();
-    if (userId && isDemoUser(userId)) return NextResponse.json({ error: DEMO_REFUSAL }, { status: 403 });
-  }
+  if (await demo()) return NextResponse.json({ error: DEMO_REFUSAL }, { status: 403 });
 
   try {
     if ((await apiTokenStore.count(ctx)) >= MAX_TOKENS) return NextResponse.json({ error: new TokenLimitError().message }, { status: 409 });

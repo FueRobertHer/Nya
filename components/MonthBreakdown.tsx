@@ -934,10 +934,12 @@ export default function MonthBreakdown({
   // under the switch that chooses it, naming it when it is longer than the
   // bar's month, as every card there names it.
   const longer = onSpending && !!period && !(period.months.length === 1 && period.months[0] === selected);
+  // Plain "In and out" while there is no span to name, never one left hanging on a comma.
+  const figuresWhen = onSpending ? caption : selected ? monthName(selected) : "";
   const figures = (
     <MonthFigures
       totals={{ moneyIn, moneyOut, currency }}
-      title={`In and out, ${onSpending ? caption : selected ? monthName(selected) : ""}`}
+      title={figuresWhen ? `In and out, ${figuresWhen}` : "In and out"}
       caption={longer ? caption : null}
     >
       <div className="chart-note">

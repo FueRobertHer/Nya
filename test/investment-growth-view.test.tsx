@@ -744,6 +744,17 @@ describe('what the figures are short of', () => {
     }
   });
 
+  test('no investment activity for any account: the chart says that, not that balances are missing', async () => {
+    const { host, root } = setup({ only: ['roth'], answers: { roth: { noActivity: true } } });
+    try {
+      await pass(50);
+      expect(byClass(host, 'empty-note').map(words)).toContain('Nothing to draw yet: Nya has no investment activity for this account, so its returns can’t be told apart from deposits and withdrawals.');
+      expect(words(host)).not.toContain('it builds as balances are recorded');
+    } finally {
+      act(() => root.unmount());
+    }
+  });
+
   test('history that fails to load: said once, critical, and no figures', async () => {
     const { host, root } = setup({ history: 500 });
     try {

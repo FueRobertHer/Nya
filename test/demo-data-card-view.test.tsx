@@ -6,7 +6,7 @@ const noop = () => {};
 const INFO: Extract<DemoInfo, { demo: true }> = {
   demo: true,
   scenarios: [
-    { id: 'single-renter', title: 'Single renter', description: 'One income and a rented flat.' },
+    { id: 'single-renter', title: 'Single renter', description: 'One income and a rented apartment.' },
     { id: 'household', title: 'Two-income household', description: 'Two incomes and a child.' },
   ],
   default: 'household',

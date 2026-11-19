@@ -119,7 +119,7 @@ describe('the other steps', () => {
   test('the mapping step names the file’s columns and its first rows', () => {
     const q = { needs: 'mapping' as const, app: null, columns: {}, table: { header: ['When', 'Who', 'Out'], sample: [{ line: 2, cells: ['2026-09-01', 'Shop', '10.00'] }], rows: 1 }, problem: null };
     const words = text(renderToStaticMarkup(<MappingStep q={q} options={{}} busy={false} error="" onAnswer={noop} />));
-    expect(words).toContain('Nya doesn’t recognise this file’s columns');
+    expect(words).toContain('Nya doesn’t recognize this file’s columns');
     expect(words).toContain('Line 2: 2026-09-01 · Shop · 10.00');
   });
 

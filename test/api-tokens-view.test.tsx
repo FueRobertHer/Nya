@@ -9,7 +9,7 @@ await mockForFile('@clerk/nextjs', () => ({
 }));
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { ApiTokensView, RevokeSheet, mcpConfig, shortDay, ACCESS_CHOICES, CHANGES_NOTE } = await import('@/components/ApiTokens');
-const { MAX_TOKENS, REQUESTS_PER_MINUTE } = await import('@/lib/api-limits');
+const { DEMO_REFUSAL, MAX_TOKENS, REQUESTS_PER_MINUTE } = await import('@/lib/api-limits');
 const { writingIn } = await import('./writing-words');
 
 type Props = Parameters<typeof ApiTokensView>[0];
@@ -113,6 +113,14 @@ describe('API tokens, on screen', () => {
     expect(makeButton(busy)[0]).toMatch(/disabled/);
     expect(busy).toMatch(/<input[^>]*disabled/);
     expect(view({ error: 'You have the most API tokens you can.' })).toContain('You have the most API tokens you can.');
+  });
+
+  test('a demo account: why it can’t make one, said up front, in place of the form', () => {
+    const html = view({ list: { ...(ready([]) as Extract<Props['list'], { kind: 'ready' }>), demo: true }, label: 'Claude' });
+    expect(text(html)).toContain(DEMO_REFUSAL);
+    expect(html).not.toContain('Make a token');
+    expect(html).not.toContain('A name for it');
+    expect(view()).not.toContain('Demo accounts can’t make API tokens');
   });
 
   test('at the limit, no form: revoke one first (records that can’t be read count, as the server counts them)', () => {

@@ -413,7 +413,7 @@ export default function InvestmentGrowth({
         chart={
           chartEl ?? (
             <>
-              {g && !g.loading && !historyFailed && <p className="empty-note">Not enough history to draw yet: it builds as balances are recorded.</p>}
+              {g && !g.loading && !historyFailed && <p className="empty-note">{emptyWords(g)}</p>}
               {(!g || g.loading) && !historyFailed && (
                 <div className="chart-loading" aria-hidden="true">
                   <div className="chart-loading-box" />
@@ -517,6 +517,17 @@ function heroInfo(g: CurrencyGroup<Shown>, one: boolean): string[] {
     `Without returns is what ${one ? 'it' : 'they'} would be worth with no returns: the beginning balance plus deposits and withdrawals so far. The gap between it and Balance is your investment returns.${ends}`,
     `The rate of return weighs each deposit and withdrawal by how long it was invested, so money added late in the range counts for less.${one ? '' : ' An account counted from a later day joins on that day.'}${middles} Past a year it is given a year.`,
   ];
+}
+
+/** Why there is no chart: with no investment activity for any account there
+ *  are no deposits or withdrawals to draw the line from, whatever balances
+ *  were recorded; otherwise too few recorded days. */
+export function emptyWords(g: CurrencyGroup<Shown>): string {
+  if (g.rows.length > 0 && g.rows.every((r) => r.status === 'none')) {
+    const one = g.rows.length === 1;
+    return `Nothing to draw yet: Nya has no investment activity for ${one ? 'this account' : 'these accounts'}, so ${one ? 'its' : 'their'} returns can’t be told apart from deposits and withdrawals.`;
+  }
+  return 'Not enough history to draw yet: it builds as balances are recorded.';
 }
 
 /** Where an account starts or stops, and what isn't counted in the range,
