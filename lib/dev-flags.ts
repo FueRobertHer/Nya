@@ -6,7 +6,7 @@
 // VERCEL variable, so Vercel's own Development environment is out too, as is
 // its `development:` prefix), on the `dev:` prefix, and only when
 // NYA_DEV_FLAGS=1, which `bun run dev` sets and binds the server to this
-// machine (127.0.0.1); `bun run dev:lan`, which answers the local network for
+// machine (localhost, docs/deployment.md says why not 127.0.0.1); `bun run dev:lan`, which answers the local network for
 // trying the app on a phone, leaves the page off. With REDIS_PREFIX set to
 // production or preview locally, as the scripts do, the page is missing.
 // Whoever reaches a dev server some other way can change only the `dev:`
