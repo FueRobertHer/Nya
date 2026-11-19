@@ -226,7 +226,7 @@ describe('Whole path from the drawdown', () => {
     expect(planPath(figures(p))!.after!.withEvents).toBe(planPath(figures(p, { detailed: false }))!.after!.withEvents);
   });
 
-  test('a milestone after the stop fires on the drawdown’s path', () => {
+  test('a balance after the stop fires on the drawdown’s path', () => {
     const on = (amount: number, from = 0) => ({ anchor: { at: 'balance' as const, amount }, offset: from });
     // Roth and tax-deferred money grow past $2M only some years on: when, depends
     // on what the years pay, health and tax included.

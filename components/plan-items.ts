@@ -279,7 +279,7 @@ export type TimelineLayout = {
   /** In order of the steady path's years; a point with nothing under it is
    *  a marker (the stop, FI). */
   points: TimelinePoint[];
-  /** Milestones the steady path never reaches, last, with their items. */
+  /** Balances the steady path never reaches, last, with their items. */
   notReached: TimelinePoint[];
   /** Items that can't be placed, in the order they were added. */
   unplaced: number[];
@@ -295,7 +295,7 @@ function fiAt(f: PlanFigures): { age: number | null; now: boolean; when: FiWhen 
 
 /** The Timeline's points (timeline.md "The points"): each year that names
  *  something, one label joined with " · " (today, the stop, FI, balance
- *  milestones, item edges, then a plain age only when nothing else names
+ *  anchors, item edges, then a plain age only when nothing else names
  *  it), each item under the year it starts. With no age there are no
  *  points, and every item is listed in the order it was added. */
 export function timelinePoints(plan: FirePlanV2, f: PlanFigures | null, money: Money): TimelineLayout {
@@ -546,7 +546,7 @@ export function itemCautions(x: PlanItem, at: { start: number | null; stop: numb
 
 /** The copy's name for an item tried in one: the template's words with its
  *  start ("Buy a home at 38", "Part-time work when you stop", "… at a
- *  milestone" for a balance), never an amount, cut at a word to the 40 a
+ *  balance" for a balance), never an amount, cut at a word to the 40 a
  *  name holds, with " (2)", " (3)"... when another plan has it already. */
 export function copyNameFor(template: ItemTemplate, x: PlanItem, plan: Facts, others: readonly { id: string; name: string }[]): string {
   const a = x.from.anchor;
@@ -569,7 +569,7 @@ export function copyNameFor(template: ItemTemplate, x: PlanItem, plan: Facts, ot
       when = by('FI');
       break;
     case 'balance':
-      when = 'at a milestone';
+      when = 'at a balance';
       break;
     case 'item': {
       const other = plan.items.find((y) => y.id === a.id);

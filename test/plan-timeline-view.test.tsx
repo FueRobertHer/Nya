@@ -157,7 +157,7 @@ describe('a row’s notes', () => {
     });
   });
 
-  test('a milestone never reached is last, with the nearest the steady path comes', () => {
+  test('a balance never reached is last, with the nearest the steady path comes', () => {
     const html = card({ ...PLAN, items: [ROOF, mk('Yacht', 'one-off', { anchor: { at: 'balance', amount: 900_000_000 }, offset: 0 }, { once: 1_000 })] });
     const t = text(html);
     expect(t).toContain('Invested assets reach $900,000,000 · not by 95');

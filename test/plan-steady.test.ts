@@ -10,7 +10,7 @@ import { OFF } from './plan-gen';
 
 // Where each item falls on the steady path (lib/fire/steady.ts), through the
 // figures that build the path it reads (lib/fire/plan-figures.ts): fixed
-// edges, balance milestones latched, and the two searches.
+// edges, balance anchors latched, and the two searches.
 
 const m = { spending: null, savings: null, assets: null };
 // FI number $1,000,000 (4%, no tax); $500,000 now and $50,000 a year at 5%.
@@ -67,7 +67,7 @@ describe('fixed edges', () => {
   });
 });
 
-describe('balance milestones', () => {
+describe('balance anchors', () => {
   test('fire at the start of the first year the balance reaches them, and stay fired', () => {
     const k = Array.from({ length: 30 }, (_, i) => i).find((i) => projectBalance(A, C, G, i) >= 800_000) as number;
     // A cost it starts takes the balance back under: still placed.
@@ -188,7 +188,7 @@ describe('stop when I reach FI', () => {
   });
 });
 
-test('the longest search, 25 items with balance milestones, under 50 ms', () => {
+test('the longest search, 25 items with balance anchors, under 50 ms', () => {
   const items: PlanItem[] = Array.from({ length: 25 }, (_, i) =>
     i % 3 === 0 ? spend(`s${i}`, when({ at: 'balance', amount: 600_000 + i * 50_000 }), 500) : i % 3 === 1 ? cost(`c${i}`, when({ at: 'fi' }, i % 5), 1_000) : cost(`a${i}`, when({ at: 'stop' }, -(i % 4)), 1_000)
   );

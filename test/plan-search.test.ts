@@ -48,11 +48,11 @@ const detailed: DetailedInput = {
   lawYear: { year: 2026, behind: false },
 };
 const at = (amount: number) => ({ anchor: { at: 'balance', amount } as const, offset: 0 });
-const milestone: PlanItem = { id: 'm', label: 'Part-time at two million', kind: 'part-time', from: at(2_000_000), until: null, once: null, yearly: 20_000, replaces: null, every: null, times: null, inflationAdjusted: true, owner: 'you', beforeTax: true };
+const onBalance: PlanItem = { id: 'm', label: 'Part-time at two million', kind: 'part-time', from: at(2_000_000), until: null, once: null, yearly: 20_000, replaces: null, every: null, times: null, inflationAdjusted: true, owner: 'you', beforeTax: true };
 const plan = (over: Partial<FirePlanV2> = {}): FirePlanV2 => ({ ...planOf({ ...DEFAULT_PLAN, age: 45, targetAge: 55, spending: 60_000, savings: 40_000, assets: 1_000_000, realReturn: 0.05, withdrawalRate: 0.04 }), ...over });
 const M: Measured = { spending: null, savings: null, assets: null };
 const jobFor = (p: FirePlanV2): SearchJob => ({ plan: p, measured: M, count: ON, detailed });
-const SEARCHING = plan({ stopAtFi: true, items: [milestone] });
+const SEARCHING = plan({ stopAtFi: true, items: [onBalance] });
 
 describe('runSearchJob', () => {
   test('its answer is the one planFigures finds, and working the rest from it searches no more', () => {
@@ -75,7 +75,7 @@ describe('runSearchJob', () => {
   });
 
   test('lasting changes under zero: the refusal is its answer', () => {
-    const spending: PlanItem = { ...milestone, id: 's', kind: 'spending', from: { anchor: { at: 'age', age: 45 }, offset: 0 }, yearly: -80_000 };
+    const spending: PlanItem = { ...onBalance, id: 's', kind: 'spending', from: { anchor: { at: 'age', age: 45 }, offset: 0 }, yearly: -80_000 };
     const result = runSearchJob(jobFor(plan({ items: [spending] })));
     expect(result).toMatchObject({ ok: true, answer: { refused: 'below-zero' } });
   });

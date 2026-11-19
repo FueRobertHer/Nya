@@ -255,7 +255,7 @@ describe('Starts and Ends', () => {
 });
 
 describe('what is possible', () => {
-  test('a milestone: where the steady path has it, the FI date, and that it is checked each year', async () => {
+  test('on a balance: where the steady path has it, the FI date, and that it is checked each year', async () => {
     await seedPlan({ ...PLAN, items: [ROOF] });
     const tab = await render();
     const sheet = await addTemplate(tab, 'A change in spending');
@@ -273,7 +273,7 @@ describe('what is possible', () => {
     await tab.unmount();
   }, 20_000);
 
-  test('with a start from what you would have then, a later milestone says where it falls across the runs', async () => {
+  test('with a start from what you would have then, a later balance says where it falls across the runs', async () => {
     await seedPlan({ ...PLAN, start: 'at-stop', items: [ROOF] });
     const tab = await render(WITH_BALANCES);
     const sheet = await addTemplate(tab, 'A change in spending');
@@ -288,7 +288,7 @@ describe('what is possible', () => {
     await tab.unmount();
   }, 30_000);
 
-  test('a milestone never reached says the nearest', async () => {
+  test('a balance never reached says the nearest', async () => {
     await seedPlan({ ...PLAN, items: [ROOF] });
     const tab = await render();
     const sheet = await addTemplate(tab, 'A cost');

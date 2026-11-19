@@ -7,7 +7,7 @@
 //
 //   - FIXED edges are known before anything runs: an age (yours, or the
 //     partner's as yours), the stop while it is an age, an edge on one.
-//   - A BALANCE milestone fires on the steady path's balance at the start of a
+//   - A BALANCE anchor fires on the steady path's balance at the start of a
 //     year (the close of the one before), before that year's money in and
 //     costs, and stays fired: a cost it starts can't switch it off. Placing
 //     one changes nothing before its year, so firing the earliest crossing,
@@ -24,7 +24,7 @@
 //     the edges on FI at it, and under the stop at FI the stop too.
 //
 // With D11's start (Will it last? from what you'd have at your stop age), a
-// balance milestone not fired by then fires per run instead, and an edge on one
+// balance anchor not fired by then fires per run instead, and an edge on one
 // follows it there (`perRun`, compiled by lib/fire/compile.ts conditionalFlows);
 // every other start, and an edge on FI, takes the steady path's year in every run.
 //
@@ -79,14 +79,14 @@ export type SteadyWorld = {
 
 type Plan = { items: readonly PlanItem[]; age: number | null; partnerAge: number | null; targetAge: number | null; stopAtFi: boolean; start: StartChoice };
 
-/** An edge on a balance milestone, by so many years. */
+/** An edge on a balance anchor, by so many years. */
 type Follows = { node: string; offset: number };
 /** Each edge placed, what it follows, and an end's age where it has one. */
 type Placed = { ages: ItemAges[]; why: (Unplaced | null)[]; onFi: Set<number>; follows: Map<string, Follows>; ends: (number | null)[] };
 
 type Edge = { value: number } | { why: Exclude<Unplaced, 'no-years'> | 'never' };
 
-/** The ages of every edge, given the stop, FI and the balance milestones
+/** The ages of every edge, given the stop, FI and the balance anchors
  *  fired so far (by node, `${index}:${side}`). */
 function place(plan: Plan, stop: number | null, fi: number | null, fired: ReadonlyMap<string, number>): Placed {
   const items = plan.items;
@@ -182,8 +182,8 @@ function place(plan: Plan, stop: number | null, fi: number | null, fired: Readon
 export const anchoredOn = (plan: Pick<Plan, 'items'>, at: 'fi' | 'balance') =>
   plan.items.some((x) => x.from.anchor.at === at || (x.until !== null && !('years' in x.until) && x.until.anchor.at === at));
 
-/** The balance milestones by node, with what they wait for. */
-function milestones(plan: Plan): { node: string; amount: number; offset: number }[] {
+/** The balance anchors by node, with what they wait for. */
+function balanceAnchors(plan: Plan): { node: string; amount: number; offset: number }[] {
   const out: { node: string; amount: number; offset: number }[] = [];
   plan.items.forEach((x, i) => {
     if (x.from.anchor.at === 'balance') out.push({ node: `${i}:start`, amount: x.from.anchor.amount, offset: x.from.offset });
@@ -192,10 +192,10 @@ function milestones(plan: Plan): { node: string; amount: number; offset: number 
   return out;
 }
 
-/** Every edge at a stop and FI, the balance milestones fired one crossing at
+/** Every edge at a stop and FI, the balance anchors fired one crossing at
  *  a time on the path the ages so far make. */
 function settle(plan: Plan, world: SteadyWorld, stop: number | null, fi: number | null) {
-  const pending = milestones(plan);
+  const pending = balanceAnchors(plan);
   const fired = new Map<string, number>();
   let placed = place(plan, stop, fi, fired);
   if (pending.length === 0 || plan.age === null) return { ...placed, fired };
@@ -222,13 +222,13 @@ function settle(plan: Plan, world: SteadyWorld, stop: number | null, fi: number 
 }
 
 /** With D11's start, the edges that wait on a run's own balance: on a balance
- *  milestone the steady path hasn't fired by the time Will it last? starts. A
+ *  anchor the steady path hasn't fired by the time Will it last? starts. A
  *  run's first balance is the steady path's there, so none of these fires before
  *  its second year. Nothing for any other start. */
 function perRunOf(plan: Plan, r: ReturnType<typeof settle>, stop: number | null): Pick<Resolution, 'perRun'> {
   if (plan.start !== 'at-stop' || stop === null || plan.age === null) return {};
   const by = Math.max(stop, plan.age);
-  const amounts = new Map(milestones(plan).map((m) => [m.node, m.amount]));
+  const amounts = new Map(balanceAnchors(plan).map((m) => [m.node, m.amount]));
   const triggers: number[] = [];
   const index = new Map<string, number>();
   const waiting = (node: string): RunEdge | null => {

@@ -310,7 +310,7 @@ describe('copies and refusals', () => {
     expect(copyNameFor(pt, named(pt, mk('p', 'part-time', at(50), { until: at(55) })), plan, [])).toBe('Part-time work from 50');
     expect(copyNameFor(pt, named(pt, mk('p', 'part-time', on('stop'), { until: at(55) })), plan, [])).toBe('Part-time work when you stop');
     expect(copyNameFor(home, named(home, mk('h', 'home', on('fi'))), plan, [])).toBe('Buy a home when you reach FI');
-    expect(copyNameFor(home, named(home, mk('h', 'home', { anchor: { at: 'balance', amount: 2_000_000 }, offset: 0 })), plan, [])).toBe('Buy a home at a milestone');
+    expect(copyNameFor(home, named(home, mk('h', 'home', { anchor: { at: 'balance', amount: 2_000_000 }, offset: 0 })), plan, [])).toBe('Buy a home at a balance');
     expect(copyNameFor(ITEM_TEMPLATES.find((t) => t.id === 'spending')!, mk('s', 'spending', on('stop', -2), { label: 'A change in spending' }), plan, [])).toBe('A change in spending before you stop');
     expect(copyNameFor(home, named(home, mk('h', 'home', on('stop', -2))), plan, [])).toBe('Buy a home 2 years before you stop');
     expect(copyNameFor(home, named(home, mk('h', 'home', at(38))), plan, [{ id: 'a', name: 'Buy a home at 38' }, { id: 'b', name: 'buy a home at 38 (2)' }])).toBe('Buy a home at 38 (3)');
@@ -393,7 +393,7 @@ describe('what is possible', () => {
     expect(preview(mk('c', 'one-off', at(44), { once: 1_000 }), OFF).warnings).toEqual(['Before 50, where Will it last? starts, so it isn’t counted anywhere.']);
   });
 
-  test('before today, it says so; only a milestone is already true', () => {
+  test('before today, it says so; only a balance is already true', () => {
     const past = preview(mk('c', 'one-off', at(35), { once: 1_000 }));
     expect(past.rows[0]).toEqual({ key: 'On your steady path', value: 'At 35, before today' });
     expect(past.warnings).toEqual(['Before today, so it isn’t counted: your measured figures may already count it.']);
