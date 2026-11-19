@@ -159,6 +159,12 @@ describe('a goal', () => {
     expect(saves).toEqual([[bike]]);
     expectRefused('Delete goal', 'It couldn’t be saved.');
 
+    // Back to the form, what the delete said stays with the delete.
+    await press(button(footerOf(dialog('Delete goal')), 'Cancel'));
+    expect(footerOf(dialog('Edit goal'))!.findAll((e) => classOf(e).includes('sheet-footer-note')).length).toBe(0);
+    await press(row(dialog('Edit goal'), 'Delete goal'));
+    expect(footerOf(dialog('Delete goal'))!.findAll((e) => classOf(e).includes('sheet-footer-note')).length).toBe(0);
+
     refuse = false;
     await press(button(footerOf(dialog('Delete goal')), 'Delete'));
     expect(saves.at(-1)).toEqual([bike]);
@@ -247,11 +253,15 @@ describe('the target allocation', () => {
           allocation={{
             settings: { ...initialListState<AllocationSettings | null>(null), status: 'ready', value },
             load: async () => {},
+            // As the store saves: what is sent is taken at once, and put
+            // back if the server refuses it (lib/whole-list-store.ts).
             save: async (next) => {
               saves.push(next);
-              if (refuse) return false;
+              const before = value;
               setValue(next);
-              return true;
+              await new Promise((r) => setTimeout(r, 1));
+              if (refuse) setValue(before);
+              return !refuse;
             },
             withSettings: true,
             alloc,
@@ -287,7 +297,15 @@ describe('the target allocation', () => {
     expect(saves).toEqual([{ ...EMPTY_SETTINGS, target: null }]);
     expectRefused('Delete the target', 'It was not deleted. Try again in a moment.');
 
+    // The back arrow (as Escape) goes back without what the delete said.
+    await press(dialog('Delete the target')!.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('aria-label') === 'Back')[0]);
+    const again = dialog('Target allocation')!;
+    expect(footerOf(again)!.findAll((e) => classOf(e).includes('sheet-footer-note')).length).toBe(0);
+    expect(valueOf(field(again, 'Bonds'))).toBe('35');
+
     refuse = false;
+    await press(row(again, 'Delete the target'));
+    expectAsking('Delete the target', 'Delete your target allocation? It can’t be undone.');
     await press(button(footerOf(dialog('Delete the target')), 'Delete'));
     await act(async () => void (await new Promise((r) => setTimeout(r, 300))));
     expect(dialog('Delete the target')).toBeNull();

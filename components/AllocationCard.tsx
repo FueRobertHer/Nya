@@ -273,9 +273,11 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
     setAsking(false);
   };
   // What a form's Delete row needs, given what it deletes: none when nothing
-  // is saved to delete.
+  // is saved to delete. Kept while asking: a save takes the target away at
+  // once (lib/whole-list-store.ts), before the server has it, and the level
+  // stays until it is done.
   const removal = (has: boolean, question: string): Removal | undefined =>
-    has ? { asking, onAsk: () => setAsking(true), onBack: back, question, safe, row: deleteRow } : undefined;
+    has || asking ? { asking, onAsk: () => setAsking(true), onBack: back, question, safe, row: deleteRow } : undefined;
   const current = settings.value ?? EMPTY_SETTINGS;
   // Counts the person's saves, so the mix over time, which the server
   // classifies with the saved splits, is read again after each one.
@@ -1026,14 +1028,15 @@ export function SplitForm({
       </Notice>
     </div>
   ) : null;
-  // Into the level or back out of it: what the last try said was about the other.
+  // Into the level or back out of it (Cancel, or the sheet's back arrow and
+  // Escape, its owner's): what the last try said was about the other.
   const ask = (on: boolean) => {
     if (saving || !remove) return;
-    setError('');
     if (on) remove.onAsk();
     else remove.onBack();
   };
   const asking = !!remove?.asking;
+  useEffect(() => setError(''), [asking]);
   if (asking && remove) {
     // The level that asks. What was typed is this form's state, kept for
     // Cancel.

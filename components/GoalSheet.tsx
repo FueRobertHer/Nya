@@ -69,11 +69,15 @@ export default function GoalSheet({
       deleteRow.current?.focus({ preventScroll: true });
     }
   }, [asking]);
-  const back = () => {
+  // Into the level or back out of it: what the last try said was about the
+  // other (saveError is the card's, so it is set aside, not cleared).
+  const ask = (on: boolean) => {
     if (saving) return;
-    returning.current = true;
-    setAsking(false);
+    returning.current = !on;
+    setAttempted(false);
+    setAsking(on);
   };
+  const back = () => ask(false);
   const set = (patch: Partial<Draft>) => setD((cur) => ({ ...cur, ...patch }));
 
   const read = readDraft(d, { goal, goals, accounts, today, newId });
@@ -119,6 +123,7 @@ export default function GoalSheet({
   // Archiving keeps the goal, with its history and what was typed in the
   // form, and releases what it set aside (components/goal-draft.ts).
   const archived = goal ? archivedGoal(d, { goal, goals, accounts, today }) : null;
+  const canArchive = archived !== null;
   const archive = () => {
     if (goal && archived) void commit(goals.map((g) => (g.id === goal.id ? archived : g)));
   };
@@ -304,11 +309,11 @@ export default function GoalSheet({
       {goal && (
         <div className="stack tight">
           {reached && <p className="panel-note">Reached. Archive it to keep it, with its history, and free what it set aside.</p>}
-          {!archived && <p className="panel-note">Archiving saves your changes too, so it waits until they can be saved.</p>}
+          {!canArchive && <p className="panel-note">Archiving saves your changes too, so it waits until they can be saved.</p>}
           <ActionRows
             rows={[
-              { key: 'archive', title: 'Archive goal', sub: 'Keeps it, with its history.', disabled: saving || !archived, onSelect: archive },
-              ...(reached ? [] : [{ key: 'delete', title: 'Delete goal', sub: 'Asks first.', opens: true, neg: true, ref: deleteRow, disabled: saving, onSelect: () => setAsking(true) }]),
+              { key: 'archive', title: 'Archive goal', sub: 'Keeps it, with its history.', disabled: saving || !canArchive, onSelect: archive },
+              ...(reached ? [] : [{ key: 'delete', title: 'Delete goal', sub: 'Asks first.', opens: true, neg: true, ref: deleteRow, disabled: saving, onSelect: () => ask(true) }]),
             ]}
           />
         </div>
