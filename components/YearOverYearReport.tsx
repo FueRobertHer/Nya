@@ -325,8 +325,8 @@ export default function YearOverYearReport() {
             {error}
           </Notice>
         )}
-        <div className="action-row report-actions">
-          <button className="secondary" onClick={() => window.print()} disabled={!report || loading}>
+        <div className="btn-row report-actions">
+          <button className="btn secondary" onClick={() => window.print()} disabled={!report || loading}>
             Print or save as PDF
           </button>
         </div>

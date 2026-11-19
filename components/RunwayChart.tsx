@@ -10,16 +10,18 @@
 // runs out is marked. Every point of both lines sits behind "Show as a
 // table", for anyone who can't read them.
 
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState, type PointerEvent } from 'react';
 import type { RunwayProjection } from '@/lib/report/runway';
 import { compactMoney, formatMoney, spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { LegendLine } from './LegendLine';
 import { reportDay } from './ReportView';
 import { keysHelp, useChartKeys } from './chart-keys';
+import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
 
-const W = 340;
-const H = 150;
+// Drawn at its own width (components/drawn-width.ts), in the shape it had
+// on its fixed 340 by 150 viewBox.
+const ASPECT = 150 / FALLBACK_WIDTH;
 const PAD_LEFT = 8;
 const PAD_RIGHT = 10;
 const PAD_TOP = 12;
@@ -47,7 +49,8 @@ function niceTicks(min: number, max: number): number[] {
 const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 
 export default function RunwayChart({ projection, currency }: { projection: RunwayProjection; currency: string | null }) {
-  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [drawnRef, W] = useDrawnWidth<SVGSVGElement>();
+  const H = Math.round(W * ASPECT);
   const [active, setActive] = useState<number | null>(null);
   // The table renders its rows only while it is open.
   const [tableOpen, setTableOpen] = useState(false);
@@ -74,7 +77,7 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
     const y = (v: number) => PAD_TOP + (1 - (v - bottom) / (top - bottom)) * (H - PAD_TOP - PAD_BOTTOM);
     const path = (key: 'without' | 'with') => points.map((p, k) => `${k === 0 ? 'M' : 'L'}${x(days(p.date)).toFixed(1)},${y(p[key]).toFixed(1)}`).join('');
     return { x, y, ticks: niceTicks(bottom, top), without: path('without'), with: path('with'), showZero };
-  }, [points, spanDays]);
+  }, [points, spanDays, W, H]);
 
   const { x, y, ticks, showZero } = geo;
   const marks = [
@@ -82,11 +85,9 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
     { date: projection.with_income.runs_out, key: 'with' as const, color: 'var(--data)' },
   ].filter((m): m is { date: string; key: 'without' | 'with'; color: string } => m.date !== null && points.some((p) => p.date === m.date));
 
-  function scrub(clientX: number) {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const px = ((clientX - rect.left) / rect.width) * W;
+  function scrub(e: PointerEvent<SVGSVGElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px = ((e.clientX - rect.left) / rect.width) * W;
     const d = ((px - PAD_LEFT) / (W - PAD_LEFT - PAD_RIGHT)) * spanDays;
     let best = 0;
     for (let k = 1; k < points.length; k++) if (Math.abs(days(points[k].date) - d) < Math.abs(days(points[best].date) - d)) best = k;
@@ -139,16 +140,16 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
       </div>
 
       <svg
-        ref={svgRef}
-        className="chart-svg"
+        ref={drawnRef}
+        className="chart-svg at-width"
         viewBox={`0 0 ${W} ${H}`}
         role="slider"
         {...keys.slider}
         aria-label={spoken(
           `Estimated cash from ${formatMoney(points[0].with, currency)} now to ${formatMoney(last.with, currency)} with income and ${formatMoney(last.without, currency)} without it on ${reportDay(last.date)}.`
         )}
-        onPointerMove={(e) => scrub(e.clientX)}
-        onPointerDown={(e) => scrub(e.clientX)}
+        onPointerMove={scrub}
+        onPointerDown={scrub}
         onPointerLeave={() => setActive(null)}
       >
         {ticks.map((t) => (
