@@ -20,6 +20,8 @@ import { NO_STRATEGY } from '@/lib/fire/tax/rules';
 import { usMarket } from '@/lib/fire/us-market';
 import { lastingKey } from '@/components/plan-search';
 import { ON } from './plan-gen';
+import { historyMove } from '@/lib/fire/account-growth';
+import { bucketGrowth } from '@/lib/fire/bucket-growth';
 
 const US = usMarket();
 
@@ -244,6 +246,22 @@ describe('the run plans', () => {
     expect(on.sim.historyShift).toBeGreaterThan(0);
     for (const p of [plan({ accounts: OWN }), plan({ historyMoved: true }), plan({ accounts: [rate('taxable', 0.05)], historyMoved: true }), plan({ accounts: OWN, historyMoved: true, assets: 1_000_000 })]) {
       expect(Object.hasOwn(engineOf(figures(p, false)).sim, 'historyShift')).toBe(false);
+    }
+  });
+
+  test('what is said is what runs: the blend’s gap, and each bucket held with its own', () => {
+    for (const accounts of [OWN, [rate('taxable', 0.07), rate('tax-deferred', 0.04)]]) {
+      const p = plan({ accounts, historyMoved: true });
+      const f = figures(p);
+      const { sim } = engineOf(f);
+      const said = historyMove(p, f.view, bucketGrowth(p, BUCKETS.groups, input.share457)?.year)!;
+      expect(said.on).toBe(true);
+      expect(said.together).toBe(sim.historyShift as number);
+      expect(said.buckets?.map((b) => b.bucket)).toEqual(['taxable', 'deferred', 'roth']);
+      for (const b of said.buckets!) expect(b.gap).toBe((sim.tax?.historyShift as NonNullable<SimTax['historyShift']>)[b.bucket]);
+      // Flat, the blend's alone.
+      const flatF = figures(p, false);
+      expect(historyMove(p, flatF.view, null)?.together).toBe(engineOf(flatF).sim.historyShift as number);
     }
   });
 

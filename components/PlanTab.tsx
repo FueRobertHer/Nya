@@ -94,6 +94,9 @@ import {
   EVENTS_WORDS,
   asksLasting,
   lastingText,
+  historyLine,
+  historyFar,
+  historyFarText,
 } from './plan-text';
 import { createLastingFigures, type LastingAnswer, type LastingFound } from './plan-lasting';
 import { Hero } from './Hero';
@@ -109,7 +112,8 @@ import { fmtAsOf } from './accounts-format';
 import { EMPTY_SETTINGS, overridesOf, withBucket } from '@/lib/allocation/settings';
 import { investedAssets, type AssetInstitution, type InvestedAssets, type TrailingFlows, type UnreadTransactions, type WorkplaceSavings } from '@/lib/fire/inputs';
 import { fiFigures, measuredInputs, notMeasuredWhat, notWorkedOutText, unmeasuredNeed, type ShareRates } from '@/lib/fire/progress';
-import { planGrowth } from '@/lib/fire/account-growth';
+import { historyMove, planGrowth, type HistoryMove } from '@/lib/fire/account-growth';
+import { bucketGrowth } from '@/lib/fire/bucket-growth';
 import { historyCount } from '@/lib/spending';
 import { figureNotes, inputFlags, names, stressNotice, windowText, type FigureArgs, type FigureNote, type FigureNotes, type FigureText } from './plan-figure-notes';
 import TotalCaveats, { Notice } from './TotalCaveats';
@@ -1495,6 +1499,9 @@ export default function PlanTab({
   const drawn = shown?.detail && !('failed' in shown.detail) ? shown.detail : null;
   const detailStuck = !!shown?.detail && 'failed' in shown.detail;
   const shownInput = drawn ? inputOf(shownPlan, shownChoices) : null;
+  // The buckets held today, by what each grows at with the accounts' own rates
+  // (lib/fire/bucket-growth.ts): what the stress test's history moves by, said.
+  const heldOf = (p: FirePlanV2, input: ReturnType<typeof inputOf>) => (input ? (bucketGrowth(p, input.buckets.groups, input.share457)?.year ?? null) : null);
   const yearContext: YearContext | null =
     drawn && shownInput
       ? {
@@ -2185,6 +2192,7 @@ export default function PlanTab({
               onRetryDetail={retryAnswer}
               startAtStop={(editable || state.saving || plansState.saving) && !other && !copyFixing && formPlan.start !== 'at-stop' && view.stopAge !== null ? () => savers.form({ ...formPlan, start: 'at-stop' }) : null}
               startBusy={state.saving || plansState.saving}
+              history={historyMove(plan, view, heldOf(plan, shownInput))}
             />
           )}
 
@@ -2487,6 +2495,11 @@ export default function PlanTab({
             defaultGrowth={defaultGrowth}
             measuredYield={detailBuckets ? measuredYield(detailBuckets) : null}
             growthAt={(rate) => planGrowth({ ...formPlan, realReturn: rate }, measured)}
+            movedAt={(rate) => {
+              const p = { ...formPlan, realReturn: rate };
+              const g = planGrowth(p, measured);
+              return historyMove(p, { growth: g.growth, ownRates: g.own }, detailForm && !detailStuck ? heldOf(p, shownInput ?? inputOf(formPlan, shownChoices)) : null);
+            }}
           />
         )}
         {shownSheet?.kind === 'numbers' && <AboutNumbers detailed={detailShown} />}
@@ -3323,6 +3336,7 @@ export function SimulationCard({
   onRetryDetail,
   startAtStop = null,
   startBusy = false,
+  history = null,
 }: {
   /** The open copy's name, said at the top; null with your plan open. */
   copyName?: string | null;
@@ -3362,6 +3376,9 @@ export function SimulationCard({
   startBusy?: boolean;
   /** A detailed plan's years aren't in, so the setup would say what's about to change. */
   setupHeld?: boolean;
+  /** Its history and your accounts' own growth (lib/fire/account-growth.ts
+   *  historyMove): null with no account at its own rate. */
+  history?: HistoryMove | null;
 }) {
   // Over the label: an open copy's tag, and the badge.
   const top =
@@ -3457,6 +3474,8 @@ export function SimulationCard({
   } else {
     setup = `Stop working ${when} with ${money(sim.startBalance)} (${startLabel}), withdrawing ${pct(rate)} of it, ${money(spendingNow ?? 0)} a year after tax, your spending now, for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}.`;
   }
+  // Held with the setup: it says what the run being worked out will move by.
+  const said = setupHeld ? null : history;
   const setupNote = setupHeld ? null : <p className="panel-note">{typeof setup === 'string' ? <Masked>{setup}</Masked> : setup}</p>;
 
   if (!outcome) {
@@ -3517,9 +3536,15 @@ export function SimulationCard({
         {flexible ? ' This rule lasts by cutting spending when markets fall; Lowest year, below, says how far.' : ''}
         {detail && setupHeld ? ` ${WITH_EACH_YEARS_TAX}` : ''}
       </p>
+      {said && !historyFar(said) && <p className="plan-definition">{historyLine(said)}</p>}
       <p className="plan-definition">{detail ? hypotheticalDrawdown(detail.lawYear) : HYPOTHETICAL_LABEL}</p>
     </div>,
     <>
+      {said && historyFar(said) && (
+        <Notice level="caution">
+          {historyLine(said)} {historyFarText(r.method === 'monte-carlo')}
+        </Notice>
+      )}
       {startNote}
       {setupNote}
       {retirementNote}

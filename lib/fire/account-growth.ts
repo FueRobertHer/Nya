@@ -85,6 +85,30 @@ export function bucketShift(plan: Moved, view: Grows, year: Partial<YearGrowth> 
   return Object.values(gaps).every((g) => g === 0) ? null : gaps;
 }
 
+/** A bucket held today and the gap its history moves by. */
+export type BucketMove = { bucket: keyof YearGrowth; gap: number };
+
+/** What moving history does to a plan, for its words: whether it is on, the
+ *  blend and the plan's rate, the blend's gap, and with tax worked out each
+ *  bucket held today with its own. */
+export type HistoryMove = { on: boolean; blend: number; rate: number; together: number; buckets: BucketMove[] | null };
+
+const HELD_ORDER = ['taxable', 'deferred', 'deferred457', 'roth', 'hsa'] as const;
+
+/** The gaps historyShift and bucketShift give the plan with history moved, said
+ *  for the buckets held today (`held`: bucketGrowth's `year`, null with a flat
+ *  rate), a 457(b) at tax-deferred's gap with it. Null where nothing could move:
+ *  no account at its own rate, or invested assets typed. */
+export function historyMove(plan: Moved, view: Grows, held: Partial<YearGrowth> | null | undefined): HistoryMove | null {
+  if (view.ownRates === 0) return null;
+  const moved = { ...plan, historyMoved: true };
+  const gaps = held ? bucketShift(moved, view, held) : null;
+  const buckets = held
+    ? HELD_ORDER.filter((k) => held[k] !== undefined && !(k === 'deferred457' && held.deferred !== undefined && (gaps?.deferred457 ?? 0) === (gaps?.deferred ?? 0))).map((k) => ({ bucket: k, gap: gaps?.[k] ?? 0 }))
+    : null;
+  return { on: plan.historyMoved === true, blend: view.growth, rate: plan.realReturn, together: historyShift(moved, view) ?? 0, buckets };
+}
+
 /** An account's own growth and dividends as a sheet holds them: a null is the
  *  plan's. */
 export type OwnRates = { growth: number | null; yield: number | null };
