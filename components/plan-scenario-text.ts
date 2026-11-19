@@ -21,7 +21,7 @@ export const SETTING_NAMES: Record<SetField, string> = {
   savings: 'Annual savings',
   assets: 'Invested assets',
   withdrawalRate: 'Withdrawal rate',
-  realReturn: 'Growth after inflation until FI',
+  realReturn: 'Growth after inflation',
   taxRate: 'Tax on withdrawals',
   rule: 'Withdrawal rule',
   floor: 'Floor',

@@ -79,6 +79,10 @@ describe('how a copy differs from your plan', () => {
     expect([at('Stop age'), at('Annual spending'), at('Fund fees'), at('Your own FI number'), at('“Rent”'), at('Adds'), at('Leaves out'), at('Other')]).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
   });
 
+  test('the growth rate is named as its field is, with no until FI: it counts after the stop too', () => {
+    expect(copyDiffParts(plan({ realReturn: 0.05 }), plan({ realReturn: 0.06 }), money)).toEqual(['Growth after inflation: 6% (your plan: 5%)']);
+  });
+
   test('stopping at FI is said as the stop', () => {
     expect(copyDiffParts(plan(), plan({ stopAtFi: true }), money)).toEqual(['Stop age: when it reaches FI (your plan: 55)']);
   });

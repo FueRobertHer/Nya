@@ -1264,7 +1264,7 @@ export function AssumptionsForm(
             : "How much you'd draw each year, as a share of what you have: it sets the FI number (spending divided by it) and the rate the simulation tests."}
         </p>
         <label className="field">
-          {detail ? 'Growth after inflation (% a year)' : 'Growth after inflation until FI (% a year)'}
+          Growth after inflation (% a year)
           <input
             type="number"
             inputMode="decimal"
