@@ -589,6 +589,8 @@ describe('the card’s route', () => {
       expect(await res.json()).toEqual({ error: DEMO_REFUSAL });
     }
     expect(await apiTokenStore.count(ctx)).toBe(0);
+    // The list says so, so the card can say why before anything is typed.
+    expect((await (await call('GET')).json()).demo).toBe(true);
   });
 
   test('refuses a bad name or a token past the limit before asking to sign in', async () => {

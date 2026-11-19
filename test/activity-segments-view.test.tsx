@@ -168,6 +168,16 @@ describe('Activity: the bar and its segments', () => {
     v.unmount();
   });
 
+  test('with no month to name, the strip’s heading is plain "In and out", never one ending on a comma', () => {
+    // No transactions, only a note from the load: the strip is drawn, with no month.
+    const v = mount({ txns: [], notes: ['Could not load transactions.'] });
+    const headings = () => v.all((e) => e.tagName === 'H2' && (e.textContent ?? '').startsWith('In and out')).map((e) => e.textContent);
+    expect(headings()).toEqual(['In and out']);
+    act(() => click(v.tab('Spending')));
+    expect(headings()).toEqual(['In and out']);
+    v.unmount();
+  });
+
   test('the strip is said once, first in the panel (after Spending’s period), on the page, signed', () => {
     const v = mount();
     const [panel] = v.all((e) => e.getAttribute('id') === 'activity-panel');

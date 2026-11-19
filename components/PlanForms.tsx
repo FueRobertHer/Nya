@@ -418,6 +418,8 @@ export function AboutForm(props: SaveProps & { detail?: DetailForm | null }) {
           />
         </label>
         {s.under('Your age')}
+        {/* Opened from Tax after you stop too, which can't be worked out without it. */}
+        {plan.age === null && <p className="helper">Working out tax year by year needs your age: until it is set, your flat tax rate stays.</p>}
         <div className="field">
           <span aria-hidden="true">You stop</span>
           <Choice

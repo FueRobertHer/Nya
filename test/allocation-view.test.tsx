@@ -196,8 +196,9 @@ describe('the allocation by class', () => {
 
   test('the bar and the rows: a key beside every name, money owed named, never drawn', () => {
     const a = allocate({ institutions: [inst('X', [acct('m', { balance: 100_000 })])], holdings: [hold('m', 'VTI', 120_000), hold('m', 'CUR:USD', -20_000, { security_type: 'cash' })], settings: null, currency: 'USD' });
-    const html = renderToStaticMarkup(<ShareTable totals={a.classes} order={SLOTS} colors={CLASS_COLORS} label={(s) => CLASS_NAMES[s]} money={money} />);
+    const html = renderToStaticMarkup(<ShareTable caption="By asset class" totals={a.classes} order={SLOTS} colors={CLASS_COLORS} label={(s) => CLASS_NAMES[s]} money={money} />);
     const t = text(html);
+    expect(html).toContain('<caption class="visually-hidden">By asset class</caption>');
     expect(t).toContain('US stocks $120,000 120%');
     expect(t).toContain('Cash −$20,000 -20%');
     expect(t).toContain('Cash is below zero (−$20,000): money owed');
@@ -229,7 +230,10 @@ describe('the allocation by class', () => {
 describe('the allocation by tax bucket', () => {
   test('each account’s bucket and where it came from, with a way to change it', () => {
     const mine = { ...EMPTY_SETTINGS, buckets: [{ account_id: 'k', bucket: 'roth' as const }] };
-    const t = text(renderToStaticMarkup(<BucketView alloc={alloc(mine)} money={money} editable open={noop} />));
+    const html = renderToStaticMarkup(<BucketView alloc={alloc(mine)} money={money} editable open={noop} />);
+    const t = text(html);
+    // Its table is named for what its rows are by, not the class view's name.
+    expect(html).toContain('<caption class="visually-hidden">By tax bucket</caption>');
     expect(t).toContain('Taxable $100,000');
     expect(t).toContain('Roth $50,000');
     expect(t).toContain('Unclassified $10,000');
