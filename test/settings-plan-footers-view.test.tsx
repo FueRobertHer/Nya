@@ -99,6 +99,7 @@ describe('the admin page’s Disconnect sheet', () => {
     await press(button(dialog(), 'Disconnect'));
     expect(deletes).toEqual([{ container: 'c1', item_id: 'i1' }]);
     const refused = footer()!;
+    expect(refused.notes[0]?.[0]).toBeTruthy();
     expect(refused.notes).toEqual([[refused.notes[0][0], 'Critical: It is in use again, so it was kept.']]);
     expect(refused.buttons).toEqual([
       ['Cancel', 'btn secondary', false, null],
@@ -125,7 +126,6 @@ describe('the starter sets’ preview', () => {
     newId: () => `new${++n}`,
   });
   const shown: ShownPlan = { ...rest, basis: 'b'.repeat(64) };
-  expect(shown.unchanged).toBe(false);
 
   /** The route, as app/api/categories/templates answers: the preview; an
    *  apply refused while `refuse` says so, else applied. */
@@ -140,6 +140,7 @@ describe('the starter sets’ preview', () => {
   /** From the list of sets: no footer; the preview: Back, then Apply, and
    *  a refused apply said beside them; applied: no footer again. */
   async function walk() {
+    expect(shown.unchanged).toBe(false);
     expect(dialog()?.textContent).toContain('See what Simple changes');
     expect(footer()).toBeNull();
     await press(button(dialog(), 'See what Simple changes'));
@@ -152,6 +153,7 @@ describe('the starter sets’ preview', () => {
     });
     await press(button(dialog(), 'Apply Simple'));
     const refused = footer()!;
+    expect(refused.notes[0]?.[0]).toBeTruthy();
     expect(refused.notes).toEqual([[refused.notes[0][0], 'Critical: It couldn’t be applied. Try again.']]);
     expect(refused.buttons).toEqual([
       ['Back', 'btn secondary', false, null],
@@ -208,6 +210,7 @@ describe('the Plan’s opt-in', () => {
     });
     await press(button(dialog(), 'Work it out'));
     const failed = footer()!;
+    expect(failed.notes[0]?.[0]).toBeTruthy();
     expect(failed.notes).toEqual([[failed.notes[0][0], 'Critical: Your plan wasn’t saved: try again.']]);
     expect(failed.buttons[1]).toEqual(['Work it out', 'btn', false, failed.notes[0][0]]);
     await v.unmount();
@@ -216,6 +219,7 @@ describe('the Plan’s opt-in', () => {
   test('what it waits on is the footer’s note, and Work it out waits, described by it', async () => {
     const v = await mount(sheet({ paused: 'This can’t be saved yet.' }));
     const waiting = footer()!;
+    expect(waiting.notes[0]?.[0]).toBeTruthy();
     expect(waiting.notes).toEqual([[waiting.notes[0][0], 'This can’t be saved yet.']]);
     const note = dialog()!.findAll((e) => classOf(e).includes('sheet-footer-note'))[0]!;
     expect(classOf(note)).toEqual(['helper', 'plan-paused', 'sheet-footer-note']);

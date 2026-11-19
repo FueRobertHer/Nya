@@ -631,6 +631,7 @@ describe('names', () => {
     expect(s.alerts()).toEqual(['Critical: Give it a name.']);
     // Why it was refused sits beside them, and Save is described by it.
     const refused = s.footer();
+    expect(refused.note?.[0]).toBeTruthy();
     expect(refused.note?.[1]).toBe('Critical: Give it a name.');
     expect(refused.buttons).toEqual([
       ['Cancel', 'btn secondary', null],
