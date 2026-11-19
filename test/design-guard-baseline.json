@@ -21,7 +21,7 @@
     "inlineLayoutStyles": 5
   },
   "components/ConfirmPaymentSheet.tsx": {
-    "inlineLayoutStyles": 2
+    "inlineLayoutStyles": 1
   },
   "components/ConnectRedirect.tsx": {
     "inlineLayoutStyles": 2
@@ -36,7 +36,7 @@
     "inlineLayoutStyles": 1
   },
   "components/GroupSheet.tsx": {
-    "inlineLayoutStyles": 2
+    "inlineLayoutStyles": 1
   },
   "components/HandoffSheet.tsx": {
     "inlineLayoutStyles": 2
@@ -48,7 +48,7 @@
     "inlineLayoutStyles": 31
   },
   "components/IouSheet.tsx": {
-    "inlineLayoutStyles": 2
+    "inlineLayoutStyles": 1
   },
   "components/ManualTxnSheet.tsx": {
     "inlineLayoutStyles": 4
@@ -84,7 +84,7 @@
     "inlineLayoutStyles": 3
   },
   "components/ShareCostSheet.tsx": {
-    "inlineLayoutStyles": 2
+    "inlineLayoutStyles": 1
   },
   "components/ShareKinds.tsx": {
     "inlineLayoutStyles": 1
@@ -96,7 +96,7 @@
     "inlineLayoutStyles": 5
   },
   "components/SplitSheet.tsx": {
-    "inlineLayoutStyles": 2
+    "inlineLayoutStyles": 1
   },
   "components/TagsCard.tsx": {
     "inlineLayoutStyles": 6

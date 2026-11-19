@@ -7,8 +7,9 @@
 // is no spending, nor is paying it back. Saved through
 // app/api/shared-expenses/ious.
 
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
+import ActionRows from './ActionRows';
 import { Masked } from './HideAmounts';
 import FieldError, { amountExample } from './FieldError';
 import CategoryPicker from './CategoryPicker';
@@ -47,6 +48,20 @@ export default function IouSheet({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [asking, setAsking] = useState(false);
+  const failedId = useId();
+  const askId = useId();
+  const saidId = useId();
+  const opener = useRef<HTMLButtonElement>(null);
+  const keep = useRef<HTMLButtonElement>(null);
+  const said = useRef<HTMLParagraphElement>(null);
+
+  // Asking to delete it: focus on Keep it, in the footer, and what deleting
+  // it does in view, under its row.
+  useEffect(() => {
+    if (!asking) return;
+    keep.current?.focus();
+    said.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [asking]);
 
   useEffect(() => {
     if (!open) return;
@@ -98,8 +113,54 @@ export default function IouSheet({
     category_id: draft.direction === 'by_you' && draft.category_id ? draft.category_id : null,
   });
 
+  // What one state's buttons said when they failed stays with them.
+  const ask = (on: boolean) => {
+    setAsking(on);
+    setError('');
+    if (!on) opener.current?.focus();
+  };
+
+  // The buttons, and why the last press failed beside them; asked to delete
+  // it, the question, then Keep it and Delete in their place.
+  const failed = error ? failedId : undefined;
+  const footer = (
+    <>
+      {asking && id && (
+        <p className="helper sheet-footer-note" id={askId}>
+          Delete it?
+        </p>
+      )}
+      {error && (
+        <div className="sheet-footer-note" id={failedId}>
+          <Notice level="critical" role="alert">
+            <Masked>{hideAmountsIn(error)}</Masked>
+          </Notice>
+        </div>
+      )}
+      {asking && id ? (
+        <>
+          <button type="button" ref={keep} className="btn secondary" onClick={() => ask(false)} disabled={saving}>
+            Keep it
+          </button>
+          <button type="button" className="btn danger" onClick={() => void run('DELETE', { id })} disabled={saving} aria-describedby={[askId, saidId, failed].filter(Boolean).join(' ')}>
+            Delete
+          </button>
+        </>
+      ) : (
+        <>
+          <button type="button" className="btn secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button type="button" className="btn" onClick={() => void run(id ? 'PATCH' : 'POST', id ? { id, ...fields() } : fields())} disabled={!ready || saving} aria-describedby={failed}>
+            {saving ? 'Saving…' : id ? 'Save' : 'Add'}
+          </button>
+        </>
+      )}
+    </>
+  );
+
   return (
-    <Sheet open title={id ? 'IOU' : 'Add an IOU'} onClose={() => !saving && onClose()}>
+    <Sheet open title={id ? 'IOU' : 'Add an IOU'} onClose={() => !saving && onClose()} footer={footer}>
       <p className="panel-note" style={{ marginTop: 0 }}>
         Something owed that none of your transactions shows. Did you pay for it from an account in Nya? Share that transaction instead.
       </p>
@@ -167,36 +228,17 @@ export default function IouSheet({
           </label>
         )}
       </div>
-      {error && (
-        <Notice level="critical" role="alert">
-          <Masked>{hideAmountsIn(error)}</Masked>
-        </Notice>
-      )}
-      <div className="button-pair">
-        <button onClick={() => void run(id ? 'PATCH' : 'POST', id ? { id, ...fields() } : fields())} disabled={!ready || saving}>
-          {saving ? 'Saving…' : id ? 'Save' : 'Add'}
-        </button>
-        <button className="secondary" onClick={onClose} disabled={saving}>
-          Cancel
-        </button>
-      </div>
-      {id && !asking && (
-        <button className="secondary" style={{ marginTop: 12 }} onClick={() => setAsking(true)} disabled={saving}>
-          Delete this IOU
-        </button>
-      )}
-      {id && asking && (
-        <>
-          <p className="panel-note">Delete it? What it counted goes from your totals, and it is no longer in your balance with them.</p>
-          <div className="button-pair">
-            <button className="danger" onClick={() => void run('DELETE', { id })} disabled={saving}>
-              Delete
-            </button>
-            <button className="secondary" onClick={() => setAsking(false)} disabled={saving}>
-              Keep it
-            </button>
-          </div>
-        </>
+      {/* Deleting it, from its actions: last, asking in the footer first;
+          what goes with it is said here, under its row. */}
+      {id && (
+        <div className="panel-section stack tight">
+          <ActionRows rows={[{ key: 'delete', title: 'Delete this IOU', sub: 'Asks first.', neg: true, ref: opener, onSelect: () => !saving && ask(true) }]} />
+          {asking && (
+            <p className="panel-note" id={saidId} ref={said}>
+              What it counted goes from your totals, and it is no longer in your balance with them.
+            </p>
+          )}
+        </div>
       )}
     </Sheet>
   );

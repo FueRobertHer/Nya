@@ -10,8 +10,9 @@
 // refiles it, puts transactions in or takes them out, and ungroups it after
 // asking (app/api/transaction-groups).
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
+import ActionRows from './ActionRows';
 import CategoryPicker from './CategoryPicker';
 import { Masked } from './HideAmounts';
 import type { Txn } from './MonthBreakdown';
@@ -129,6 +130,20 @@ export default function GroupSheet({
   const [error, setError] = useState('');
   const [confirming, setConfirming] = useState(false);
   const ix = useMemo(() => indexTaxonomy(taxonomy), [taxonomy]);
+  const failedId = useId();
+  const askId = useId();
+  const saidId = useId();
+  const opener = useRef<HTMLButtonElement>(null);
+  const keep = useRef<HTMLButtonElement>(null);
+  const said = useRef<HTMLParagraphElement>(null);
+
+  // Asking to ungroup: focus on Keep the group, in the footer, and what
+  // ungrouping does in view, under its row.
+  useEffect(() => {
+    if (!confirming) return;
+    keep.current?.focus();
+    said.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [confirming]);
 
   useEffect(() => {
     if (!first) return;
@@ -232,8 +247,54 @@ export default function GroupSheet({
     </label>
   );
 
+  // What one state's buttons said when they failed stays with them.
+  const ask = (on: boolean) => {
+    setConfirming(on);
+    setError('');
+    if (!on) opener.current?.focus();
+  };
+
+  // The buttons, and why the last press failed beside them; asked to
+  // ungroup, the question, then Keep the group and Ungroup in their place.
+  const failed = error ? failedId : undefined;
+  const footer = (
+    <>
+      {confirming && group && (
+        <p className="helper sheet-footer-note" id={askId}>
+          Ungroup {group.name}?
+        </p>
+      )}
+      {error && (
+        <div className="sheet-footer-note" id={failedId}>
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        </div>
+      )}
+      {confirming && group ? (
+        <>
+          <button type="button" ref={keep} className="btn secondary" onClick={() => ask(false)} disabled={saving}>
+            Keep the group
+          </button>
+          <button type="button" className="btn danger" onClick={() => void send('DELETE', { id: group.group_id })} disabled={saving} aria-describedby={[askId, saidId, failed].filter(Boolean).join(' ')}>
+            Ungroup
+          </button>
+        </>
+      ) : (
+        <>
+          <button type="button" className="btn secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button type="button" className="btn" onClick={save} disabled={!ready || saving} aria-describedby={failed}>
+            {saving ? 'Saving…' : group ? 'Save group' : 'Group them'}
+          </button>
+        </>
+      )}
+    </>
+  );
+
   return (
-    <Sheet open={open} title={group ? 'Edit group' : 'Group transactions'} onClose={() => !saving && onClose()}>
+    <Sheet open={open} title={group ? 'Edit group' : 'Group transactions'} onClose={() => !saving && onClose()} footer={footer}>
       <p className="panel-note" style={{ marginTop: 0 }}>
         Transactions that belong together, such as a dinner and what a friend paid you back, count once, at what they come to, in the group&apos;s
         category. Each stays listed under the group.
@@ -268,37 +329,18 @@ export default function GroupSheet({
         <p className="split-left" role="status">
           <Masked>{groupStatus({ count: chosen.size, net, currency, category: category ? { name: category.name, kind: groupOf(ix, category).kind } : null })}</Masked>
         </p>
-        {error && (
-          <Notice level="critical" role="alert">
-            {error}
-          </Notice>
-        )}
       </div>
-      <div className="button-pair">
-        <button onClick={save} disabled={!ready || saving}>
-          {saving ? 'Saving…' : group ? 'Save group' : 'Group them'}
-        </button>
-        <button className="secondary" onClick={onClose} disabled={saving}>
-          Cancel
-        </button>
-      </div>
-      {group && !confirming && (
-        <button className="secondary" style={{ marginTop: 12 }} onClick={() => setConfirming(true)} disabled={saving}>
-          Ungroup
-        </button>
-      )}
-      {group && confirming && (
-        <>
-          <p className="panel-note">Ungroup {group.name}? Its transactions count on their own again, each under its own category.</p>
-          <div className="button-pair">
-            <button className="danger" onClick={() => send('DELETE', { id: group.group_id })} disabled={saving}>
-              Ungroup
-            </button>
-            <button className="secondary" onClick={() => setConfirming(false)} disabled={saving}>
-              Keep the group
-            </button>
-          </div>
-        </>
+      {/* Ungrouping, from its actions: last, asking in the footer first;
+          what it does is said here, under its row. */}
+      {group && (
+        <div className="panel-section stack tight">
+          <ActionRows rows={[{ key: 'ungroup', title: 'Ungroup', sub: 'Asks first.', neg: true, ref: opener, onSelect: () => !saving && ask(true) }]} />
+          {confirming && (
+            <p className="panel-note" id={saidId} ref={said}>
+              Its transactions count on their own again, each under its own category.
+            </p>
+          )}
+        </div>
       )}
     </Sheet>
   );

@@ -9,8 +9,9 @@
 // stops sharing it (after asking). Nothing is sent to anyone: this keeps the
 // list, and the card offers to ask them for it.
 
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
+import ActionRows from './ActionRows';
 import { Masked } from './HideAmounts';
 import FieldError, { amountExample } from './FieldError';
 import type { Txn } from './MonthBreakdown';
@@ -69,6 +70,20 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [confirming, setConfirming] = useState(false);
+  const failedId = useId();
+  const askId = useId();
+  const saidId = useId();
+  const opener = useRef<HTMLButtonElement>(null);
+  const keep = useRef<HTMLButtonElement>(null);
+  const said = useRef<HTMLParagraphElement>(null);
+
+  // Asking to stop sharing it: focus on Keep it shared, in the footer, and
+  // what stopping does in view, under its row.
+  useEffect(() => {
+    if (!confirming) return;
+    keep.current?.focus();
+    said.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [confirming]);
 
   const target = targets.find((x) => x.key === targetKey) ?? targets.find((x) => x.row.shared) ?? targets[0] ?? null;
   const kept = t ? shareKeptUnder(t) : '';
@@ -171,8 +186,58 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
     onClose();
   }
 
+  // Asking only while there is a share to stop (another part of the split
+  // may have none).
+  const asking = confirming && !!stored;
+  // What one state's buttons said when they failed stays with them.
+  const ask = (on: boolean) => {
+    setConfirming(on);
+    setError('');
+    if (!on) opener.current?.focus();
+  };
+
+  // The buttons, and why the last press failed beside them; asked to stop
+  // sharing it, the question, then Keep it shared and Stop sharing in their
+  // place.
+  const failed = error ? failedId : undefined;
+  const footer = (
+    <>
+      {asking && (
+        <p className="helper sheet-footer-note" id={askId}>
+          Stop sharing {shownName(t)}?
+        </p>
+      )}
+      {error && (
+        <div className="sheet-footer-note" id={failedId}>
+          <Notice level="critical" role="alert">
+            <Masked>{hideAmountsIn(error)}</Masked>
+          </Notice>
+        </div>
+      )}
+      {asking ? (
+        <>
+          <button type="button" ref={keep} className="btn secondary" onClick={() => ask(false)} disabled={saving}>
+            Keep it shared
+          </button>
+          <button type="button" className="btn danger" onClick={() => void stop()} disabled={saving} aria-describedby={[askId, saidId, failed].filter(Boolean).join(' ')}>
+            Stop sharing
+          </button>
+        </>
+      ) : (
+        <>
+          <button type="button" className="btn secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button type="button" className="btn" onClick={() => void save()} disabled={!ready || saving} aria-describedby={failed}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </>
+      )}
+    </>
+  );
+
   return (
-    <Sheet open title={stored ? 'Who owes what' : 'Share the cost'} onClose={() => !saving && onClose()}>
+    <Sheet open title={stored ? 'Who owes what' : 'Share the cost'} onClose={() => !saving && onClose()} footer={footer}>
       <p className="panel-note" style={{ marginTop: 0 }}>
         {shownName(t)}: <Masked>{formatMoney(target.amount, currency)}</Masked> {onShownDay(t.date)}. Say who shares it with you and what each owes: your part counts in your
         budgets and reports on this day, and theirs is what they owe you. Nya never asks them for it on its own.
@@ -273,40 +338,18 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
         <p className={`split-left${yours >= 0 && picks.length > 0 ? ' done' : ''}`} role="status">
           <Masked>{yours >= 0 ? `Your part: ${money(yours)}` : `The parts are ${money(-yours)} more than it`}</Masked>
         </p>
-        {error && (
-          <Notice level="critical" role="alert">
-            <Masked>{hideAmountsIn(error)}</Masked>
-          </Notice>
-        )}
       </div>
-      <div className="button-pair">
-        <button onClick={() => void save()} disabled={!ready || saving}>
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-        <button className="secondary" onClick={onClose} disabled={saving}>
-          Cancel
-        </button>
-      </div>
-      {stored && !confirming && (
-        <button className="secondary" style={{ marginTop: 12 }} onClick={() => setConfirming(true)} disabled={saving}>
-          Stop sharing it
-        </button>
-      )}
-      {stored && confirming && (
-        <>
-          <p className="panel-note">
-            Stop sharing {shownName(t)}? It counts whole again, and {stored.entries.map((e) => nameOf(e.person)).join(' and ')} no longer owe{stored.entries.length === 1 ? 's' : ''} you for
-            it.
-          </p>
-          <div className="button-pair">
-            <button className="danger" onClick={() => void stop()} disabled={saving}>
-              Stop sharing
-            </button>
-            <button className="secondary" onClick={() => setConfirming(false)} disabled={saving}>
-              Keep it shared
-            </button>
-          </div>
-        </>
+      {/* Stopping, from its actions: last, asking in the footer first; who
+          no longer owes for it is said here, under its row. */}
+      {stored && (
+        <div className="panel-section stack tight">
+          <ActionRows rows={[{ key: 'stop', title: 'Stop sharing it', sub: 'Asks first.', neg: true, ref: opener, onSelect: () => !saving && ask(true) }]} />
+          {asking && (
+            <p className="panel-note" id={saidId} ref={said}>
+              It counts whole again, and {stored.entries.map((e) => nameOf(e.person)).join(' and ')} no longer owe{stored.entries.length === 1 ? 's' : ''} you for it.
+            </p>
+          )}
+        </div>
       )}
     </Sheet>
   );
