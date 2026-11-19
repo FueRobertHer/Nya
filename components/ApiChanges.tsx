@@ -15,7 +15,7 @@
 // change made before writing was turned off can still be undone. Otherwise
 // nothing is drawn, and the card above reads as it always did.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useId, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
@@ -242,8 +242,27 @@ export function ChangeSheet({
 }) {
   const title = asking?.kind === 'undo' ? 'Undo this change?' : asking?.kind === 'forget' ? 'Forget what it changed?' : 'Delete the change?';
   const label = asking?.change?.token?.label;
+  const errorId = useId();
+  // Cancel, then what it asks, and why it failed beside them.
+  const footer = asking && (
+    <>
+      {error && (
+        <div className="sheet-footer-note" id={errorId}>
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        </div>
+      )}
+      <button type="button" className="btn secondary" onClick={onCancel} disabled={busy}>
+        Cancel
+      </button>
+      <button type="button" className={asking.kind === 'undo' ? 'btn' : 'btn danger'} onClick={() => onConfirm(false)} disabled={busy} aria-describedby={error ? errorId : undefined}>
+        {busy ? 'Working…' : asking.kind === 'undo' ? 'Undo' : asking.kind === 'forget' ? 'Forget this one' : 'Delete'}
+      </button>
+    </>
+  );
   return (
-    <Sheet open={!!asking} title={title} onClose={onCancel}>
+    <Sheet open={!!asking} title={title} onClose={onCancel} footer={footer}>
       {asking && (
         <>
           <div className="stack tight">
@@ -259,22 +278,9 @@ export function ChangeSheet({
                   ? `Nya keeps a copy of what each change changed, before and after, for ${CHANGES_KEEP_DAYS} days, so it can be undone. Forgetting removes the copy now. The change stays listed, without it, and can no longer be undone.`
                   : 'Its record can’t be read, so it can’t be undone or shown. Deleting it removes what is left of it.'}
             </p>
-            {error && (
-              <Notice level="critical" role="alert">
-                {error}
-              </Notice>
-            )}
-          </div>
-          <div className="button-pair" style={{ marginTop: 16 }}>
-            <button className="secondary" onClick={onCancel} disabled={busy}>
-              Cancel
-            </button>
-            <button className={asking.kind === 'undo' ? undefined : 'danger'} onClick={() => onConfirm(false)} disabled={busy}>
-              {busy ? 'Working…' : asking.kind === 'undo' ? 'Undo' : asking.kind === 'forget' ? 'Forget this one' : 'Delete'}
-            </button>
           </div>
           {asking.kind === 'forget' && label && (
-            <button className="link-btn danger-link api-change-forget-all" onClick={() => onConfirm(true)} disabled={busy}>
+            <button type="button" className="link-btn danger-link api-change-forget-all" onClick={() => onConfirm(true)} disabled={busy} aria-describedby={error ? errorId : undefined}>
               Forget every change {label} made
             </button>
           )}

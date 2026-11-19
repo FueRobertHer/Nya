@@ -1,15 +1,9 @@
 {
   "components/AdminUnusedItems.tsx": {
-    "inlineLayoutStyles": 3
+    "inlineLayoutStyles": 2
   },
   "components/AllocationCard.tsx": {
     "inlineLayoutStyles": 5
-  },
-  "components/ApiChanges.tsx": {
-    "inlineLayoutStyles": 1
-  },
-  "components/ApiTokens.tsx": {
-    "inlineLayoutStyles": 1
   },
   "components/CategoriesCard.tsx": {
     "inlineLayoutStyles": 3
@@ -18,7 +12,7 @@
     "inlineLayoutStyles": 9
   },
   "components/CategoryTemplates.tsx": {
-    "inlineLayoutStyles": 5
+    "inlineLayoutStyles": 4
   },
   "components/ConfirmPaymentSheet.tsx": {
     "inlineLayoutStyles": 2

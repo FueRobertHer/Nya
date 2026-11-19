@@ -279,7 +279,18 @@ async function mount(fetcher: ReturnType<typeof store>['fetcher'], { shown = {} 
     );
   const helpers = () => dialog()?.findAll((e) => e.tagName === 'P' && classOf(e).includes('helper')).map((e) => e.textContent) ?? [];
   const alerts = () => dialog()?.findAll((e) => e.getAttribute('role') === 'alert').map((e) => e.textContent) ?? [];
+  /** The sheet's footer: each button's words, class and what describes it,
+   *  in order, and its note's id and words. */
+  const footer = () => {
+    const foot = dialog()?.findAll((e) => classOf(e).includes('sheet-footer'))[0] ?? null;
+    const note = foot?.findAll((e) => classOf(e).includes('sheet-footer-note'))[0] ?? null;
+    return {
+      buttons: (foot?.findAll((e) => e.tagName === 'BUTTON') ?? []).map((b) => [b.textContent, b.getAttribute('class'), b.getAttribute('aria-describedby')]),
+      note: note ? [note.getAttribute('id'), note.textContent] : null,
+    };
+  };
   return {
+    footer,
     said,
     seen,
     jobs,
@@ -607,9 +618,24 @@ describe('names', () => {
     expect(s.field()?.value).toBe('Spend more');
     expect(s.field()?.getAttribute('maxLength')).toBe('40');
     expect(s.helpers()).toEqual(['40 characters at most.']);
+    // Cancel, then Save, in the sheet's footer.
+    expect(s.footer()).toEqual({
+      buttons: [
+        ['Cancel', 'btn secondary', null],
+        ['Save', 'btn', null],
+      ],
+      note: null,
+    });
     await act(async () => type(s.field()!, '  '));
     await s.press(s.button('Save'), 'Save');
     expect(s.alerts()).toEqual(['Critical: Give it a name.']);
+    // Why it was refused sits beside them, and Save is described by it.
+    const refused = s.footer();
+    expect(refused.note?.[1]).toBe('Critical: Give it a name.');
+    expect(refused.buttons).toEqual([
+      ['Cancel', 'btn secondary', null],
+      ['Save', 'btn', refused.note![0]],
+    ]);
     await act(async () => type(s.field()!, 'first PLAN'));
     await s.press(s.button('Save'), 'Save');
     expect(s.alerts()).toEqual(['Critical: Another plan has that name: choose another, so they can be told apart.']);
@@ -667,6 +693,7 @@ describe('names', () => {
     expect(s.title()).toBe('New copy');
     expect(s.helpers()).toEqual(['A copy starts as your plan. Open it, and every change you make there is saved to it, never to your plan.', '40 characters at most.']);
     expect(s.field()?.value).toBe('');
+    expect(s.footer().buttons.map((b) => b[0])).toEqual(['Cancel', 'Make it']);
     await act(async () => type(s.field()!, 'Sabbatical'));
     await s.press(s.button('Make it'), 'Make it');
     expect(sent.map((b) => [b.method, b.from, b.name, JSON.stringify(b.plan) === JSON.stringify(PLAN)])).toEqual([['POST', 'main', 'Sabbatical', true]]);
