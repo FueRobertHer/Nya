@@ -144,7 +144,18 @@ export type SimPlan = {
   conditional?: ConditionalFlows;
   /** Real return on cash, a year: see CASH_REAL_RETURN. */
   cashRealReturn: number;
+  /** History moved by the accounts' own growth (version 2's `historyMoved`,
+   *  lib/fire/account-growth.ts historyShift): added to every year's growth, as
+   *  a factor, before the fee, and to each asset's under `rebalance: 'none'`. A
+   *  year never loses more than all of it. Absent: history as it ran, to the
+   *  bit. With `tax`, the whole balance's, which last year's return (the
+   *  guardrails' rule) and the mix read; each bucket's is the tax's. */
+  historyShift?: number;
 };
+
+/** The most a history shift moves a year, either way: two whole years' growth,
+ *  past any gap between rates a plan holds (each from -99% to 100%). */
+export const MAX_HISTORY_SHIFT = 2;
 
 /**
  * Cash earns this much after inflation, a year, unless a plan says
@@ -249,6 +260,11 @@ export function checkPlan(plan: SimPlan): void {
   if (!finite(plan.fee) || plan.fee < 0 || plan.fee >= 0.5) fail('the fee must be from 0% to under 50%');
   if (!finite(plan.taxRate) || plan.taxRate < 0 || plan.taxRate >= 0.99) fail('the tax rate must be from 0% to under 99%');
   if (!finite(plan.cashRealReturn) || plan.cashRealReturn <= -1) fail('the return on cash must be above -100%');
+  const shift = (v: number) => finite(v) && Math.abs(v) <= MAX_HISTORY_SHIFT;
+  if (plan.historyShift !== undefined && !shift(plan.historyShift)) fail('history can be moved by at most 200 points a year');
+  // Every bucket says its own gap.
+  const bucketShift = plan.tax?.historyShift;
+  if (bucketShift && ![bucketShift.taxable, bucketShift.deferred, bucketShift.deferred457, bucketShift.roth, bucketShift.hsa].every(shift)) fail('history can be moved by at most 200 points a year');
   const r = plan.rule;
   if (r.kind === 'vpw') {
     if (!finite(r.expectedReturn) || r.expectedReturn <= -1) fail('VPW needs an expected return above -100%');
@@ -361,6 +377,8 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
   const g = growthTables(plan, market);
   const tax = plan.taxRate;
   const afterFee = 1 - plan.fee;
+  // Zero is history as it ran: x + 0 is x, and a year's growth is above zero.
+  const shift = plan.historyShift ?? 0;
   const w = plan.allocation;
   const drift = plan.rebalance === 'none';
 
@@ -494,12 +512,12 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
       const m = source.monthAt(p, y);
       let grown: number;
       if (drift) {
-        hs *= g.stocks[m] * afterFee;
-        hb *= g.bonds[m] * afterFee;
-        hc *= g.cash * afterFee;
+        hs *= Math.max(0, g.stocks[m] + shift) * afterFee;
+        hb *= Math.max(0, g.bonds[m] + shift) * afterFee;
+        hc *= Math.max(0, g.cash + shift) * afterFee;
         grown = hs + hb + hc;
       } else {
-        grown = bal * (g.portfolio as Float64Array)[m] * afterFee;
+        grown = bal * Math.max(0, (g.portfolio as Float64Array)[m] + shift) * afterFee;
       }
       lastNominalReturn = bal > 0 ? (grown / bal) * g.inflation[m] - 1 : 0;
       lastInflation = g.inflation[m] - 1;

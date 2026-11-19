@@ -148,3 +148,38 @@ describe('D9’s lastsIn, held only while it is set', () => {
     expect(toStored({ ...V2, lastsIn: 0.9 }, 2)).toEqual({ plan: { ...V2, lastsIn: 0.9 } });
   });
 });
+
+describe('historyMoved, held only while it is on', () => {
+  const V2: FirePlanV2 = { ...DEFAULT_PLAN_V2, age: 40, targetAge: 50, spending: 40_000 };
+
+  test('a plan without it reads, upgrades and is sent back without it', () => {
+    expect(parsePlanV2(V2)).toEqual({ plan: V2 });
+    expect(Object.hasOwn(upgradeStoredPlan(V2) as object, 'historyMoved')).toBe(false);
+    expect(Object.hasOwn(DEFAULT_PLAN_V2, 'historyMoved')).toBe(false);
+    expect(Object.hasOwn(basePlanOf(V2).plan, 'historyMoved')).toBe(false);
+  });
+
+  test('on is kept; off reads as without it, so two plans that say the same compare the same', () => {
+    expect(parsePlanV2({ ...V2, historyMoved: true })).toEqual({ plan: { ...V2, historyMoved: true } });
+    expect(basePlanOf({ ...V2, historyMoved: true })).toEqual({ plan: { ...V2, historyMoved: true }, fixed: [] });
+    const off = parsePlanV2({ ...V2, historyMoved: false } as unknown as FirePlanV2) as { plan: FirePlanV2 };
+    expect(off).toEqual({ plan: V2 });
+    expect(Object.hasOwn(off.plan, 'historyMoved')).toBe(false);
+    expect(isFirePlanV2({ ...V2, historyMoved: false })).toBe(true);
+  });
+
+  test('anything but true or false is refused, and a repair drops it, never the whole plan', () => {
+    for (const historyMoved of [null, 'true', 1, 0, {}]) {
+      expect(parsePlanV2({ ...V2, historyMoved })).toEqual({ error: 'historyMoved must be true or false', field: 'historyMoved' });
+      expect(isFirePlanV2({ ...V2, historyMoved })).toBe(false);
+    }
+    const r = repairPlanV2({ ...V2, spending: 50_000, historyMoved: 'yes' } as unknown as FirePlanV2);
+    expect(r).toEqual({ plan: { ...V2, spending: 50_000 }, fixed: [{ field: 'historyMoved' }] });
+  });
+
+  test('version 1 can’t hold it', () => {
+    const v1 = planOf(DEFAULT_PLAN);
+    expect(toStored({ ...v1, historyMoved: true }, 1)).toEqual({ error: 'This plan holds settings only a newer version of Nya can save.' });
+    expect(toStored({ ...V2, historyMoved: true }, 2)).toEqual({ plan: { ...V2, historyMoved: true } });
+  });
+});

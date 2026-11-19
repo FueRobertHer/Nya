@@ -2563,6 +2563,7 @@ const REPAIR_NAMES: Record<string, string> = {
   lastsIn: 'the share your FI date lasts in',
   planFunding: 'how a workplace plan is paid into',
   accounts: 'an account’s own growth or dividends',
+  historyMoved: 'moving the stress test by your accounts’ own growth',
 };
 
 /** What a repair changed, in words: an income or one-off by its label, or by
