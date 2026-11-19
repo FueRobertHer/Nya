@@ -58,7 +58,24 @@ const PLAN = { ...DEFAULT_PLAN_V2, age: 41, targetAge: 50, spending: 40_000, sav
 const yearRow = (id: string, income: number, contributions: number) => ({ id, dividends_12m: income, contributions_12m: contributions, contributions_12m_from: '2025-11-05', contributions_12m_partial: false, contributions_12m_rows: [], contributions_12m_activity_from: null, note: null });
 
 type Call = { method: string; url: string; body: any };
-function serve(over: { tax?: TaxFacts; plan?: typeof PLAN; refuse?: string; rows?: Record<string, ReturnType<typeof yearRow>>; hold?: Promise<void>; copies?: boolean; currency?: string; choices?: TaxChoices } = {}) {
+/** An account's balance on the 1st of each month from `from` to `to`, growing
+ *  `yearly` a year with nothing put in, and the activity that says so. */
+function grown(from: string, to: string, yearly: number) {
+  const points: { date: string; value: number }[] = [];
+  let value = 100_000;
+  for (let d = from; d <= to; ) {
+    points.push({ date: d, value: Math.round(value * 100) / 100 });
+    const [y, m] = d.split('-').map(Number);
+    const next = `${m === 12 ? y + 1 : y}-${String(m === 12 ? 1 : m + 1).padStart(2, '0')}-01`;
+    value *= (1 + yearly) ** ((Date.parse(`${next}T00:00:00Z`) - Date.parse(`${d}T00:00:00Z`)) / 86_400_000 / 365);
+    d = next;
+  }
+  return { points, activity: { txns: [], ytd_contributions: 0, ytd_rollovers: 0, flows: [], flows_from: from, flows_to: to, note: null } };
+}
+/** An account with no investment activity at all. */
+const NO_ACTIVITY = { txns: [], ytd_contributions: 0, ytd_rollovers: 0, flows: null, note: null };
+
+function serve(over: { tax?: TaxFacts; plan?: typeof PLAN; refuse?: string; rows?: Record<string, ReturnType<typeof yearRow>>; hold?: Promise<void>; copies?: boolean; currency?: string; choices?: TaxChoices; histories?: Record<string, ReturnType<typeof grown> | 'fails'> } = {}) {
   const calls: Call[] = [];
   const state = { tax: over.tax ?? DEFAULT_TAX_FACTS, plan: over.plan ?? PLAN, refuse: over.refuse ?? null, settings: { version: 1, target: null, buckets: [], funds: [], accounts: [] } as any };
   const rows = over.rows ?? { 'i1:brk': yearRow('i1:brk', 2_800, 6_000), 'i1:k': yearRow('i1:k', 0, 20_000) };
@@ -95,6 +112,15 @@ function serve(over: { tax?: TaxFacts; plan?: typeof PLAN; refuse?: string; rows
     if (u.pathname === '/api/plans' && method === 'GET') {
       const [status, body] = plansListing(state.plan, over.copies ? [copyRow(state.plan, 'a', 'Stop at 52', { targetAge: 52 })] : []);
       return json(body, status as number);
+    }
+    // Each account's history and activity, for its rate of return (by
+    // "item:account"); none recorded for any other.
+    if (u.pathname === '/api/account-history' || u.pathname === '/api/investment-activity') {
+      const id = u.searchParams.get('id');
+      const held = Object.entries(over.histories ?? {}).find(([k]) => k.endsWith(`:${id}`) && (u.pathname === '/api/account-history' || k === `${u.searchParams.get('item_id')}:${id}`))?.[1];
+      if (held === 'fails') return json({ error: 'no' }, 500);
+      if (u.pathname === '/api/account-history') return json({ points: held?.points ?? [] });
+      return json(held?.activity ?? NO_ACTIVITY);
     }
     if (u.pathname === '/api/allocation-settings') {
       if (method === 'PUT') state.settings = call.body.settings ?? call.body;
@@ -1096,6 +1122,92 @@ describe('with a copy open', () => {
     expect(field(tab.dialog()!, 'Put in so far')!.disabled).toBe(true);
     expect(button(tab.dialog()!, 'Save')!.disabled).toBe(true);
     expect(server.facts()).toEqual([]);
+    await tab.unmount();
+  });
+});
+
+describe('each account’s own rate of return', () => {
+  const DETAILED = { ...DEFAULT_TAX_FACTS, model: 'detailed' as const };
+  // With tax worked out each render works out the tax (see the dividends' SLOW).
+  const SLOW = 30_000;
+  /** Fidelity's accounts under an item of their own, so what one test loads
+   *  isn't another's (components/InvestmentActivity.tsx keeps a payload a minute). */
+  const under = (item: string) => [{ ...INSTITUTIONS[0], item_id: item }, INSTITUTIONS[1]];
+  const growthField = (tab: Tab) => field(tab.dialog()!, 'Its growth after inflation (% a year)');
+  const NONE = 'No yearly rate for it yet: that takes more than a year of its balances, and what went in and out.';
+
+  test('since it starts, after 3% inflation on a flat plan; Use sets its own, which the sheet’s Save keeps', async () => {
+    const server = serve({ histories: { 'r1:brk': grown('2020-06-01', '2026-10-01', 0.091) } });
+    const tab = await mount({ institutions: under('r1') });
+    await openAssets(tab);
+    await openRow(tab, 'Brokerage');
+    expect(tab.shown()).toContain('Its rate of return since Oct 2021: 9.1% a year, about 5.9% after 3% inflation. A guide, not a forecast: a few strong years rarely repeat on cue.');
+    expect(tab.shown()).not.toContain('A plan’s rates are');
+    // Never put in by itself.
+    expect(growthField(tab)).toBeNull();
+    await press(buttonShown(tab.dialog()!, 'Use 5.9%'));
+    expect(growthField(tab)!.value).toBe('5.9');
+    expect(buttonShown(tab.dialog()!, 'Use 5.9%')).toBeNull();
+    expect(server.saved()).toEqual([]);
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    expect(subOf(tab, 'Brokerage')).toBe('Cost basis $105,000 · gain $35,000 · grows 5.9%');
+    await press(buttonShown(tab.dialog()!, 'Save'));
+    expect(server.saved().map((p: any) => p.accounts)).toEqual([[{ account_id: 'brk', growth: 0.059, yield: null }]]);
+    await tab.unmount();
+  });
+
+  test('with tax worked out, after the plan’s own inflation; Use only where it would change its own', async () => {
+    serve({ tax: DETAILED, choices: { ...DEFAULT_TAX_CHOICES, inflation: 0.025 }, plan: { ...PLAN, accounts: [{ account_id: 'brk', growth: 0.064, yield: null }] }, histories: { 'r2:brk': grown('2020-06-01', '2026-10-01', 0.091) }, rows: { 'r2:brk': yearRow('r2:brk', 2_800, 6_000) } });
+    const tab = await mount({ institutions: under('r2') });
+    await openAssets(tab);
+    await openRow(tab, 'Brokerage');
+    expect(tab.shown()).toContain('Its rate of return since Oct 2021: 9.1% a year, about 6.4% after 2.5% inflation.');
+    expect(growthField(tab)!.value).toBe('6.4');
+    expect(buttonShown(tab.dialog()!, 'Use 6.4%')).toBeNull();
+    await act(async () => type(growthField(tab)!, '6'));
+    await settle();
+    expect(buttonShown(tab.dialog()!, 'Use 6.4%')).not.toBeNull();
+    await tab.unmount();
+  }, SLOW);
+
+  test('none for an account with under a year of it, or no activity; one that can’t be loaded says so', async () => {
+    serve({ histories: { 'r3:brk': grown('2026-02-01', '2026-10-01', 0.091), 'r3:r': 'fails' } });
+    const tab = await mount({ institutions: under('r3') });
+    await openAssets(tab);
+    await openRow(tab, 'Brokerage');
+    expect(tab.shown()).toContain(NONE);
+    expect(tab.shown()).not.toContain('Its rate of return');
+    expect(buttonShown(tab.dialog()!, 'Use 5.9%')).toBeNull();
+    await arrow(tab);
+    await openRow(tab, '401(k)');
+    expect(tab.shown()).toContain(NONE);
+    await arrow(tab);
+    await openRow(tab, 'Roth IRA');
+    expect(tab.shown()).toContain('Its rate of return couldn’t be loaded.');
+    expect(tab.shown()).not.toContain(NONE);
+    await tab.unmount();
+  });
+
+  test('a rate that ends long before the balances says when it ends; past what a plan takes, Use takes the most', async () => {
+    serve({ histories: { 'r4:brk': grown('2018-06-01', '2024-03-01', 0.3) } });
+    const tab = await mount({ institutions: under('r4') });
+    await openAssets(tab);
+    await openRow(tab, 'Brokerage');
+    expect(tab.shown()).toContain('Its rate of return from Mar 2019 to Mar 2024: 30% a year, about 26.2% after 3% inflation. A guide, not a forecast: a few strong years rarely repeat on cue. A plan’s rates are from -5% to 15%.');
+    await press(buttonShown(tab.dialog()!, 'Use 15%'));
+    expect(growthField(tab)!.value).toBe('15');
+    await tab.unmount();
+  });
+
+  test('nothing is asked where its growth can’t be set: with your own figure for invested assets', async () => {
+    const server = serve({ plan: { ...PLAN, assets: 200_000 }, histories: { 'r5:brk': grown('2020-06-01', '2026-10-01', 0.091) } });
+    const tab = await mount({ institutions: under('r5') });
+    await openAssets(tab);
+    await openRow(tab, 'Brokerage');
+    expect(tab.shown()).toContain('every account grows at the plan’s 5% after inflation');
+    expect(tab.shown()).not.toContain('rate of return');
+    expect(tab.shown()).not.toContain(NONE);
+    expect(server.calls.filter((c) => c.url.startsWith('/api/account-history') || c.url.startsWith('/api/investment-activity'))).toEqual([]);
     await tab.unmount();
   });
 });
