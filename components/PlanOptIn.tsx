@@ -5,12 +5,13 @@
 // reads, and nothing changes until Work it out. Shared by every plan, so a copy says
 // where it is done. Saved by components/PlanTab.tsx, which reads your plans again after.
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import { BesideTable } from './PlanBeside';
 import { fiWhen } from './plan-fi-when';
 import { pct } from './plan-text';
 import { Notice } from './TotalCaveats';
+import { SheetFooter } from './Sheet';
 
 const CHEVRON = (
   <svg className="section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -122,6 +123,9 @@ export function OptInSheet({
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const pausedId = useId();
+  const errorId = useId();
+  const describedBy = [paused ? pausedId : '', error ? errorId : ''].filter(Boolean).join(' ') || undefined;
   const shares = after?.shares ?? null;
   const mostly = before && after ? mostlyWords(before, after) : null;
   const confirm = async () => {
@@ -165,20 +169,28 @@ export function OptInSheet({
         <p className="helper">Each account’s tax bucket, owner and cost basis; what you put into Roth; how you’ll be covered before 65; your household and state. Anything not set uses an assumption, and Nya says which. Some, like no state, can understate costs.</p>
       </div>
       <p className="helper">Hypothetical, {lawYear} tax law. Not tax advice. You can go back to a flat rate at any time, from Tax after you stop.</p>
-      {error && (
-        <Notice level="critical" role="alert">
-          {error}
-        </Notice>
-      )}
-      {paused && <p className="helper plan-paused">{paused}</p>}
-      <div className="button-pair">
-        <button type="button" className="secondary" onClick={onDone} disabled={saving}>
+      {/* Not now, then Work it out, in the drawer's footer, with what it
+          waits on and why it failed beside them. */}
+      <SheetFooter>
+        {paused && (
+          <p className="helper plan-paused sheet-footer-note" id={pausedId}>
+            {paused}
+          </p>
+        )}
+        {error && (
+          <div className="sheet-footer-note" id={errorId}>
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          </div>
+        )}
+        <button type="button" className="btn secondary" onClick={onDone} disabled={saving}>
           Not now
         </button>
-        <button type="button" onClick={confirm} disabled={saving || paused !== null}>
+        <button type="button" className="btn" onClick={confirm} disabled={saving || paused !== null} aria-describedby={describedBy}>
           {saving ? 'Saving…' : 'Work it out'}
         </button>
-      </div>
+      </SheetFooter>
     </div>
   );
 }

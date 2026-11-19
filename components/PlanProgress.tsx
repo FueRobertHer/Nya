@@ -597,7 +597,10 @@ export default function PlanProgress({ progress, plan, savings, growth, currency
         title={sheet === 'resave' ? 'Save the Plan as it is now' : sheet === 'save' ? 'This is my plan' : sheet === 'forget' ? 'Stop comparing' : 'Delete the saved plan'}
         onClose={close}
         footer={
-          <div className="btn-row">
+          <>
+            <button type="button" className="btn secondary" disabled={busy} onClick={close}>
+              Cancel
+            </button>
             {saving ? (
               <button type="button" className="btn" disabled={busy} onClick={() => void save()}>
                 Save
@@ -607,10 +610,7 @@ export default function PlanProgress({ progress, plan, savings, growth, currency
                 {sheet === 'forget' ? 'Stop comparing' : 'Delete it'}
               </button>
             )}
-            <button type="button" className="btn secondary" disabled={busy} onClick={close}>
-              Cancel
-            </button>
-          </div>
+          </>
         }
       >
         <SheetBody sheet={sheet} saved={saved} savings={savings.value} money={money} inflation={inflation} onInflation={setInflation} error={sheetError} />

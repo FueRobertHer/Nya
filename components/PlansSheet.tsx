@@ -23,8 +23,8 @@
 // tab's worker, one job per plan, with your plan's method and seed; answers
 // are kept for the visit only (rememberResult), never stored.
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Sheet } from './Sheet';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { Sheet, SheetFooter } from './Sheet';
 import { Masked } from './HideAmounts';
 import ActionRows from './ActionRows';
 import PlanCompare from './PlanCompare';
@@ -681,6 +681,7 @@ function NameForm({
 }) {
   const [name, setName] = useState(initial);
   const [error, setError] = useState('');
+  const errorId = useId();
   return (
     <div className="stack">
       {intro && <p className="helper">{intro}</p>}
@@ -691,12 +692,16 @@ function NameForm({
         </label>
         <p className="helper">{SCENARIO_NAME_MAX} characters at most.</p>
       </div>
-      {error && (
-        <Notice level="critical" role="alert">
-          {error}
-        </Notice>
-      )}
-      <div className="btn-row">
+      {/* Cancel, then Save, in the sheet's footer (its levels give none of
+          their own), and why the name was refused beside them. */}
+      <SheetFooter>
+        {error && (
+          <div className="sheet-footer-note" id={errorId}>
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          </div>
+        )}
         <button type="button" className="btn secondary" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
@@ -704,6 +709,7 @@ function NameForm({
           type="button"
           className="btn"
           disabled={busy}
+          aria-describedby={error ? errorId : undefined}
           onClick={async () => {
             const n = name.trim();
             if (!n) return setError('Give it a name.');
@@ -714,7 +720,7 @@ function NameForm({
         >
           {busy ? 'Saving…' : saveText}
         </button>
-      </div>
+      </SheetFooter>
     </div>
   );
 }

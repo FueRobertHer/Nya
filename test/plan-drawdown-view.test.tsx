@@ -368,6 +368,12 @@ describe('the way in', () => {
     expect(sheet.textContent).toContain('Your FI number, Home and every copy of your plan use them.');
     expect(sheet.textContent).toContain('Each account’s tax bucket, owner and cost basis');
     expect(sheet.textContent).toContain('2026 tax law. Not tax advice.');
+    // Not now, then Work it out, in the drawer's footer.
+    const foot = sheet.findAll((e) => classOf(e).includes('sheet-footer'))[0];
+    expect(foot?.findAll((e) => e.tagName === 'BUTTON').map((b) => [b.textContent, b.getAttribute('class')])).toEqual([
+      ['Not now', 'btn secondary'],
+      ['Work it out', 'btn'],
+    ]);
     await press(button(sheet, 'Not now'));
     expect(tab.dialog()).toBeNull();
     expect(calls().filter((c) => c.path === '/api/plan-facts' && c.method === 'POST')).toEqual([]);

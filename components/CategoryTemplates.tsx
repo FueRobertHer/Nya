@@ -10,7 +10,7 @@
 // until you leave this screen. When your categories changed since the
 // preview, the apply is refused and the preview worked out again.
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { displayName, MAX_CATEGORIES } from '@/lib/categories';
 import {
   TEMPLATE_IDS,
@@ -24,6 +24,7 @@ import {
   type UndoKept,
 } from '@/lib/category-templates';
 import { Notice } from './TotalCaveats';
+import { SheetFooter } from './Sheet';
 
 /** A plan as the route sends it: without the set it would make. */
 export type ShownPlan = Omit<TemplatePlan, 'taxonomy' | 'signature'> & { basis: string };
@@ -280,6 +281,7 @@ export function CategoryTemplatesView({
   onUndo: (t: TemplateId, undo: TemplateUndo) => void;
   onList: () => void;
 }) {
+  const failedId = useId();
   const failed = error && (
     <Notice level="critical" role="alert">
       {error}
@@ -315,17 +317,23 @@ export function CategoryTemplatesView({
         <div className="inst-name">{name}</div>
         <p className="panel-note">{TEMPLATES[step.template].summary}</p>
         {step.plan ? <PlanView plan={step.plan} /> : !error && <p className="empty-note">Working out what {name} would change…</p>}
-        {failed}
-        <div className="button-pair" style={{ marginTop: 16 }}>
-          <button className="secondary" onClick={onList} disabled={busy}>
+        {/* Back, then Apply while it would change something, in the sheet's
+            footer (whichever sheet it is in), and why it failed beside them. */}
+        <SheetFooter>
+          {failed ? (
+            <div className="sheet-footer-note" id={failedId}>
+              {failed}
+            </div>
+          ) : null}
+          <button type="button" className="btn secondary" onClick={onList} disabled={busy}>
             Back
           </button>
           {step.plan && !step.plan.unchanged && (
-            <button onClick={() => onApply(step.template, step.plan!)} disabled={busy}>
+            <button type="button" className="btn" onClick={() => onApply(step.template, step.plan!)} disabled={busy} aria-describedby={failed ? failedId : undefined}>
               {busy ? 'Applying…' : `Apply ${name}`}
             </button>
           )}
-        </div>
+        </SheetFooter>
       </div>
     );
   }

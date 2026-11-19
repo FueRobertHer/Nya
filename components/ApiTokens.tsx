@@ -25,7 +25,7 @@
 // once the person confirms, and one saved by another version of Nya is only
 // named (lib/repo.ts: never offered for removal).
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useState, type ReactNode } from 'react';
 import { useReverification } from '@clerk/nextjs';
 import { isReverificationCancelledError } from '@clerk/nextjs/errors';
 import { Sheet } from './Sheet';
@@ -491,31 +491,33 @@ export function RevokeSheet({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
+  const errorId = useId();
+  // Cancel, then Revoke (or Delete), and why it failed beside them.
+  const footer = revoking && (
+    <>
+      {error && (
+        <div className="sheet-footer-note" id={errorId}>
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        </div>
+      )}
+      <button type="button" className="btn secondary" onClick={onCancel} disabled={busy}>
+        Cancel
+      </button>
+      <button type="button" className="btn danger" onClick={onConfirm} disabled={busy} aria-describedby={error ? errorId : undefined}>
+        {busy ? (revoking.unreadable ? 'Deleting…' : 'Revoking…') : revoking.unreadable ? 'Delete' : 'Revoke'}
+      </button>
+    </>
+  );
   return (
-    <Sheet open={!!revoking} title={revoking?.unreadable ? 'Delete the token?' : `Revoke ${revoking?.label ?? 'token'}?`} onClose={onCancel}>
+    <Sheet open={!!revoking} title={revoking?.unreadable ? 'Delete the token?' : `Revoke ${revoking?.label ?? 'token'}?`} onClose={onCancel} footer={footer}>
       {revoking && (
-        <>
-          <div className="stack">
-            <p className="panel-note">
-              {revoking.unreadable
-                ? 'Its record can’t be read, so it doesn’t work now. Deleting it removes what is left of it.'
-                : 'Anything using it loses access on its next request. This can’t be undone: make a new token if you need one again.'}
-            </p>
-            {error && (
-              <Notice level="critical" role="alert">
-                {error}
-              </Notice>
-            )}
-          </div>
-          <div className="button-pair" style={{ marginTop: 16 }}>
-            <button className="secondary" onClick={onCancel} disabled={busy}>
-              Cancel
-            </button>
-            <button className="danger" onClick={onConfirm} disabled={busy}>
-              {busy ? (revoking.unreadable ? 'Deleting…' : 'Revoking…') : revoking.unreadable ? 'Delete' : 'Revoke'}
-            </button>
-          </div>
-        </>
+        <p className="panel-note">
+          {revoking.unreadable
+            ? 'Its record can’t be read, so it doesn’t work now. Deleting it removes what is left of it.'
+            : 'Anything using it loses access on its next request. This can’t be undone: make a new token if you need one again.'}
+        </p>
       )}
     </Sheet>
   );
