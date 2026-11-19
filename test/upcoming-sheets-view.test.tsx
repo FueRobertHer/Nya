@@ -202,6 +202,37 @@ describe('Recurring', () => {
     v.unmount();
   });
 
+  test('a series on a health savings account a bank reports as a bank account says the forecast doesn’t count it, its amount varying or not', async () => {
+    const amounts = [800, 2900, 1200, 2600, 900, 3000, 1100, 2500, 950, 2800, 1000, 2700];
+    const every = (start: string) => scheduleDates({ unit: 'day', every: 14, start }, '2100-01-01', 12);
+    const series = detectRecurring([
+      ...every('2026-04-24').map((d, i) => recurring(d, -amounts[i], { name: 'Gig pay', category: 'income' })),
+      ...every('2026-04-23').map((d, i) => recurring(d, -amounts[i], { name: 'Bonus match', category: 'income', account_name: 'Health savings', account_hsa: true })),
+      ...monthly('2026-04', 6, 12).map((d) => recurring(d, 3.95, { name: 'HSA fee', account_name: 'Health savings', account_hsa: true })),
+    ]);
+    expect(series.map((s) => [s.name, s.agreement === 'varies', !!s.accountHsa]).sort()).toEqual([
+      ['Bonus match', true, true],
+      ['Gig pay', true, false],
+      ['HSA fee', false, true],
+    ]);
+    const v = mountRecurring({ series });
+    const said = async (title: string) => {
+      await v.open(title);
+      const text = v.dialog()!.textContent;
+      act(() => click(v.button('Close', v.dialog()!)!));
+      await settle();
+      return text;
+    };
+    const notCash = "On Health savings, which isn't checking or savings, so the forecast doesn't count it.";
+    for (const title of ['Bonus match', 'HSA fee']) {
+      const text = await said(title);
+      expect(text).toContain(notCash);
+      expect(text).not.toContain('varies too much');
+    }
+    expect(await said('Gig pay')).toContain('Its amount varies too much to forecast, so the forecast leaves it out and says so.');
+    v.unmount();
+  });
+
   test('Not recurring saves the dismissal and closes the sheet; the series is listed as marked, and focus goes to that row', async () => {
     const v = mountRecurring();
     await v.open('Rent');

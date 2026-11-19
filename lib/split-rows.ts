@@ -320,6 +320,7 @@ function groupRow(id: string, g: TxnGroup, members: Txn[], missing: number, inpu
     pending: false,
     account_name: anchor.account_name,
     account_type: anchor.account_type ?? null,
+    ...(anchor.account_hsa ? { account_hsa: true as const } : {}),
     institution_name: anchor.institution_name,
     ...filedUnder(inputs.ix, c),
     iso_currency_code: anchor.iso_currency_code,

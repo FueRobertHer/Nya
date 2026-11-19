@@ -135,7 +135,10 @@ const CACHED_HISTORY = { recent: 4, older: 6 };
  *  cached before rows carried what rules and what was carried across a
  *  re-link are applied by (lib/txn-layers.ts), and `content_keys` from one
  *  cached before posted rows carried the key a share carries across a
- *  re-link by (lib/shared-expenses/rows.ts), with `loading`, the accounts
+ *  re-link by (lib/shared-expenses/rows.ts), and `hsa_flags` from one cached
+ *  before rows carried that their account is a health savings account its
+ *  bank reports as a bank account (account_hsa, which the cash forecast and
+ *  Runway read), with `loading`, the accounts
  *  whose connection is still bringing its history, where such a share's row
  *  may not have come yet: any is a miss. */
 export type PlaidPayload = {
@@ -144,6 +147,7 @@ export type PlaidPayload = {
   category_facts: true;
   layer_facts: true;
   content_keys: true;
+  hsa_flags: true;
   loading: string[];
   transactions: Txn[];
   notes: string[]; // per-institution problems, shown to the user
@@ -175,6 +179,7 @@ export function isPlaidPayload(v: unknown): v is PlaidPayload {
     p.category_facts === true &&
     p.layer_facts === true &&
     p.content_keys === true &&
+    p.hsa_flags === true &&
     Array.isArray(p.loading) &&
     Array.isArray(p.transactions) &&
     Array.isArray(p.notes) &&
@@ -429,6 +434,7 @@ export async function assembleBankRows(
       category_facts: true,
       layer_facts: true,
       content_keys: true,
+      hsa_flags: true,
       loading: [...new Set(results.flatMap((r) => r.loading ?? []))],
       transactions,
       notes,
@@ -598,6 +604,7 @@ export async function finishActivity(
         amount: t.amount,
         account_name: t.account_name,
         account_type: t.account_type ?? null,
+        ...(t.account_hsa ? { account_hsa: true as const } : {}),
         institution_name: t.institution_name,
         category: t.category,
         subcategory: t.subcategory,

@@ -33,6 +33,7 @@ import { shownName } from '@/lib/merchant-name';
 import { leftOutText } from '@/lib/spending';
 import { countsInMonthly, recurringMonthly, type MonthlyConverted } from '@/lib/totals';
 import { leftOutWhy } from '@/lib/fx/totals';
+import { onBankCash } from '@/lib/balance';
 import type { FxTable } from '@/lib/fx/rates';
 import type { NoSpending } from '@/lib/no-transactions';
 import { Masked } from './HideAmounts';
@@ -259,18 +260,21 @@ export default function RecurringCard({
       .join(' · ');
   };
   // What the forecast makes of it, for its sheet.
+  // An account that isn't cash (a health savings account a bank reports as
+  // a bank account among them) before the amount: the forecast leaves such a
+  // series out without a note, varying or not (lib/forecast.ts).
   const counted = (s: RecurringSeries) =>
     s.paysCard
       ? "It pays a card off, so it isn't in the monthly total here, where the card's own bills are; the forecast counts it, as the money leaving your checking."
-      : s.agreement === 'varies'
-      ? 'Its amount varies too much to forecast, so the forecast leaves it out and says so.'
-      : s.accountType === 'credit'
-        ? `Charged to ${s.account || 'a card'}: the forecast counts the card's payment from your checking instead, when that repeats at a steady amount.`
-        : s.accountType && s.accountType !== 'depository'
-          ? `On ${s.account || 'an account'}, which isn't checking or savings, so the forecast doesn't count it.`
-          : s.accountType === null
-            ? "The account it's on isn't known, so the forecast doesn't count it."
-            : null;
+      : s.accountType && s.accountType !== 'credit' && !onBankCash(s)
+        ? `On ${s.account || 'an account'}, which isn't checking or savings, so the forecast doesn't count it.`
+        : s.agreement === 'varies'
+          ? 'Its amount varies too much to forecast, so the forecast leaves it out and says so.'
+          : s.accountType === 'credit'
+            ? `Charged to ${s.account || 'a card'}: the forecast counts the card's payment from your checking instead, when that repeats at a steady amount.`
+            : s.accountType === null
+              ? "The account it's on isn't known, so the forecast doesn't count it."
+              : null;
 
   const list = (of: Row[]) => (
     <ul className="list-rows">
