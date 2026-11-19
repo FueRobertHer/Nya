@@ -152,7 +152,7 @@ What a sheet shows once it has saved depends on whether the person can see the c
 - **A save that keeps the sheet open says so in the sheet**: a done line with `role="status"`, never silence.
 - **A save that fails says so where the person is**: in the sheet while it is open, never only on the screen behind it, and never as a silent revert.
 - **Buttons in the footer.** A sheet's buttons go in `Sheet`'s `footer` (or `SheetFooter` from a level), not in a `.button-pair` or `.btn-row` in the body. What they wait on, and their errors, go in its `.sheet-footer-note`.
-- **One order.** In a footer the way out comes first and the action last: Cancel (or Keep it, a `.btn.secondary`) then Save, Add or the `.btn.danger` that confirms. A question it confirms ("Delete this rule?") is its note, if short; asking swaps the footer's buttons, not the body's.
+- **One order.** In a footer the way out comes first and the action last: Cancel (or Keep it, a `.btn.secondary`) then Save, Add or the `.btn.danger` that confirms. Asking swaps the footer's buttons, not the body's (a person's Forget). A Delete asks in a level of its own, opened from the sheet's last action row (Destructive action row in design-system.md).
 - **Done lines are done notices.** A `.status-note`, `.panel-note`, `.import-headline` or visually hidden status line that says a save worked becomes a `Notice` with `level="done"`.
 - **Tested.** A view test covers each sheet's after-save state: what it says, its Undo, and where focus lands.
 

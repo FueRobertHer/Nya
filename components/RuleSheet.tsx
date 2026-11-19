@@ -23,6 +23,7 @@ import type { Taxonomy } from '@/lib/categories';
 import type { Tag } from '@/lib/tags';
 import { blankCondition, draftComplete, draftInput, type DraftCondition, type RuleDraft, type RulesState } from './rules-state';
 import { Notice } from './TotalCaveats';
+import ActionRows from './ActionRows';
 
 const FIELD_LABEL: Record<RuleField, string> = {
   name: 'Name',
@@ -95,9 +96,28 @@ export default function RuleSheet({
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  // Asked to delete the rule: a level of the sheet that asks, the form kept.
+  const [asking, setAsking] = useState(false);
   const errorId = useId();
-  const askId = useId();
+  // The level's safe answer takes focus when it opens (after the sheet's own
+  // focus on its panel), and Delete rule takes it back after Cancel.
+  const safe = useRef<HTMLButtonElement>(null);
+  const deleteRow = useRef<HTMLButtonElement>(null);
+  const returning = useRef(false);
+  useEffect(() => {
+    if (asking) safe.current?.focus({ preventScroll: true });
+    else if (returning.current) {
+      returning.current = false;
+      deleteRow.current?.focus({ preventScroll: true });
+    }
+  }, [asking]);
+  // Into the level or back out of it: what the last try said was about the other.
+  const ask = (on: boolean) => {
+    if (busy) return;
+    returning.current = !on;
+    setError(null);
+    setAsking(on);
+  };
   // A preview answered after a newer one was asked for is dropped.
   const asked = useRef(0);
 
@@ -108,7 +128,7 @@ export default function RuleSheet({
       setError(null);
       setPreview(null);
       setPreviewError(null);
-      setConfirmDelete(false);
+      setAsking(false);
     }
   }, [rules.draft]);
 
@@ -232,7 +252,7 @@ export default function RuleSheet({
   };
 
   // The buttons, and why the last one failed beside them; asked to delete the
-  // rule, Keep it and Delete rule in their place.
+  // rule, Cancel and Delete in their place.
   const failed = error ? errorId : undefined;
   const footer = (
     <>
@@ -243,16 +263,13 @@ export default function RuleSheet({
           </Notice>
         </div>
       )}
-      {form.id && confirmDelete ? (
+      {form.id && asking ? (
         <>
-          <p className="helper sheet-footer-note" id={askId}>
-            Delete this rule? Its transactions go back to as they were.
-          </p>
-          <button type="button" className="btn secondary" onClick={() => setConfirmDelete(false)} disabled={busy}>
-            Keep it
+          <button type="button" ref={safe} className="btn secondary" onClick={() => ask(false)} disabled={busy}>
+            Cancel
           </button>
-          <button type="button" className="btn danger" onClick={() => send({ action: 'delete', id: form.id })} disabled={busy} aria-describedby={failed ? `${askId} ${failed}` : askId}>
-            {busy ? 'Deleting…' : 'Delete rule'}
+          <button type="button" className="btn danger" onClick={() => send({ action: 'delete', id: form.id })} disabled={busy} aria-describedby={failed}>
+            {busy ? 'Deleting…' : 'Delete'}
           </button>
         </>
       ) : (
@@ -267,6 +284,16 @@ export default function RuleSheet({
       )}
     </>
   );
+
+  // The level that asks: the same sheet (the form is this component's
+  // state), with a back arrow to it.
+  if (form.id && asking) {
+    return (
+      <Sheet open={open} title="Delete rule" level="delete" onBack={() => ask(false)} onClose={rules.close} footer={footer}>
+        <p>Delete this rule? It can&apos;t be undone. Its transactions go back to as they were; turning it off instead keeps it.</p>
+      </Sheet>
+    );
+  }
 
   return (
     <Sheet open={open} title={form.id ? 'Edit rule' : 'New rule'} onClose={rules.close} footer={footer}>
@@ -416,13 +443,8 @@ export default function RuleSheet({
           A rule changes every matching transaction, past and future, without changing what is stored: turn it off or delete it and they are as they were. What you
           set on one transaction always wins over a rule.
         </p>
-        {form.id && !confirmDelete && (
-          <div className="panel-section">
-            <button className="danger-outline" onClick={() => setConfirmDelete(true)} disabled={busy}>
-              Delete rule…
-            </button>
-          </div>
-        )}
+        {/* Deleting it, last: a row that opens the level that asks. */}
+        {form.id && <ActionRows rows={[{ key: 'delete', title: 'Delete rule', sub: 'Asks first.', opens: true, neg: true, ref: deleteRow, disabled: busy, onSelect: () => ask(true) }]} />}
       </div>
     </Sheet>
   );

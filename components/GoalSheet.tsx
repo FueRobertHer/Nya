@@ -9,7 +9,7 @@
 // its reason is shown here when it differs. The form only closes once the
 // server took the change.
 
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import { formatMoney, hideAmountsIn } from '@/lib/format';
@@ -21,6 +21,7 @@ import type { AccountFlow } from '@/lib/goal-projection';
 import { archivedGoal, draftOf, pickAccount, readDraft, type Draft, type DraftField } from './goal-draft';
 import { Notice } from './TotalCaveats';
 import FieldError from './FieldError';
+import ActionRows from './ActionRows';
 
 export default function GoalSheet({
   open,
@@ -52,10 +53,27 @@ export default function GoalSheet({
   const [newId] = useState(() => crypto.randomUUID());
   const [saving, setSaving] = useState(false);
   const [attempted, setAttempted] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  // Asked to delete it: a level of the sheet that asks, what was typed kept.
+  const [asking, setAsking] = useState(false);
   const errorId = useId();
   const failedId = useId();
-  const askId = useId();
+  // The level's safe answer takes focus when it opens (after the sheet's own
+  // focus on its panel), and Delete goal takes it back after Cancel.
+  const safe = useRef<HTMLButtonElement>(null);
+  const deleteRow = useRef<HTMLButtonElement>(null);
+  const returning = useRef(false);
+  useEffect(() => {
+    if (asking) safe.current?.focus({ preventScroll: true });
+    else if (returning.current) {
+      returning.current = false;
+      deleteRow.current?.focus({ preventScroll: true });
+    }
+  }, [asking]);
+  const back = () => {
+    if (saving) return;
+    returning.current = true;
+    setAsking(false);
+  };
   const set = (patch: Partial<Draft>) => setD((cur) => ({ ...cur, ...patch }));
 
   const read = readDraft(d, { goal, goals, accounts, today, newId });
@@ -105,8 +123,8 @@ export default function GoalSheet({
     if (goal && archived) void commit(goals.map((g) => (g.id === goal.id ? archived : g)));
   };
 
-  // The buttons, and why a save failed beside them; asked to delete, what goes
-  // with Keep it and Delete in their place.
+  // The buttons, and why a save failed beside them; asked to delete, Cancel
+  // and Delete in their place.
   const failed = attempted && saveError ? failedId : undefined;
   const footer = (
     <>
@@ -117,15 +135,12 @@ export default function GoalSheet({
           </Notice>
         </div>
       )}
-      {confirmDelete && goal ? (
+      {asking && goal ? (
         <>
-          <p className="helper sheet-footer-note" id={askId}>
-            Delete {goal.name} for good? Archiving keeps it, with its history.
-          </p>
-          <button type="button" className="btn secondary" onClick={() => setConfirmDelete(false)} disabled={saving}>
-            Keep it
+          <button type="button" ref={safe} className="btn secondary" onClick={back} disabled={saving}>
+            Cancel
           </button>
-          <button type="button" className="btn danger" onClick={() => commit(goals.filter((g) => g.id !== goal.id))} disabled={saving} aria-describedby={failed ? `${askId} ${failed}` : askId}>
+          <button type="button" className="btn danger" onClick={() => commit(goals.filter((g) => g.id !== goal.id))} disabled={saving} aria-describedby={failed}>
             {saving ? 'Deleting…' : 'Delete'}
           </button>
         </>
@@ -141,6 +156,16 @@ export default function GoalSheet({
       )}
     </>
   );
+
+  // The level that asks: the same sheet (what was typed stays in this
+  // component's state), with a back arrow to the form.
+  if (asking && goal) {
+    return (
+      <Sheet open={open} title="Delete goal" level="delete" onBack={back} onClose={() => !saving && onClose()} footer={footer}>
+        <p>Delete {goal.name} for good? It can&apos;t be undone. Archiving keeps it instead, with its history.</p>
+      </Sheet>
+    );
+  }
 
   return (
     <Sheet open={open} title={goal ? 'Edit goal' : 'Add a goal'} onClose={() => !saving && onClose()} footer={footer}>
@@ -273,23 +298,20 @@ export default function GoalSheet({
           An allocation is the part of the account’s balance this goal counts as its own: the money stays in the account, and goals never count more than it holds.
         </p>
       </div>
-      {!confirmDelete && (
-        <>
-          {goal && (
-            <div className="goal-sheet-actions">
-              {reached && <p className="panel-note">Reached. Archive it to keep it, with its history, and free what it set aside.</p>}
-              <button className="secondary" onClick={archive} disabled={saving || !archived}>
-                Archive goal
-              </button>
-              {!archived && <p className="panel-note">Archiving saves your changes too, so it waits until they can be saved.</p>}
-              {!reached && (
-                <button className="danger-outline" onClick={() => setConfirmDelete(true)} disabled={saving}>
-                  Delete goal
-                </button>
-              )}
-            </div>
-          )}
-        </>
+      {/* Its actions, last: Archive acts in place (the archived list
+          restores it); Delete, for a goal not reached, opens the level that
+          asks. */}
+      {goal && (
+        <div className="stack tight">
+          {reached && <p className="panel-note">Reached. Archive it to keep it, with its history, and free what it set aside.</p>}
+          {!archived && <p className="panel-note">Archiving saves your changes too, so it waits until they can be saved.</p>}
+          <ActionRows
+            rows={[
+              { key: 'archive', title: 'Archive goal', sub: 'Keeps it, with its history.', disabled: saving || !archived, onSelect: archive },
+              ...(reached ? [] : [{ key: 'delete', title: 'Delete goal', sub: 'Asks first.', opens: true, neg: true, ref: deleteRow, disabled: saving, onSelect: () => setAsking(true) }]),
+            ]}
+          />
+        </div>
       )}
     </Sheet>
   );

@@ -3,7 +3,7 @@
     "inlineLayoutStyles": 3
   },
   "components/AllocationCard.tsx": {
-    "inlineLayoutStyles": 5
+    "inlineLayoutStyles": 4
   },
   "components/ApiChanges.tsx": {
     "inlineLayoutStyles": 1
