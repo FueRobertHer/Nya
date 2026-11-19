@@ -126,15 +126,20 @@ describe('the caveat line', () => {
     expect(html).toContain('<summary class="notice info">');
   });
 
-  test('the same kind twice is named once, the count still every note', () => {
+  test('the same kind twice is named once, with how many, so the parts add up to the count', () => {
     expect(summaryText([c('a', 'caution', 'accrued interest not known'), c('b', 'caution', 'accrued interest not known'), c('c', 'caution', 'old exchange rates')])).toBe(
-      '3 notes: accrued interest not known and old exchange rates'
+      '3 notes: accrued interest not known (2) and old exchange rates'
     );
   });
 
   test('more than three kinds: the first three and how many more', () => {
     const items = ['a', 'b', 'c', 'd', 'e'].map((k) => c(k, 'caution', `kind ${k}`));
     expect(summaryText(items)).toBe('5 notes: kind a, kind b, kind c and 2 more');
+  });
+
+  test('more counts the notes left, not their kinds: 9 notes over five kinds add up', () => {
+    const kinds = ['a', 'a', 'a', 'b', 'b', 'c', 'd', 'd', 'e'];
+    expect(summaryText(kinds.map((k, i) => c(`${k}${i}`, 'caution', `kind ${k}`)))).toBe('9 notes: kind a (3), kind b (2), kind c and 3 more');
   });
 });
 

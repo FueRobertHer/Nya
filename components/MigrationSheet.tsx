@@ -625,7 +625,7 @@ export function MappingStep({ q, options, busy, error, onAnswer }: { q: Extract<
       <p className="panel-note" style={{ marginTop: 0 }}>
         {q.app
           ? `Some columns this file needs as ${APP_NAMES[q.app]}’s export weren’t found. Say which column is which.`
-          : 'Nya doesn’t recognise this file’s columns as one of these apps’ exports. Say which app it is from and which column is which, or import a bank’s file into one account with that account’s Import.'}
+          : 'Nya doesn’t recognize this file’s columns as one of these apps’ exports. Say which app it is from and which column is which, or import a bank’s file into one account with that account’s Import.'}
       </p>
       <label className="field">
         <span>It is from</span>

@@ -48,13 +48,19 @@ const CHEVRON = (
 
 const RANK: Record<CaveatSeverity, number> = { critical: 2, caution: 1, info: 0 };
 
-/** The summary line's words: the count, then at most three kinds, each
- *  once (two loans whose interest couldn't be read are one kind), the worst
- *  first, so a line in amber names what made it amber. */
+/** The summary line's words: the count of notes, then at most three kinds,
+ *  each once (two loans whose interest couldn't be read are one kind), the
+ *  worst first, so a line in amber names what made it amber. A kind with
+ *  more than one note says how many, and "more" counts the notes left, so
+ *  the parts add up to the count: "9 notes: A (3), B (2), C and 3 more". */
 export function summaryText(lesser: readonly Caveat[]): string {
-  const kinds = [...new Set([...lesser].sort((a, b) => RANK[b.severity] - RANK[a.severity]).map((c) => c.summary))];
-  const shown = kinds.length > 3 ? [...kinds.slice(0, 3), `${kinds.length - 3} more`] : kinds;
-  return `${lesser.length} notes: ${joinNames(shown)}`;
+  const counts = new Map<string, number>();
+  for (const c of [...lesser].sort((a, b) => RANK[b.severity] - RANK[a.severity])) counts.set(c.summary, (counts.get(c.summary) ?? 0) + 1);
+  const kinds = [...counts];
+  const named = kinds.slice(0, 3);
+  const said = named.map(([summary, n]) => (n > 1 ? `${summary} (${n})` : summary));
+  const left = lesser.length - named.reduce((t, [, n]) => t + n, 0);
+  return `${lesser.length} notes: ${joinNames(left > 0 ? [...said, `${left} more`] : said)}`;
 }
 
 export { LevelWord };

@@ -330,7 +330,7 @@ export default function YearOverYearReport() {
             Print or save as PDF
           </button>
         </div>
-        <p className="panel-note">This compares what Nya has stored, so open Nya first to bring your connections up to date.</p>
+        <p className="panel-note">This compares what Nya has stored: to bring your connections up to date first, go back to Activity and use Refresh at the top.</p>
       </div>
       {loading && !report && <ReportSkeleton title="Year over year" className="yoy-report" status="Comparing the years" />}
       {report && (

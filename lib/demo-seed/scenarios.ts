@@ -23,7 +23,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: 'single-renter',
     title: 'Single renter',
-    description: 'One income and a rented flat: a card, a student loan, three investment accounts, saving about half of what comes in.',
+    description: 'One income and a rented apartment: a card, a student loan, three investment accounts, saving about half of what comes in.',
     build: (today) => demoProfile('Alex', today),
   },
   {
@@ -35,7 +35,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     id: 'early-retiree',
     title: 'Early retiree',
-    description: 'Stopped work at 44, now 47: living on a taxable brokerage drawn on each month, consulting now and then, ACA cover and Roth conversions planned.',
+    description: 'Stopped work at 44, now 47: living on a taxable brokerage drawn on each month, consulting now and then, ACA coverage and Roth conversions planned.',
     build: (today) => earlyRetiree(today),
   },
   {

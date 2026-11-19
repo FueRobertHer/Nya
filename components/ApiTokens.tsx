@@ -30,7 +30,7 @@ import { useReverification } from '@clerk/nextjs';
 import { isReverificationCancelledError } from '@clerk/nextjs/errors';
 import { Sheet } from './Sheet';
 import ApiChanges from './ApiChanges';
-import { CHANGES_KEEP_DAYS, LABEL_MAX, MAX_TOKENS, REQUESTS_PER_MINUTE, type Access } from '@/lib/api-limits';
+import { CHANGES_KEEP_DAYS, DEMO_REFUSAL, LABEL_MAX, MAX_TOKENS, REQUESTS_PER_MINUTE, type Access } from '@/lib/api-limits';
 import { formatInstantDay } from '@/lib/format';
 import { Notice } from './TotalCaveats';
 
@@ -38,7 +38,7 @@ export type TokenInfo = { id: string; label: string; hint: string; created_at: s
 
 export type TokenList =
   | { kind: 'loading' }
-  | { kind: 'ready'; tokens: TokenInfo[]; unreadable: string[]; unrecognised: string[]; limit: number; writes?: boolean }
+  | { kind: 'ready'; tokens: TokenInfo[]; unreadable: string[]; unrecognised: string[]; limit: number; writes?: boolean; demo?: boolean }
   | { kind: 'error'; message: string };
 
 /** What a token can do, in words, as the list says it. */
@@ -137,7 +137,7 @@ function useTokens() {
         setList({ kind: 'error', message: typeof data?.error === 'string' ? data.error : 'Your API tokens couldn’t be loaded.' });
         return;
       }
-      setList({ kind: 'ready', tokens: data.tokens, unreadable: data.unreadable ?? [], unrecognised: data.unrecognised ?? [], limit: data.limit ?? MAX_TOKENS, writes: data.writes === true });
+      setList({ kind: 'ready', tokens: data.tokens, unreadable: data.unreadable ?? [], unrecognised: data.unrecognised ?? [], limit: data.limit ?? MAX_TOKENS, writes: data.writes === true, demo: data.demo === true });
     } catch {
       setList({ kind: 'error', message: 'Your API tokens couldn’t be loaded.' });
     }
@@ -389,7 +389,10 @@ export function ApiTokensView({
       ) : (
         list.kind === 'ready' && (
           <div className="api-token-new">
-            {atLimit ? (
+            {list.demo ? (
+              // Said before anything is filled in, as the server would refuse it.
+              <Notice level="info">{DEMO_REFUSAL}</Notice>
+            ) : atLimit ? (
               <p className="panel-note">You have the most tokens you can ({list.limit}). Revoke one you no longer use to make another.</p>
             ) : (
               <>

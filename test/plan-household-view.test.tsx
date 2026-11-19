@@ -39,6 +39,25 @@ const partners: PlanItem = {
   beforeTax: false,
 };
 
+describe('no age yet', () => {
+  test('Tax after you stop opens Household, which says tax needs the age', async () => {
+    await seedPlan({ ...PLAN, age: null });
+    const tab = await render();
+    await press(tab.row('Tax after you stop'));
+    const form = tab.dialog()!;
+    expect(form.getAttribute('aria-label')).toBe('Household');
+    expect(form.textContent).toContain('Working out tax year by year needs your age: until it is set, your flat tax rate stays.');
+    await tab.unmount();
+  }, 20_000);
+
+  test('with an age set, Household says nothing of it', async () => {
+    await seedPlan();
+    const tab = await render();
+    expect((await household(tab)).textContent).not.toContain('Working out tax year by year needs your age');
+    await tab.unmount();
+  }, 20_000);
+});
+
 describe('the stop', () => {
   test('Stop when I reach FI writes it, the age field goes, and the stop age is kept', async () => {
     await seedPlan();

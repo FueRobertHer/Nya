@@ -4,7 +4,8 @@
 // module of their own, free of server imports, because three places state
 // them and must agree: the limits themselves (lib/api-tokens.ts,
 // lib/api-http.ts), the API tokens card (components/ApiTokens.tsx) and the
-// developer page (app/developers).
+// developer page (app/developers). The demo refusal's words are here too,
+// for the route and the card alike.
 
 /** The version of the API's paths and shapes: /api/v1. */
 export const API_VERSION = '1';
@@ -12,6 +13,14 @@ export const API_VERSION = '1';
 /** What every token starts with, so it can be recognised (by a person, or a
  *  secret scanner). */
 export const TOKEN_PREFIX = 'nya_';
+
+/** Why a demo account can't make a token: everyone who tries the demo shares
+ *  its data (lib/demo.ts), so a token would go on reading what later visitors
+ *  type. A sandbox for developers is a later step. Here, free of server
+ *  imports, since the card says it before a demo visitor fills anything in,
+ *  as the route answers it. */
+export const DEMO_REFUSAL =
+  'Demo accounts can’t make API tokens: everyone who tries the demo shares its data, so a token would go on reading what later visitors type. Try the API on your own copy of Nya.';
 
 /** Tokens one person may have at once. */
 export const MAX_TOKENS = 10;

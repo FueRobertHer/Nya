@@ -200,7 +200,7 @@ export default function DevelopersPage() {
             the app password, doesn’t revoke tokens. Deleting your account deletes them; with sign-in accounts, being taken
             off the list of people allowed in stops the tokens you made working, as it stops you signing in. Backups leave
             tokens out, so if a backup is ever restored, every token stops: make new ones. Tokens start with{' '}
-            <code>nya_</code>, so one is easy to recognise, by you or by a tool that looks for leaked secrets. The demo
+            <code>nya_</code>, so one is easy to recognize, by you or by a tool that looks for leaked secrets. The demo
             accounts can’t make tokens: everyone who tries the demo shares their data.
           </p>
           <p className="info-aside">

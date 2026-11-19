@@ -96,6 +96,16 @@ describe('which report', () => {
   });
 });
 
+describe('what a report reads', () => {
+  test('says how to bring connections up to date from here, not to open Nya, which is open', async () => {
+    const v = await mount();
+    const said = v.host.textContent.replace(/\s+/g, ' ');
+    expect(said).toContain('The report reads what Nya has stored: to bring your connections up to date first, go back to Activity and use Refresh at the top.');
+    expect(said).not.toContain('open Nya first');
+    await v.unmount();
+  });
+});
+
 describe('the kind of accountant’s report', () => {
   test('a radio group on Tax year; Date range chosen asks for that report', async () => {
     const v = await mount();
