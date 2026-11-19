@@ -17,6 +17,14 @@
 // The first two are the same run when they start in the same place, as "at your
 // stop age" does.
 //
+// ACCOUNTS AT THEIR OWN RATES (version 2's `accounts`) grow each bucket at its
+// accounts' rate, and the taxable accounts pay out at their own yield
+// (lib/fire/bucket-growth.ts), worked out here from the plan each run is of, so
+// each copy has its own. Before the stop the total stays the walk's at the plan's
+// blend, and only the shares move; from the stop on the buckets compound apart.
+// Only where the blend has an account at its own (FiView's `ownRates`): with
+// invested assets typed or not measured, none counts.
+//
 // A start with no mix still runs, as the flat model does: a walk that can't get
 // there, or nothing to project from, takes today's shares, or all taxable with no
 // accounts to go by, and says so.
@@ -35,7 +43,8 @@ import { compileItems, conditionalFlows, type CompileAt } from './compile';
 import { runDrawdown, type Drawdown, type DrawdownHealth } from './drawdown';
 import type { WalkChanges } from './events';
 import { planPath } from './path';
-import { planYears, projectFrom, ruleSpec } from './plan';
+import { planYears, projectFrom, ruleSpec, type FiView } from './plan';
+import { bucketGrowth, planYield, type BucketGrowth } from './bucket-growth';
 import type { PlanFigures } from './plan-figures';
 import type { FirePlanV2 } from './plan-v2';
 import type { Strategy } from './tax/rules';
@@ -58,7 +67,12 @@ export type DetailedInput = {
   savingsSplit: readonly { bucket: TaxBucket; share: number }[] | null;
   share457: Record<Owner, number>;
   inflation: number;
+  /** What the taxable accounts pay out, as Assumptions has it: the yield typed,
+   *  else what they paid over the last year. */
   taxableYield: number;
+  /** The yield typed in Assumptions, which an account without its own takes;
+   *  absent or null, each takes what it paid, else `taxableYield`. */
+  typedYield?: number | null;
   health: DrawdownHealth;
   state: StateCode | null;
   /** 0 in a state with no income tax. */
@@ -101,8 +115,9 @@ export type DetailWork = {
   /** The drawdown from the plan's own start, as `figures` runs it: what another rule
    *  would come to from there (lib/fire/compare-conversions.ts). Null where it can't run. */
   startRun(f: PlanFigures): Drawdown | null;
-  /** The walk with the tax on what its years before the stop have to sell, growing at `growth` (FiView's). */
-  taxWalk(plan: FirePlanV2, walk: WalkChanges, from: { assets: number; savings: number; years: number }, growth: number): WalkChanges;
+  /** The walk with the tax on what its years before the stop have to sell, growing at
+   *  `view.growth`, its buckets at their accounts' rates. */
+  taxWalk(plan: FirePlanV2, walk: WalkChanges, from: { assets: number; savings: number; years: number }, view: Pick<FiView, 'growth' | 'ownRates'>): WalkChanges;
   /** Enough for the path alone, for a search's candidate: `start` isn't to be
    *  read, and is `whole`. */
   forPath(f: PlanFigures): PlanDetail | { failed: string } | null;
@@ -131,6 +146,13 @@ export function detailWork(input: DetailedInput): DetailWork {
   /** Today's shares, at `balance`. */
   const shares = (balance: number) => mixToday(input.buckets, balance);
 
+  /** What the plan's accounts' own rates give its buckets; null where none counts. */
+  const growthOf = (plan: FirePlanV2, view: Pick<FiView, 'ownRates'>): BucketGrowth | null => (view.ownRates > 0 ? bucketGrowth(plan, input.buckets.groups, input.share457) : null);
+
+  /** The taxable yield with the plan's accounts' own; with invested assets typed,
+   *  no account's counts. */
+  const yieldOf = (plan: FirePlanV2) => (plan.assets === null ? planYield(plan, input.buckets.groups, input.taxableYield, input.typedYield ?? null) : input.taxableYield);
+
   /** What is held in your `age`th year, scaled to `balance`, and whether it had
    *  to take today's shares. */
   function slotsAt(f: PlanFigures, age: number, balance: number): { slots: MixSlot[]; noMix: boolean } {
@@ -139,7 +161,8 @@ export function detailWork(input: DetailedInput): DetailWork {
     if (from === null) return { slots: shares(balance), noMix: true };
     const k = age - (plan.age as number);
     const base = mixToday(input.buckets, from.assets);
-    const mix = k > 0 ? taxedMix(base, { savings: from.savings, split: split(from.savings), realReturn: f.view.growth, inflation: input.inflation, walk: withoutTaxes(f.walk), years: k }, taxedWalk(plan)).mix : { slots: base, total: base.reduce((s, x) => s + x.value, 0) };
+    const rates = growthOf(plan, f.view)?.mix;
+    const mix = k > 0 ? taxedMix(base, { savings: from.savings, split: split(from.savings), realReturn: f.view.growth, ...(rates ? { bucketGrowth: rates } : {}), inflation: input.inflation, walk: withoutTaxes(f.walk), years: k }, taxedWalk(plan)).mix : { slots: base, total: base.reduce((s, x) => s + x.value, 0) };
     if (mix === null || !(mix.total > 0)) return { slots: shares(balance), noMix: true };
     const scale = balance / mix.total;
     return { slots: mix.slots.map((s) => ({ ...s, value: s.value * scale, basis: s.basis * scale, reachable: s.reachable * scale })), noMix: false };
@@ -180,8 +203,9 @@ export function detailWork(input: DetailedInput): DetailWork {
       spending: Math.max(0, spending - paid),
       rule: (rate) => ruleSpec(plan, rate),
       realReturn: f.view.growth,
+      bucketGrowth: growthOf(plan, f.view)?.year ?? null,
       inflation: input.inflation,
-      taxableYield: input.taxableYield,
+      taxableYield: yieldOf(plan),
       oneOffs: items.sim.oneOffs,
       lower: items.sim.lowerSpending,
       income: items.incomeBy,
@@ -229,10 +253,12 @@ export function detailWork(input: DetailedInput): DetailWork {
       return start === null || failedIn(start.drawn) ? null : start.drawn;
     },
 
-    taxWalk(plan, walk, from, growth) {
+    taxWalk(plan, walk, from, view) {
       if (from.years <= 0) return walk;
       try {
-        const { taxes } = taxedMix(mixToday(input.buckets, from.assets), { savings: from.savings, split: split(from.savings), realReturn: growth, inflation: input.inflation, walk, years: from.years }, taxedWalk(plan));
+        // The same rates as the mix it walks with (slotsAt), so its taxes are that mix's.
+        const rates = growthOf(plan, view)?.mix;
+        const { taxes } = taxedMix(mixToday(input.buckets, from.assets), { savings: from.savings, split: split(from.savings), realReturn: view.growth, ...(rates ? { bucketGrowth: rates } : {}), inflation: input.inflation, walk, years: from.years }, taxedWalk(plan));
         return taxes.length > 0 ? { ...walk, taxes } : walk;
       } catch {
         // The drawdown fails on the same input, and says so.
@@ -285,7 +311,7 @@ export function detailWork(input: DetailedInput): DetailWork {
         slots: start.slots,
         share457: input.share457,
         inflation: input.inflation,
-        taxableYield: input.taxableYield,
+        taxableYield: yieldOf(plan),
         income: fixed.incomeBy,
         health: input.health,
         state: input.state,

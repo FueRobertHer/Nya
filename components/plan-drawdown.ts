@@ -19,7 +19,7 @@ import type { Filing, StateCode } from '@/lib/fire/tax/law/types';
 import type { FigureNote } from './plan-figure-notes';
 import { plainNumber } from '@/lib/format';
 import type { FiView } from '@/lib/fire/plan';
-import { ownRatesText, pct } from './plan-text';
+import { apartWords, ownRatesText, pct } from './plan-text';
 
 type Money = (n: number) => string;
 
@@ -300,6 +300,9 @@ export type YearContext = {
   money: Money;
   /** The growth after inflation the plan runs at (FiView's). */
   growth: number;
+  /** Accounts grow at their own rates (FiView's ownRates over 0), so its
+   *  buckets grow apart from the stop on. */
+  apart?: boolean;
   /** Fractions of a point: 0.021 is 2.1 points. */
   healthGrowth: number;
   acaLaw: TaxChoices['health']['acaLaw'];
@@ -333,13 +336,16 @@ function coverageWords(y: DrawdownYear): string | null {
   return you ? `You on ${you}.` : them ? `Your partner on ${them}.` : null;
 }
 
+const capitalized = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
 /** The head of a year's sheet. */
 export function yearHelper(y: DrawdownYear, c: YearContext): string {
   const parts: string[] = [];
   if (y.partnerAge !== null) parts.push(`Your partner is ${y.partnerAge}.`);
   const covered = coverageWords(y);
   if (covered) parts.push(covered);
-  parts.push(`Assumes steady ${pct(c.growth)} growth after inflation, health costs rising ${healthPace(c.healthGrowth)}, and ${c.lawYear} tax law. Hypothetical, not tax advice.`);
+  const apart = c.apart ? ` ${capitalized(apartWords(c.growth))}.` : '';
+  parts.push(`Assumes steady ${pct(c.growth)} growth after inflation, health costs rising ${healthPace(c.healthGrowth)}, and ${c.lawYear} tax law.${apart} Hypothetical, not tax advice.`);
   return parts.join(' ');
 }
 
@@ -522,9 +528,9 @@ export function sharesNote(s: Pick<FiShares, 'settled' | 'gap' | 'noMix'>, money
 }
 
 /** The last line of Tax after you stop: what it all rests on. */
-export function taxHypothetical(a: { lawYear: number; state: StateCode | null; stateRate: number; stateTaxes: boolean | null; converts: boolean; growth: number; healthGrowth: number }): string {
+export function taxHypothetical(a: { lawYear: number; state: StateCode | null; stateRate: number; stateTaxes: boolean | null; converts: boolean; growth: number; healthGrowth: number; apart?: boolean }): string {
   const state = a.state === null ? 'no state tax counted' : a.stateTaxes === false || a.stateRate === 0 ? `${STATE_NAMES[a.state]} with no income tax` : `${STATE_NAMES[a.state]} at ${pct(a.stateRate, 1)}`;
-  return `Hypothetical: ${a.lawYear} federal tax law held in today’s dollars, ${state}, ${a.converts ? 'the conversion rule you picked' : 'no conversions'}, a steady ${pct(a.growth)} after inflation, and health costs rising ${healthPace(a.healthGrowth)}. Not tax advice.`;
+  return `Hypothetical: ${a.lawYear} federal tax law held in today’s dollars, ${state}, ${a.converts ? 'the conversion rule you picked' : 'no conversions'}, a steady ${pct(a.growth)} after inflation${a.apart ? ' (each kind of account at its own accounts’ rate from the stop on)' : ''}, and health costs rising ${healthPace(a.healthGrowth)}. Not tax advice.`;
 }
 
 /** A joint plan's one line (the tax plan's Plan outcomes). */

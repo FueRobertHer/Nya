@@ -17,11 +17,12 @@ import type { InvestedAssets } from '@/lib/fire/inputs';
 import type { Count } from '@/lib/fire/compile';
 import type { DetailWork, DetailedInput } from '@/lib/fire/plan-detail';
 import { detailWork } from '@/lib/fire/plan-detail';
+import { paidOf } from '@/lib/fire/bucket-growth';
 import { planFigures, type FiguresRefused, type PlanFigures } from '@/lib/fire/plan-figures';
 import type { Measured } from '@/lib/fire/plan';
 import type { FirePlanV2 } from '@/lib/fire/plan-v2';
 import { anchoredOn, type Resolution } from '@/lib/fire/steady';
-import { DEFAULT_TAX_CHOICES, MAX_RATE, type TaxChoices } from '@/lib/fire/tax-choices';
+import { DEFAULT_TAX_CHOICES, type TaxChoices } from '@/lib/fire/tax-choices';
 import type { Owner, TaxFacts } from '@/lib/fire/tax-facts';
 import { lawFor } from '@/lib/fire/tax/law';
 import { rmdAge } from '@/lib/fire/tax/rmd';
@@ -51,8 +52,8 @@ export function measuredYield(today: Pick<BucketsToday, 'groups'>): number | nul
   for (const g of today.groups) {
     if (g.bucket !== 'taxable') continue;
     for (const a of g.accounts) {
-      if (a.income !== null && a.value > 0 && a.income >= 0 && a.income / a.value <= MAX_RATE) {
-        income += a.income;
+      if (paidOf(a) !== null) {
+        income += a.income as number;
         value += a.value;
       }
     }
@@ -95,6 +96,7 @@ export function detailedInput({ plan, tax, facts, today, paid, calendarYear }: {
     share457: shares457(today),
     inflation: choices.inflation,
     taxableYield: choices.taxableYield ?? measuredYield(today) ?? 0,
+    typedYield: choices.taxableYield,
     health: {
       coverage: choices.health.beforeMedicare,
       medicareExtra: choices.health.medicareExtra,

@@ -7,7 +7,10 @@
 // cent:
 //   - money in at the year's start goes to taxable at full basis;
 //   - a cost at the year's start comes from every bucket, by its share;
-//   - everything grows at the plan's return, which is after inflation;
+//   - everything grows at the plan's return, which is after inflation; with
+//     accounts at their own rates (lib/fire/bucket-growth.ts) each bucket grows at
+//     its own, and the slots are scaled each year to the balance at the plan's
+//     return, so the total is still the walk's and only the shares move;
 //   - the year's savings go by the split (lib/fire/savings-split.ts), and a year
 //     whose saving is below zero takes it from every bucket, by its share.
 //
@@ -121,7 +124,17 @@ const totalOf = (slots: Iterable<MixSlot>) => {
   return sum;
 };
 
-type MixArgs = { savings: number; split: readonly SplitShare[]; realReturn: number; inflation: number; walk: WalkChanges; years: number };
+type MixArgs = {
+  savings: number;
+  split: readonly SplitShare[];
+  realReturn: number;
+  inflation: number;
+  walk: WalkChanges;
+  years: number;
+  /** Each bucket's own growth (lib/fire/bucket-growth.ts); a bucket not in it, or
+   *  absent, grows at `realReturn`. */
+  bucketGrowth?: Partial<Record<TaxBucket, number>>;
+};
 
 /** What working a year's tax out takes, beyond the walk. */
 export type TaxedWalk = {
@@ -160,6 +173,10 @@ function rescale(group: MixSlot[], field: 'value' | 'basis' | 'reachable', to: n
 
 function walkMix(today: readonly MixSlot[], args: MixArgs, taxed: TaxedWalk | null): { mix: ProjectedMix | null; taxes: { year: number; amount: number }[] } {
   const { savings, split, realReturn, inflation, walk, years } = args;
+  const rates = args.bucketGrowth ?? {};
+  // Buckets that grow apart; with none, every year runs as it did before accounts
+  // had rates, to the bit.
+  const apart = Object.values(rates).some((r) => r !== realReturn);
   const taxes: { year: number; amount: number }[] = [];
   const slots = new Map<string, MixSlot>(today.map((s) => [`${s.owner}:${s.bucket}`, { ...s }]));
   const slotFor = (owner: Owner, bucket: TaxBucket) => {
@@ -181,9 +198,19 @@ function walkMix(today: readonly MixSlot[], args: MixArgs, taxed: TaxedWalk | nu
       s.reachable *= keep;
     }
   };
+  /** Apart: the slots' values to `total`, their shares kept; a basis isn't
+   *  scaled, and what a Roth can reach stays within its value. */
+  const scaleTo = (total: number) => {
+    const now = totalOf(slots.values());
+    if (!(now > 0)) return;
+    for (const s of slots.values()) {
+      s.value *= total / now;
+      s.reachable = Math.min(s.reachable, s.value);
+    }
+  };
   const grow = () => {
     for (const s of slots.values()) {
-      s.value *= 1 + realReturn;
+      s.value *= 1 + (apart ? (rates[s.bucket] ?? realReturn) : realReturn);
       s.basis /= 1 + inflation;
       s.reachable = Math.min(s.reachable / (1 + inflation), s.value);
     }
@@ -272,7 +299,11 @@ function walkMix(today: readonly MixSlot[], args: MixArgs, taxed: TaxedWalk | nu
         if (costs + tax > balance + 1e-9) return stopped;
         balance = (balance - costs - tax) * (1 + realReturn) + saving;
         if (balance < 0) return stopped;
+        const before = apart ? totalOf(slots.values()) : 0;
         grow();
+        // Apart, the buckets grew to other shares: kept, at the total they would
+        // have without rates, so only the year's own flow below moves a basis.
+        if (apart) scaleTo(before * (1 + realReturn));
         const now = totalOf(slots.values());
         if (now > 0) takeShare(now - balance);
         else if (balance > 0) {
@@ -290,12 +321,19 @@ function walkMix(today: readonly MixSlot[], args: MixArgs, taxed: TaxedWalk | nu
       taxable.basis += moneyIn;
     }
     const cost = costIn(walk, k);
+    // Apart, the slots stop adding up to the walk's balance as they grow, so its
+    // checks go by the balance, as walkPath (lib/fire/events.ts) has it.
+    if (apart) balance += moneyIn;
     if (cost > 0) {
-      if (cost > totalOf(slots.values()) + 1e-9) return stopped;
+      if (cost > (apart ? balance : totalOf(slots.values())) + 1e-9) return stopped;
       takeShare(cost);
     }
     grow();
     const saved = savingsIn(walk, savings, k);
+    if (apart) {
+      balance = (balance - cost) * (1 + realReturn) + saved;
+      if (balance < 0) return stopped;
+    }
     if (saved >= 0) {
       for (const share of split) {
         const slot = slotFor(share.owner, share.bucket);
@@ -305,10 +343,20 @@ function walkMix(today: readonly MixSlot[], args: MixArgs, taxed: TaxedWalk | nu
         if (share.bucket === 'roth') slot.reachable += amount;
       }
     } else {
-      if (totalOf(slots.values()) + saved < 0) return stopped;
-      takeShare(-saved);
+      if (!apart && totalOf(slots.values()) + saved < 0) return stopped;
+      // Apart, the balance can pay what the slots, grown otherwise, come short of:
+      // they are scaled to it below.
+      takeShare(apart ? Math.min(-saved, totalOf(slots.values())) : -saved);
     }
-    balance = totalOf(slots.values());
+    if (apart) {
+      // The shares as the buckets grew them, the total as the walk has it.
+      if (totalOf(slots.values()) > 0) scaleTo(balance);
+      else if (balance > 0) {
+        const s = slotFor('you', 'taxable');
+        s.value = balance;
+        s.basis = balance;
+      }
+    } else balance = totalOf(slots.values());
   }
   return { mix: { slots: [...slots.values()], total: totalOf(slots.values()) }, taxes };
 }

@@ -297,6 +297,8 @@ describe('Tax after you stop', () => {
     expect(line({})).toContain('no state tax counted');
     expect(line({})).toContain('no conversions');
     expect(line({ converts: true })).toContain('the conversion rule you picked');
+    expect(line({})).toContain('a steady 5% after inflation, and health');
+    expect(line({ apart: true })).toContain('a steady 5% after inflation (each kind of account at its own accounts’ rate from the stop on), and health');
     expect(line({ state: 'NV', stateTaxes: false })).toContain('Nevada with no income tax');
     expect(line({ state: 'CO', stateRate: 0.044, stateTaxes: true })).toContain('Colorado at 4.4%');
   });

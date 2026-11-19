@@ -1499,6 +1499,7 @@ export default function PlanTab({
       ? {
           money,
           growth: view.growth,
+          apart: view.ownRates > 0,
           healthGrowth: shownInput.health.growth,
           acaLaw: shownInput.health.acaLaw,
           lawYear: drawn.law.year,
@@ -2389,7 +2390,7 @@ export default function PlanTab({
             growth={view.growth}
             start={drawn && (plan.start !== 'fi-number' || plan.fiNumber !== null) ? drawn.start : null}
             startBalance={'sim' in engine ? engine.sim.startBalance : null}
-            hypothetical={taxHypothetical({ lawYear: lawNow.year, state: detailChoices.state, stateRate: detailChoices.stateRate, stateTaxes: detailChoices.state ? lawNow.stateIncomeTax[detailChoices.state] : null, converts: detailChoices.strategy.conversions.kind !== 'none', growth: view.growth, healthGrowth: detailChoices.health.growth ?? lawNow.healthGrowth.overPrices })}
+            hypothetical={taxHypothetical({ lawYear: lawNow.year, state: detailChoices.state, stateRate: detailChoices.stateRate, stateTaxes: detailChoices.state ? lawNow.stateIncomeTax[detailChoices.state] : null, converts: detailChoices.strategy.conversions.kind !== 'none', growth: view.growth, apart: view.ownRates > 0, healthGrowth: detailChoices.health.growth ?? lawNow.healthGrowth.overPrices })}
             money={money}
             onYears={
               drawn
