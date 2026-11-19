@@ -816,7 +816,7 @@ describe('each account’s growth', () => {
     // 6% + 140,000 × 1% / 485,000.
     expect(tab.shown()).toContain('With 1 account at its own, yours grow 6.29% a year together.');
     await act(async () => type(field(tab.dialog()!, 'Growth after inflation')!, '99'));
-    expect(tab.shown()).toContain('in Invested assets.Only for the years until FI');
+    expect(tab.shown()).toContain('in Invested assets.For years to FI, Coast FI, the balance at your stop age and Your path’s steady years after it.');
     await tab.unmount();
   });
 

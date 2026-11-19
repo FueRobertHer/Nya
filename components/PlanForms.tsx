@@ -1282,7 +1282,7 @@ export function AssumptionsForm(
             ? 'The plan’s rate: your own figure for invested assets grows at it.'
             : `The plan’s rate: every account grows at it unless you give one its own in Invested assets.${together && together.own > 0 ? ` With ${together.own === 1 ? '1 account at its own' : `${together.own} at their own`}, yours grow ${pct(together.growth)} a year together${detail ? `. On Drawdown, ${apartWords(together.growth)}` : ''}.` : ''}`}
         </p>
-        <p className="helper">{detail ? 'For years to FI, Coast FI, the balance at your stop age and the steady years on Drawdown. Your FI number’s tax and health coverage come from the steady years. The stress test uses market history for its returns instead, and works out each year’s tax and health coverage on them.' : 'Only for the years until FI: years to FI, Coast FI and the balance at your stop age. The stress test uses market history for its returns instead.'}</p>
+        <p className="helper">{detail ? 'For years to FI, Coast FI, the balance at your stop age and the steady years on Drawdown. Your FI number’s tax and health coverage come from the steady years. The stress test uses market history for its returns instead, and works out each year’s tax and health coverage on them.' : 'For years to FI, Coast FI, the balance at your stop age and Your path’s steady years after it. The stress test uses market history for its returns instead.'}</p>
         {!taxWorked && (
           <>
         <label className="field">
