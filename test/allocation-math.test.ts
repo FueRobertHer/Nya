@@ -417,6 +417,12 @@ describe('the Plan’s mix', () => {
     expect(m).toMatchObject({ ok: true, stocksPct: 90, bondsPct: 0, cashPct: 10, bank: 10_000, otherCurrencies: [{ currency: 'EUR', amount: 500 }] });
   });
 
+  test('an HSA a bank reports as a bank account is cash the plan always counts, checking and savings only when asked', () => {
+    const insts = [inst('Bank', [acct('chk', { type: 'depository', subtype: 'checking', balance: 10_000 }), acct('hsa', { type: 'depository', subtype: 'hsa', balance: 4_000 })])];
+    expect(bankCash(insts, 'USD', false)).toEqual({ amount: 4_000, otherCurrencies: [] });
+    expect(bankCash(insts, 'USD', true)).toEqual({ amount: 14_000, otherCurrencies: [] });
+  });
+
   test('cash borrowed on margin can’t be a share of a mix, so none is offered', () => {
     const m = planMix(base([hold('s', 'VTI', 120_000), hold('s', 'CUR:USD', -20_000, { security_type: 'cash' })], 100_000));
     expect(m).toMatchObject({ ok: false, why: 'negative', cash: -20_000 });

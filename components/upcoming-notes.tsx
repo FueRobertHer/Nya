@@ -93,6 +93,7 @@ export const KIND_WORDS: Record<ForecastNoteKind | 'not_loaded' | 'loading' | 'p
   pending_currency: 'pending charges in another currency',
   amounts_currency: 'expected amounts in another currency',
   unplaced: 'an account of unknown type',
+  hsa: 'a health savings account',
 };
 
 /** The notes that mean the list or the calendar may be leaving entries out. */

@@ -56,6 +56,21 @@ describe('the groups', () => {
     expect(b.groups[0].accounts[0]).toMatchObject({ account_id: 'c', basisFrom: 'cash', gain: 0, chosen: false });
   });
 
+  test('an HSA a bank reports as a bank account sits under HSA, never as cash under taxable', () => {
+    const bankHsa = acct({ account_id: 'bh', name: 'Health savings', type: 'depository', subtype: 'hsa', balance: 8_000 });
+    for (const includeCash of [false, true]) {
+      const b = groupsOf([BROKER, bankHsa, CHECKING], {}, includeCash);
+      const hsa = b.groups.find((g) => g.bucket === 'hsa')!;
+      expect(hsa.accounts.map((a) => a.account_id)).toEqual(['bh']);
+      // It holds cash: no gain.
+      expect(hsa.accounts[0]).toMatchObject({ basisFrom: 'cash', gain: 0, why: null });
+      expect(b.groups.find((g) => g.bucket === 'taxable')!.accounts.map((a) => a.account_id)).toEqual(includeCash ? ['brk', 'c'] : ['brk']);
+    }
+    // The person's own bucket still wins.
+    const chosen = groupsOf([bankHsa], { overrides: new Map([['bh', 'taxable']]) });
+    expect(chosen.groups.map((g) => g.bucket)).toEqual(['taxable']);
+  });
+
   test('an account with no bucket says why', () => {
     expect(groupsOf([OTHER]).groups[0].accounts[0].why).toContain('Plaid');
   });

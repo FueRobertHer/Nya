@@ -11,7 +11,9 @@
 // a cache. It is shown labelled as an estimate, beside what it leaves out.
 //
 // WHAT IT STARTS FROM. The cash accounts: checking, savings and the like
-// (Plaid's depository type, cash on hand among them), not hidden, each at the
+// (Plaid's depository type, cash on hand among them, but a health savings
+// account a bank reports as one: money for health costs, named instead), not
+// hidden, each at the
 // balance the dashboard shows, less the charges still pending on them: a
 // bank's current balance leaves those out, but the money is spent. A pending
 // deposit isn't added (it isn't money to spend yet, and a paycheck still
@@ -61,6 +63,7 @@ import { currencyOf } from './spending';
 import { convert, type FxTable, type NoRate } from './fx/rates';
 import { reasonText } from './fx/words';
 import { shownName } from './merchant-name';
+import { isBankCash, isDepositoryHsa } from './balance';
 
 /** The ranges a forecast is shown for, in days from today. */
 export const FORECAST_RANGES = [30, 60, 90] as const;
@@ -267,7 +270,7 @@ export function cashPosition(
   opts: { fx?: FxTable | null; today?: string } = {}
 ): CashPosition {
   const cash = institutions.flatMap((i) =>
-    i.accounts.filter((a) => a.type === 'depository' && !a.hidden).map((a) => ({ a, institution: i.institution_name, manual: !!i.manual && !i.connector }))
+    i.accounts.filter((a) => isBankCash(a) && !a.hidden).map((a) => ({ a, institution: i.institution_name, manual: !!i.manual && !i.connector }))
   );
   const currency = dominantCurrency(cash.map(({ a }) => ({ iso_currency_code: a.currency })));
   const scale = minorScale(currency);
@@ -646,7 +649,8 @@ export type ForecastNoteKind =
   | 'accounts_currency'
   | 'pending_currency'
   | 'amounts_currency'
-  | 'unplaced';
+  | 'unplaced'
+  | 'hsa';
 
 /** One of the forecast's notes: what it is about, its words, and what it
  *  bears on: the balance the forecast starts from (`start`), or the bills,
@@ -752,6 +756,11 @@ export function forecastNoteItems(opts: ForecastNoteInput): ForecastNote[] {
         `${accountsWord(i.unconfirmed_missing!)} at ${i.institution_name} stopped reporting, so any cash in ${i.unconfirmed_missing === 1 ? 'it' : 'them'} isn't in this forecast.`
       );
   }
+  // A health savings account its bank reports as a bank account: left out of
+  // where this starts (cashPosition), as Runway leaves it out.
+  for (const i of institutions)
+    for (const a of i.accounts)
+      if (!a.hidden && isDepositoryHsa(a)) start('hsa', `${a.name} at ${i.institution_name} is a health savings account, for health costs, so it isn't counted as cash.`);
 
   const missing = unique((opts.incomplete ?? []).filter((i) => i.coverage === 'missing').map((i) => i.institution_name));
   if (missing.length > 0) items('missing', `Transactions from ${join(missing)} couldn't be loaded, so bills and income there may be missing.`);

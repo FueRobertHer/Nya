@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
+import { isBankCash, isDepositoryHsa, isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
 
 // Small surface, but it is now the single definition behind net worth, the
 // history subtraction, manual-account validation and every figure the Dashboard
@@ -71,5 +71,26 @@ describe('isInvestmentType', () => {
   // normalizes before the call.
   test('is case-sensitive', () => {
     expect(isInvestmentType('Investment')).toBe(false);
+  });
+});
+
+describe('isDepositoryHsa and isBankCash', () => {
+  test('an HSA a bank reports as a bank account is not bank cash', () => {
+    for (const subtype of ['hsa', 'HSA']) {
+      expect(isDepositoryHsa({ type: 'depository', subtype })).toBe(true);
+      expect(isBankCash({ type: 'depository', subtype })).toBe(false);
+    }
+  });
+
+  test('checking, savings and cash on hand are bank cash; an investment HSA is neither', () => {
+    for (const subtype of ['checking', 'savings', 'cash', null, undefined]) {
+      expect(isBankCash({ type: 'depository', subtype })).toBe(true);
+      expect(isDepositoryHsa({ type: 'depository', subtype })).toBe(false);
+    }
+    expect(isDepositoryHsa({ type: 'investment', subtype: 'hsa' })).toBe(false);
+    expect(isBankCash({ type: 'investment', subtype: 'hsa' })).toBe(false);
+    expect(isBankCash({ type: 'credit', subtype: 'credit card' })).toBe(false);
+    // Still not a type that holds securities: holdings aren't asked for.
+    expect(isInvestmentType('depository')).toBe(false);
   });
 });

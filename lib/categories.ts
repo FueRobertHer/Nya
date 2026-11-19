@@ -52,7 +52,7 @@
 // existed (legacyKind), so no total moves; moving a category to a group of
 // another kind is how a person makes, say, loan payments count as spending.
 // The finer rules (recurring detection's everyday categories, the Plan's
-// loan payments and refunds) read the text key the row carries, never a name
+// loan payments) read the text key the row carries, never a name
 // (lib/spending.ts categoryKey).
 //
 // GROWING. A key no category has yet (Plaid starts a new category, a file is

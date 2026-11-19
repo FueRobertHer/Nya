@@ -20,6 +20,7 @@
 // Pure, and safe in the browser.
 
 import { BUCKET_SLOTS, accountBucket, type BucketSlot, type TaxBucket } from '@/lib/allocation/buckets';
+import { isBankCash } from '@/lib/balance';
 import { isCashHolding, type CashHolding } from '@/lib/cash';
 import type { ChildAccount, CountedAccount, InvestedAssets } from './inputs';
 import type { Owner, TaxFacts } from './tax-facts';
@@ -29,7 +30,8 @@ import type { Owner, TaxFacts } from './tax-facts';
  *  - positions: every position's;
  *  - partial: some positions', the rest counted as all gain;
  *  - none: nothing says (the gain isn't known);
- *  - cash: a checking or savings account, which has no gain. */
+ *  - cash: a checking or savings account (or an HSA a bank reports as one),
+ *    which has no gain. */
 export type BasisFrom = 'typed' | 'positions' | 'partial' | 'none' | 'cash';
 
 /** A position, as much of one as the basis needs. */
@@ -130,7 +132,10 @@ export function bucketsToday(args: {
 
   const groups = new Map<BucketSlot, BucketAccount[]>();
   for (const a of assets.accounts) {
-    const cash = a.type === 'depository';
+    // Checking or savings, taxable; an HSA a bank reports as a bank account
+    // goes by its subtype, to the HSA bucket. Either holds cash, with no gain.
+    const cash = isBankCash(a);
+    const bankHeld = a.type === 'depository';
     const chosen = overrides.get(a.account_id);
     const placed = accountBucket(a.subtype, chosen);
     const bucket: BucketSlot = cash && !chosen ? 'taxable' : placed.bucket;
@@ -143,7 +148,7 @@ export function bucketsToday(args: {
     if (typed !== undefined) {
       basis = typed;
       basisFrom = 'typed';
-    } else if (cash) {
+    } else if (bankHeld) {
       basis = a.value;
       basisFrom = 'cash';
     } else {

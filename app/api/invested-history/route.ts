@@ -5,7 +5,7 @@ import { getEffectiveHidden, readKnownAccounts } from '@/lib/links';
 import { placeRecorded } from '@/lib/holdings-history';
 import { readMeasuredBalances } from '@/lib/history';
 import { getEffectiveLifecycle, endDays, endOf } from '@/lib/lifecycle';
-import { isInvestmentType } from '@/lib/balance';
+import { isBankCash, isDepositoryHsa, isInvestmentType } from '@/lib/balance';
 import { isManualId, MANUAL_CURRENCY } from '@/lib/manual';
 import { bankCurrencies } from '@/lib/sharing';
 import { readFx } from '@/lib/fx/read';
@@ -146,7 +146,10 @@ export async function POST(req: Request) {
     // Strict: a saved plan that can't be read is a 409, never "none".
     const saved = await savedPlanStore.get(ctx);
     if (saved === null) return NextResponse.json({ error: 'No plan is saved as your plan.' }, { status: 404 });
-    const counts = (type: string | null) => type !== null && (isInvestmentType(type) || (saved.plan.includeCash && type === 'depository'));
+    // As the Plan counts them (lib/fire/inputs.ts investedAssets): an HSA a
+    // bank reports as a bank account is invested, whatever includeCash says.
+    const counts = (type: string | null, subtype: string | null | undefined) =>
+      type !== null && (isInvestmentType(type) || isDepositoryHsa({ type, subtype }) || (saved.plan.includeCash && isBankCash({ type, subtype })));
     const today = dayOf(Date.now());
     const from = saved.day;
 
@@ -171,9 +174,9 @@ export async function POST(req: Request) {
     // ones left out.
     const listed = new Map<string, { account_id: string; currency: string | null; ended?: string }>();
     for (const a of listedIn) {
-      if (!counts(a.type)) continue;
       const placed = place(a.account_id);
-      if (!placed || listed.has(placed.account) || leftOut(placed.account, a.subtype)) continue;
+      if (!placed || !counts(a.type, a.subtype === undefined ? knownSubtype.get(placed.account) : a.subtype)) continue;
+      if (listed.has(placed.account) || leftOut(placed.account, a.subtype)) continue;
       const end = ends.get(placed.account);
       listed.set(placed.account, { account_id: placed.account, currency: a.currency, ...(end !== undefined ? { ended: end } : {}) });
     }
@@ -185,9 +188,9 @@ export async function POST(req: Request) {
     const added: { account: string; end: string; currency: string | null; ids: string[] }[] = [];
     for (const [root, { entry }] of lifecycle.accounts) {
       const end = endOf(entry.lifecycle);
-      if (end === null || !counts(entry.type ?? null)) continue;
       const placed = place(root);
-      if (!placed || listed.has(placed.account) || added.some((a) => a.account === placed.account) || leftOut(placed.account)) continue;
+      if (end === null || !placed || !counts(entry.type ?? null, knownSubtype.get(placed.account))) continue;
+      if (listed.has(placed.account) || added.some((a) => a.account === placed.account) || leftOut(placed.account)) continue;
       added.push({ account: placed.account, end, currency: entry.currency ?? (isManualId(placed.account) ? MANUAL_CURRENCY : null), ids: [...new Set([root, placed.account])] });
     }
     const unpriced = added.filter((a) => a.currency === null).flatMap((a) => a.ids);

@@ -44,7 +44,7 @@
 //
 // Pure, and imports nothing that touches storage: the Plan tab runs it.
 
-import { isInvestmentType } from '@/lib/balance';
+import { isBankCash, isDepositoryHsa, isInvestmentType } from '@/lib/balance';
 import { convert } from '@/lib/fx/rates';
 import { tableOf, type PageFx } from '@/lib/fx/view';
 import { accountBucket, BUCKET_SLOTS, type AccountBucket, type BucketSlot } from './buckets';
@@ -676,18 +676,21 @@ export function inputsIn(
   };
 }
 
-/** Checking and savings, not hidden, as the plan counts them with
- *  includeCash (lib/fire/inputs.ts investedAssets), in one currency: the
- *  amount, and what is in others. */
+/** The cash in bank accounts the plan counts (lib/fire/inputs.ts
+ *  investedAssets), not hidden, in one currency: the amount, and what is in
+ *  others. An HSA a bank reports as a bank account always (it holds no
+ *  positions, so it is cash in the mix), and checking and savings with
+ *  `includeCash`. */
 export function bankCash(
   institutions: readonly AllocInstitution[],
-  currency: string | null
+  currency: string | null,
+  includeCash = true
 ): { amount: number; otherCurrencies: { currency: string; amount: number }[] } {
   let amount = 0;
   const other = new Map<string, number>();
   for (const inst of institutions) {
     for (const a of inst.accounts) {
-      if (a.hidden || a.type !== 'depository' || typeof a.balance !== 'number' || !Number.isFinite(a.balance)) continue;
+      if (a.hidden || !(isDepositoryHsa(a) || (includeCash && isBankCash(a))) || typeof a.balance !== 'number' || !Number.isFinite(a.balance)) continue;
       if (!a.currency || !currency || a.currency === currency) amount += a.balance;
       else other.set(a.currency, (other.get(a.currency) ?? 0) + a.balance);
     }

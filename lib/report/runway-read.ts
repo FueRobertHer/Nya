@@ -47,7 +47,7 @@ import { cashPosition, forecastConverter, MANUAL_STALE_DAYS, withWhy, type Forec
 import type { FxTable } from '../fx/rates';
 import { isConnectorKind } from '../connectors/types';
 import { resolveId } from '../link-core';
-import { isInvestmentType } from '../balance';
+import { isDepositoryHsa, isInvestmentType } from '../balance';
 import { leftOutText } from '../spending';
 import { tidy } from '../totals';
 import { StoredDataUnreadableError } from '../repo';
@@ -105,15 +105,12 @@ export type RunwayReport = RunwayBuilt & {
   plain?: RunwayReport;
 };
 
-/** A health savings account: money for health costs, never cash to live on. */
-const isHsa = (a: Pick<ApiAccount, 'type' | 'subtype'>) => a.type === 'depository' && (a.subtype ?? '').toLowerCase() === 'hsa';
-
 /** The cash accounts' institutions, as the forecast reads them, from the
  *  accounts the API lists: none that ended by today. */
 function cashInstitutions(accounts: readonly ApiAccount[], today: string): ForecastInstitution[] {
   const out = new Map<string, ForecastInstitution>();
   for (const a of accounts) {
-    if (a.hidden || (a.lifecycle && a.lifecycle.date <= today) || isHsa(a)) continue;
+    if (a.hidden || (a.lifecycle && a.lifecycle.date <= today) || isDepositoryHsa(a)) continue;
     const key = `${a.source}\n${a.institution}`;
     const inst = out.get(key) ?? {
       institution_name: a.institution,
@@ -263,7 +260,7 @@ export async function readRunway(ctx: Ctx, opts: { today: string; timeZone: stri
       }
     }
     if (!built.has_cash && position.noBalance.length === 0) items.push(note('no cash to start from', 'No checking, savings or cash on hand is in Nya, so there is no cash to start from.'));
-    for (const a of live.filter(isHsa)) items.push(note('a health savings account', `${a.name} at ${a.institution} is a health savings account, for health costs, so it isn’t counted as cash.`));
+    for (const a of live.filter(isDepositoryHsa)) items.push(note('a health savings account', `${a.name} at ${a.institution} is a health savings account, for health costs, so it isn’t counted as cash.`));
     if (live.some((a) => isInvestmentType(a.type))) {
       items.push(note('cash in investment accounts', 'Cash inside investment accounts, such as a brokerage’s settlement or money market fund, isn’t counted: it is money waiting to be invested, days from being spent.'));
     }

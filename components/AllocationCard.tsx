@@ -175,7 +175,7 @@ export function useAllocation({
     [inputs, value, currency, fx]
   );
   const mix = useMemo(() => {
-    const bank = includeCash ? bankCash(inputs.institutions, currency) : { amount: 0, otherCurrencies: [] };
+    const bank = bankCash(inputs.institutions, currency, includeCash);
     // The Plan's mix is of what it counts, so without a child's accounts when
     // they are out (D7): worked out on its own, since the card shows them all.
     const out = new Set(leaveOut ? inputs.institutions.flatMap((i) => i.accounts.filter((a) => leaveOut(a)).map((a) => a.account_id)) : []);
