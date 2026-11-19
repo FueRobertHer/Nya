@@ -28,7 +28,9 @@ import { MAX_FACT_AMOUNT, type Owner, type TaxFactOp, type TaxFacts } from '@/li
 import { LIMITS, pctText } from '@/lib/fire/plan';
 import type { OwnRates } from '@/lib/fire/account-growth';
 import { paidOf } from '@/lib/fire/bucket-growth';
-import { pct } from './plan-text';
+import { monthName, pct } from './plan-text';
+import { useMeasuredRate, type RateState } from './use-measured-rate';
+import { afterInflation } from '@/lib/fire/measured-rate';
 import { normalizedAmountText } from '@/lib/manual-txn-input';
 import type { BucketAccount, BucketsToday } from '@/lib/fire/buckets-today';
 import type { ChildAccount } from '@/lib/fire/inputs';
@@ -51,6 +53,8 @@ export type BucketSheet = {
   bucketsFor: (includeCash: boolean) => BucketsToday;
   /** When the balances were read, in words. */
   asOf: string | null;
+  /** The same, as the instant (an ISO time). */
+  balancesAt: string | null;
   /** Whether rows the sheets rest on are still coming. */
   reading: boolean;
   /** Whether a partner is set, so there are two people to tell apart. */
@@ -96,6 +100,9 @@ export type SheetRates = {
   full: boolean;
   /** A copy is open: its rates are its own, its facts every plan's. */
   copy: boolean;
+  /** What an account's own rate of return is said after: the plan's inflation
+   *  with tax worked out, else the 3% its steady years assume. */
+  inflation: number;
 };
 
 type Money = (n: number) => string;
@@ -293,6 +300,46 @@ function yieldDefault(account: BucketAccount, d: { typed: number | null; togethe
   return { words: 'Empty counts none: nothing over the last year says what it pays.', paid: null };
 }
 
+/** A rate measured up to more than this many days before the sheet's balances
+ *  is said with its end, not "since". */
+const STALE_DAYS = 31;
+
+/** An account's own rate of return beside its growth (lib/fire/measured-rate.ts),
+ *  said after inflation, with Use to take it as its own, within what a plan
+ *  takes: never put in by itself. Nothing is said while it loads, or while
+ *  another request fetches its activity for the first time. `typed`: what its
+ *  own growth field holds, null when it grows at the plan's. */
+function RateHint({ measured, inflation, balancesAt, typed, disabled, onUse }: { measured: RateState; inflation: number; balancesAt: string | null; typed: string | null; disabled: boolean; onUse: (rate: number) => void }) {
+  if (measured.kind === 'none') return <p className="helper">No yearly rate for it yet: that takes more than a year of its balances, and what went in and out.</p>;
+  if (measured.kind === 'failed') return <p className="helper">Its rate of return couldn&rsquo;t be loaded.</p>;
+  if (measured.kind !== 'rate') return null;
+  const real = afterInflation(measured.rate, inflation);
+  const [min, max] = LIMITS.realReturn;
+  // As said, to a tenth of a percent, and then within what a plan takes.
+  const said = Number(real.toFixed(3));
+  const use = Math.min(max, Math.max(min, said));
+  // An empty field holds nothing (Number would read it as 0).
+  const held = typed === null || typed.trim() === '' ? null : Number(typed) * 0.01;
+  const offers = held === null || !(Math.abs(held - use) < 1e-9);
+  const stale = balancesAt !== null && (Date.parse(balancesAt) - Date.parse(`${measured.to}T00:00:00Z`)) / 86_400_000 > STALE_DAYS;
+  const span = stale ? `from ${monthName(measured.since.slice(0, 7))} to ${monthName(measured.to.slice(0, 7))}` : `since ${monthName(measured.since.slice(0, 7))}`;
+  return (
+    <>
+      <p className="helper">
+        Its rate of return {span}: {pct(measured.rate, 1)} a year, about {pct(real, 1)} after {pct(inflation)} inflation. A guide, not a forecast: a few strong years rarely repeat on cue.
+        {use !== said && ` A plan’s rates are from ${pct(min)} to ${pct(max)}.`}
+      </p>
+      {offers && (
+        <div>
+          <button type="button" className="btn ghost" onClick={() => onUse(use)} disabled={disabled}>
+            Use {pct(use)}
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
 /** The field's placeholder: what empty is, as a rate. */
 function yieldPlaceholder(account: BucketAccount, d: { typed: number | null; together: number | null }): string {
   if (d.typed !== null) return pct(d.typed);
@@ -362,6 +409,10 @@ function AccountLevel({
   const settable = !!rates && !rates.off;
   // Its facts can't change here, but its growth can: the button hands it over.
   const handsOnly = !!locked && settable;
+  // Its own rate of return, as a guide beside its growth: asked for only where
+  // its growth can be set, and never for checking or savings, which have no
+  // investment activity to ask a bank for.
+  const measured = useMeasuredRate(id, account?.item_id ?? null, account?.currency ?? null, !!rates && account?.basisFrom !== 'cash');
   const showsBasis = account?.bucket === 'taxable' && account.basisFrom !== 'cash';
   // Its own dividends, where they count: with tax worked out.
   const dividends = showsBasis && rates ? rates.dividends : null;
@@ -469,6 +520,18 @@ function AccountLevel({
                 </label>
               )}
               {rateWrong && <FieldError id={rateId}>{rateWrong}</FieldError>}
+              <RateHint
+                measured={measured}
+                inflation={rates.inflation}
+                balancesAt={sheet.balancesAt}
+                typed={own ? rateText : null}
+                disabled={saving || rates.off}
+                onUse={(rate) => {
+                  setOwn(true);
+                  setRateText(pctText(rate));
+                  setRateWrong('');
+                }}
+              />
               {rates.off && rates.why && <p className="helper">{rates.why}</p>}
             </>
           ) : (

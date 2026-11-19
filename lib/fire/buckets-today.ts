@@ -49,6 +49,9 @@ export type BucketAccount = {
   name: string;
   institution: string;
   item_id: string | null;
+  /** The account's own currency (its figures below are the total's), which a
+   *  brokerage's months are checked against for its rate of return. */
+  currency?: string | null;
   subtype: string | null;
   bucket: BucketSlot;
   /** The bucket came from the person's choice (not the account's kind). */
@@ -155,6 +158,7 @@ export function bucketsToday(args: {
       name: a.name,
       institution: a.institution,
       item_id: a.item_id,
+      currency: a.currency,
       subtype: a.subtype ?? null,
       bucket,
       chosen: !!chosen,
