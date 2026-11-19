@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
-import { NOTE_KINDS, figureNotes, inputFlags, stressNotice, windowText, type FigureArgs, type FigureNote, type FigureText } from '@/components/plan-figure-notes';
+import { NOTE_KINDS, figureNotes, flatCostsNotes, inputFlags, stressNotice, windowText, type FigureArgs, type FigureNote, type FigureText } from '@/components/plan-figure-notes';
 import { FiCard } from '@/components/PlanTab';
 import { PAYROLL_NOTE, wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
@@ -154,6 +154,33 @@ describe('annual spending', () => {
     expect(notesOf(refused)).toEqual([['caution', 'accounts Plaid doesn’t cover', "Plaid doesn't provide transactions for the bank or card accounts at Acme CU, so they aren't counted."]]);
     const named = figureNotes(at({ flows: null, withoutTransactions: investmentsOnly, transactionCount: 12 })).spending;
     expect(notesOf(named)).toEqual([['info', 'connections with no transactions', 'Empower and Vanguard hold no bank account or card, so no transactions come from them.']]);
+  });
+
+  test('a bank that needs reconnecting, with nothing else read: not loaded, naming the bank, never "not enough"', () => {
+    const chase = [{ institution: 'Chase', reason: 'needs to be reconnected' }];
+    const none = figureNotes(at({ flows: null, unread: chase, transactionCount: 0 }));
+    expect(none.spending.sub).toBe("Couldn't be loaded");
+    expect(notesOf(none.spending)).toEqual([
+      ['caution', 'transactions that couldn’t be read', "Transactions from Chase couldn't be read (the Activity tab says why), so there is nothing to measure from. Type your own until they are."],
+    ]);
+    // Savings says the same, by the same rule.
+    expect(none.savings.sub).toBe("Couldn't be loaded");
+    expect(notesOf(none.savings)).toEqual(notesOf(none.spending));
+    // A few rows from elsewhere: still too few, and the bank named beside them.
+    const few = figureNotes(at({ flows: null, unread: chase, transactionCount: 12 }));
+    expect(few.spending.sub).toBe('Not enough transactions yet');
+    expect(few.savings.sub).toBe('Needs a year of transactions');
+    for (const t of [few.spending, few.savings]) {
+      expect(notesOf(t)).toEqual([['caution', 'transactions that couldn’t be read', "Transactions from Chase couldn't all be read (the Activity tab says why), so there may be enough once they are."]]);
+    }
+    // No connection that brings spending in at all says that first.
+    expect(figureNotes(at({ flows: null, unread: chase, withoutTransactions: investmentsOnly, transactionCount: 0 })).spending.sub).toBe('No transactions to measure from');
+  });
+
+  test('savings, when the transactions failed to load: said so, as spending says it', () => {
+    const failed = figureNotes(at({ flows: null, txnsFailed: true })).savings;
+    expect(failed.sub).toBe("Couldn't be loaded");
+    expect(notesOf(failed)).toEqual([['info', 'transactions not loaded', "Your transactions couldn't be loaded; type your savings, or try again later."]]);
   });
 
   test('measured: where from, every warning in the FI card’s order as a caution, then what is left out as information', () => {
@@ -414,6 +441,61 @@ describe('ages and assumptions', () => {
   });
 });
 
+describe('what a flat plan’s FI number leaves out after you stop', () => {
+  const base = { workedOut: true, taxRate: 0, taxOnHold: false, inDollars: true, age: 40, partnerAge: null, stopAge: 55, spendingMeasured: true, where: 'here' as const };
+  const of = (over: Partial<Parameters<typeof flatCostsNotes>[0]> = {}) => {
+    const n = flatCostsNotes({ ...base, ...over });
+    return n.row ? [n.row.level, n.row.kind, n.row.text, n.answer] : null;
+  };
+
+  test('0% in dollars: no tax and no health coverage, as one caution under the row, pointing at what counts both', () => {
+    expect(of()).toEqual([
+      'caution',
+      'no tax or health coverage',
+      'Your FI number counts no tax after you stop and no health coverage before Medicare (measured spending leaves out coverage through work). Work out tax from your accounts here to count both. A tax rate in Assumptions counts tax alone.',
+      'Counts no tax after you stop and no health coverage before Medicare (below).',
+    ]);
+    // A copy works it out on your plan; spending typed may already hold coverage.
+    expect(of({ where: 'copy', spendingMeasured: false })?.[2]).toBe(
+      'Your FI number counts no tax after you stop and no health coverage before Medicare (unless your spending includes it). Work out tax from your accounts on your plan to count both. A tax rate in Assumptions counts tax alone.'
+    );
+  });
+
+  test('a rate set, in dollars: only health coverage', () => {
+    expect(of({ taxRate: 0.15, spendingMeasured: false })?.[2]).toBe('Your FI number counts no health coverage before Medicare, unless your spending includes it. Work out tax from your accounts here to count coverage.');
+    expect(of({ taxRate: 0.15 })).toEqual([
+      'caution',
+      'no health coverage',
+      'Your FI number counts no health coverage before Medicare: measured spending leaves out coverage through work. Work out tax from your accounts here to count coverage.',
+      'Counts no health coverage before Medicare (below).',
+    ]);
+  });
+
+  test('outside dollars: only a 0% rate, as Medicare is a US cover and worked-out tax needs dollars', () => {
+    expect(of({ inDollars: false, where: 'rate' })).toEqual(['caution', 'no tax after you stop', 'Your FI number counts no tax after you stop. Set a tax rate in Assumptions.', 'Counts no tax after you stop (below).']);
+    expect(of({ inDollars: false, where: 'rate', taxRate: 0.15 })).toBeNull();
+    // Detailed tax on hold says it already, on the same row.
+    expect(of({ inDollars: false, where: 'rate', taxOnHold: true })).toBeNull();
+  });
+
+  test('stopping at 65 or later, both of you: no gap before Medicare to say', () => {
+    expect(of({ taxRate: 0.15, stopAge: 65 })).toBeNull();
+    expect(of({ stopAge: 65 })?.[1]).toBe('no tax after you stop');
+    // A younger partner is still short of it.
+    expect(of({ taxRate: 0.15, stopAge: 65, partnerAge: 37 })?.[1]).toBe('no health coverage');
+    // Your age not known: the stop is your age then, so only it decides.
+    expect(of({ taxRate: 0.15, age: null })?.[1]).toBe('no health coverage');
+    expect(of({ taxRate: 0.15, age: null, stopAge: 67 })).toBeNull();
+    // A partner's age at the stop needs yours: not known, the gap may be there.
+    expect(of({ taxRate: 0.15, age: null, stopAge: 67, partnerAge: 60 })?.[1]).toBe('no health coverage');
+  });
+
+  test('no worked-out FI number: your own, which no rate moves, or none yet, says nothing', () => {
+    expect(of({ workedOut: false })).toBeNull();
+    expect(of({ workedOut: false, taxRate: 0.15 })).toBeNull();
+  });
+});
+
 describe('the notes’ kinds and keys', () => {
   test('two notes that say the same have keys of their own, from the row, the kind and the place, never the text', () => {
     const workplace = { ...noPlans, partial: [{ name: 'Fidelity 401(k)', from: '2026-01-10' }, { name: 'Fidelity 401(k)', from: '2026-01-10' }] } as WorkplaceSavings;
@@ -473,6 +555,11 @@ describe('the notes’ kinds and keys', () => {
         }),
       ].flatMap((a) => Object.values(figureNotes(a)).flatMap((t) => t.notes.map((n) => n.kind)))
     );
+    // A flat plan's, drawn by the Plan tab on its own row (flatCostsNotes).
+    for (const o of [{ taxRate: 0, inDollars: false }, { taxRate: 0.15, inDollars: true }, { taxRate: 0, inDollars: true }]) {
+      const n = flatCostsNotes({ ...o, workedOut: true, taxOnHold: false, age: 40, partnerAge: null, stopAge: 55, spendingMeasured: true, where: o.inDollars ? 'here' : 'rate' }).row;
+      if (n) kinds.add(n.kind);
+    }
     const notice: string[] = [NOTE_KINDS.spendingLow, NOTE_KINDS.assetsLow];
     expect(Object.values(NOTE_KINDS).filter((k) => !notice.includes(k) && !kinds.has(k))).toEqual([]);
   });

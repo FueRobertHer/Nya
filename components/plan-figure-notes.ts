@@ -94,6 +94,52 @@ export type FigureArgs = {
   taxOnHold: boolean;
 };
 
+/**
+ * What a flat plan's FI number leaves out after you stop, said rather than
+ * left for the person to find: a 0% rate (the default) counts no tax on what
+ * is withdrawn, and in dollars nothing counts health coverage before
+ * Medicare, which measured spending leaves out while it comes through work.
+ * A caution, not critical: the number is what the plan says, only kinder than
+ * it may be. Under the row it qualifies (`row`, Tax after you stop, or
+ * Assumptions where that row isn't drawn), and repeated on the answer
+ * (`answer`), as the inputs that may be low are. Nothing while detailed tax
+ * is saved and on hold (taxOnHold says it), nor where the health part can't
+ * matter: both of you 65 or over at the stop. Nor without a worked-out FI
+ * number (`workedOut` false: your own typed one, which no rate moves, or none
+ * yet, whose answer names what it needs).
+ *   where: 'here' on your plan in dollars, whose Tax after you stop row
+ *   works both out; 'copy' in a copy, which does it on your plan; 'rate'
+ *   where worked-out tax can't be had, only a rate.
+ */
+export function flatCostsNotes(a: {
+  workedOut: boolean;
+  taxRate: number;
+  taxOnHold: boolean;
+  inDollars: boolean;
+  age: number | null;
+  partnerAge: number | null;
+  stopAge: number | null;
+  spendingMeasured: boolean;
+  where: 'here' | 'copy' | 'rate';
+}): { row: FigureNote | null; answer: string | null } {
+  if (a.taxOnHold || !a.workedOut) return { row: null, answer: null };
+  const tax = a.taxRate === 0;
+  // The stop is your own age then; a partner's needs both ages.
+  const partnerAtStop = a.partnerAge !== null && a.age !== null && a.stopAge !== null ? a.partnerAge + (a.stopAge - a.age) : null;
+  const bothOnMedicare = (a.stopAge ?? 0) >= 65 && (a.partnerAge === null || (partnerAtStop ?? 0) >= 65);
+  const health = a.inDollars && a.where !== 'rate' && !bothOnMedicare;
+  if (!tax && !health) return { row: null, answer: null };
+  const coverage = a.spendingMeasured ? 'measured spending leaves out coverage through work' : 'unless your spending includes it';
+  const what = tax && health ? 'no tax after you stop and no health coverage before Medicare' : tax ? 'no tax after you stop' : 'no health coverage before Medicare';
+  const lead = tax && health ? `Your FI number counts ${what} (${coverage}).` : tax ? `Your FI number counts ${what}.` : `Your FI number counts ${what}${a.spendingMeasured ? ': ' : ', '}${coverage}.`;
+  const count = tax && health ? ' to count both' : health ? ' to count coverage' : '';
+  const rate = tax && health ? '. A tax rate in Assumptions counts tax alone' : tax ? ', or set a tax rate in Assumptions' : '';
+  const fix =
+    a.where === 'here' ? `Work out tax from your accounts here${count}${rate}.` : a.where === 'copy' ? `Work out tax from your accounts on your plan${count}${rate}.` : 'Set a tax rate in Assumptions.';
+  const kind = tax && health ? NOTE_KINDS.flatBoth : tax ? NOTE_KINDS.flatTax : NOTE_KINDS.flatHealth;
+  return { row: { key: `flat:${kind}`, level: 'caution', kind, text: `${lead} ${fix}` }, answer: `Counts ${what} (below).` };
+}
+
 /** What Tax says while detailed tax is saved and can't be worked out: the flat
  *  rate, never silently. */
 export const taxOnHoldText = (rate: number) => `Worked-out tax needs US dollars; using a flat ${pct(rate)}.`;
@@ -131,10 +177,21 @@ export function names(list: string[]): string {
   return `${unique.slice(0, -1).join(', ')} and ${unique[unique.length - 1]}`;
 }
 
-/** What may be missing from transaction-based figures, in a sentence, or null. */
-export function unreadText(unread: UnreadTransactions[], what: 'low' | 'off'): string | null {
+/** What may be missing from transaction-based figures, in a sentence, or
+ *  null: for a figure measured from what was read ('low', 'off'), for none
+ *  yet from the few that were ('short'), and for none at all, with no
+ *  transaction read ('none'). */
+export function unreadText(unread: UnreadTransactions[], what: 'low' | 'off' | 'short' | 'none'): string | null {
   if (unread.length === 0) return null;
   const named = unread.filter((u) => u.institution).map((u) => u.institution as string);
+  if (what === 'none') {
+    if (named.length > 0) return `Transactions from ${names(named)} couldn't be read (the Activity tab says why), so there is nothing to measure from. Type your own until they are.`;
+    return "Your transactions couldn't be loaded. Type your own, or try again later.";
+  }
+  if (what === 'short') {
+    if (named.length > 0) return `Transactions from ${names(named)} couldn't all be read (the Activity tab says why), so there may be enough once they are.`;
+    return "Your latest transactions couldn't be loaded, so there may be enough once they are.";
+  }
   const consequence = what === 'low' ? 'so this figure may be low' : 'so this figure may be off';
   if (named.length > 0) return `Transactions from ${names(named)} couldn't all be read (the Activity tab says why), ${consequence}.`;
   return `Your latest transactions couldn't be loaded, ${consequence} or out of date.`;
@@ -167,6 +224,9 @@ export function assetCaveatLines(caveats: AssetCaveat[]): string[] {
  *  (components/budget-notes.ts). */
 export const NOTE_KINDS = {
   taxOnHold: 'worked-out tax needs US dollars',
+  flatTax: 'no tax after you stop',
+  flatHealth: 'no health coverage',
+  flatBoth: 'no tax or health coverage',
   spendingGap: 'spending not measured',
   rateGap: 'savings rate not measured',
   yearGap: 'savings not measured',
@@ -226,7 +286,7 @@ function noteList(row: string) {
 const said = (sub: string, notes: FigureNote[], why: string | null = null, line: string | null = null): FigureText => ({ sub, line, why, notes });
 
 /** Transactions that couldn't all be read, as a caution of its kind. */
-function addUnread(add: ReturnType<typeof noteList>['add'], unread: UnreadTransactions[], what: 'low' | 'off') {
+function addUnread(add: ReturnType<typeof noteList>['add'], unread: UnreadTransactions[], what: 'low' | 'off' | 'short' | 'none') {
   add('caution', unread.some((u) => u.institution) ? NOTE_KINDS.unreadNamed : NOTE_KINDS.unreadUnnamed, unreadText(unread, what));
 }
 
@@ -347,6 +407,15 @@ function spendingText(a: FigureArgs, coverage: Coverage, flowsGap: Gap): FigureT
       add('info', NOTE_KINDS.noSpending, `${noSpending.lead}, so there are no bank or card transactions to measure spending from. Type your own.`);
       return said('No transactions to measure from', notes);
     }
+    // A bank that needs reconnecting (or whose stored history couldn't be
+    // read) sends no rows, by design (Activity leaves them out): with none
+    // read from anywhere, nothing loaded, and the bank is named; with a few,
+    // it is named beside them, as what may be missing.
+    if (a.transactionCount === 0 && unread.length > 0) {
+      addUnread(add, unread, 'none');
+      return said("Couldn't be loaded", notes);
+    }
+    addUnread(add, unread, 'short');
     addMissing(add, withoutTransactions, 'uncounted');
     add('info', NOTE_KINDS.named, namedWithout);
     return said('Not enough transactions yet', notes);
@@ -427,10 +496,20 @@ function savingsText(a: FigureArgs, coverage: Coverage, flowsGap: Gap): FigureTe
   }
   if (!flows) {
     if (a.txnsLoading) return said(LOADING, notes);
+    if (a.txnsFailed) {
+      add('info', NOTE_KINDS.failed, "Your transactions couldn't be loaded; type your savings, or try again later.");
+      return said("Couldn't be loaded", notes);
+    }
     if (noSpending) {
       add('info', NOTE_KINDS.noSpending, `${noSpending.lead}, so there are no bank or card transactions to measure income and spending from. Type your own.`);
       return said('No transactions to measure from', notes);
     }
+    // As spending says it (spendingText).
+    if (a.transactionCount === 0 && unread.length > 0) {
+      addUnread(add, unread, 'none');
+      return said("Couldn't be loaded", notes);
+    }
+    addUnread(add, unread, 'short');
     add('info', NOTE_KINDS.named, namedWithout);
     return said('Needs a year of transactions', notes);
   }

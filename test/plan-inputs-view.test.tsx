@@ -900,6 +900,22 @@ describe('a sheet holds the saved plan it opened on', () => {
   });
 });
 
+describe('a bank that needs reconnecting', () => {
+  // What /api/transactions sends for it (test/transactions.test.ts): none of
+  // its rows, by design, and a note that names it.
+  test('with no transaction from anywhere else: spending and savings say they couldn’t be loaded and name the bank, never "not enough"', async () => {
+    serve();
+    const tab = await mount({ txns: [], txnNotes: ['Chase: needs to be reconnected'] });
+    for (const title of ['Annual spending', 'Annual savings']) {
+      expect(part(tab.row(title)!, 'list-row-sub')?.textContent).toBe("Couldn't be loaded");
+      expect(tab.notesOf(title)?.textContent).toContain("Transactions from Chase couldn't be read (the Activity tab says why), so there is nothing to measure from. Type your own until they are.");
+    }
+    expect(tab.card()?.textContent).not.toContain('Not enough transactions');
+    expect(tab.card()?.textContent).not.toContain('Needs a year of transactions');
+    await tab.unmount();
+  });
+});
+
 describe('Drawdown’s notice', () => {
   const SPENDING = "Your annual spending may be low: it is missing transactions Plaid doesn't provide, and the simulation withdraws it (Your path says which).";
   const ASSETS = "Your invested assets may be low: some couldn't be counted (Your path says which).";

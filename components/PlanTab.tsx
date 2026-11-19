@@ -115,7 +115,7 @@ import { fiFigures, measuredInputs, notMeasuredWhat, notWorkedOutText, unmeasure
 import { historyMove, planGrowth, type HistoryMove } from '@/lib/fire/account-growth';
 import { bucketGrowth } from '@/lib/fire/bucket-growth';
 import { historyCount } from '@/lib/spending';
-import { figureNotes, inputFlags, names, stressNotice, windowText, type FigureArgs, type FigureNote, type FigureNotes, type FigureText } from './plan-figure-notes';
+import { figureNotes, flatCostsNotes, inputFlags, names, stressNotice, windowText, type FigureArgs, type FigureNote, type FigureNotes, type FigureText } from './plan-figure-notes';
 import TotalCaveats, { Notice } from './TotalCaveats';
 import { chevron, RIGHT } from './ActivityBar';
 import { planAccountsOf, planId, plansAskedFor, saveTaxFact, usePlanInputs, useSharedPlanInputs, workplacePlansOf, yearFrom } from './plan-inputs';
@@ -1473,8 +1473,29 @@ export default function PlanTab({
         value: detailChoices.health.beforeMedicare === null ? null : shownShares ? money(shownShares.h) : '--',
         notes: [...honesty.filter((n) => n.kind === 'health not set' || n.kind === 'coverage counted twice').map((n) => (n.kind === 'health not set' ? { ...n, text: HEALTH_NOT_SET } : n)), ...(rowMedicaid ? [medicaidNote(rowMedicaid, 'Your FI number')] : [])],
       };
+  // A flat plan's FI number counts no tax at 0% and, in dollars, no health coverage
+  // before Medicare: said under the row that sets it and on the answer
+  // (components/plan-figure-notes.ts flatCostsNotes). Not before the facts say
+  // the plan is flat, so a detailed one never shows it on its way in.
+  const flatTaxHere = offerDetail && !entry;
+  const flatCosts =
+    shared.factsKnown && !detailShown
+      ? flatCostsNotes({
+          workedOut: plan.fiNumber == null && view.workedOut !== null,
+          taxRate: plan.taxRate,
+          taxOnHold: figureArgs.taxOnHold,
+          inDollars: taxInDollars,
+          age: plan.age,
+          partnerAge: plan.partnerAge ?? null,
+          stopAge: view.stopAge,
+          spendingMeasured: view.spending.source === 'measured',
+          where: flatTaxHere ? 'here' : entry && taxInDollars ? 'copy' : 'rate',
+        })
+      : { row: null, answer: null };
   const figureTexts: typeof shownNow = !detailShown
-    ? shownNow
+    ? flatCosts.row && !flatTaxHere
+      ? { ...shownNow, assumptions: { ...shownNow.assumptions, notes: [...shownNow.assumptions.notes, flatCosts.row] } }
+      : shownNow
     : {
         ...shownNow,
         ages: { ...shownNow.ages, sub: `${shownNow.ages.sub} · ${householdLine(shared.taxFacts, detailChoices)}` },
@@ -1487,8 +1508,8 @@ export default function PlanTab({
     ? { sub: `Share of your costs after ${shownShares.drawn.years[0]?.age} · from your accounts and ${lawNow.year} law`, line: null, why: null, notes: [], value: pct(shownShares.t, 1) }
     : fiHeld
       ? { sub: 'Working it out', line: null, why: null, notes: [], value: '--' }
-      : offerDetail && !entry
-        ? { sub: 'As set · work out tax from your accounts', line: null, why: null, notes: [], value: pct(shownPlan.taxRate) }
+      : flatTaxHere
+        ? { sub: 'As set · work out tax from your accounts', line: null, why: null, notes: flatCosts.row ? [flatCosts.row] : [], value: pct(shownPlan.taxRate) }
         : null;
   const fiSub = shownPlan.fiNumber !== null ? null : shownShares ? `Spending, health coverage and tax, at a ${pct(shownPlan.withdrawalRate)} withdrawal rate` : fiHeld ? 'Working it out' : null;
   const stressNotes = stressNotice(figureArgs, engine, shown?.startsWith ?? null);
@@ -2111,6 +2132,7 @@ export default function PlanTab({
               assets={assets}
               currencyNote={currencyNote}
               convertedNote={convertedNote}
+              flatCosts={flatCosts.answer}
               money={money}
             />
 
@@ -2686,6 +2708,7 @@ export function FiCard({
   assets: measuredAssets,
   currencyNote,
   convertedNote = null,
+  flatCosts = null,
   money,
 }: {
   /** The open copy's name, said at the top; null with your plan open. */
@@ -2751,6 +2774,9 @@ export function FiCard({
   /** What was converted into the Plan's currency (lib/fire/progress.ts
    *  convertedNote), with a home currency. */
   convertedNote?: string | null;
+  /** What a flat plan's FI number counts none of after you stop, on the answer
+   *  (components/plan-figure-notes.ts flatCostsNotes); null when nothing. */
+  flatCosts?: string | null;
   money: (n: number) => string;
 }) {
   const { spending, savings, assets } = view;
@@ -2814,6 +2840,7 @@ export function FiCard({
   caveat('caution', 'runs out before you stop', head.runsOut && `${head.runsOut} (below).`);
   caveat('caution', 'invested assets may be low', view.progress !== null && view.fiNumber !== null && assetsShort ? 'Invested assets may be low (below).' : null);
   caveat('caution', 'spending may be low', spendingMissing && `May be low: spending is missing ${spendingMissing} (below).`);
+  caveat('caution', 'tax or health coverage not counted', flatCosts);
   caveat('caution', 'currency', currencyNote);
   caveat('info', 'converted', convertedNote);
   const asks = !!head.ask && !!onAskAges;
