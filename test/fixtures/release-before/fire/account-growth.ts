@@ -19,9 +19,18 @@
 // above zero has a rate of its own (an account since closed or hidden is kept
 // and ignored), and when nothing counted is above zero.
 //
+// The stress test can move market history by the same rates (version 2's
+// `historyMoved`): every year of it by the blend's gap from the plan's rate, in
+// points added to the year (an account at 7% against the plan's 5% adds 2, so a
+// -30% year is -28%), and with tax worked out each bucket by its own accounts'
+// gap (lib/fire/bucket-growth.ts). The gap is worked out here, once a plan, from
+// what the steady path runs at: so with no account at its own rate, or at the
+// plan's, nothing moves, to the bit.
+//
 // Imports no data and no storage.
 
-import type { AccountRate, Measured, PlanCore } from './plan';
+import type { AccountRate, FiView, Measured, PlanCore } from './plan';
+import type { YearGrowth } from './tax/year';
 
 /** The rate a plan runs at (see the top of this file), and how many counted
  *  accounts above zero grow at their own rate in it (0 where the plan's rate
@@ -52,6 +61,28 @@ export function planGrowth(plan: Pick<PlanCore, 'realReturn' | 'assets' | 'accou
   }
   if (own === 0) return base;
   return { growth: Math.min(high, Math.max(low, plan.realReturn + lift / total)), own };
+}
+
+type Moved = Pick<PlanCore, 'realReturn' | 'historyMoved'>;
+type Grows = Pick<FiView, 'growth' | 'ownRates'>;
+
+/** What the stress test moves every year of history by (the run plan's
+ *  `historyShift`): the blend's gap from the plan's rate, with history moved and
+ *  an account at its own rate; null where nothing moves. */
+export function historyShift(plan: Moved, view: Grows): number | null {
+  if (!plan.historyMoved || view.ownRates === 0) return null;
+  const gap = view.growth - plan.realReturn;
+  return gap === 0 ? null : gap;
+}
+
+/** Each bucket's gap with tax worked out (SimTax's `historyShift`), from what it
+ *  grows at on the steady years (bucketGrowth's `year`): a bucket not said takes
+ *  the blend's, as it grows at the blend there. Null where nothing moves. */
+export function bucketShift(plan: Moved, view: Grows, year: Partial<YearGrowth> | null | undefined): YearGrowth | null {
+  if (!plan.historyMoved || view.ownRates === 0) return null;
+  const at = (k: keyof YearGrowth) => (year?.[k] ?? view.growth) - plan.realReturn;
+  const gaps: YearGrowth = { taxable: at('taxable'), deferred: at('deferred'), deferred457: at('deferred457'), roth: at('roth'), hsa: at('hsa') };
+  return Object.values(gaps).every((g) => g === 0) ? null : gaps;
 }
 
 /** An account's own growth and dividends as a sheet holds them: a null is the
