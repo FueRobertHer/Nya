@@ -77,17 +77,25 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
   const keep = useRef<HTMLButtonElement>(null);
   const said = useRef<HTMLParagraphElement>(null);
 
-  // Asking to stop sharing it: focus on Keep it shared, in the footer, and
-  // what stopping does in view, under its row.
-  useEffect(() => {
-    if (!confirming) return;
-    keep.current?.focus();
-    said.current?.scrollIntoView?.({ block: 'nearest' });
-  }, [confirming]);
-
   const target = targets.find((x) => x.key === targetKey) ?? targets.find((x) => x.row.shared) ?? targets[0] ?? null;
   const kept = t ? shareKeptUnder(t) : '';
   const stored = card && target ? (card.shares.find((s) => s.transaction_id === kept && (s.part ?? null) === target.part) ?? null) : null;
+  // Asking only while there is a share to stop.
+  const asking = confirming && !!stored;
+
+  // Asking to stop sharing it: focus on Keep it shared, in the footer, and
+  // what stopping does in view, under its row.
+  useEffect(() => {
+    if (!asking) return;
+    keep.current?.focus();
+    said.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [asking]);
+  // Another part of the split chosen: neither the question nor what a press
+  // on the last one said goes with it.
+  useEffect(() => {
+    setConfirming(false);
+    setError('');
+  }, [target?.key]);
 
   // A fresh form each time it opens, from the share as stored.
   useEffect(() => {
@@ -186,9 +194,6 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
     onClose();
   }
 
-  // Asking only while there is a share to stop (another part of the split
-  // may have none).
-  const asking = confirming && !!stored;
   // What one state's buttons said when they failed stays with them.
   const ask = (on: boolean) => {
     setConfirming(on);

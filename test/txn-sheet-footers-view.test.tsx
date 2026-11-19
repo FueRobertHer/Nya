@@ -347,6 +347,26 @@ describe('a shared cost', () => {
     expect(closed).toBe(1);
   });
 
+  test('on a split, choosing another part leaves the question and its refusal behind', async () => {
+    const part = (id: string, amount: number, category: string) => sharedTxn({ transaction_id: `split:${id}`, name: 'Bistro', amount, category_name: category });
+    const split = sharedTxn({ transaction_id: 't-dinner', name: 'Bistro', amount: 120, split_parts: [part('p0', 80, 'Restaurants'), part('p1', 40, 'Groceries')] });
+    const card = cardOf({ shares: [{ ...cardOf().shares[0], part: 'p0' }] });
+    const { state } = sharedWith(card, 1, 'It changed meanwhile.');
+    await mount(<ShareCostSheet t={split} shared={state} onClose={() => {}} />);
+    await press(row(dialog('Who owes what'), 'Stop sharing it'));
+    await press(button(footerOf(dialog('Who owes what')), 'Stop sharing'));
+    expectRefused('Who owes what', 'Stop sharing', 'It changed meanwhile.');
+    // Groceries, not shared: its own buttons, nothing said of the other.
+    await press(dialog('Who owes what')!.findAll((e) => e.getAttribute('type') === 'radio')[1]);
+    expectFooter('Share the cost', 'Cancel', ['Save', 'btn']);
+    expect(notes(footerOf(dialog('Share the cost'))).length).toBe(0);
+    // Back on Restaurants: not asking until asked again, and then Keep has focus.
+    await press(dialog('Share the cost')!.findAll((e) => e.getAttribute('type') === 'radio')[0]);
+    expectFooter('Who owes what', 'Cancel', ['Save', 'btn']);
+    await press(row(dialog('Who owes what'), 'Stop sharing it'));
+    expectAsking('Who owes what', 'Stop sharing Bistro?', 'Keep it shared', 'Stop sharing', 'It counts whole again, and Alex Smith no longer owes you for it.');
+  });
+
   test('a cost not shared yet: Cancel then Save, no Stop row', async () => {
     const { state } = sharedWith(cardOf(), 0, '');
     await mount(<ShareCostSheet t={sharedTxn({ transaction_id: 't-new', name: 'Cafe', amount: 40 })} shared={state} onClose={() => {}} />);
@@ -398,9 +418,11 @@ describe('a payment and what was settled', () => {
   });
 
   test('Mark settled: Cancel then Mark settled, described by nothing until a press fails', async () => {
-    const { state } = sharedWith(cardOf(), 0, '');
+    const { state } = sharedWith(cardOf(), 1, 'It changed meanwhile.');
     await mount(<SettleSheet person="alex" currency="USD" shared={state} onClose={() => {}} />);
     const d = expectFooter('Mark settled', 'Cancel', ['Mark settled', 'btn']);
     expect(button(footerOf(d), 'Mark settled')!.getAttribute('aria-describedby')).toBeNull();
+    await press(button(footerOf(d), 'Mark settled'));
+    expectRefused('Mark settled', 'Mark settled', 'It changed meanwhile.');
   });
 });
