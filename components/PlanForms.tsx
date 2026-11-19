@@ -45,6 +45,7 @@ import { BucketGroups, BucketLevel, SavingsSplitLines, type BucketSheet, type Sh
 import { BUCKET_NAMES, type TaxBucket } from '@/lib/allocation/buckets';
 import { byBucket, type SavingsSplit } from '@/lib/fire/savings-split';
 import type { SavingsBucket } from '@/lib/fire/tax-choices';
+import { DEFAULT_INFLATION } from '@/lib/fire/saved-plan';
 import { headLine, splitNote } from './plan-buckets';
 import type { PlanMix } from '@/lib/allocation/allocation';
 
@@ -802,6 +803,7 @@ export function FigureForm(
             }),
           // A taxable account's dividends count only with tax worked out.
           dividends: props.detail ? { typed: props.detail.choices.taxableYield, together: today ? measuredYield(today) : null } : null,
+          inflation: props.detail ? props.detail.choices.inflation : DEFAULT_INFLATION,
           typed: mode === 'typed',
           off: s.disabled,
           why: props.paused ?? null,

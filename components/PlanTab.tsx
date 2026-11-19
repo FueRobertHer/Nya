@@ -1365,6 +1365,7 @@ export default function PlanTab({
       detail: shownInput ? { rmdAges: shownInput.rmdAges, cautions: rothCautions } : null,
       bucketsFor,
       asOf: balancesAsOf ? fmtAsOf(balancesAsOf) : null,
+      balancesAt: balancesAsOf ?? null,
       reading: yearRows.some((id) => !rows[id] || rows[id].pending),
       partner: plan.partnerAge !== null,
       tax: shared.taxFacts,
