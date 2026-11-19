@@ -19,7 +19,7 @@
 // upgradePlan fills in a field added since a plan was saved. Imports no data
 // and no storage, so the route and the browser can both use it.
 
-import { planGrowth } from './account-growth';
+import { historyShift, planGrowth } from './account-growth';
 import { baristaFiNumber, coastFiNumber, fiNumber, projectBalance, projectionShort, yearsToTarget } from './fi';
 import { vpwExpectedReturn, type RuleKind, type RuleSpec } from './rules';
 import { CASH_REAL_RETURN, MAX_YEARS, type Method, type Rebalance, type SimPlan } from './simulate';
@@ -130,7 +130,7 @@ export const DEFAULT_PLAN: FirePlan = {
  *  everything but its version and its lists (lib/fire/compile.ts places a
  *  plan's items), with version 2's stop at FI and own FI number when it has
  *  them. */
-export type PlanCore = Omit<FirePlan, 'version' | 'income' | 'expenses'> & { stopAtFi?: boolean; fiNumber?: number | null; partnerAge?: number | null; accounts?: readonly AccountRate[] };
+export type PlanCore = Omit<FirePlan, 'version' | 'income' | 'expenses'> & { stopAtFi?: boolean; fiNumber?: number | null; partnerAge?: number | null; accounts?: readonly AccountRate[]; historyMoved?: boolean };
 
 /** The age the plan stops working at: the one typed, or under "stop when I
  *  reach FI" the search's answer (lib/fire/steady.ts), null when there is
@@ -690,6 +690,7 @@ export function enginePlan(plan: PlanCore, view: FiView): EnginePlan | { missing
   }
   const years = planYears(plan, view.stopAge);
   const age = startAge(plan, view.stopAge);
+  const shift = historyShift(plan, view);
   return {
     sim: {
       startBalance,
@@ -702,6 +703,7 @@ export function enginePlan(plan: PlanCore, view: FiView): EnginePlan | { missing
       income: [],
       oneOffs: [],
       cashRealReturn: CASH_REAL_RETURN,
+      ...(shift !== null ? { historyShift: shift } : {}),
     },
     startAge: age,
     rate,
