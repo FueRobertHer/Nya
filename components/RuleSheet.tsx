@@ -11,7 +11,7 @@
 // (app/api/rules/preview), and how many keep a category or name you chose
 // for them, since a choice made on one transaction always wins over a rule.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import CategoryPicker from './CategoryPicker';
@@ -96,6 +96,8 @@ export default function RuleSheet({
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const errorId = useId();
+  const askId = useId();
   // A preview answered after a newer one was asked for is dropped.
   const asked = useRef(0);
 
@@ -229,8 +231,45 @@ export default function RuleSheet({
     }
   };
 
+  // The buttons, and why the last one failed beside them; asked to delete the
+  // rule, Keep it and Delete rule in their place.
+  const failed = error ? errorId : undefined;
+  const footer = (
+    <>
+      {error && (
+        <div className="sheet-footer-note" id={errorId}>
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        </div>
+      )}
+      {form.id && confirmDelete ? (
+        <>
+          <p className="helper sheet-footer-note" id={askId}>
+            Delete this rule? Its transactions go back to as they were.
+          </p>
+          <button type="button" className="btn secondary" onClick={() => setConfirmDelete(false)} disabled={busy}>
+            Keep it
+          </button>
+          <button type="button" className="btn danger" onClick={() => send({ action: 'delete', id: form.id })} disabled={busy} aria-describedby={failed ? `${askId} ${failed}` : askId}>
+            {busy ? 'Deleting…' : 'Delete rule'}
+          </button>
+        </>
+      ) : (
+        <>
+          <button type="button" className="btn secondary" onClick={rules.close} disabled={busy}>
+            Cancel
+          </button>
+          <button type="button" className="btn" onClick={save} disabled={busy || !complete} aria-describedby={failed}>
+            {busy ? 'Saving…' : form.id ? 'Save rule' : 'Make rule'}
+          </button>
+        </>
+      )}
+    </>
+  );
+
   return (
-    <Sheet open={open} title={form.id ? 'Edit rule' : 'New rule'} onClose={rules.close}>
+    <Sheet open={open} title={form.id ? 'Edit rule' : 'New rule'} onClose={rules.close} footer={footer}>
       <div className="sheet-form rule-form">
         <div className="section-label">When a transaction’s</div>
         {form.conditions.map((c, i) => (
@@ -373,34 +412,15 @@ export default function RuleSheet({
           )}
         </div>
 
-        {error && (
-          <Notice level="critical" role="alert">
-            {error}
-          </Notice>
-        )}
-        <button onClick={save} disabled={busy || !complete} style={{ marginTop: 12 }}>
-          {busy ? 'Saving…' : form.id ? 'Save rule' : 'Make rule'}
-        </button>
         <p className="panel-note">
           A rule changes every matching transaction, past and future, without changing what is stored: turn it off or delete it and they are as they were. What you
           set on one transaction always wins over a rule.
         </p>
-        {form.id && (
+        {form.id && !confirmDelete && (
           <div className="panel-section">
-            {confirmDelete ? (
-              <div className="button-pair">
-                <button className="danger" onClick={() => send({ action: 'delete', id: form.id })} disabled={busy}>
-                  {busy ? 'Deleting…' : 'Delete rule'}
-                </button>
-                <button className="secondary" onClick={() => setConfirmDelete(false)} disabled={busy}>
-                  Keep it
-                </button>
-              </div>
-            ) : (
-              <button className="danger-outline" onClick={() => setConfirmDelete(true)} disabled={busy}>
-                Delete rule…
-              </button>
-            )}
+            <button className="danger-outline" onClick={() => setConfirmDelete(true)} disabled={busy}>
+              Delete rule…
+            </button>
           </div>
         )}
       </div>

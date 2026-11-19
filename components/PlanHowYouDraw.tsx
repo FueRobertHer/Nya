@@ -131,12 +131,7 @@ export function OrderForm(props: SaveProps & { detail: DetailForm }) {
         ]}
       />
       <p className="helper">Either way, required withdrawals come first once they start. Before 59½, what would pay a penalty comes last.</p>
-      {s.error && (
-        <Notice level="critical" role="alert">
-          {s.error}
-        </Notice>
-      )}
-      <Buttons copy={props.copy} paused={props.paused} onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
+      <Buttons error={s.error} copy={props.copy} paused={props.paused} onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
     </div>
   );
 }
@@ -324,12 +319,7 @@ export function ConversionsForm(
       <Why label={RULES_DIFFER_LABEL}>
         <p>{`${rulesDifferText({ onAca: props.onAca, acaLaw })} Compare conversions on Drawdown sets the rules side by side.`}</p>
       </Why>
-      {s.error && (
-        <Notice level="critical" role="alert">
-          {s.error}
-        </Notice>
-      )}
-      <Buttons copy={props.copy} paused={props.paused} onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
+      <Buttons error={s.error} copy={props.copy} paused={props.paused} onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
     </div>
   );
 }

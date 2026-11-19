@@ -21,6 +21,7 @@ import CheckRows from './CheckRows';
 import FieldError from './FieldError';
 import { Masked, NO_EXAMPLE } from './HideAmounts';
 import { Segmented } from './Segmented';
+import { SheetFooter } from './Sheet';
 import { Notice } from './TotalCaveats';
 import { Why } from './Why';
 import { isChildAccount } from '@/lib/fire/child-accounts';
@@ -241,18 +242,45 @@ export function SavingsSplitLines({ split, reading, heading = true }: { split: S
   );
 }
 
-/** Cancel and Save for a level: Cancel goes back, as the arrow does. `done`: the
- *  level only hands something to its sheet, which keeps it on its own Save. */
-function LevelButtons({ onCancel, onSave, saving, off, done = false }: { onCancel: () => void; onSave: () => void; saving: boolean; off: boolean; done?: boolean }) {
+/** Cancel and Save for a level, in the sheet's footer with why a save failed
+ *  beside them: Cancel goes back, as the arrow does. `done`: the level only hands
+ *  something to its sheet, which keeps it on its own Save. `hidden`: the level is
+ *  under another (an account's, under its bucket's), whose footer shows. */
+function LevelButtons({
+  onCancel,
+  onSave,
+  saving,
+  off,
+  done = false,
+  error = '',
+  hidden = false,
+}: {
+  onCancel: () => void;
+  onSave: () => void;
+  saving: boolean;
+  off: boolean;
+  done?: boolean;
+  error?: string;
+  hidden?: boolean;
+}) {
+  const errorId = useId();
+  if (hidden) return null;
   return (
-    <div className="btn-row">
+    <SheetFooter>
+      {error && (
+        <div className="sheet-footer-note" id={errorId}>
+          <Notice level="critical" role="alert">
+            {error}
+          </Notice>
+        </div>
+      )}
       <button type="button" className="btn secondary" onClick={onCancel} disabled={saving}>
         Cancel
       </button>
-      <button type="button" className="btn" onClick={onSave} disabled={saving || off}>
+      <button type="button" className="btn" onClick={onSave} disabled={saving || off} aria-describedby={error ? errorId : undefined}>
         {saving ? 'Saving…' : done ? 'Done' : 'Save'}
       </button>
-    </div>
+    </SheetFooter>
   );
 }
 
@@ -359,6 +387,7 @@ function AccountLevel({
   growth,
   money,
   onBack,
+  hidden,
 }: {
   title: string;
   /** In a bucket; null when it is a child's account left out of the plan. */
@@ -370,6 +399,8 @@ function AccountLevel({
   growth: SheetRates | null;
   money: Money;
   onBack: () => void;
+  /** Under its bucket's level, whose footer shows instead. */
+  hidden: boolean;
 }) {
   const id = (account ?? child)!.account_id;
   const subtype = account ? account.subtype : (child?.subtype ?? null);
@@ -582,12 +613,7 @@ function AccountLevel({
           </li>
         </ul>
       )}
-      {error && (
-        <Notice level="critical" role="alert">
-          {error}
-        </Notice>
-      )}
-      <LevelButtons onCancel={onBack} onSave={() => void save()} saving={saving} off={!!locked && !handsOnly} done={handsOnly} />
+      <LevelButtons error={error} hidden={hidden} onCancel={onBack} onSave={() => void save()} saving={saving} off={!!locked && !handsOnly} done={handsOnly} />
     </div>
   );
 }
@@ -629,12 +655,7 @@ function RothLevel({ owner, sheet, onBack }: { owner: Owner; sheet: BucketSheet;
         {held !== null && !locked && <p className="helper">Empty it and save to clear it.</p>}
       </div>
       {locked && <p className="helper">{locked}</p>}
-      {error && (
-        <Notice level="critical" role="alert">
-          {error}
-        </Notice>
-      )}
-      <LevelButtons onCancel={onBack} onSave={() => void save()} saving={saving} off={!!locked} />
+      <LevelButtons error={error} onCancel={onBack} onSave={() => void save()} saving={saving} off={!!locked} />
     </div>
   );
 }
@@ -658,7 +679,7 @@ export function BucketLevel({ level, today, sheet, money, growth = null }: { lev
       {/* The account's level stays under its bucket's, so what was typed in it is
           there on the way back. */}
       <div hidden={inBucket}>
-        <AccountLevel key={level.account_id} title={title} account={account} child={child} sheet={sheet} growth={growth} money={money} onBack={() => sheet.onLevel(null)} />
+        <AccountLevel key={level.account_id} hidden={inBucket} title={title} account={account} child={child} sheet={sheet} growth={growth} money={money} onBack={() => sheet.onLevel(null)} />
       </div>
       {inBucket && account && (
         <>

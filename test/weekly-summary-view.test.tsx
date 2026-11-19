@@ -30,6 +30,7 @@ const sheet = (over: Partial<Body> = {}) =>
       saving={false}
       saveError={null}
       onSave={noop}
+      onCancel={noop}
       sending={false}
       sendNote={null}
       onSendNow={noop}
@@ -120,8 +121,14 @@ describe('the sheet', () => {
   });
 
   test('saves only a change, and sends only where this copy of Nya can', () => {
-    expect(sheet()).toMatch(/<button disabled="">Save<\/button>/);
-    expect(sheet({ draft: { enabled: true, weekday: 3, time_zone: 'America/New_York' } })).toMatch(/<button>Save<\/button>/);
+    // In the sheet's footer, Cancel first (SheetFooter, drawn in place here).
+    expect(sheet()).toMatch(/<div class="sheet-footer"><button type="button" class="btn secondary">Cancel<\/button><button type="button" class="btn" disabled="">Save<\/button><\/div>/);
+    expect(sheet({ draft: { enabled: true, weekday: 3, time_zone: 'America/New_York' } })).toMatch(/<button type="button" class="btn">Save<\/button>/);
+    // A failed save is said in the footer, beside Save, which it describes.
+    const failed = sheet({ draft: { enabled: true, weekday: 3, time_zone: 'America/New_York' }, saveError: 'It wasn’t saved.' });
+    const note = failed.match(/<div class="sheet-footer"><div class="sheet-footer-note" id="([^"]+)"><div class="notice critical" role="alert">/);
+    expect(note).not.toBeNull();
+    expect(failed).toContain(`aria-describedby="${note![1]}">Save</button>`);
     const cannot = sheet({ canSend: false, whyNot: 'This copy of Nya isn’t set up to send email.' });
     expect(cannot).toMatch(/<button class="secondary" disabled="">Send me one now<\/button>/);
     expect(cannot).toContain('isn’t set up to send email');

@@ -63,7 +63,8 @@ describe('Goals', () => {
     expect(dialog()).not.toBeNull();
     // Saved meanwhile (as the editor's save does), then the sheet closes.
     act(() => setGoals([FUND]));
-    expect(v.button('Add goal', 'btn')).toBeNull();
+    // The empty state's Add goal is gone (the sheet's own Add goal, in its footer, stays while it is open).
+    expect(v.all((e) => e.tagName === 'BUTTON' && e.textContent === 'Add goal' && e.getAttribute('aria-haspopup') === 'dialog').length).toBe(0);
     act(() => click(dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('aria-label') === 'Close')[0]));
     await settle(400);
     expect(dialog()).toBeNull();

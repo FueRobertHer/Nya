@@ -43,6 +43,7 @@ import { Sheet } from './Sheet';
 import { Notice } from './TotalCaveats';
 import { Masked, NO_EXAMPLE, spokenLabel } from './HideAmounts';
 import BudgetSuggestion from './BudgetSuggestion';
+import ActionRows from './ActionRows';
 import { chevron, RIGHT } from './ActivityBar';
 import { NOT_LOADED } from './budget-month-state';
 import type { RolloverChange, Target } from './BudgetsCard';
@@ -331,13 +332,13 @@ export function BudgetSheet({
           )}
         </>
       )}
+      {/* Deleting it, from its actions: last, opening a level that asks. */}
+      {saved !== null && <ActionRows rows={[{ key: 'delete', title: 'Delete budget', sub: 'Asks first.', opens: true, neg: true, onSelect: () => !busy && onLevel('remove') }]} />}
     </>,
     <div className="btn-row">
-      {saved !== null && (
-        <button type="button" className="btn secondary" onClick={() => onLevel('remove')} disabled={busy}>
-          Delete…
-        </button>
-      )}
+      <button type="button" className="btn secondary" onClick={close} disabled={busy}>
+        Cancel
+      </button>
       <button type="button" className="btn" onClick={() => amount !== null && onSave(amount)} disabled={!editable || busy || amount === null}>
         {busy ? 'Saving…' : 'Save'}
       </button>
@@ -463,9 +464,14 @@ export function AddBudgetSheet({
       title="Add budget"
       onClose={close}
       footer={
-        <button type="button" className="btn" onClick={() => target && amount !== null && onAdd(target, amount)} disabled={!editable || busy || !target || amount === null}>
-          {busy ? 'Adding…' : 'Add budget'}
-        </button>
+        <>
+          <button type="button" className="btn secondary" onClick={close} disabled={busy}>
+            Cancel
+          </button>
+          <button type="button" className="btn" onClick={() => target && amount !== null && onAdd(target, amount)} disabled={!editable || busy || !target || amount === null}>
+            {busy ? 'Adding…' : 'Add budget'}
+          </button>
+        </>
       }
     >
       <div className="stack">
