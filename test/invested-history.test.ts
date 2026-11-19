@@ -125,6 +125,34 @@ describe('what counts, by the saved plan’s rules', () => {
     expect(on.body.latest).toMatchObject({ total: 16_650 });
   });
 
+  // Some banks report an HSA as a bank account (lib/balance.ts isDepositoryHsa):
+  // the Plan counts it whatever include cash says, so its progress does too.
+  test('an HSA a bank reports as a bank account counts without include cash, from the page or the directory', async () => {
+    await saved('2026-10-01');
+    await measured('2026-10-01', { brk: 10_000, hsa: 3_000, chk: 2_000, unshown: 500 });
+    await known('unshown', '2026-09-01', 'Old HSA', 'depository', 'hsa');
+    const list = progressAccountsOf([
+      {
+        name: 'Bank',
+        item_id: 'i',
+        error: false,
+        staleAsOf: null,
+        staleAsOfAt: null,
+        missing: 0,
+        accounts: [
+          { account_id: 'brk', name: 'B', type: 'investment', subtype: 'brokerage', balance: 1, currency: 'USD' },
+          { account_id: 'hsa', name: 'H', type: 'depository', subtype: 'hsa', balance: 1, currency: 'USD' },
+          { account_id: 'chk', name: 'C', type: 'depository', subtype: 'checking', balance: 1, currency: 'USD' },
+        ],
+        unshown: [{ account_id: 'unshown', name: 'U', type: 'depository', currency: 'USD' }],
+      },
+    ]);
+    expect(list).toEqual([listedAs('brk'), listedAs('hsa', 'depository', 'USD', 'hsa'), listedAs('chk', 'depository'), acct('unshown', 'depository')]);
+    const { body } = await ask({ accounts: list });
+    expect(body.anchor).toMatchObject({ total: 13_500, counted: 3 });
+    expect(body.accounts.map((a: any) => a.account_id).sort()).toEqual(['brk', 'hsa', 'unshown']);
+  });
+
   test('nothing from before the day it was saved', async () => {
     await saved('2026-10-02');
     await measured('2026-10-01', { brk: 99_999 });

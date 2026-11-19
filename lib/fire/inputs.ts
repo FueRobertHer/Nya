@@ -86,7 +86,7 @@
 import { type Txn } from '@/components/MonthBreakdown';
 import { categoryKey, currencyOf, inCurrency, isExcluded, isHistoryRow, isTransfer, totalsCurrency, transactionCounter, type LeftOut } from '@/lib/spending';
 import type { PlanFunding } from './plan';
-import { isCashOnHand, isInvestmentType } from '@/lib/balance';
+import { isBankCash, isCashOnHand, isDepositoryHsa, isInvestmentType } from '@/lib/balance';
 import { dominantCurrency } from '@/lib/format';
 import { isConnectorKind } from '@/lib/connectors/types';
 import { totalsIn, type Conversion } from '@/lib/fx/totals';
@@ -621,11 +621,15 @@ export type AssetsConversion = {
   unrated: { currency: string; why: NoRate; unrated: string }[];
 };
 
-const holds = (a: AssetAccount, includeCash: boolean) => isInvestmentType(a.type) || (includeCash && a.type === 'depository');
+/** An investment account, a health savings account a bank reports as a bank
+ *  account among them (lib/balance.ts isDepositoryHsa), or with `includeCash`
+ *  checking and savings. */
+const holds = (a: AssetAccount, includeCash: boolean) => isInvestmentType(a.type) || isDepositoryHsa(a) || (includeCash && isBankCash(a));
 
 /**
- * Invested assets: every investment account that is not hidden, plus
- * checking and savings when `includeCash`. Credit and loan balances are not
+ * Invested assets: every investment account that is not hidden (an HSA a
+ * bank reports as a bank account included), plus checking and savings when
+ * `includeCash`. Credit and loan balances are not
  * subtracted: the FI number is about what can be invested and drawn on, not
  * net worth.
  *

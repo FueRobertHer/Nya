@@ -831,6 +831,21 @@ describe('invested assets', () => {
     expect(investedAssets([inst([acct({ balance: 100_000 }), acct({ type: 'depository', balance: 20_000 })])], true).total).toBe(120_000);
   });
 
+  // Some banks report an HSA as a bank account (lib/balance.ts isDepositoryHsa).
+  test('an HSA a bank reports as a bank account counts, once, with or without checking and savings', () => {
+    const hsa = acct({ account_id: 'hsa', type: 'depository', subtype: 'hsa', balance: 8_000 });
+    const checking = acct({ account_id: 'chk', type: 'depository', subtype: 'checking', balance: 2_000 });
+    const without = investedAssets([inst([acct({ balance: 100_000 }), hsa, checking])], false);
+    expect(without.total).toBe(108_000);
+    expect(without.accounts.map((a) => a.account_id)).toContain('hsa');
+    const withCash = investedAssets([inst([acct({ balance: 100_000 }), hsa, checking])], true);
+    expect(withCash.total).toBe(110_000);
+    expect(withCash.accounts.filter((a) => a.account_id === 'hsa')).toHaveLength(1);
+    // Its subtype in any case; hidden, it is out.
+    expect(investedAssets([inst([acct({ type: 'depository', subtype: 'HSA', balance: 500 })])], false).total).toBe(500);
+    expect(investedAssets([inst([acct({ type: 'depository', subtype: 'hsa', balance: 500, hidden: true })])], false).total).toBeNull();
+  });
+
   test('an account without a balance is counted as unknown, not as zero', () => {
     const r = investedAssets([inst([acct({ balance: null }), acct({ balance: 5 })])], false);
     expect(r.total).toBe(5);
