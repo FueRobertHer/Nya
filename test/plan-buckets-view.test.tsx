@@ -1175,6 +1175,10 @@ describe('the rows asked for', () => {
 
 describe('each taxable account’s dividends', () => {
   const DETAILED = { ...DEFAULT_TAX_FACTS, model: 'detailed' as const };
+  // Each render works out the tax, year by year: well within 5s here, but CI's
+  // runner has taken over 5s for one of these (test/plan-detail-forms-view.test.tsx
+  // gives its tests the same room).
+  const SLOW = 30_000;
   const yieldField = (tab: Tab) => field(tab.dialog()!, 'Dividends and interest (% a year)');
   const ABOUT = 'Part of its growth, not on top of it: after you stop, it’s paid out and taxed each year, and the rest grows. A dividend its institution reports only as reinvested isn’t counted.';
   /** Opens an account, types its dividends, and hands them to the sheet. */
@@ -1210,7 +1214,7 @@ describe('each taxable account’s dividends', () => {
     await press(buttonShown(tab.dialog()!, 'Save'));
     expect(server.saved()[1].accounts).toBeUndefined();
     await tab.unmount();
-  });
+  }, SLOW);
 
   test('its own beside its own growth; out of range is refused under the field; Cancel drops both', async () => {
     const server = serve({ tax: DETAILED, plan: { ...PLAN, accounts: [{ account_id: 'brk', growth: 0.07, yield: null }] } });
@@ -1232,7 +1236,7 @@ describe('each taxable account’s dividends', () => {
     await openRow(tab, 'Brokerage');
     expect(yieldField(tab)!.value).toBe('1.5');
     await tab.unmount();
-  });
+  }, SLOW);
 
   test('a yield typed in Assumptions is what empty is', async () => {
     serve({ tax: DETAILED, choices: { ...DEFAULT_TAX_CHOICES, taxableYield: 0.015 } });
@@ -1242,7 +1246,7 @@ describe('each taxable account’s dividends', () => {
     expect(yieldField(tab)!.getAttribute('placeholder')).toBe('1.5%');
     expect(tab.shown()).toContain(`Empty is the plan’s 1.5%, set in Assumptions. ${ABOUT}`);
     await tab.unmount();
-  });
+  }, SLOW);
 
   test('without tax worked out, or with your own figure, what it paid is said and there is nothing to set', async () => {
     for (const plan of [PLAN, { ...PLAN, assets: 200_000 }]) {
@@ -1254,7 +1258,7 @@ describe('each taxable account’s dividends', () => {
       expect(tab.shown()).toContain('From the last year’s activity.');
       await tab.unmount();
     }
-  });
+  }, SLOW);
 
   test('hide amounts masks what it paid, never a rate', async () => {
     serve({ tax: DETAILED });
@@ -1271,7 +1275,7 @@ describe('each taxable account’s dividends', () => {
     } finally {
       setAmountsHidden(false);
     }
-  });
+  }, SLOW);
 
   test('Assumptions, with tax worked out: the buckets drift apart, and an account’s own dividends come first', async () => {
     serve({ tax: DETAILED, plan: { ...PLAN, accounts: [{ account_id: 'brk', growth: 0.07, yield: null }] } });
@@ -1283,7 +1287,7 @@ describe('each taxable account’s dividends', () => {
     );
     expect(tab.shown()).toContain('Empty is what your accounts paid over the last year. An account’s own, set in Invested assets, comes first.');
     await tab.unmount();
-  });
+  }, SLOW);
 
   test('dividends of its own count toward what a plan keeps: one more is refused under its field', async () => {
     const many = Array.from({ length: 50 }, (_, i) => acct(`a${String(i).padStart(2, '0')}`, `Fund ${i}`, '401k', 10_000));
@@ -1296,7 +1300,7 @@ describe('each taxable account’s dividends', () => {
     expect(tab.shown()).toContain('A plan keeps its own growth or dividends for 50 accounts at most: set one of them back to the plan’s first.');
     expect(yieldField(tab)!.getAttribute('aria-invalid')).toBe('true');
     await tab.unmount();
-  });
+  }, SLOW);
 });
 
 describe('detailed tax saved, in another currency', () => {
