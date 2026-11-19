@@ -26,6 +26,8 @@ import { Why } from './Why';
 import { isChildAccount } from '@/lib/fire/child-accounts';
 import { MAX_FACT_AMOUNT, type Owner, type TaxFactOp, type TaxFacts } from '@/lib/fire/tax-facts';
 import { LIMITS, pctText } from '@/lib/fire/plan';
+import type { OwnRates } from '@/lib/fire/account-growth';
+import { paidOf } from '@/lib/fire/bucket-growth';
 import { pct } from './plan-text';
 import { normalizedAmountText } from '@/lib/manual-txn-input';
 import type { BucketAccount, BucketsToday } from '@/lib/fire/buckets-today';
@@ -69,23 +71,28 @@ export type BucketSheet = {
   bucketsEditable: boolean;
 };
 
-/** Each account's own growth after inflation, as the Invested assets sheet holds
- *  it until its Save. */
+/** Each account's own growth after inflation and dividends, as the Invested
+ *  assets sheet holds them until its Save. */
 export type SheetRates = {
   /** The plan's own rate, which an account without one grows at. */
   plan: number;
   /** Each account's own, by id. */
-  rates: ReadonlyMap<string, number>;
-  /** Hands an account's own (null: the plan's) to the sheet. */
-  set: (account_id: string, growth: number | null) => void;
+  rates: ReadonlyMap<string, OwnRates>;
+  /** Hands an account's own (a null: the plan's) to the sheet. */
+  set: (account_id: string, own: OwnRates) => void;
+  /** Where a taxable account's dividends count (with tax worked out), what one
+   *  without its own pays: the yield typed in Assumptions (null: none typed),
+   *  else what it paid, else what the accounts paid together (null: none
+   *  measured). Null where they don't count. */
+  dividends: { typed: number | null; together: number | null } | null;
   /** The sheet's figure is your own: no account grows at a rate of its own. */
   typed: boolean;
   /** The sheet can't save, so nothing is handed to it. */
   off: boolean;
   /** Why it can't, when there is more to say than a moment's save. */
   why: string | null;
-  /** The accounts listed with their own growth fill what a plan keeps
-   *  (LIMITS.accountRates): another can't be given one. */
+  /** The accounts listed with their own rates fill what a plan keeps
+   *  (LIMITS.accountRates): another can't be given any. */
   full: boolean;
   /** A copy is open: its rates are its own, its facts every plan's. */
   copy: boolean;
@@ -136,7 +143,7 @@ function RothRow({ row, sheet, money }: { row: BucketsToday['roth'][number]; she
 }
 
 /** Invested assets' accounts by bucket. */
-export function BucketGroups({ today, sheet, mix, money, rates = null }: { today: BucketsToday; sheet: BucketSheet; mix: string | null; money: Money; /** Each account's own growth, said on its row; null when none applies. */ rates?: ReadonlyMap<string, number> | null }) {
+export function BucketGroups({ today, sheet, mix, money, rates = null }: { today: BucketsToday; sheet: BucketSheet; mix: string | null; money: Money; /** Each account's own growth, said on its row; null when none applies. */ rates?: ReadonlyMap<string, OwnRates> | null }) {
   const names = namesOf(today);
   const openAccount = (a: { account_id: string; name: string; institution: string }) => sheet.onLevel({ kind: 'account', account_id: a.account_id, title: rowTitle(a, names) });
   // No Roth group to sit in, and the amounts typed still need a way to be changed
@@ -158,7 +165,7 @@ export function BucketGroups({ today, sheet, mix, money, rates = null }: { today
           {sheet.detail && g.bucket === 'hsa' && <p className="helper">{HSA_WORDS}</p>}
           <ul className="list-rows">
             {g.accounts.map((a) => (
-              <AccountRow key={a.account_id} title={rowTitle(a, names)} sub={[accountSub(a, money, sheet.partner), growsWords(rates?.get(a.account_id))].filter(Boolean).join(' · ')} value={money(a.value)} onOpen={() => openAccount(a)} />
+              <AccountRow key={a.account_id} title={rowTitle(a, names)} sub={[accountSub(a, money, sheet.partner), growsWords(rates?.get(a.account_id)?.growth ?? undefined)].filter(Boolean).join(' · ')} value={money(a.value)} onOpen={() => openAccount(a)} />
             ))}
             {g.bucket === 'roth' && today.roth.map((r) => <RothRow key={r.owner} row={r} sheet={sheet} money={money} />)}
           </ul>
@@ -264,10 +271,39 @@ function readGrowth(text: string): { rate: number } | { problem: string } {
   return { rate: Number((n * 0.01).toFixed(6)) };
 }
 
-/** An account's facts, and its growth in the plan: a level of the drawer. Its
- *  facts save at once, and only when they changed; its growth goes to the sheet
- *  (`growth`), which keeps it on Save. Cancel leaves everything as it was, and a
- *  failed save stays open and says why. */
+/** Its dividends as typed: empty is what an account without its own pays
+ *  (null), or what is wrong. */
+function readYield(text: string): { rate: number | null } | { problem: string } {
+  const t = text.trim();
+  if (t === '') return { rate: null };
+  const n = Number(t);
+  const [min, max] = LIMITS.accountYield;
+  if (!Number.isFinite(n) || n * 0.01 < min - 1e-12 || n * 0.01 > max + 1e-12) return { problem: `Its dividends and interest must be from ${pct(min)} to ${pct(max)}.` };
+  return { rate: Number((n * 0.01).toFixed(6)) };
+}
+
+/** What a taxable account's dividends are with the field empty: the start of
+ *  the field's helper, and what it paid where that is what empty is (drawn
+ *  after the words, through <Masked>). */
+function yieldDefault(account: BucketAccount, d: { typed: number | null; together: number | null }, reading: boolean): { words: string; paid: number | null } {
+  if (d.typed !== null) return { words: `Empty is the plan’s ${pct(d.typed)}, set in Assumptions.`, paid: null };
+  if (paidOf(account) !== null) return { words: 'Empty is what it paid over the last year, ', paid: account.income };
+  if (reading && account.income === null) return { words: STILL_READING, paid: null };
+  if (d.together !== null) return { words: `Empty is what your accounts paid together over the last year, ${pct(d.together, 1)}.`, paid: null };
+  return { words: 'Empty counts none: nothing over the last year says what it pays.', paid: null };
+}
+
+/** The field's placeholder: what empty is, as a rate. */
+function yieldPlaceholder(account: BucketAccount, d: { typed: number | null; together: number | null }): string {
+  if (d.typed !== null) return pct(d.typed);
+  const r = paidOf(account) ?? d.together;
+  return r === null ? 'None measured' : pct(r, 1);
+}
+
+/** An account's facts, and its growth and dividends in the plan: a level of the
+ *  drawer. Its facts save at once, and only when they changed; its rates go to
+ *  the sheet (`growth`), which keeps them on Save. Cancel leaves everything as
+ *  it was, and a failed save stays open and says why. */
 function AccountLevel({
   title,
   account,
@@ -312,11 +348,14 @@ function AccountLevel({
     setWrong('');
     setError('');
   }
-  const ownHeld = growth?.rates.get(id);
-  const [own, setOwn] = useState(ownHeld !== undefined);
-  const [rateText, setRateText] = useState(growth ? pctText(ownHeld ?? growth.plan) : '');
+  const held = growth?.rates.get(id);
+  const [own, setOwn] = useState(held?.growth != null);
+  const [rateText, setRateText] = useState(growth ? pctText(held?.growth ?? growth.plan) : '');
   const [rateWrong, setRateWrong] = useState('');
   const rateId = useId();
+  const [yieldText, setYieldText] = useState(held?.yield != null ? pctText(held.yield) : '');
+  const [yieldWrong, setYieldWrong] = useState('');
+  const yieldId = useId();
   // A child's account left out isn't in the plan, so it grows at nothing; with your
   // own figure, everything grows at the plan's rate.
   const rates = account && growth && !growth.typed ? growth : null;
@@ -324,15 +363,26 @@ function AccountLevel({
   // Its facts can't change here, but its growth can: the button hands it over.
   const handsOnly = !!locked && settable;
   const showsBasis = account?.bucket === 'taxable' && account.basisFrom !== 'cash';
+  // Its own dividends, where they count: with tax worked out.
+  const dividends = showsBasis && rates ? rates.dividends : null;
+  const ratesWord = dividends ? 'Its growth and dividends' : 'Its growth';
+  const empty = account && dividends ? yieldDefault(account, dividends, sheet.reading) : null;
   // A partner since removed: the choice stays, to take the account back.
   const showsWhose = !!account && (sheet.partner || heldOwner === 'partner');
   const showsCount = isChildAccount(subtype);
   const save = async () => {
     const read = !locked && showsBasis ? readAmount(basis, 'Cost basis') : { amount: typed };
-    const rate = !settable || !own ? { rate: null } : rates.full && !rates.rates.has(id) ? { problem: `A plan keeps its own growth for ${LIMITS.accountRates} accounts at most: set one of them back to the plan’s first.` } : readGrowth(rateText);
+    const rate = !settable || !own ? { rate: null } : readGrowth(rateText);
+    // Where its dividends don't count, what it had is kept.
+    const pays = !settable || !dividends ? { rate: held?.yield ?? null } : readYield(yieldText);
+    // A plan keeps so many accounts' own rates: one more is refused, under the
+    // field that would add it.
+    const adds = settable && rates.full && !rates.rates.has(id) && (('rate' in rate && rate.rate !== null) || ('rate' in pays && pays.rate !== null));
+    const full = `A plan keeps its own growth or dividends for ${LIMITS.accountRates} accounts at most: set one of them back to the plan’s first.`;
     setWrong('problem' in read ? read.problem : '');
-    setRateWrong('problem' in rate ? rate.problem : '');
-    if ('problem' in read || 'problem' in rate) return;
+    setRateWrong('problem' in rate ? rate.problem : adds && own ? full : '');
+    setYieldWrong('problem' in pays ? pays.problem : adds && !own ? full : '');
+    if ('problem' in read || 'problem' in rate || 'problem' in pays || adds) return;
     setError('');
     if (!locked && (owner !== heldOwner || read.amount !== typed || counted !== heldCount)) {
       setSaving(true);
@@ -343,7 +393,7 @@ function AccountLevel({
         return;
       }
     }
-    if (settable) rates.set(id, rate.rate);
+    if (settable) rates.set(id, { growth: rate.rate, yield: pays.rate });
     onBack();
   };
   const value = account ? account.value : (child?.value ?? null);
@@ -393,7 +443,7 @@ function AccountLevel({
           <p className="helper">{basisNote(account)}</p>
         </div>
       )}
-      {locked && <p className="helper">{rates?.copy ? `${locked} Its growth is this copy’s own.` : settable ? `${locked} Its growth in this plan can still be changed.` : locked}</p>}
+      {locked && <p className="helper">{rates?.copy ? `${locked} ${ratesWord} ${dividends ? 'are' : 'is'} this copy’s own.` : settable ? `${locked} ${ratesWord} in this plan can still be changed.` : locked}</p>}
       {account && growth && (
         <div className="stack tight">
           <h3 className="section-label">Growth after inflation</h3>
@@ -426,7 +476,25 @@ function AccountLevel({
           )}
         </div>
       )}
-      {account?.bucket === 'taxable' && account.basisFrom !== 'cash' && (
+      {account && dividends && rates && empty && (
+        <div className="stack tight">
+          <label className="field">
+            Dividends and interest (% a year)
+            <input type="number" inputMode="decimal" data-percent step="0.1" placeholder={yieldPlaceholder(account, dividends)} value={yieldText} onChange={(e) => setYieldText(e.target.value)} disabled={saving || rates.off} aria-invalid={yieldWrong ? true : undefined} aria-describedby={yieldWrong ? yieldId : undefined} />
+          </label>
+          {yieldWrong && <FieldError id={yieldId}>{yieldWrong}</FieldError>}
+          <p className="helper">
+            {empty.words}
+            {empty.paid !== null && (
+              <>
+                <Masked>{money(empty.paid)}</Masked>.
+              </>
+            )}{' '}
+            Part of its growth, not on top of it: after you stop, it&rsquo;s paid out and taxed each year, and the rest grows. A dividend its institution reports only as reinvested isn&rsquo;t counted.
+          </p>
+        </div>
+      )}
+      {account?.bucket === 'taxable' && account.basisFrom !== 'cash' && !dividends && (
         <div className="stack tight">
           <dl className="txn-detail">
             <div className="txn-detail-row">

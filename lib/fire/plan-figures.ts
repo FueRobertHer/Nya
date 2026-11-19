@@ -210,7 +210,7 @@ function build(plan: FirePlanV2, measured: Measured, ages: readonly ItemAges[], 
   // The balance at the stop is the walk's whenever it changes, with an FI
   // number or without one (the path, lib/fire/path.ts, is the same walk).
   const from = projectFrom(plan, core);
-  if (detailed && from !== null) walk = detailed.taxWalk(plan, walk, from, core.growth);
+  if (detailed && from !== null) walk = detailed.taxWalk(plan, walk, from, core);
   const walkAtStop = from !== null && hasWalk(walk) ? walkBalanceAt(from.assets, from.savings, core.growth, walk, from.years) : null;
   const atStop = walkAtStop === null ? core.atTargetAge : 'balance' in walkAtStop ? walkAtStop.balance : null;
   // Built from retirement spending; the items' parts of the simulation added.

@@ -46,7 +46,7 @@ import { onAcaThisYear, type Coverage, type HealthStatus } from './tax/health';
 import type { Filing, StateCode, TaxLaw } from './tax/law/types';
 import { peopleOf, type MixSlot } from './tax/mix';
 import { NO_STRATEGY, defaultUntil, yearRule, type Strategy } from './tax/rules';
-import { checkYearInput, newPersonYear, newYearResult, runYear, runYearFilling, splitConversion, type Drawn, type YearInput, type YearResult } from './tax/year';
+import { checkYearInput, newPersonYear, newYearResult, runYear, runYearFilling, splitConversion, type Drawn, type YearGrowth, type YearInput, type YearResult } from './tax/year';
 
 /** The share of a taxable yield that is qualified dividends: a broad stock fund's,
  *  about. Said in About these numbers. */
@@ -87,6 +87,9 @@ export type DrawdownInput = {
   /** The plan's rule at a rate (lib/fire/plan.ts ruleSpec). */
   rule: (rate: number) => RuleSpec;
   realReturn: number;
+  /** Each bucket's own growth, where the plan's accounts grow apart
+   *  (lib/fire/bucket-growth.ts); one not said grows at `realReturn`. */
+  bucketGrowth?: Partial<YearGrowth> | null;
   inflation: number;
   taxableYield: number;
   oneOffs: readonly OneOffExpense[];
@@ -285,6 +288,10 @@ function runYears(inp: DrawdownInput, rule: RuleSpec, t: number, h: number): Run
   const strategy = inp.strategy ?? NO_STRATEGY;
   const until = strategy.convertUntil ?? defaultUntil(inp.rmdAges, { age: today.age, partnerAge: joint ? today.partnerAge : null });
   const aca = { on: 0, withCredit: 0 };
+  const apart = inp.bucketGrowth;
+  const bucketGrowth: YearGrowth | null = apart
+    ? { taxable: apart.taxable ?? realReturn, deferred: apart.deferred ?? realReturn, deferred457: apart.deferred457 ?? realReturn, roth: apart.roth ?? realReturn, hsa: apart.hsa ?? realReturn }
+    : null;
 
   for (let y = 0; y < years; y++) {
     const age = startAge + y;
@@ -368,6 +375,7 @@ function runYears(inp: DrawdownInput, rule: RuleSpec, t: number, h: number): Run
       ceiling: null,
       order: strategy.order,
       growth: realReturn,
+      ...(bucketGrowth ? { bucketGrowth } : {}),
       inflation,
     };
     const asked = yearRule(strategy, until, age, input, law);

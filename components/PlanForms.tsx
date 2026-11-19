@@ -17,7 +17,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { plainNumber } from '@/lib/format';
 import { allocationOf, asText, LIMITS, PLAN_TO_AGE, pctText, stopOf, type AccountRate, type FiView, type FirePlan, type PlanCore, type PlanFunding } from '@/lib/fire/plan';
-import { planGrowth, withGrowth } from '@/lib/fire/account-growth';
+import { planGrowth, ratesOf, withRates, type OwnRates } from '@/lib/fire/account-growth';
+import { measuredYield } from './plan-detailed';
 import type { PathAfter } from '@/lib/fire/path';
 import { LASTS_IN_CHOICES, parsePlanV2, type FirePlanV2 } from '@/lib/fire/plan-v2';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
@@ -29,7 +30,7 @@ import { STATE_CODES, type Filing, type StateCode, type Statute } from '@/lib/fi
 import { FILING_NAMES, fiLines, fiYearly, householdNotes, lawLabel, sharesNote, STATE_NAMES } from './plan-drawdown';
 import { MoneyLines } from './PlanDrawdown';
 import type { FiShares } from '@/lib/fire/plan-figures';
-import { METHOD_NAMES, RULE_NAMES, ruleText, pct, saidAbove, saidRate, wholeMoney } from './plan-text';
+import { METHOD_NAMES, RULE_NAMES, apartWords, ruleText, pct, saidAbove, saidRate, wholeMoney } from './plan-text';
 import { BLOCK_MONTHS, DEFAULT_RUNS, DEFAULT_SEED } from '@/lib/fire/simulate';
 import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
 import { Masked, NO_EXAMPLE, spokenLabel } from './HideAmounts';
@@ -692,10 +693,8 @@ const CHILD_ACCOUNTS_NOTE = ' Accounts for a child’s education are left out un
 
 type CountedAccount = { account_id: string; name: string; institution: string; balance: number; currency?: string | null; /** What it adds to the total. */ value: number };
 
-/** Each account's own growth in a plan, by id. */
-const ownGrowth = (accounts: readonly AccountRate[] | undefined) => new Map((accounts ?? []).flatMap((x) => (x.growth === null ? [] : [[x.account_id, x.growth] as const])));
-
-const sameRates = (a: ReadonlyMap<string, number>, b: ReadonlyMap<string, number>) => a.size === b.size && [...a].every(([id, r]) => b.get(id) === r);
+/** Whether two sheets' accounts' own rates come to the same list. */
+const sameRates = (a: ReadonlyMap<string, OwnRates>, b: ReadonlyMap<string, OwnRates>) => JSON.stringify(withRates(a, new Set(), Infinity) ?? []) === JSON.stringify(withRates(b, new Set(), Infinity) ?? []);
 
 const SAVINGS_BUCKETS: readonly SavingsBucket[] = ['taxable', 'tax-deferred', 'roth', 'hsa'];
 
@@ -782,29 +781,31 @@ export function FigureForm(
   const today = kind === 'assets' && sheet ? sheet.bucketsFor(includeCash) : null;
   const level = (kind === 'assets' && sheet?.level) || null;
   const money = (n: number) => wholeMoney(n, props.currency);
-  // Each account's own growth, as its level hands it over: kept by Save, with
-  // the rest of the sheet, and by nothing else.
+  // Each account's own growth and dividends, as its level hands them over: kept
+  // by Save, with the rest of the sheet, and by nothing else.
   const planRate = plan.realReturn;
-  const [rates, setRates] = useState<ReadonlyMap<string, number>>(() => ownGrowth(plan.accounts));
-  const ratesMoved = kind === 'assets' && !sameRates(rates, ownGrowth(plan.accounts));
+  const [rates, setRates] = useState<ReadonlyMap<string, OwnRates>>(() => ratesOf(plan.accounts));
+  const ratesMoved = kind === 'assets' && !sameRates(rates, ratesOf(plan.accounts));
   const listed = new Set(live ? live.accounts.map((a) => a.account_id) : []);
-  const accountsNow = () => withGrowth(plan.accounts, rates, listed, LIMITS.accountRates);
+  const accountsNow = () => withRates(rates, listed, LIMITS.accountRates);
   const growth: SheetRates | null =
     kind === 'assets'
       ? {
           plan: planRate,
           rates,
-          set: (id, rate) =>
+          set: (id, own) =>
             setRates((m) => {
               const next = new Map(m);
-              if (rate === null) next.delete(id);
-              else next.set(id, rate);
+              if (own.growth === null && own.yield === null) next.delete(id);
+              else next.set(id, own);
               return next;
             }),
+          // A taxable account's dividends count only with tax worked out.
+          dividends: props.detail ? { typed: props.detail.choices.taxableYield, together: today ? measuredYield(today) : null } : null,
           typed: mode === 'typed',
           off: s.disabled,
           why: props.paused ?? null,
-          full: [...rates.keys()].filter((id) => listed.has(id)).length >= LIMITS.accountRates,
+          full: [...rates].filter(([id, r]) => listed.has(id) && (r.growth !== null || r.yield !== null)).length >= LIMITS.accountRates,
           copy: !!props.copy,
         }
       : null;
@@ -994,7 +995,7 @@ export function FigureForm(
         alsoIn={s.alsoIn}
         onAlso={s.setAlsoIn}
         paused={props.paused}
-        extra={ratesMoved ? <p className="helper">An account&rsquo;s growth is kept when you save. Cancel or close this, and what you set is dropped.</p> : null}
+        extra={ratesMoved ? <p className="helper">{props.detail ? 'An account’s growth and dividends are' : 'An account’s growth is'} kept when you save. Cancel or close this, and what you set is dropped.</p> : null}
         onDone={props.onDone}
         disabled={s.disabled}
         saving={s.saving}
@@ -1265,7 +1266,7 @@ export function AssumptionsForm(
         <p className="helper">
           {plan.assets !== null
             ? 'The plan’s rate: your own figure for invested assets grows at it.'
-            : `The plan’s rate: every account grows at it unless you give one its own in Invested assets.${together && together.own > 0 ? ` With ${together.own === 1 ? '1 account at its own' : `${together.own} at their own`}, yours grow ${pct(together.growth)} a year together.` : ''}`}
+            : `The plan’s rate: every account grows at it unless you give one its own in Invested assets.${together && together.own > 0 ? ` With ${together.own === 1 ? '1 account at its own' : `${together.own} at their own`}, yours grow ${pct(together.growth)} a year together${detail ? `. On Drawdown, ${apartWords(together.growth)}` : ''}.` : ''}`}
         </p>
         <p className="helper">{detail ? 'For years to FI, Coast FI, the balance at your stop age and the steady years on Drawdown, which your FI number’s tax and health coverage come from. Will it last? uses market history for its returns, and works out each year’s tax and health coverage on them.' : 'Only for the years until FI: years to FI, Coast FI and the balance at your stop age. Will it last? uses market history for its returns.'}</p>
         {!taxWorked && (
@@ -1359,7 +1360,7 @@ export function AssumptionsForm(
               <input type="number" inputMode="decimal" data-percent step="0.1" value={taxableYield} onChange={(e) => setTaxableYield(e.target.value)} placeholder={props.measuredYield != null ? pct(props.measuredYield, 1) : 'None measured'} {...s.field('The taxable yield')} disabled={s.saving} />
             </label>
             {s.under('The taxable yield')}
-            <p className="helper">{props.measuredYield != null ? 'Empty is what your accounts paid over the last year.' : 'Empty counts none: nothing over the last year says what they pay, so taxes on it are left out.'}</p>
+            <p className="helper">{props.measuredYield != null ? 'Empty is what your accounts paid over the last year.' : 'Empty counts none: nothing over the last year says what they pay, so taxes on it are left out.'}{plan.assets === null && ' An account’s own, set in Invested assets, comes first.'}</p>
           </>
         )}
         <label className="field">
