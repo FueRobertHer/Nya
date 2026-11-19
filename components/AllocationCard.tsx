@@ -32,6 +32,7 @@ import { CopyTag } from './CopyTag';
 import { Choice } from './PlanForms';
 import { axisDay, dayLabel, dayName, wholeMoney } from './plan-text';
 import { keysHelp, useChartKeys } from './chart-keys';
+import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
 import {
   BUCKET_COLORS,
   CLASS_COLORS,
@@ -1359,9 +1360,10 @@ export function HistoryBody({
   );
 }
 
-const W = 340;
-const H = 132;
-const PAD_LEFT = 34;
+// Drawn at its own width (components/drawn-width.ts), in the shape it had
+// on its fixed 340 by 132 viewBox.
+const ASPECT = 132 / FALLBACK_WIDTH;
+const PAD_LEFT = 36;
 const PAD_RIGHT = 8;
 const PAD_TOP = 8;
 const PAD_BOTTOM = 26;
@@ -1410,7 +1412,8 @@ export function AllocationHistoryChart({
   answer: Pick<HistoryAnswer, 'accounts'>;
   nameOf: (id: string) => string;
 }) {
-  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [drawnRef, W] = useDrawnWidth<SVGSVGElement>();
+  const H = Math.round(W * ASPECT);
   const [active, setActive] = useState<number | null>(null);
   const keys = useChartKeys({
     count: days.length,
@@ -1435,11 +1438,9 @@ export function AllocationHistoryChart({
   const present = SLOTS.filter((s) => days.some((d) => (d.classes[s] ?? 0) > 0 && isMoney(d.classes[s] ?? 0)));
   const marked = days.some((d) => d.missing.length > 0);
 
-  function scrub(clientX: number) {
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const px = ((clientX - rect.left) / rect.width) * W;
+  function scrub(e: React.PointerEvent<SVGSVGElement>) {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px = ((e.clientX - rect.left) / rect.width) * W;
     let best = 0;
     for (let k = 1; k < xs.length; k++) if (Math.abs(xs[k] + width / 2 - px) < Math.abs(xs[best] + width / 2 - px)) best = k;
     setActive(best);
@@ -1458,16 +1459,16 @@ export function AllocationHistoryChart({
         </span>
       </div>
       <svg
-        ref={svgRef}
-        className="chart-svg"
+        ref={drawnRef}
+        className="chart-svg at-width"
         viewBox={`0 0 ${W} ${H}`}
         role="slider"
         {...keys.slider}
         aria-label={`Your mix on each of ${days.length} recorded days, from ${dayName(days[0].date)} to ${dayName(days[days.length - 1].date)}. On the last: ${dayMixText(days[days.length - 1])}${
           days[days.length - 1].missing.length ? `, leaving out ${missingOn(days[days.length - 1], answer, nameOf)}` : ''
         }.`}
-        onPointerMove={(e) => scrub(e.clientX)}
-        onPointerDown={(e) => scrub(e.clientX)}
+        onPointerMove={scrub}
+        onPointerDown={scrub}
         onPointerLeave={() => setActive(null)}
       >
         {[0, 0.5, 1].map((t) => (
