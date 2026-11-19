@@ -172,12 +172,23 @@ describe('an item in words', () => {
     expect(itemTitle(mk('h', 'home', at(45), { once: 1 }), { partnerAge: 38 })).toBe('h');
   });
 
-  test('amounts and their lines', () => {
-    expect(itemAmount(mk('s', 'spending', at(42), { yearly: -3_000 }))).toEqual({ amount: 3_000, line: 'less a year' });
-    expect(itemAmount(mk('p', 'pay', at(42), { yearly: 5_000 }))).toEqual({ amount: 5_000, line: 'more a year' });
-    expect(itemAmount(mk('car', 'car', at(42), { once: 30_000, every: 8, times: 4 }))).toEqual({ amount: 30_000, line: 'each' });
-    expect(itemAmount(mk('h', 'home', at(45), { once: 100_000, yearly: -6_000 }))).toEqual({ amount: 100_000, line: 'once' });
-    expect(itemAmount(mk('ss', 'social-security', at(67), { yearly: 18_000 }))).toEqual({ amount: 18_000, line: 'a year' });
+  test('amounts and their lines say which way the money goes', () => {
+    // Money in.
+    expect(itemAmount(mk('ss', 'social-security', at(67), { yearly: 18_000 }))).toEqual({ amount: 18_000, line: 'comes in a year' });
+    expect(itemAmount(mk('pt', 'part-time', on('stop', 0), { yearly: 30_000 }))).toEqual({ amount: 30_000, line: 'comes in a year' });
+    expect(itemAmount(mk('w', 'windfall', at(50), { once: 50_000 }))).toEqual({ amount: 50_000, line: 'comes in once' });
+    // Money out: a child no longer reads like income.
+    expect(itemAmount(mk('kid', 'child', at(38), { yearly: 9_000 }))).toEqual({ amount: 9_000, line: 'spent a year' });
+    expect(itemAmount(mk('roof', 'one-off', at(50), { once: 12_000 }))).toEqual({ amount: 12_000, line: 'spent once' });
+    expect(itemAmount(mk('car', 'car', at(42), { once: 30_000, every: 8, times: 4 }))).toEqual({ amount: 30_000, line: 'spent each time' });
+    expect(itemAmount(mk('h', 'home', at(45), { once: 100_000, yearly: -6_000 }))).toEqual({ amount: 100_000, line: 'spent once' });
+    expect(itemAmount(mk('h', 'home', at(45), { once: 0, yearly: 6_000 }))).toEqual({ amount: 6_000, line: 'more spent a year' });
+    // Changes: spending and pay each say which.
+    expect(itemAmount(mk('s', 'spending', at(42), { yearly: 5_000 }))).toEqual({ amount: 5_000, line: 'more spent a year' });
+    expect(itemAmount(mk('s', 'spending', at(42), { yearly: -3_000 }))).toEqual({ amount: 3_000, line: 'less spent a year' });
+    expect(itemAmount(mk('loan', 'loan-end', at(42), { yearly: 4_800 }))).toEqual({ amount: 4_800, line: 'less spent a year' });
+    expect(itemAmount(mk('p', 'pay', at(42), { yearly: 5_000 }))).toEqual({ amount: 5_000, line: 'more pay a year' });
+    expect(itemAmount(mk('p', 'pay', at(42), { yearly: -10_000 }))).toEqual({ amount: 10_000, line: 'less pay a year' });
   });
 
   test('a row’s sub: an offset, the end, before tax, and counts in your FI date', () => {
@@ -189,11 +200,11 @@ describe('an item in words', () => {
   });
 
   test('a sentence for every kind', () => {
-    expect(itemSentence(mk('ss', 'social-security', at(67), { yearly: 18_000, owner: 'partner', beforeTax: true }), plan, money)).toBe('$18,000 a year, at your partner’s 67, for good, before tax');
-    expect(itemSentence(mk('pen', 'pension', on('stop', 5), { yearly: 12_000, inflationAdjusted: false }), plan, money)).toBe('$12,000 a year, 5 years after you stop, for good, fixed');
+    expect(itemSentence(mk('ss', 'social-security', at(67), { yearly: 18_000, owner: 'partner', beforeTax: true }), plan, money)).toBe('$18,000 comes in a year, at your partner’s 67, for good, before tax');
+    expect(itemSentence(mk('pen', 'pension', on('stop', 5), { yearly: 12_000, inflationAdjusted: false }), plan, money)).toBe('$12,000 comes in a year, 5 years after you stop, for good, fixed');
     expect(itemSentence(mk('h', 'home', at(45), { once: 100_000, yearly: -6_000 }), plan, money)).toBe('$100,000 from your investments, then spending $6,000 a year less, at 45, for good');
-    expect(itemSentence(mk('car', 'car', on('fi', -1), { once: 40_000, every: 8, times: 3 }), plan, money)).toBe('$40,000 each, 1 year before FI, every 8 years, 3 times');
-    expect(itemSentence(mk('roof', 'one-off', on('stop', 2), { once: 30_000 }), plan, money)).toBe('$30,000, 2 years after you stop');
+    expect(itemSentence(mk('car', 'car', on('fi', -1), { once: 40_000, every: 8, times: 3 }), plan, money)).toBe('$40,000 spent each time, 1 year before FI, every 8 years, 3 times');
+    expect(itemSentence(mk('roof', 'one-off', on('stop', 2), { once: 30_000 }), plan, money)).toBe('$30,000 spent once, 2 years after you stop');
   });
 });
 

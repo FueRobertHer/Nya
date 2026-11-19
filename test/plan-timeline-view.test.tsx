@@ -84,11 +84,11 @@ describe('its points and rows', () => {
     expect(t).toContain('Social Security, you');
     expect(t).toContain('Her pension, your partner');
     // A cost has no owner to name.
-    expect(t).toContain('Roof Counts in your FI date $30,000 once');
+    expect(t).toContain('Roof Counts in your FI date $30,000 spent once');
     expect(html.match(/class="list-row"/g)?.length).toBe(6);
     expect(html.match(/<svg/g)?.length).toBe(6);
     // At 67 it starts long after FI, so it moves nothing there.
-    expect(text(card({ ...PLAN, items: [SOCIAL] }))).toContain('Social Security For good $24,000 a year');
+    expect(text(card({ ...PLAN, items: [SOCIAL] }))).toContain('Social Security For good $24,000 comes in a year');
     expect(text(card({ ...PLAN, items: [SOCIAL] }))).not.toContain('Social Security, you');
   });
 

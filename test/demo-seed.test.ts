@@ -131,6 +131,7 @@ const { firePlansStore, planFactsStore, readPlanAnswer } = await import('@/lib/p
 const { parsePlanV2, planOf } = await import('@/lib/fire/plan-v2');
 const { MAIN_ID, factsOf, holdsAmounts } = await import('@/lib/fire/copies');
 const { readStoredTxns } = await import('@/lib/transactions');
+const { itemTitle } = await import('@/components/plan-items');
 const { secretsStore } = await import('@/lib/connectors/store');
 const { demoTarget } = await import('@/lib/demo-seed/guard');
 const { SCENARIOS, scenarioById, DEFAULT_SCENARIO } = await import('@/lib/demo-seed/scenarios');
@@ -561,6 +562,8 @@ describe('seeding', () => {
     // Then the child, the two of them working part-time after the stop, and
     // four milestones (Travel more, timed on one, is in a copy).
     expect(plan.items.map((x) => x.id)).toEqual(['social-security', 'maya', 'sam-consulting', 'jordan-tutoring', 'lean-fi', 'travel-fund', 'halfway', 'coast-fi']);
+    // Each title says whose once a partner is set, so no label says it again.
+    expect(plan.items.slice(0, 4).map((x) => itemTitle(x, plan))).toEqual(['Social Security, you', 'Maya', 'Consulting, you', 'Tutoring, your partner']);
     // Version 2, with the tax facts the profile holds: a partner's Roth, a basis
     // typed for the joint brokerage, and the 529 left out, to show that group.
     expect(plan.partnerAge).toBe(37);
