@@ -156,6 +156,33 @@ describe('annual spending', () => {
     expect(notesOf(named)).toEqual([['info', 'connections with no transactions', 'Empower and Vanguard hold no bank account or card, so no transactions come from them.']]);
   });
 
+  test('a bank that needs reconnecting, with nothing else read: not loaded, naming the bank, never "not enough"', () => {
+    const chase = [{ institution: 'Chase', reason: 'needs to be reconnected' }];
+    const none = figureNotes(at({ flows: null, unread: chase, transactionCount: 0 }));
+    expect(none.spending.sub).toBe("Couldn't be loaded");
+    expect(notesOf(none.spending)).toEqual([
+      ['caution', 'transactions that couldn’t be read', "Transactions from Chase couldn't be read (the Activity tab says why), so there is nothing to measure from. Type your own until they are."],
+    ]);
+    // Savings says the same, by the same rule.
+    expect(none.savings.sub).toBe("Couldn't be loaded");
+    expect(notesOf(none.savings)).toEqual(notesOf(none.spending));
+    // A few rows from elsewhere: still too few, and the bank named beside them.
+    const few = figureNotes(at({ flows: null, unread: chase, transactionCount: 12 }));
+    expect(few.spending.sub).toBe('Not enough transactions yet');
+    expect(few.savings.sub).toBe('Needs a year of transactions');
+    for (const t of [few.spending, few.savings]) {
+      expect(notesOf(t)).toEqual([['caution', 'transactions that couldn’t be read', "Transactions from Chase couldn't all be read (the Activity tab says why), so there may be enough once they are."]]);
+    }
+    // No connection that brings spending in at all says that first.
+    expect(figureNotes(at({ flows: null, unread: chase, withoutTransactions: investmentsOnly, transactionCount: 0 })).spending.sub).toBe('No transactions to measure from');
+  });
+
+  test('savings, when the transactions failed to load: said so, as spending says it', () => {
+    const failed = figureNotes(at({ flows: null, txnsFailed: true })).savings;
+    expect(failed.sub).toBe("Couldn't be loaded");
+    expect(notesOf(failed)).toEqual([['info', 'transactions not loaded', "Your transactions couldn't be loaded; type your savings, or try again later."]]);
+  });
+
   test('measured: where from, every warning in the FI card’s order as a caution, then what is left out as information', () => {
     const f: TrailingFlows = {
       ...flows,

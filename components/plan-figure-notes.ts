@@ -131,10 +131,21 @@ export function names(list: string[]): string {
   return `${unique.slice(0, -1).join(', ')} and ${unique[unique.length - 1]}`;
 }
 
-/** What may be missing from transaction-based figures, in a sentence, or null. */
-export function unreadText(unread: UnreadTransactions[], what: 'low' | 'off'): string | null {
+/** What may be missing from transaction-based figures, in a sentence, or
+ *  null: for a figure measured from what was read ('low', 'off'), for none
+ *  yet from the few that were ('short'), and for none at all, with no
+ *  transaction read ('none'). */
+export function unreadText(unread: UnreadTransactions[], what: 'low' | 'off' | 'short' | 'none'): string | null {
   if (unread.length === 0) return null;
   const named = unread.filter((u) => u.institution).map((u) => u.institution as string);
+  if (what === 'none') {
+    if (named.length > 0) return `Transactions from ${names(named)} couldn't be read (the Activity tab says why), so there is nothing to measure from. Type your own until they are.`;
+    return "Your transactions couldn't be loaded. Type your own, or try again later.";
+  }
+  if (what === 'short') {
+    if (named.length > 0) return `Transactions from ${names(named)} couldn't all be read (the Activity tab says why), so there may be enough once they are.`;
+    return "Your latest transactions couldn't be loaded, so there may be enough once they are.";
+  }
   const consequence = what === 'low' ? 'so this figure may be low' : 'so this figure may be off';
   if (named.length > 0) return `Transactions from ${names(named)} couldn't all be read (the Activity tab says why), ${consequence}.`;
   return `Your latest transactions couldn't be loaded, ${consequence} or out of date.`;
@@ -226,7 +237,7 @@ function noteList(row: string) {
 const said = (sub: string, notes: FigureNote[], why: string | null = null, line: string | null = null): FigureText => ({ sub, line, why, notes });
 
 /** Transactions that couldn't all be read, as a caution of its kind. */
-function addUnread(add: ReturnType<typeof noteList>['add'], unread: UnreadTransactions[], what: 'low' | 'off') {
+function addUnread(add: ReturnType<typeof noteList>['add'], unread: UnreadTransactions[], what: 'low' | 'off' | 'short' | 'none') {
   add('caution', unread.some((u) => u.institution) ? NOTE_KINDS.unreadNamed : NOTE_KINDS.unreadUnnamed, unreadText(unread, what));
 }
 
@@ -347,6 +358,15 @@ function spendingText(a: FigureArgs, coverage: Coverage, flowsGap: Gap): FigureT
       add('info', NOTE_KINDS.noSpending, `${noSpending.lead}, so there are no bank or card transactions to measure spending from. Type your own.`);
       return said('No transactions to measure from', notes);
     }
+    // A bank that needs reconnecting (or whose stored history couldn't be
+    // read) sends no rows, by design (Activity leaves them out): with none
+    // read from anywhere, nothing loaded, and the bank is named; with a few,
+    // it is named beside them, as what may be missing.
+    if (a.transactionCount === 0 && unread.length > 0) {
+      addUnread(add, unread, 'none');
+      return said("Couldn't be loaded", notes);
+    }
+    addUnread(add, unread, 'short');
     addMissing(add, withoutTransactions, 'uncounted');
     add('info', NOTE_KINDS.named, namedWithout);
     return said('Not enough transactions yet', notes);
@@ -427,10 +447,20 @@ function savingsText(a: FigureArgs, coverage: Coverage, flowsGap: Gap): FigureTe
   }
   if (!flows) {
     if (a.txnsLoading) return said(LOADING, notes);
+    if (a.txnsFailed) {
+      add('info', NOTE_KINDS.failed, "Your transactions couldn't be loaded; type your savings, or try again later.");
+      return said("Couldn't be loaded", notes);
+    }
     if (noSpending) {
       add('info', NOTE_KINDS.noSpending, `${noSpending.lead}, so there are no bank or card transactions to measure income and spending from. Type your own.`);
       return said('No transactions to measure from', notes);
     }
+    // As spending says it (spendingText).
+    if (a.transactionCount === 0 && unread.length > 0) {
+      addUnread(add, unread, 'none');
+      return said("Couldn't be loaded", notes);
+    }
+    addUnread(add, unread, 'short');
     add('info', NOTE_KINDS.named, namedWithout);
     return said('Needs a year of transactions', notes);
   }
