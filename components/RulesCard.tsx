@@ -10,7 +10,7 @@
 // transactions are read again after it (`onChanged`), since rules apply on
 // every read.
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { ruleSentence, sortedRules, type Rule } from '@/lib/rules';
 import type { Tag } from '@/lib/tags';
@@ -18,6 +18,7 @@ import { draftFromRule, newDraft, type RulesState } from './rules-state';
 import { hiddenFigure } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { Notice } from './TotalCaveats';
+import { focusInsteadOf } from './Sheet';
 
 /** An amount in a rule: a size, in whatever currency the transaction is
  *  (hidden while amounts are, lib/format.ts). */
@@ -38,6 +39,8 @@ export default function RulesCard({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Where focus goes once a deleted rule's row, its Edit with it, has gone.
+  const newRule = useRef<HTMLButtonElement>(null);
   const list = sortedRules(rules.set);
   const names = useMemo(
     () => ({
@@ -99,7 +102,7 @@ export default function RulesCard({
       ) : (
         <>
           <div className="stack">
-            <button className="secondary" style={{ marginTop: 12 }} onClick={() => rules.open(newDraft())} disabled={!rules.set}>
+            <button ref={newRule} className="secondary" style={{ marginTop: 12 }} onClick={() => rules.open(newDraft())} disabled={!rules.set}>
               New rule
             </button>
             {error && (
@@ -142,7 +145,18 @@ export default function RulesCard({
                     >
                       Down
                     </button>
-                    <button className="link-btn" onClick={() => rules.open(draftFromRule(r))} disabled={busy} aria-label={`Edit rule ${i + 1}`} aria-describedby={`rule-${r.id}`}>
+                    <button
+                      className="link-btn"
+                      onClick={(e) => {
+                        // A rule deleted from its drawer takes this row with it:
+                        // focus then goes to New rule.
+                        focusInsteadOf(e.currentTarget, () => newRule.current);
+                        rules.open(draftFromRule(r));
+                      }}
+                      disabled={busy}
+                      aria-label={`Edit rule ${i + 1}`}
+                      aria-describedby={`rule-${r.id}`}
+                    >
                       Edit
                     </button>
                   </div>

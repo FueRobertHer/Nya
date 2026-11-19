@@ -29,7 +29,6 @@ function mount(initial: Split | null = null) {
       <SplitForm
         intro="How this holding divides."
         initial={initial}
-        canRemove={false}
         editable
         onSave={async (s) => {
           saved.push(s);

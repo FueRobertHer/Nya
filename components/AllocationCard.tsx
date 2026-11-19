@@ -26,7 +26,7 @@
 // left out of it: never silently, and never with unclassified money counted
 // as stocks or bonds.
 
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type Ref } from 'react';
 import { Sheet, SheetFooter } from './Sheet';
 import { CopyTag } from './CopyTag';
 import { Choice } from './PlanForms';
@@ -94,6 +94,7 @@ import type { LeaveOut } from '@/lib/fire/child-accounts';
 import { Masked } from './HideAmounts';
 import { Why } from './Why';
 import { Notice } from './TotalCaveats';
+import ActionRows from './ActionRows';
 import FieldError from './FieldError';
 
 /** Allocation's two views, by asset class or tax bucket, as tabs. */
@@ -236,17 +237,47 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
   const [sheet, setSheet] = useState<SheetState | null>(null);
   const [opened, setOpened] = useState(0);
   const shown = useLast(sheet);
+  // Asked to delete the target or a split: a level of the sheet that asks,
+  // the form kept under it. Reset as a sheet opens, not as it closes, so a
+  // sheet sliding out keeps showing the level it closed from.
+  const [asking, setAsking] = useState(false);
   const open = (s: SheetState) => {
     setOpened((n) => n + 1);
+    setAsking(false);
     setSheet(s);
   };
   const close = () => setSheet(null);
   useEffect(() => {
     setSheet(null);
+    setAsking(false);
   }, [planKey]);
+  // The level's safe answer takes focus when it opens, and the Delete row
+  // takes it back after Cancel: here, so after the sheet's own focus on its
+  // panel as the level changes.
+  const safe = useRef<HTMLButtonElement>(null);
+  const deleteRow = useRef<HTMLButtonElement>(null);
+  const returning = useRef(false);
+  useEffect(() => {
+    if (asking) safe.current?.focus({ preventScroll: true });
+    else if (returning.current) {
+      returning.current = false;
+      deleteRow.current?.focus({ preventScroll: true });
+    }
+  }, [asking]);
   const currency = alloc.currency;
   const money = (n: number) => wholeMoney(n, currency);
   const editable = withSettings && !settings.saving && !settingsLocked;
+  const back = () => {
+    if (settings.saving) return;
+    returning.current = true;
+    setAsking(false);
+  };
+  // What a form's Delete row needs, given what it deletes: none when nothing
+  // is saved to delete. Kept while asking: a save takes the target away at
+  // once (lib/whole-list-store.ts), before the server has it, and the level
+  // stays until it is done.
+  const removal = (has: boolean, question: string): Removal | undefined =>
+    has || asking ? { asking, onAsk: () => setAsking(true), onBack: back, question, safe, row: deleteRow } : undefined;
   const current = settings.value ?? EMPTY_SETTINGS;
   // Counts the person's saves, so the mix over time, which the server
   // classifies with the saved splits, is read again after each one.
@@ -354,13 +385,19 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
         title={
           shown
             ? shown.kind === 'target'
-              ? 'Target allocation'
+              ? asking
+                ? 'Delete the target'
+                : 'Target allocation'
               : shown.kind === 'bucket'
                 ? 'Tax bucket'
-                : `Classify ${shown.label}`
+                : asking
+                  ? 'Delete my split'
+                  : `Classify ${shown.label}`
             : ''
         }
         onClose={close}
+        onBack={asking ? back : undefined}
+        level={asking ? 'delete' : undefined}
       >
         {shown?.kind === 'fund' && (
           <SplitForm
@@ -371,7 +408,7 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
                 : `What ${shown.label} holds, in percents that add up to 100. A fund's mix is on its fact sheet; a target-date fund's moves every year, so check it now and then.`
             }
             initial={shown.current ?? shown.listed?.split ?? null}
-            canRemove={shown.current !== null}
+            remove={removal(shown.current !== null, `Delete your split for ${shown.label}? It can’t be undone.${shown.listed ? ' Nya’s list is used instead.' : ''}`)}
             editable={editable}
             onSave={(split) => saveSettings(withFund(current, shown.key, split))}
             onCancel={close}
@@ -382,7 +419,7 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
             key={opened}
             intro={`What the money in ${shown.label} that no position explains is in, in percents that add up to 100. It is used for that money only, never for positions the account lists.`}
             initial={shown.current}
-            canRemove={shown.current !== null}
+            remove={removal(shown.current !== null, `Delete your split for ${shown.label}? It can’t be undone.`)}
             editable={editable}
             onSave={(split) => saveSettings(withAccountSplit(current, shown.account_id, split))}
             onCancel={close}
@@ -397,7 +434,7 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
             target
             intro="The allocation you aim for, by asset class, in percents that add up to 100. Give stocks either as one share, or as US and international: not both."
             initial={current.target}
-            canRemove={current.target !== null}
+            remove={removal(current.target !== null, 'Delete your target allocation? It can’t be undone.')}
             editable={editable}
             onSave={(split) => saveSettings({ ...current, target: split })}
             onCancel={close}
@@ -931,10 +968,24 @@ export function readSplit(fields: Partial<Record<AssetClass, string>>, opts: { t
   return split;
 }
 
+/** A split form's way to delete what is saved, through a level of its sheet
+ *  that asks (the sheet's title and back arrow are its owner's). */
+export type Removal = {
+  /** The level that asks is shown, the form hidden under it. */
+  asking: boolean;
+  onAsk: () => void;
+  onBack: () => void;
+  /** What the level asks: what goes, and that it can't be undone. */
+  question: string;
+  /** The level's Cancel, and the row that opens it, for focus. */
+  safe: Ref<HTMLButtonElement>;
+  row: Ref<HTMLButtonElement>;
+};
+
 export function SplitForm({
   intro,
   initial,
-  canRemove,
+  remove,
   editable,
   target = false,
   onSave,
@@ -942,7 +993,8 @@ export function SplitForm({
 }: {
   intro: string;
   initial: Split | null;
-  canRemove: boolean;
+  /** Left out when nothing is saved to delete. */
+  remove?: Removal;
   editable: boolean;
   target?: boolean;
   /** Saves the split, or removes it with null; true once the server has it. */
@@ -967,8 +1019,44 @@ export function SplitForm({
     setSaving(true);
     const ok = await onSave(split);
     setSaving(false);
-    if (!ok) setError('It was not saved. Try again in a moment.');
+    if (!ok) setError(split ? 'It was not saved. Try again in a moment.' : 'It was not deleted. Try again in a moment.');
   };
+  const failed = error ? (
+    <div className="sheet-footer-note" id={failedId}>
+      <Notice level="critical" role="alert">
+        {error}
+      </Notice>
+    </div>
+  ) : null;
+  // Into the level or back out of it (Cancel, or the sheet's back arrow and
+  // Escape, its owner's): what the last try said was about the other.
+  const ask = (on: boolean) => {
+    if (saving || !remove) return;
+    if (on) remove.onAsk();
+    else remove.onBack();
+  };
+  const asking = !!remove?.asking;
+  useEffect(() => setError(''), [asking]);
+  if (asking && remove) {
+    // The level that asks. What was typed is this form's state, kept for
+    // Cancel.
+    return (
+      <>
+        <div className="stack">
+          <p>{remove.question}</p>
+        </div>
+        <SheetFooter>
+          {failed}
+          <button type="button" ref={remove.safe} className="btn secondary" onClick={() => ask(false)} disabled={saving}>
+            Cancel
+          </button>
+          <button type="button" className="btn danger" disabled={!editable || saving} aria-describedby={error ? failedId : undefined} onClick={() => void save(null)}>
+            {saving ? 'Deleting…' : 'Delete'}
+          </button>
+        </SheetFooter>
+      </>
+    );
+  }
   return (
     <>
       <p className="panel-note" style={{ marginTop: 0 }}>
@@ -1003,19 +1091,16 @@ export function SplitForm({
         {sum / 10}% of 100%
       </p>
       {wrong && <FieldError id={errorId}>{wrong.message}</FieldError>}
-      {canRemove && (
-        <button className="danger-outline" style={{ marginTop: 12 }} disabled={!editable || saving} onClick={() => void save(null)}>
-          {target ? 'Delete the target' : 'Delete my split'}
-        </button>
+      {/* Deleting what is saved, last: a row that opens the level that asks. */}
+      {remove && (
+        <div className="panel-section">
+          <ActionRows
+            rows={[{ key: 'delete', title: target ? 'Delete the target' : 'Delete my split', sub: 'Asks first.', opens: true, neg: true, ref: remove.row, disabled: !editable || saving, onSelect: () => ask(true) }]}
+          />
+        </div>
       )}
       <SheetFooter>
-        {error && (
-          <div className="sheet-footer-note" id={failedId}>
-            <Notice level="critical" role="alert">
-              {error}
-            </Notice>
-          </div>
-        )}
+        {failed}
         <button type="button" className="btn secondary" onClick={onCancel} disabled={saving}>
           Cancel
         </button>
