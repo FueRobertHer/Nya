@@ -1,7 +1,4 @@
 {
-  "app/globals.css": {
-    "smallFonts": 2
-  },
   "components/AdminUnusedItems.tsx": {
     "inlineLayoutStyles": 3
   },

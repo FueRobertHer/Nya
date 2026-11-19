@@ -30,14 +30,27 @@ const LAYERS = [
 /** `spelled`: the mark in full, where words have the room a chart's label hasn't. */
 export type DrawdownMark = { age: number; label: string; short: string; spelled?: string };
 
-/** Each mark's row, the fewest the names need. */
-export function markRows(marks: readonly { x: number; label: string }[]): number[] {
-  const ends: number[] = [];
+/** Each mark's row, the fewest the names need, in the marks' order. A name
+ *  starts at `x` and its rule is at `at` (`x` unless the name was moved in
+ *  from the right edge); the rule runs down from under its name through
+ *  every row below. So a name goes on the first row where it clears the
+ *  names beside it, no rule from a row above runs through it, and its own
+ *  rule runs through no name below; where no row can do all three (a rule
+ *  under a name moved in from the edge), the first that clears the names. */
+export function markRows(marks: readonly { x: number; label: string; at?: number }[]): number[] {
+  const placed: { from: number; to: number; at: number; row: number }[] = [];
+  const crosses = (at: number, from: number, to: number) => at > from - 1 && at < to + 1;
   return marks.map((m) => {
-    const w = labelWidth(m.label);
-    let row = ends.findIndex((end) => m.x >= end + MIN_LABEL_GAP);
-    if (row < 0) row = ends.length;
-    ends[row] = m.x + w;
+    const from = m.x;
+    const to = m.x + labelWidth(m.label);
+    const at = m.at ?? m.x;
+    const clears = (row: number) => placed.every((p) => p.row !== row || from >= p.to + MIN_LABEL_GAP || p.from >= to + MIN_LABEL_GAP);
+    const uncrossed = (row: number) => placed.every((p) => (p.row < row ? !crosses(p.at, from, to) : p.row > row ? !crosses(at, p.from, p.to) : true));
+    const last = placed.length;
+    let row = -1;
+    for (let r = 0; r <= last && row < 0; r++) if (clears(r) && uncrossed(r)) row = r;
+    if (row < 0) for (let r = 0; r <= last && row < 0; r++) if (clears(r)) row = r;
+    placed.push({ from, to, at, row });
     return row;
   });
 }

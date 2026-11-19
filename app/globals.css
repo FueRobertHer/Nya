@@ -579,9 +579,16 @@ h1,
    control). The transparent edge is drawn in forced colors. On a fill of its
    own (a notice, the rule offer) it keeps an edge instead, below .btn's. */
 button.secondary {
+  min-height: var(--tap);
   background: var(--elevated);
   border: 1px solid transparent;
   color: var(--text-1);
+}
+
+/* A bare button is a primary of the old kind: its padding alone leaves it
+   under 44px, so it takes the target as a secondary does. */
+button:not([class]) {
+  min-height: var(--tap);
 }
 
 /* Hover only where there is a pointer: on touch screens it sticks after a tap. */
@@ -1797,7 +1804,17 @@ button.danger {
 
 /* Text-weight actions inside a table row: a full button would dominate the
    balance it sits under. */
+/* 12px words in a 44px box, each way: a target drawn around the words
+   instead would reach over the control beside it and take its taps (a
+   select 8px above, "Yes" beside "No"), so the box is real, and a line of
+   a sentence ending in one is 44px tall. */
 .link-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap);
+  min-height: var(--tap);
+  vertical-align: middle;
   width: auto;
   background: none;
   border: none;
@@ -2321,15 +2338,18 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
   }
 }
 
+/* Every chart is drawn at its own width (components/drawn-width.ts, the
+   svg's .at-width), a viewBox unit to a CSS pixel, so its text is the size
+   it says: 12px at every width, never scaled down on a phone. */
 .chart-tick {
   fill: var(--text-2);
-  font-size: 0.625rem;
+  font-size: var(--fs-1);
   font-variant-numeric: tabular-nums;
 }
 
 .chart-xlabel {
   fill: var(--text-2);
-  font-size: 0.625rem;
+  font-size: var(--fs-1);
 }
 
 /* A rule's name in words at its left end, inside the plot (the cash
@@ -2355,14 +2375,6 @@ button:is(:disabled, [aria-disabled="true"]):where(:not([class*="cl-"])) {
    the page under its hero. */
 .investments-hero .chart-rule-label {
   stroke: var(--canvas);
-}
-
-/* A chart drawn at its own width (components/drawn-width.ts) has a viewBox
-   unit to a CSS pixel, so its text is the size it says. The charts still on
-   a fixed viewBox keep the size above until they are drawn at theirs. */
-.at-width .chart-tick,
-.at-width .chart-xlabel {
-  font-size: var(--fs-1);
 }
 
 /* The info button at the end of the readout row: the explanations of the
@@ -2938,8 +2950,12 @@ span.meter-fill {
   margin-top: 0;
 }
 
+/* A goal's row opens its sheet: 44px at least, its lines centred in it. */
 .budget-summary {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: var(--tap);
   width: 100%;
   background: none;
   border: none;
@@ -4759,11 +4775,14 @@ button.danger-outline {
 
 /* A quiet text button: big enough to tap, no box around it. */
 button.plan-edit {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
   width: auto;
   flex-shrink: 0;
   background: none;
   border: none;
-  padding: 2px 0 2px 8px;
+  padding: 0 0 0 8px;
   color: var(--accent);
   font-size: var(--fs-2);
   font-weight: 600;
@@ -5249,6 +5268,9 @@ button.plan-edit:disabled {
   display: flex;
   align-items: flex-start;
   gap: 10px;
+  min-height: var(--tap);
+  /* As a .check-row: 8px over and under its words, 44px at least. */
+  padding-block: var(--sp-2);
   margin-top: 4px;
   font-size: var(--fs-3);
   line-height: 1.4;
@@ -6232,6 +6254,7 @@ button.import-choice {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-height: var(--tap);
   padding: 8px 0;
   font-size: var(--fs-3);
 }
@@ -6524,7 +6547,9 @@ button.import-choice {
   margin-top: 4px;
 }
 
+/* A group's row opens it: 44px tall, as button.cat-manage-group is. */
 button.rollup-toggle {
+  min-height: var(--tap);
   background: none;
   border: none;
   padding: 4px 0;
@@ -6858,7 +6883,7 @@ button.tag-color.chosen {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 32px;
+  min-height: var(--tap);
 }
 
 /* The offer, in a transaction's sheet after it is given another category,
@@ -7162,6 +7187,7 @@ button.tag-color.chosen {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: var(--tap);
   margin-bottom: 12px;
   font-size: var(--fs-2);
   color: var(--text-2);
@@ -7476,9 +7502,11 @@ button.split-small {
   font-size: var(--fs-1);
 }
 
+/* One line as tall as a tap, as .plan-table-view's. */
 .cash-flow-table summary {
   cursor: pointer;
-  padding: 4px 0;
+  padding: 0;
+  line-height: var(--tap);
 }
 
 .cash-flow-table td,
@@ -7503,8 +7531,16 @@ button.split-small {
   font-weight: 600;
 }
 
-/* A flow's name opens its transactions: text, underlined, never a block. */
+/* A flow's name opens its transactions: text, underlined, never a block.
+   44px tall, its cell's padding taken up by it, so rows stay a tap apart. */
+.cash-flow-table td:has(> .cash-flow-show) {
+  padding-block: 0;
+}
+
 button.cash-flow-show {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
   width: auto;
   background: none;
   border: none;
@@ -7649,8 +7685,9 @@ button.cash-flow-show {
 }
 
 .weekly-summary-sheet > .link-btn {
-  display: block;
-  margin: -4px 0 10px;
+  display: flex;
+  justify-content: flex-start;
+  margin: 0 0 10px;
   text-align: left;
 }
 
@@ -8215,8 +8252,10 @@ button.review-keys-toggle {
   font-size: var(--fs-2);
 }
 
+/* One line as tall as a tap, as .plan-table-view's. */
 .migration-how summary {
   cursor: pointer;
+  line-height: var(--tap);
   color: var(--text-2);
 }
 
@@ -8394,7 +8433,10 @@ button.review-keys-toggle {
    its facts open under it. */
 .inventory-row {
   border-top: 1px solid var(--line);
-  padding: 10px 0;
+}
+
+.inventory-row[open] {
+  padding-bottom: 10px;
 }
 
 .inventory-row > summary,
@@ -8426,12 +8468,16 @@ button.review-keys-toggle {
   transform: rotate(90deg);
 }
 
+/* The whole line opens the row: 44px at least, its words in the middle. */
 .inventory-row > summary {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
   align-items: baseline;
+  align-content: center;
   gap: 2px 12px;
+  min-height: var(--tap);
+  padding-block: 4px;
 }
 
 .inventory-name {
@@ -8457,10 +8503,12 @@ button.review-keys-toggle {
 /* The kinds with nothing stored, folded under their heading. */
 .inventory-none {
   border-top: 1px solid var(--line);
-  padding-top: 10px;
 }
 
 .inventory-none > summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
   color: var(--text-2);
   font-size: var(--fs-2);
 }

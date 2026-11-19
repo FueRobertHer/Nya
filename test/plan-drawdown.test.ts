@@ -340,6 +340,19 @@ describe('the chart’s marks', () => {
   test('a name goes on the first row it clears, so none is lost', () => {
     expect(markRows([{ x: 10, label: '59½' }, { x: 16, label: '65' }, { x: 200, label: 'RMD age 75' }])).toEqual([0, 1, 0]);
   });
+
+  // As the chart lays them out at 320px (a 254px card): RMD age 75's name
+  // clears 65's on the top row, but its rule would run down through Social
+  // Security 67's name on the row under it, so it goes a row lower.
+  test('no mark’s rule runs through another’s name', () => {
+    const marks = [
+      { x: 75, label: '59½' },
+      { x: 102, label: '65' },
+      { x: 112, label: 'Social Security 67' },
+      { x: 152, label: 'RMD age 75' },
+    ];
+    expect(markRows(marks)).toEqual([0, 0, 1, 2]);
+  });
 });
 
 describe('a year’s two money sections', () => {

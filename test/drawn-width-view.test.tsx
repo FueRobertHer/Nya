@@ -501,3 +501,51 @@ describe('a chart drawn at its width', () => {
     }
   });
 });
+
+// Reports' runway and the Plan's allocation history, the last two charts on a
+// fixed 340-wide viewBox until the touch target pass (2026-11-19): at 320px
+// their 10px ticks drew at 7.5px. Drawn at their width, in the shapes they
+// had, their ticks and dates are the 12px they say.
+const { default: RunwayChart } = await import('@/components/RunwayChart');
+const { AllocationHistoryChart } = await import('@/components/AllocationCard');
+type RunwayProjection = import('@/lib/report/runway').RunwayProjection;
+type SeriesDay = import('@/lib/allocation/series').SeriesDay;
+
+const RUNWAY = {
+  chart: ['2026-11-01', '2026-12-01', '2027-01-01', '2027-02-01'].map((date, i) => ({ date, with: 9000 - i * 500, without: 9000 - i * 2000 })),
+  without_income: { runs_out: null },
+  with_income: { runs_out: null },
+} as unknown as RunwayProjection;
+const MIX: SeriesDay[] = ['2026-10-01', '2026-10-08', '2026-10-15'].map((date, i) => ({
+  date,
+  classes: { 'us-stocks': 6000 + i * 100, bonds: 4000 },
+  total: 10000 + i * 100,
+  unlisted: 0,
+  missing: [],
+})) as unknown as SeriesDay[];
+
+describe('the last charts on a fixed viewBox, drawn at their width', () => {
+  const charts = [
+    { name: 'the runway', node: () => <RunwayChart projection={RUNWAY} currency="USD" />, shape: 150 },
+    { name: 'the allocation’s history', node: () => <AllocationHistoryChart days={MIX} currency="USD" answer={{ accounts: [] }} nameOf={(id) => id} />, shape: 132 },
+  ];
+  for (const c of charts) {
+    test(`${c.name}: its viewBox is the width it is laid out at, in its shape, and its text is drawn at 12px`, () => {
+      setObserver(true);
+      laidOut = 254;
+      const v = mount(c.node());
+      expect(v.viewBox()).toBe(`0 0 254 ${Math.round((254 * c.shape) / 340)}`);
+      v.resize(686);
+      expect(v.viewBox()).toBe(`0 0 686 ${Math.round((686 * c.shape) / 340)}`);
+      // .at-width: one viewBox unit to a CSS pixel, so .chart-tick's 12px is 12px.
+      expect(v.svg()!.getAttribute('class')).toBe('chart-svg at-width');
+      expect(v.svg()!.findAll((e) => e.getAttribute('class') === 'chart-xlabel').length).toBeGreaterThan(0);
+      v.unmount();
+      expect(watches.filter((w) => w.on)).toHaveLength(0);
+    });
+
+    test(`${c.name}: where nothing can be measured it draws at 340, as before`, () => {
+      expect(renderToStaticMarkup(c.node())).toContain(`viewBox="0 0 340 ${c.shape}"`);
+    });
+  }
+});
