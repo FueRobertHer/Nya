@@ -27,7 +27,7 @@
 // as stocks or bonds.
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { Sheet } from './Sheet';
+import { Sheet, SheetFooter } from './Sheet';
 import { CopyTag } from './CopyTag';
 import { Choice } from './PlanForms';
 import { axisDay, dayLabel, dayName, wholeMoney } from './plan-text';
@@ -956,6 +956,7 @@ export function SplitForm({
   const [wrong, setWrong] = useState<SplitProblem | null>(null);
   const [saving, setSaving] = useState(false);
   const errorId = useId();
+  const failedId = useId();
   // A field is invalid when the problem is about it, or about them all.
   const invalid = (c: AssetClass) => !!wrong && (wrong.field === undefined || wrong.field === c);
   let sum = 0;
@@ -1001,22 +1002,27 @@ export function SplitForm({
         {sum / 10}% of 100%
       </p>
       {wrong && <FieldError id={errorId}>{wrong.message}</FieldError>}
-      {error && (
-        <Notice level="critical" role="alert">
-          {error}
-        </Notice>
-      )}
       {canRemove && (
         <button className="danger-outline" style={{ marginTop: 12 }} disabled={!editable || saving} onClick={() => void save(null)}>
           {target ? 'Delete the target' : 'Delete my split'}
         </button>
       )}
-      <div className="button-pair" style={{ marginTop: 16 }}>
-        <button className="secondary" onClick={onCancel} disabled={saving}>
+      <SheetFooter>
+        {error && (
+          <div className="sheet-footer-note" id={failedId}>
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          </div>
+        )}
+        <button type="button" className="btn secondary" onClick={onCancel} disabled={saving}>
           Cancel
         </button>
         <button
+          type="button"
+          className="btn"
           disabled={!editable || saving}
+          aria-describedby={error ? failedId : undefined}
           onClick={() => {
             let split: Split;
             try {
@@ -1033,7 +1039,7 @@ export function SplitForm({
         >
           {saving ? 'Saving…' : 'Save'}
         </button>
-      </div>
+      </SheetFooter>
     </>
   );
 }
@@ -1055,6 +1061,7 @@ export function BucketForm({
   const [choice, setChoice] = useState<TaxBucket | 'type'>(bucket.from === 'you' ? (bucket.bucket as TaxBucket) : 'type');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const failedId = useId();
   const fromType = bucket.subtype === 'unclassified' ? `unclassified, since ${bucket.why ?? "Nya doesn't know this kind of account"}` : BUCKET_NAMES[bucket.subtype].toLowerCase();
   return (
     <>
@@ -1075,17 +1082,22 @@ export function BucketForm({
           </label>
         ))}
       </div>
-      {error && (
-        <Notice level="critical" role="alert">
-          {error}
-        </Notice>
-      )}
-      <div className="button-pair" style={{ marginTop: 16 }}>
-        <button className="secondary" onClick={onCancel} disabled={saving}>
+      <SheetFooter>
+        {error && (
+          <div className="sheet-footer-note" id={failedId}>
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          </div>
+        )}
+        <button type="button" className="btn secondary" onClick={onCancel} disabled={saving}>
           Cancel
         </button>
         <button
+          type="button"
+          className="btn"
           disabled={!editable || saving}
+          aria-describedby={error ? failedId : undefined}
           onClick={async () => {
             setSaving(true);
             setError('');
@@ -1096,7 +1108,7 @@ export function BucketForm({
         >
           {saving ? 'Saving…' : 'Save'}
         </button>
-      </div>
+      </SheetFooter>
     </>
   );
 }

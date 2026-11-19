@@ -60,8 +60,10 @@ const RUNWAY: RunwayReport = {
   notes: [],
 };
 
-// The runway is answered here; the scenarios go to their real route.
+// The runway is answered here; the scenarios go to their real route, but for a
+// delete refused when `refuseDelete` says so.
 let inflight = 0;
+let refuseDelete = false;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = new URL(String(input), 'http://nya.test');
   const method = init?.method ?? 'GET';
@@ -70,6 +72,7 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     if (url.pathname === '/api/reports/runway') return Response.json({ runway: RUNWAY });
     if (url.pathname === '/api/runway-scenarios') {
       if (method === 'GET') return await scenarios.GET();
+      if (method === 'DELETE' && refuseDelete) return Response.json({ error: 'It couldn’t be deleted.' }, { status: 500 });
       const req = new Request(url, { method, headers: init?.headers, body: init?.body });
       return await (method === 'POST' ? scenarios.POST(req) : scenarios.DELETE(req));
     }
@@ -107,8 +110,11 @@ async function mount() {
   const savedCard = () => host.findAll((e) => classOf(e).includes('card') && e.textContent.startsWith('Saved scenarios'))[0] ?? null;
   const workedOut = () => host.findAll((e) => e.tagName === 'SECTION' && e.getAttribute('aria-label') === 'What it is worked out from')[0] ?? null;
   const button = (within: FakeElement | null, words: string) => within?.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === words)[0] ?? null;
-  const sheet = () => host.findAll((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('aria-label') === 'Save as a scenario')[0] ?? null;
-  return { host, all, first, whatIf, savedCard, workedOut, button, sheet, unmount: () => act(async () => root.unmount()) };
+  const sheet = (title = 'Save as a scenario') => host.findAll((e) => e.getAttribute('role') === 'dialog' && e.getAttribute('aria-label') === title)[0] ?? null;
+  /** A scenario's ⋯. */
+  const more = (within: FakeElement | null, name: string) => within?.findAll((e) => e.tagName === 'BUTTON' && e.getAttribute('aria-label') === `More for ${name}`)[0] ?? null;
+  const item = (words: string) => host.findAll((e) => e.getAttribute('role') === 'menuitem' && e.textContent === words)[0] ?? null;
+  return { host, all, first, whatIf, savedCard, workedOut, button, sheet, more, item, unmount: () => act(async () => root.unmount()) };
 }
 
 describe('the saved scenarios card', () => {
@@ -151,11 +157,58 @@ describe('the saved scenarios card', () => {
     expect(card.previousElementSibling === v.whatIf()).toBe(true);
     expect(card.textContent).toContain('If I quit');
     expect(card.textContent).toContain('spending lower by $250.00 a month');
-    expect(v.button(card, 'Apply') !== null && v.button(card, 'Delete') !== null).toBe(true);
+    expect(v.button(card, 'Apply') !== null && v.more(card, 'If I quit') !== null).toBe(true);
     expect(card.textContent).not.toContain('None yet.');
     // What the route keeps: the settings, by name.
     const stored = await (await scenarios.GET()).json();
     expect(stored.scenarios.map((s: { name: string; lower_by: number; currency: string | null }) => [s.name, s.lower_by, s.currency])).toEqual([['If I quit', 250, 'USD']]);
+    await v.unmount();
+  });
+
+  // Delete is in each scenario's ⋯ and asks in a sheet (docs/design/guidelines.md,
+  // Sheets, menus and forms): a refusal is said there, beside its buttons, and
+  // once it is gone focus goes to the card's heading, its row and ⋯ gone too.
+  test('a scenario is deleted from its ⋯, asked first in a sheet that says why when it fails', async () => {
+    const v = await mount();
+    await press(v.button(v.whatIf(), 'Save as a scenario'));
+    const naming = v.sheet()!;
+    await act(async () => type(naming.findAll((e) => e.tagName === 'INPUT' && e.getAttribute('placeholder') === 'If I took a year off')[0]!, 'If I quit'));
+    await settle();
+    await press(v.button(naming, 'Save'));
+    await act(async () => void (await new Promise((r) => setTimeout(r, 300))));
+
+    await press(v.more(v.savedCard(), 'If I quit'));
+    await press(v.item('Delete…'));
+    const ask = v.sheet('Delete scenario')!;
+    expect(ask.getAttribute('data-open')).toBe('true');
+    expect(ask.textContent).toContain('Delete the scenario If I quit? Only the scenario goes: your data is as it was. It can’t be undone.');
+    // Cancel first, the danger last, both in the footer.
+    const footer = ask.findAll((e) => classOf(e).includes('sheet-footer'))[0]!;
+    expect(footer.findAll((e) => e.tagName === 'BUTTON').map((b) => [b.textContent, b.getAttribute('class')])).toEqual([
+      ['Cancel', 'btn secondary'],
+      ['Delete', 'btn danger'],
+    ]);
+
+    // Refused: the sheet stays, saying why beside Delete, and the scenario stays.
+    refuseDelete = true;
+    try {
+      await press(v.button(footer, 'Delete'));
+    } finally {
+      refuseDelete = false;
+    }
+    expect(v.sheet('Delete scenario')!.getAttribute('data-open')).toBe('true');
+    const note = footer.findAll((e) => classOf(e).includes('sheet-footer-note'))[0]!;
+    expect(note.textContent).toContain('It couldn’t be deleted.');
+    expect(v.button(footer, 'Delete')!.getAttribute('aria-describedby')).toContain(note.getAttribute('id')!);
+    expect(v.savedCard()!.textContent).toContain('If I quit');
+
+    await press(v.button(footer, 'Delete'));
+    await act(async () => void (await new Promise((r) => setTimeout(r, 300))));
+    expect(v.sheet('Delete scenario')).toBeNull();
+    expect(v.savedCard()!.textContent).toContain('None yet.');
+    expect((await (await scenarios.GET()).json()).scenarios).toEqual([]);
+    const heading = v.savedCard()!.findAll((e) => classOf(e).includes('inst-name'))[0]!;
+    expect(dom.document.activeElement === (heading as unknown)).toBe(true);
     await v.unmount();
   });
 });

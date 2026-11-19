@@ -40,6 +40,7 @@ import { Segmented } from './Segmented';
 import FieldError from './FieldError';
 import { taxOnHoldText } from './plan-figure-notes';
 import { Notice } from './TotalCaveats';
+import { SheetFooter } from './Sheet';
 import AlsoChange, { type AlsoChoice } from './AlsoChange';
 import { itemRuleText } from './plan-items';
 import { BucketGroups, BucketLevel, SavingsSplitLines, type BucketSheet, type SheetRates } from './PlanBuckets';
@@ -176,6 +177,11 @@ export function useDetailSave(props: SaveProps, detail: DetailForm | null) {
   return { s: useSave({ ...props, onSave }), more };
 }
 
+/** A plan form's Cancel and Save, in the sheet's footer (SheetFooter), with what
+ *  Save waits on and why it failed beside them, so none of it scrolls out of
+ *  view on a long form. What goes with them in the body (`extra`, the plans it
+ *  also changes, the copy's line) is drawn where Buttons is. `hidden`: the form
+ *  is under a level of the drawer, which has its own footer. */
 export function Buttons({
   onDone,
   disabled,
@@ -184,6 +190,8 @@ export function Buttons({
   extra,
   copy = null,
   paused = null,
+  error = '',
+  hidden = false,
   also = [],
   alsoIn = [],
   onAlso,
@@ -195,25 +203,44 @@ export function Buttons({
   extra?: React.ReactNode;
   copy?: string | null;
   paused?: string | null;
+  /** Why the last save failed, said beside Save. */
+  error?: string;
+  hidden?: boolean;
   /** Also change it in: the plans offered, and those checked. */
   also?: readonly AlsoChoice[];
   alsoIn?: readonly string[];
   onAlso?: (ids: string[]) => void;
 }) {
+  const pausedId = useId();
+  const errorId = useId();
+  const describedBy = [paused ? pausedId : '', error ? errorId : ''].filter(Boolean).join(' ') || undefined;
   return (
     <>
       {extra}
       {onAlso && <AlsoChange choices={also} checked={alsoIn} onChange={onAlso} disabled={saving} />}
       {copy && <p className="panel-note plan-copy-saves">Saved to this copy, not your plan.</p>}
-      {paused && <p className="helper plan-paused">{paused}</p>}
-      <div className="button-pair" style={{ marginTop: 16 }}>
-        <button className="secondary" onClick={onDone} disabled={saving}>
-          Cancel
-        </button>
-        <button onClick={onSave} disabled={disabled}>
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-      </div>
+      {!hidden && (
+        <SheetFooter>
+          {paused && (
+            <p className="helper plan-paused sheet-footer-note" id={pausedId}>
+              {paused}
+            </p>
+          )}
+          {error && (
+            <div className="sheet-footer-note" id={errorId}>
+              <Notice level="critical" role="alert">
+                {error}
+              </Notice>
+            </div>
+          )}
+          <button type="button" className="btn secondary" onClick={onDone} disabled={saving}>
+            Cancel
+          </button>
+          <button type="button" className="btn" onClick={onSave} disabled={disabled} aria-describedby={describedBy}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </SheetFooter>
+      )}
     </>
   );
 }
@@ -473,12 +500,8 @@ export function AboutForm(props: SaveProps & { detail?: DetailForm | null }) {
         {props.copy && <p className="panel-note">Both ages are {SAME_IN_EVERY_PLAN}</p>}
         {household.fields}
       </div>
-      {s.error && (
-        <Notice level="critical" role="alert">
-          {s.error}
-        </Notice>
-      )}
       <Buttons
+        error={s.error}
         copy={props.copy}
         paused={props.paused}
         onDone={props.onDone}
@@ -650,12 +673,8 @@ export function FiNumberForm(
           Use the worked-out number
         </button>
       )}
-      {s.error && (
-        <Notice level="critical" role="alert">
-          {s.error}
-        </Notice>
-      )}
       <Buttons
+        error={s.error}
         copy={props.copy}
         paused={props.paused}
         onDone={props.onDone}
@@ -989,12 +1008,9 @@ export function FigureForm(
           )}
         </section>
       )}
-      {s.error && (
-        <Notice level="critical" role="alert">
-          {s.error}
-        </Notice>
-      )}
       <Buttons
+        error={s.error}
+        hidden={!!level}
         copy={props.copy}
         also={props.also}
         alsoIn={s.alsoIn}
@@ -1565,12 +1581,7 @@ export function AssumptionsForm(
         </label>
         {s.under('The fee')}
       </div>
-      {s.error && (
-        <Notice level="critical" role="alert">
-          {s.error}
-        </Notice>
-      )}
-      <Buttons copy={props.copy} paused={props.paused} onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
+      <Buttons error={s.error} copy={props.copy} paused={props.paused} onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
     </div>
   );
 }

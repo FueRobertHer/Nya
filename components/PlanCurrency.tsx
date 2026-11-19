@@ -21,8 +21,8 @@
 // change drawer (CurrencyChangeSheet) is the tab's, so it stays open while
 // the card moves from one place to the other.
 
-import { useEffect, useState, type ReactNode, type RefObject } from 'react';
-import { Sheet } from './Sheet';
+import { useEffect, useId, useState, type ReactNode, type RefObject } from 'react';
+import { Sheet, SheetFooter } from './Sheet';
 import { everyCurrency, currencyName } from './currency-state';
 import { recordedText, relabelText } from '@/lib/fire/plan-currency';
 import { Notice } from './TotalCaveats';
@@ -251,6 +251,8 @@ export function CurrencyChangeSheet({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const askId = useId();
+  const errorId = useId();
   const off = disabled || busy;
   const to = changing?.to ?? null;
   const others = mode ? mode.offer.filter((c) => c !== mode.currency) : [];
@@ -286,16 +288,23 @@ export function CurrencyChangeSheet({
           )}
           {changing && to !== null && (
             <>
-              <div className="stack tight">
+              <div className="stack tight" id={askId}>
                 <p className="panel-note">Read your plan’s figures as {to}, not {mode.currency}?</p>
                 <p className="panel-note">{relabelText(mode.currency, to, mode.copiesIn)}</p>
-                <Alert text={error} />
               </div>
-              <div className="button-pair" style={{ marginTop: 16 }}>
-                <button className="secondary" onClick={close} disabled={busy}>
+              <SheetFooter>
+                {error && (
+                  <div className="sheet-footer-note" id={errorId}>
+                    <Alert text={error} />
+                  </div>
+                )}
+                <button type="button" className="btn secondary" onClick={close} disabled={busy}>
                   Cancel
                 </button>
                 <button
+                  type="button"
+                  className="btn"
+                  aria-describedby={error ? `${askId} ${errorId}` : askId}
                   disabled={off}
                   onClick={async () => {
                     setBusy(true);
@@ -308,7 +317,7 @@ export function CurrencyChangeSheet({
                 >
                   {busy ? 'Saving…' : `Read them as ${to}`}
                 </button>
-              </div>
+              </SheetFooter>
             </>
           )}
         </>

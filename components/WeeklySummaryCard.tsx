@@ -21,8 +21,8 @@
 // A setting that can't be read is said, and nothing is offered to save over
 // it (the route refuses that too, lib/repo.ts).
 
-import { useCallback, useEffect, useState } from 'react';
-import { Sheet } from './Sheet';
+import { useCallback, useEffect, useId, useState } from 'react';
+import { Sheet, SheetFooter } from './Sheet';
 import { DEFAULT_WEEKDAY, SENDS_NOW_PER_DAY, WEEKDAY_NAMES, type Weekday, type WeeklySetting } from '@/lib/weekly-summary/settings';
 import { RUN_TEXT, nextDelivery, sameClock, timeOfDay } from '@/lib/weekly-summary/when';
 import { LinesSkeleton } from './LoadingSkeletons';
@@ -200,6 +200,7 @@ export default function WeeklySummaryCard({ clerk }: { clerk: boolean }) {
             saving={saving}
             saveError={saveError}
             onSave={save}
+            onCancel={() => setOpen(false)}
             sending={sending}
             sendNote={sendNote}
             onSendNow={sendNow}
@@ -263,6 +264,7 @@ export function WeeklySummarySheetBody(props: {
   saving: boolean;
   saveError: string | null;
   onSave: () => void;
+  onCancel: () => void;
   sending: boolean;
   sendNote: { ok: boolean; text: string } | null;
   onSendNow: () => void;
@@ -274,6 +276,7 @@ export function WeeklySummarySheetBody(props: {
   const { draft, onDraft, saved, preview } = props;
   const unchanged = saved ? saved.enabled === draft.enabled && saved.weekday === draft.weekday && saved.time_zone === draft.time_zone : !draft.enabled;
   const set = (d: Partial<Draft>) => onDraft({ ...draft, ...d });
+  const errorId = useId();
   return (
     <div className="sheet-form weekly-summary-sheet">
       <label className="quick-add-check">
@@ -315,14 +318,22 @@ export function WeeklySummarySheetBody(props: {
         Each summary covers the seven days before its day, on this time zone’s calendar. {comesText(draft.weekday, draft.time_zone, props.now)}
       </p>
       {props.demo && <p className="stale-note">Demo accounts can’t get the weekly summary: everyone who tries the demo shares its data.</p>}
-      <button onClick={props.onSave} disabled={props.saving || unchanged}>
-        {props.saving ? 'Saving…' : 'Save'}
-      </button>
-      {props.saveError && (
-        <Notice level="critical" role="alert">
-          {props.saveError}
-        </Notice>
-      )}
+      {/* Save and why it failed, kept in view at the sheet's foot over the long preview. */}
+      <SheetFooter>
+        {props.saveError && (
+          <div className="sheet-footer-note" id={errorId}>
+            <Notice level="critical" role="alert">
+              {props.saveError}
+            </Notice>
+          </div>
+        )}
+        <button type="button" className="btn secondary" onClick={props.onCancel} disabled={props.saving}>
+          Cancel
+        </button>
+        <button type="button" className="btn" onClick={props.onSave} disabled={props.saving || unchanged} aria-describedby={props.saveError ? errorId : undefined}>
+          {props.saving ? 'Saving…' : 'Save'}
+        </button>
+      </SheetFooter>
 
       <h3 className="section-label weekly-preview-title">This week’s summary</h3>
       {preview.kind === 'loading' && <p className="panel-note">Working it out…</p>}

@@ -13,9 +13,10 @@
 // sent or stored: only a scenario the person saves by name is
 // (app/api/runway-scenarios), and that keeps the settings, never a figure.
 
-import { useCallback, useEffect, useId, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
 import FieldError from './FieldError';
 import { Sheet } from './Sheet';
+import { Menu } from './Menu';
 import RunwayChart from './RunwayChart';
 import { Masked } from './HideAmounts';
 import { Hero } from './Hero';
@@ -330,7 +331,18 @@ export default function RunwayReport() {
   const [naming, setNaming] = useState(false);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  // The scenario asked about in the delete sheet, and why its delete failed.
+  const [deleting, setDeleting] = useState<{ id: string; label: string; unreadable: boolean } | null>(null);
+  // The last one asked about, kept while the sheet slides out so its words stay.
+  const [asked, setAsked] = useState<{ id: string; label: string; unreadable: boolean } | null>(null);
+  if (deleting && deleting !== asked) setAsked(deleting);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [otherCurrency, setOtherCurrency] = useState<string | null>(null);
+  const nameErrorId = useId();
+  const askId = useId();
+  const deleteErrorId = useId();
+  // Where focus goes once a deleted scenario's row, its ⋯ with it, has gone.
+  const savedHeading = useRef<HTMLDivElement>(null);
 
   const loadSaved = useCallback(async () => {
     try {
@@ -407,20 +419,27 @@ export default function RunwayReport() {
     }
   };
 
-  const remove = async (id: string, label: string, unreadable = false) => {
-    if (!window.confirm(`Delete ${label}? Only the scenario goes: your data is as it was.`)) return;
+  /** Deletes the scenario the delete sheet asks about: the sheet closes once the
+   *  list is read again, and stays open saying why if it fails. */
+  const remove = async () => {
+    if (!deleting) return;
     setBusy(true);
+    setDeleteError(null);
     try {
       const res = await fetch('/api/runway-scenarios', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(unreadable ? { id, unreadable: true } : { id }),
+        body: JSON.stringify(deleting.unreadable ? { id: deleting.id, unreadable: true } : { id: deleting.id }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) setSavedError(typeof body.error === 'string' ? body.error : 'It couldn’t be deleted.');
+      if (!res.ok) {
+        setDeleteError(typeof body.error === 'string' ? body.error : 'It couldn’t be deleted.');
+        return;
+      }
       await loadSaved();
+      setDeleting(null);
     } catch {
-      setSavedError('It couldn’t be deleted. Check your connection and try again.');
+      setDeleteError('It couldn’t be deleted. Check your connection and try again.');
     } finally {
       setBusy(false);
     }
@@ -524,9 +543,21 @@ export default function RunwayReport() {
                 scenario", which makes them, and the fields Apply sets. */}
             <div className="card no-print stack">
               <div className="inst-header">
-                <div className="inst-name">Saved scenarios</div>
+                <div className="inst-name" tabIndex={-1} ref={savedHeading}>
+                  Saved scenarios
+                </div>
               </div>
-              <SavedScenarios list={saved} currency={runway.currency} busy={busy} onApply={apply} onDelete={(id, label, unreadable) => void remove(id, label, unreadable)} />
+              <SavedScenarios
+                list={saved}
+                currency={runway.currency}
+                busy={busy}
+                onApply={apply}
+                onDelete={(id, label, unreadable = false) => {
+                  setDeleteError(null);
+                  setDeleting({ id, label, unreadable });
+                }}
+                focusInstead={savedHeading}
+              />
               {savedError && !naming && (
                 <Notice level="critical" role="alert">
                   {savedError}
@@ -537,7 +568,28 @@ export default function RunwayReport() {
         }
       />
 
-      <Sheet open={naming} title="Save as a scenario" onClose={() => setNaming(false)}>
+      <Sheet
+        open={naming}
+        title="Save as a scenario"
+        onClose={() => !busy && setNaming(false)}
+        footer={
+          <>
+            {savedError && (
+              <div className="sheet-footer-note" id={nameErrorId}>
+                <Notice level="critical" role="alert">
+                  {savedError}
+                </Notice>
+              </div>
+            )}
+            <button type="button" className="btn secondary" onClick={() => setNaming(false)} disabled={busy}>
+              Cancel
+            </button>
+            <button type="button" className="btn" onClick={() => void save()} disabled={busy || name.trim() === ''} aria-describedby={savedError ? nameErrorId : undefined}>
+              {busy ? 'Saving…' : 'Save'}
+            </button>
+          </>
+        }
+      >
         <div className="sheet-form">
           <p className="panel-note">
             Its settings are saved, never its figures: opened again, it is worked out from your data that day.{' '}
@@ -547,20 +599,33 @@ export default function RunwayReport() {
             Name
             <input value={name} maxLength={SCENARIO_NAME_MAX} onChange={(e) => setName(e.target.value)} placeholder="If I took a year off" />
           </label>
-          {savedError && (
-            <Notice level="critical" role="alert">
-              {savedError}
-            </Notice>
-          )}
-          <div className="button-pair">
-            <button className="secondary" onClick={() => setNaming(false)} disabled={busy}>
+        </div>
+      </Sheet>
+
+      {/* Deleting a saved scenario, from its ⋯, asked first. */}
+      <Sheet
+        open={deleting !== null}
+        title="Delete scenario"
+        onClose={() => !busy && setDeleting(null)}
+        footer={
+          <>
+            {deleteError && (
+              <div className="sheet-footer-note" id={deleteErrorId}>
+                <Notice level="critical" role="alert">
+                  {deleteError}
+                </Notice>
+              </div>
+            )}
+            <button type="button" className="btn secondary" onClick={() => setDeleting(null)} disabled={busy}>
               Cancel
             </button>
-            <button onClick={() => void save()} disabled={busy || name.trim() === ''}>
-              {busy ? 'Saving…' : 'Save'}
+            <button type="button" className="btn danger" onClick={() => void remove()} disabled={busy} aria-describedby={deleteError ? `${askId} ${deleteErrorId}` : askId}>
+              {busy ? 'Deleting…' : 'Delete'}
             </button>
-          </div>
-        </div>
+          </>
+        }
+      >
+        {asked && <p id={askId}>Delete {asked.label}? Only the scenario goes: your data is as it was. It can’t be undone.</p>}
       </Sheet>
     </>
   );
@@ -574,14 +639,17 @@ export function SavedScenarios({
   busy,
   onApply,
   onDelete,
+  focusInstead,
 }: {
   list: ScenarioList | null;
   currency: string | null;
   busy: boolean;
   onApply: (s: RunwayScenario) => void;
-  /** `unreadable`: a scenario that can't be read, which the server deletes
-   *  only when told the person confirmed it. */
+  /** Asks to delete one, from its ⋯. `unreadable`: a scenario that can't be
+   *  read, which the server deletes only when told the person confirmed it. */
   onDelete: (id: string, label: string, unreadable?: boolean) => void;
+  /** Where focus goes when the delete sheet closes after its row has gone. */
+  focusInstead?: RefObject<HTMLElement | null>;
 }) {
   if (!list) return <p className="empty-note">Your saved scenarios aren’t loaded.</p>;
   if (list.scenarios.length + list.unreadable_ids.length + list.unrecognised_ids.length === 0)
@@ -597,21 +665,21 @@ export function SavedScenarios({
             </span>
           </span>
           <span className="runway-scenario-actions">
-            <button className="link-btn" disabled={busy} onClick={() => onApply(s)}>
+            <button type="button" className="btn ghost" disabled={busy} onClick={() => onApply(s)}>
               Apply
             </button>
-            <button className="link-btn danger-link" disabled={busy} onClick={() => onDelete(s.id, `the scenario ${s.name}`)}>
-              Delete
-            </button>
+            <Menu label={`More for ${s.name}`} items={[{ label: 'Delete…', danger: true, disabled: busy, onSelect: () => onDelete(s.id, `the scenario ${s.name}`) }]} focusInstead={focusInstead} />
           </span>
         </div>
       ))}
       {list.unreadable_ids.map((id) => (
         <div key={id} className="peer-row">
           <span>A saved scenario that can’t be read</span>
-          <button className="link-btn danger-link" disabled={busy} onClick={() => onDelete(id, 'this saved scenario that can’t be read', true)}>
-            Delete
-          </button>
+          <Menu
+            label="More for the scenario that can’t be read"
+            items={[{ label: 'Delete…', danger: true, disabled: busy, onSelect: () => onDelete(id, 'this saved scenario that can’t be read', true) }]}
+            focusInstead={focusInstead}
+          />
         </div>
       ))}
       {list.unrecognised_ids.length > 0 && (
