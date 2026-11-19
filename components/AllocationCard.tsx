@@ -1042,7 +1042,9 @@ export function SplitForm({
     // Cancel.
     return (
       <>
-        <p>{remove.question}</p>
+        <div className="stack">
+          <p>{remove.question}</p>
+        </div>
         <SheetFooter>
           {failed}
           <button type="button" ref={remove.safe} className="btn secondary" onClick={() => ask(false)} disabled={saving}>
@@ -1091,9 +1093,11 @@ export function SplitForm({
       {wrong && <FieldError id={errorId}>{wrong.message}</FieldError>}
       {/* Deleting what is saved, last: a row that opens the level that asks. */}
       {remove && (
-        <ActionRows
-          rows={[{ key: 'delete', title: target ? 'Delete the target' : 'Delete my split', sub: 'Asks first.', opens: true, neg: true, ref: remove.row, disabled: !editable || saving, onSelect: () => ask(true) }]}
-        />
+        <div className="panel-section">
+          <ActionRows
+            rows={[{ key: 'delete', title: target ? 'Delete the target' : 'Delete my split', sub: 'Asks first.', opens: true, neg: true, ref: remove.row, disabled: !editable || saving, onSelect: () => ask(true) }]}
+          />
+        </div>
       )}
       <SheetFooter>
         {failed}

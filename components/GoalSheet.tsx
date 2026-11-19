@@ -167,7 +167,9 @@ export default function GoalSheet({
   if (asking && goal) {
     return (
       <Sheet open={open} title="Delete goal" level="delete" onBack={back} onClose={() => !saving && onClose()} footer={footer}>
-        <p>Delete {goal.name} for good? It can&apos;t be undone. Archiving keeps it instead, with its history.</p>
+        <div className="stack">
+          <p>Delete {goal.name} for good? It can&apos;t be undone. Archiving keeps it instead, with its history.</p>
+        </div>
       </Sheet>
     );
   }
@@ -307,7 +309,7 @@ export default function GoalSheet({
           restores it); Delete, for a goal not reached, opens the level that
           asks. */}
       {goal && (
-        <div className="stack tight">
+        <div className="panel-section stack tight">
           {reached && <p className="panel-note">Reached. Archive it to keep it, with its history, and free what it set aside.</p>}
           {!canArchive && <p className="panel-note">Archiving saves your changes too, so it waits until they can be saved.</p>}
           <ActionRows

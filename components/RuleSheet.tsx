@@ -290,7 +290,9 @@ export default function RuleSheet({
   if (form.id && asking) {
     return (
       <Sheet open={open} title="Delete rule" level="delete" onBack={() => ask(false)} onClose={rules.close} footer={footer}>
-        <p>Delete this rule? It can&apos;t be undone. Its transactions go back to as they were; turning it off instead keeps it.</p>
+        <div className="stack">
+          <p>Delete this rule? It can&apos;t be undone. Its transactions go back to as they were; turning it off instead keeps it.</p>
+        </div>
       </Sheet>
     );
   }
@@ -444,7 +446,11 @@ export default function RuleSheet({
           set on one transaction always wins over a rule.
         </p>
         {/* Deleting it, last: a row that opens the level that asks. */}
-        {form.id && <ActionRows rows={[{ key: 'delete', title: 'Delete rule', sub: 'Asks first.', opens: true, neg: true, ref: deleteRow, disabled: busy, onSelect: () => ask(true) }]} />}
+        {form.id && (
+          <div className="panel-section">
+            <ActionRows rows={[{ key: 'delete', title: 'Delete rule', sub: 'Asks first.', opens: true, neg: true, ref: deleteRow, disabled: busy, onSelect: () => ask(true) }]} />
+          </div>
+        )}
       </div>
     </Sheet>
   );
