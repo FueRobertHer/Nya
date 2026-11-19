@@ -3417,10 +3417,11 @@ export function SimulationCard({
   // Placed by the compile (lib/fire/compile.ts): not one left out for want
   // of an age or already in today's figures, nor one with none of it between
   // the start and the plan's end. One begun before the start counts from it.
+  // A milestone moves no money, so it is never one of them.
   const unplaced = new Set(notes.filter((n) => n.part === 'no-age' || n.part === 'already').map((n) => n.id));
   const placed = plan.items.filter((x, i) => {
     const at = ages[i];
-    if (!at || unplaced.has(x.id)) return false;
+    if (!at || unplaced.has(x.id) || x.kind === 'milestone') return false;
     return startAge === null ? x.kind !== 'pay' : reachesStart(x, at, startAge) && at.start < startAge + sim.years;
   });
   const startLabel = plan.start === 'fi-number' ? (plan.fiNumber != null ? 'your own FI number' : 'your FI number') : plan.start === 'assets' ? 'your invested assets' : plan.start === 'at-stop' ? 'what you’d have' : 'the balance you typed';

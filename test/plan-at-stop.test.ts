@@ -13,7 +13,7 @@ import { everyRunText } from '@/components/plan-items';
 
 // D11's start, as its reader runs it (the tax plan's timeline, "With D11's
 // start"): Will it last? from what your own steady path has at the stop, a balance
-// milestone not fired by then checked per run on that run's balance. The oracle is
+// anchor not fired by then checked per run on that run's balance. The oracle is
 // the steady path: on a market that never changes, every run is the steady one, so
 // each must fire where the steady path placed it, as steadyRun is held to
 // historicalCycles. Nothing else moves for the other starts.
@@ -111,7 +111,7 @@ describe('where it starts', () => {
 
 describe('the oracle: on a market that never changes, each run is the steady path', () => {
   const REAL = 0.05;
-  /** The plan with its milestone item placed at the age the steady path fired it. */
+  /** The plan with its item on a balance placed at the age the steady path fired it. */
   const asFixed = (p: FirePlanV2, f: PlanFigures): FirePlanV2 => ({ ...p, start: 'custom', startBalance: sim(f).startBalance, items: p.items.map((x, i) => {
     const a = f.resolution.ages[i];
     if (!a) throw new Error('never placed');
@@ -136,7 +136,7 @@ describe('the oracle: on a market that never changes, each run is the steady pat
     test(name, () => {
       const p = plan({ items: [onBalance('m', over, amount, offset)] });
       const f = figures(p);
-      // The milestone comes after the stop on the steady path, so it goes per run.
+      // The balance comes after the stop on the steady path, so it goes per run.
       expect(f.resolution.perRun?.edges[0]).toBeTruthy();
       const start = f.resolution.ages[0]?.start as number;
       expect(start).toBeGreaterThan(50);
@@ -150,7 +150,7 @@ describe('the oracle: on a market that never changes, each run is the steady pat
     });
   }
 
-  test('an item that follows a milestone, by years, and two on one amount', () => {
+  test('an item that follows a balance, by years, and two on one amount', () => {
     const a = onBalance('a', { kind: 'spending', yearly: 5_000, until: { years: 3 } }, 1_250_000);
     const b: PlanItem = { ...onBalance('b', { kind: 'one-off', once: 30_000 }, 0), from: { anchor: { at: 'item', id: 'a', edge: 'end' }, offset: 2 } };
     const c = onBalance('c', { kind: 'spending', yearly: 2_000 }, 1_250_000);
@@ -173,6 +173,23 @@ describe('the oracle: on a market that never changes, each run is the steady pat
     const run = balancesOf(sim(f), REAL);
     for (let y = 0; y < steady.balances.length; y++) expect(run[y]).toBeCloseTo(steady.balances[y], 5);
   });
+
+  test('a milestone after the stop: its trigger waits per run with no flow of its own, and what is timed on it waits on that trigger', () => {
+    const lean = onBalance('lean', { kind: 'milestone', owner: null }, 1_250_000);
+    const alone = figures(plan({ items: [lean] }));
+    // On the steady path it is reached after the stop, as an item on that balance would be.
+    expect(alone.resolution.ages[0]!.start).toBeGreaterThan(50);
+    expect([alone.resolution.perRun?.triggers, sim(alone).conditional]).toEqual([[1_250_000], { triggers: [1_250_000], items: [] }]);
+    const travel: PlanItem = { ...onBalance('travel', { kind: 'spending', yearly: 5_000 }, 0), from: { anchor: { at: 'item', id: 'lean', edge: 'start' }, offset: 1 } };
+    const p = plan({ items: [lean, travel] });
+    const f = figures(p);
+    expect(f.resolution.perRun?.triggers).toEqual([1_250_000]);
+    expect(f.resolution.perRun?.edges[1]?.start).toEqual({ trigger: 0, offset: 1 });
+    expect(sim(f).conditional?.items.map((x) => x.start)).toEqual([{ trigger: 0, offset: 1 }]);
+    const steady = steadyRun(sim(figures(asFixed(p, f))), REAL);
+    const run = balancesOf(sim(f), REAL);
+    for (let y = 0; y < steady.balances.length; y++) expect(run[y]).toBeCloseTo(steady.balances[y], 5);
+  });
 });
 
 describe('what stays as the steady path has it', () => {
@@ -191,7 +208,7 @@ describe('what stays as the steady path has it', () => {
     expect(everyRunText(f.resolution.ages[0]?.start ?? null, p)).toContain('in every run');
   });
 
-  test('every other start: a milestone is the steady year, and the plan is what it was', () => {
+  test('every other start: a balance is the steady year, and the plan is what it was', () => {
     for (const start of ['fi-number', 'assets', 'custom'] as const) {
       const f = figures(plan({ start, startBalance: 1_000_000, items: [onBalance('m', { kind: 'spending', yearly: 12_000 }, 1_250_000)] }));
       expect(f.resolution.perRun).toBeUndefined();

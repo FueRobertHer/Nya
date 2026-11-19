@@ -29,7 +29,7 @@ import type { DetailWork } from './plan-detail';
 import { planFigures, type FiguresRefused } from './plan-figures';
 import type { FirePlanV2 } from './plan-v2';
 import { simulate, successGrid, type Method, type MonteCarloOptions, type SimPlan } from './simulate';
-import type { Resolution } from './steady';
+import { withoutIdle, type Resolution } from './steady';
 
 /** How far under the share a year's sample can be and still be run in full: the
  *  sample came within 1.5 points of the full run at every stop of the prototype
@@ -59,7 +59,9 @@ export function earliestStop({ plan, measured, count, detailed, method }: Earlie
   if (plan.age === null) return { error: 'the plan has no age' };
   const lo = Math.ceil(plan.age);
   const hi = Math.max(PLAN_TO_AGE, lo);
-  const stopping = { ...plan, stopAtFi: true, start: 'at-stop' as const };
+  // A milestone nothing is timed on moves no run: left out of each
+  // candidate, the answer's own figures place it once (lib/fire/steady.ts).
+  const stopping = { ...plan, stopAtFi: true, start: 'at-stop' as const, items: withoutIdle(plan) };
 
   const candidates = new Map<number, Candidate | FiguresRefused>();
   const candidate = (k: number) => {

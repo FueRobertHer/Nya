@@ -118,6 +118,15 @@ describe('the earliest stop that lasts', () => {
     expect(r.resolution.ages[2]).toEqual({ start: r.age as number, end: null });
   }, 60_000);
 
+  test('a milestone nothing is timed on, among other items, changes nothing found', () => {
+    const lean: PlanItem = { ...social('lean', 'you', 67, 0), kind: 'milestone', from: { anchor: { at: 'balance', amount: 1_200_000 }, offset: 0 }, yearly: null, owner: null, beforeTax: false };
+    const strip = ({ resolution: _, ...rest }: EarliestAnswer) => rest;
+    const withIt = solve({ ...PLAN, items: [...PLAN.items, lean] });
+    expect(strip(withIt)).toEqual(strip(solve(PLAN)));
+    // The answer's own figures place it, once, after the two incomes.
+    expect(withIt.resolution.ages.length).toBe(3);
+  });
+
   test('in the flat model', () => {
     const plan = { ...PLAN, taxRate: 0.1 };
     const r = solve(plan, 'historical', true);

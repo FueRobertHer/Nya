@@ -135,10 +135,11 @@ export function withFacts(plan: StoredPlan, facts: Facts): StoredPlan {
 /** Whether a plan holds an amount someone typed, which its currency is the
  *  currency of: version 1's typed amounts (lib/fire/plan-currency.ts), or
  *  on version 2 any item's amount (pay, a home, a pension and the rest, which
- *  typedAmounts doesn't see) or your own FI number. */
+ *  typedAmounts doesn't see, a milestone's amount among them) or your own
+ *  FI number. */
 export function holdsAmounts(plan: StoredPlan): boolean {
   if (hasTypedAmounts(plan)) return true;
-  return plan.version === 2 && (plan.fiNumber !== null || plan.items.some((x) => x.once !== null || x.yearly !== null || x.replaces !== null));
+  return plan.version === 2 && (plan.fiNumber !== null || plan.items.some((x) => x.once !== null || x.yearly !== null || x.replaces !== null || x.from.anchor.at === 'balance'));
 }
 
 /** Whether an entry holds an amount someone typed: its plan's, or its choices'

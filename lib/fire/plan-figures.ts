@@ -314,7 +314,8 @@ export function planFigures(plan: FirePlanV2, measured: Measured, { count, detai
   /** Per candidate: a search asks of the same ages and stop more than once. */
   const sharesFor = (ages: ItemAges[], stop: number | null): FiShares | null => {
     if (!detailed) return null;
-    const key = JSON.stringify([ages, stop]);
+    // A milestone's age moves no figure, so placing one reuses the shares.
+    const key = JSON.stringify([ages.map((x, i) => (plan.items[i]?.kind === 'milestone' ? null : x)), stop]);
     let made = kept.get(key);
     if (made === undefined) {
       made = settleShares(plan, measured, ages, stop, count, detailed);
