@@ -6,7 +6,7 @@
     "inlineLayoutStyles": 3
   },
   "components/AllocationCard.tsx": {
-    "inlineLayoutStyles": 7
+    "inlineLayoutStyles": 5
   },
   "components/ApiChanges.tsx": {
     "inlineLayoutStyles": 1
@@ -34,9 +34,6 @@
   },
   "components/DebtPayoff.tsx": {
     "inlineLayoutStyles": 1
-  },
-  "components/GoalSheet.tsx": {
-    "inlineLayoutStyles": 2
   },
   "components/GoalsCard.tsx": {
     "inlineLayoutStyles": 1
@@ -72,10 +69,10 @@
     "inlineLayoutStyles": 2
   },
   "components/PlanCurrency.tsx": {
-    "inlineLayoutStyles": 9
+    "inlineLayoutStyles": 8
   },
   "components/PlanForms.tsx": {
-    "inlineLayoutStyles": 3
+    "inlineLayoutStyles": 2
   },
   "components/PlanTab.tsx": {
     "inlineLayoutStyles": 3
@@ -84,7 +81,7 @@
     "inlineLayoutStyles": 2
   },
   "components/RuleSheet.tsx": {
-    "inlineLayoutStyles": 2
+    "inlineLayoutStyles": 1
   },
   "components/RulesCard.tsx": {
     "inlineLayoutStyles": 3

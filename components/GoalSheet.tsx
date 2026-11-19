@@ -54,6 +54,8 @@ export default function GoalSheet({
   const [attempted, setAttempted] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const errorId = useId();
+  const failedId = useId();
+  const askId = useId();
   const set = (patch: Partial<Draft>) => setD((cur) => ({ ...cur, ...patch }));
 
   const read = readDraft(d, { goal, goals, accounts, today, newId });
@@ -103,8 +105,45 @@ export default function GoalSheet({
     if (goal && archived) void commit(goals.map((g) => (g.id === goal.id ? archived : g)));
   };
 
+  // The buttons, and why a save failed beside them; asked to delete, what goes
+  // with Keep it and Delete in their place.
+  const failed = attempted && saveError ? failedId : undefined;
+  const footer = (
+    <>
+      {attempted && saveError && (
+        <div className="sheet-footer-note" id={failedId}>
+          <Notice level="critical" role="alert">
+            <Masked>{hideAmountsIn(saveError)}</Masked>
+          </Notice>
+        </div>
+      )}
+      {confirmDelete && goal ? (
+        <>
+          <p className="helper sheet-footer-note" id={askId}>
+            Delete {goal.name} for good? Archiving keeps it, with its history.
+          </p>
+          <button type="button" className="btn secondary" onClick={() => setConfirmDelete(false)} disabled={saving}>
+            Keep it
+          </button>
+          <button type="button" className="btn danger" onClick={() => commit(goals.filter((g) => g.id !== goal.id))} disabled={saving} aria-describedby={failed ? `${askId} ${failed}` : askId}>
+            {saving ? 'Deleting…' : 'Delete'}
+          </button>
+        </>
+      ) : (
+        <>
+          <button type="button" className="btn secondary" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button type="button" className="btn" onClick={save} disabled={!read.ready || saving} aria-describedby={failed}>
+            {saving ? 'Saving…' : goal ? 'Save' : 'Add goal'}
+          </button>
+        </>
+      )}
+    </>
+  );
+
   return (
-    <Sheet open={open} title={goal ? 'Edit goal' : 'Add a goal'} onClose={() => !saving && onClose()}>
+    <Sheet open={open} title={goal ? 'Edit goal' : 'Add a goal'} onClose={() => !saving && onClose()} footer={footer}>
       <div className="sheet-form">
         <label className="field">
           Name
@@ -233,34 +272,9 @@ export default function GoalSheet({
         <p className="panel-note">
           An allocation is the part of the account’s balance this goal counts as its own: the money stays in the account, and goals never count more than it holds.
         </p>
-        {attempted && saveError && (
-          <Notice level="critical" role="alert">
-            <Masked>{hideAmountsIn(saveError)}</Masked>
-          </Notice>
-        )}
       </div>
-      {confirmDelete && goal ? (
+      {!confirmDelete && (
         <>
-          <p className="panel-note">Delete {goal.name} for good? Archiving keeps it, with its history.</p>
-          <div className="button-pair" style={{ marginTop: 12 }}>
-            <button className="secondary" onClick={() => setConfirmDelete(false)} disabled={saving}>
-              Keep it
-            </button>
-            <button className="danger" onClick={() => commit(goals.filter((g) => g.id !== goal.id))} disabled={saving}>
-              {saving ? 'Deleting…' : 'Delete'}
-            </button>
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="button-pair" style={{ marginTop: 16 }}>
-            <button className="secondary" onClick={onClose} disabled={saving}>
-              Cancel
-            </button>
-            <button onClick={save} disabled={!read.ready || saving}>
-              {saving ? 'Saving…' : goal ? 'Save' : 'Add goal'}
-            </button>
-          </div>
           {goal && (
             <div className="goal-sheet-actions">
               {reached && <p className="panel-note">Reached. Archive it to keep it, with its history, and free what it set aside.</p>}

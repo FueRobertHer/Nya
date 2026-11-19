@@ -279,12 +279,7 @@ export default function PlanHealthForm(
       <Why label="What isn’t counted">
         <p>Below 250% of the poverty line silver plans also lower deductibles and copays; Nya counts the premium only. States that add their own help or a Basic Health Program aren’t counted either.</p>
       </Why>
-      {s.error && (
-        <Notice level="critical" role="alert">
-          {s.error}
-        </Notice>
-      )}
-      <Buttons copy={props.copy} paused={props.paused} onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
+      <Buttons error={s.error} copy={props.copy} paused={props.paused} onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
     </div>
   );
 }

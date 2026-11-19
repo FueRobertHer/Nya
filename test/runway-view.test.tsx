@@ -338,7 +338,13 @@ describe('the saved scenarios', () => {
     expect(t).toContain('If I quit');
     expect(t).toContain('Worked out with spending over the last 6 full months, spending lower by $250.00 a month, income stopping after Dec 31, 2026 and what you planned in.');
     expect(t.match(/Apply/g)?.length).toBe(1);
-    expect(t.match(/Delete/g)?.length).toBe(2);
+    // Delete is in each one's ⋯, never a first-level button (it asks in a sheet).
+    expect(t).not.toContain('Delete');
+    const html = renderToStaticMarkup(
+      <SavedScenarios list={{ scenarios: [{ id: 's1', ...saved }], unreadable_ids: ['bad'], unrecognised_ids: ['later'] }} currency="USD" busy={false} onApply={() => {}} onDelete={() => {}} />
+    );
+    expect(html).toContain('aria-label="More for If I quit"');
+    expect(html).toContain('aria-label="More for the scenario that can’t be read"');
     expect(t).toContain('A saved scenario that can’t be read');
     expect(t).toContain('One more was saved by a newer version of Nya');
     expect(text(renderToStaticMarkup(<SavedScenarios list={{ scenarios: [], unreadable_ids: [], unrecognised_ids: [] }} currency="USD" busy={false} onApply={() => {}} onDelete={() => {}} />))).toContain('None yet.');

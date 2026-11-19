@@ -389,10 +389,11 @@ describe('a form saves only to the plan it was opened for', () => {
     expect(tab.title()).toBe('Your plan');
     let answer: unknown;
     await act(async () => void (answer = await late()));
+    // Said beside Save, in the footer, while the drawer is still sliding out.
+    expect(sheet.textContent).toContain('This form was opened for another plan than the one shown now, so nothing was saved.');
     await settle(400);
     expect(tab.dialog()).toBeNull();
     expect(answer).toBeUndefined();
-    expect(sheet.textContent).toContain('This form was opened for another plan than the one shown now, so nothing was saved.');
     expect(writes()).toEqual([]);
     const { byName } = await stored();
     expect([byName['First plan'].plan.targetAge, byName['Retire at 50'].plan.targetAge]).toEqual([55, 50]);

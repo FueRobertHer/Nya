@@ -10,8 +10,8 @@
 // A rate is not an amount of the person's money, so the rates here show
 // while amounts are hidden (lib/format.ts formatRate).
 
-import { useEffect, useRef, useState } from 'react';
-import { Sheet } from './Sheet';
+import { useEffect, useId, useRef, useState } from 'react';
+import { Sheet, SheetFooter } from './Sheet';
 import { Why } from './Why';
 import CurrencyChoiceSheet, { type ManualCurrency } from './CurrencyChoiceSheet';
 import { ecbCross, errorOf, useCurrencySettings, type CurrencyLoad, type CurrencySettingsView } from './currency-state';
@@ -281,6 +281,7 @@ export function OwnRateForm({
   const quotes = view ? ['EUR', ...Object.keys(view.ecb.rates).sort()] : ['EUR'];
   const rateError = draft.rate.trim() ? rateTextError(draft.rate.trim()) : null;
   const problem = draftProblem(draft);
+  const errorId = useId();
   return (
     <div className="sheet-form own-rate-form">
       <label className="field">
@@ -331,26 +332,26 @@ export function OwnRateForm({
           <input type="date" value={draft.from} max={tomorrow()} onChange={(e) => onDraft({ ...draft, from: e.target.value })} disabled={busy} />
         </label>
       )}
-      <div className="stack">
-        <p className="panel-note">
-          {draft.every ? 'It is used for every day, past ones too, instead of the ECB’s.' : 'From that day on it is used instead of the ECB’s; before it, the ECB’s rate where it publishes one.'} A
-          rate in a currency other than the euro goes through the ECB’s rate for that currency each day. Changing a rate changes every figure it reaches, past days
-          included.
-        </p>
-        <div className="button-pair">
-          <button onClick={onSave} disabled={busy || problem !== null}>
-            {busy ? 'Saving…' : 'Save'}
-          </button>
-          <button className="secondary" onClick={onCancel} disabled={busy}>
-            Cancel
-          </button>
-        </div>
+      <p className="panel-note">
+        {draft.every ? 'It is used for every day, past ones too, instead of the ECB’s.' : 'From that day on it is used instead of the ECB’s; before it, the ECB’s rate where it publishes one.'} A
+        rate in a currency other than the euro goes through the ECB’s rate for that currency each day. Changing a rate changes every figure it reaches, past days
+        included.
+      </p>
+      <SheetFooter>
         {error && (
-          <Notice level="critical" role="alert">
-            {error}
-          </Notice>
+          <div className="sheet-footer-note" id={errorId}>
+            <Notice level="critical" role="alert">
+              {error}
+            </Notice>
+          </div>
         )}
-      </div>
+        <button type="button" className="btn secondary" onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+        <button type="button" className="btn" onClick={onSave} disabled={busy || problem !== null} aria-describedby={error ? errorId : undefined}>
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+      </SheetFooter>
     </div>
   );
 }

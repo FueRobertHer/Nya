@@ -732,7 +732,8 @@ describe('each account’s growth', () => {
     await act(async () => type(growthField(tab)!, '7'));
     await press(buttonShown(tab.dialog()!, 'Save'));
     expect(tab.title()).toBe('Brokerage');
-    expect(tab.shown()).toContain('Your accounts changed on another device.');
+    // Beside the level's buttons, in the sheet's footer.
+    expect(part(tab.dialog()!, 'sheet-footer')!.textContent).toContain('Your accounts changed on another device.');
     await press(buttonShown(tab.dialog()!, 'Cancel'));
     expect(subOf(tab, 'Brokerage')).toBe('Cost basis $105,000 · gain $35,000');
     await tab.unmount();

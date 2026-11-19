@@ -367,7 +367,8 @@ describe('the editor', () => {
     // No account, as "No account" leaves it: nothing set aside, and Save open.
     const none = html(goal('a', null, 9000, { allocation: 3000 }));
     expect(box(none)).not.toContain('checked');
-    expect(none).toMatch(/<button>Save<\/button>/);
+    // Save in the sheet's footer, after Cancel.
+    expect(none).toMatch(/<div class="sheet-footer"><button type="button" class="btn secondary">Cancel<\/button><button type="button" class="btn">Save<\/button><\/div>/);
   });
 });
 

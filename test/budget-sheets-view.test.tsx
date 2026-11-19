@@ -163,6 +163,16 @@ function mountCard(props: CardProps & { initial?: Budgets; ok?: boolean | (() =>
   return { host, saved, ...harness(host as unknown as FakeElement), unmount: () => act(() => root.unmount()) };
 }
 
+
+/** The words of a sheet's footer buttons, in order. */
+const footerButtons = (sheet: FakeElement) =>
+  sheet
+    .findAll((e) => (e.getAttribute('class') ?? '') === 'sheet-footer')[0]!
+    .findAll((e) => e.tagName === 'BUTTON')
+    .map((b) => b.textContent.trim());
+/** A budget sheet's last action row, Delete budget, which opens the level that asks. */
+const deleteRow = (sheet: FakeElement) =>
+  sheet.findAll((e) => e.tagName === 'BUTTON' && (e.getAttribute('class') ?? '').split(' ').includes('neg') && e.textContent.startsWith('Delete budget'))[0] ?? null;
 describe('a budget’s sheet', () => {
   test('its row opens it, focus in it; Save saves the amount typed and closes it, focus back on the row', async () => {
     const v = mountCard({ open: [FOOD] });
@@ -233,14 +243,16 @@ describe('a budget’s sheet', () => {
   test('Delete asks first: Keep it goes back; Delete takes it out, and with its group gone focus goes to + Add budget', async () => {
     const v = mountCard({ open: [FOOD] });
     await v.open('Groceries');
-    act(() => click(v.button('Delete…', v.dialog()!)!));
+    // Its amount's Cancel and Save in the footer; Delete budget its last action row, in the body.
+    expect(footerButtons(v.dialog()!)).toEqual(['Cancel', 'Save']);
+    act(() => click(deleteRow(v.dialog()!)!));
     expect(v.dialog()!.getAttribute('aria-label')).toBe('Delete budget');
     expect(v.dialog()!.textContent).toContain('Delete the budget for Groceries?');
     // The safe answer has focus, so a stray Enter keeps the budget.
     expect(v.focused() === v.button('Keep it', v.dialog()!)).toBe(true);
     act(() => click(v.button('Keep it', v.dialog()!)!));
     expect(v.dialog()!.getAttribute('aria-label')).toBe('Groceries');
-    act(() => click(v.button('Delete…', v.dialog()!)!));
+    act(() => click(deleteRow(v.dialog()!)!));
     await act(async () => click(v.button('Delete', v.dialog()!)!));
     await settle();
     expect(v.saved).toEqual([{ categories: {}, groups: {} }]);
@@ -290,7 +302,7 @@ describe('a budget’s sheet', () => {
     const v = mountCard({ open: [FOOD] });
     await v.open('Groceries');
     act(() => type(v.field('Monthly budget for Groceries')!, '999'));
-    act(() => click(v.button('Delete…', v.dialog()!)!));
+    act(() => click(deleteRow(v.dialog()!)!));
     act(() => click(v.button('Close', v.dialog()!)!));
     await settle(400);
     await v.open('Groceries');
@@ -316,7 +328,7 @@ describe('focus after a sheet closes', () => {
     const v = mountCard({ open: [FOOD], ok: () => new Promise<boolean>((r) => (finish = r)) });
     await v.open('Groceries');
     const before = v.row('Groceries')!;
-    act(() => click(v.button('Delete…', v.dialog()!)!));
+    act(() => click(deleteRow(v.dialog()!)!));
     act(() => click(v.button('Delete', v.dialog()!)!));
     // Its group's last budget: the list shown while it saves has no Food.
     expect(v.row('Food')).toBeNull();
@@ -517,6 +529,8 @@ describe('a budget on a category since deleted, and Add budget', () => {
     act(() => click(v.add()!));
     await settle();
     expect(v.dialog()!.getAttribute('aria-label')).toBe('Add budget');
+    // Cancel, then Add budget, in the footer.
+    expect(footerButtons(v.dialog()!)).toEqual(['Cancel', 'Add budget']);
     const go = () => v.button('Add budget', v.dialog()!)!;
     expect(go().hasAttribute('disabled')).toBe(true);
     act(() => type(v.field('Category or group to budget')!, `category:${RESTAURANTS}`));
@@ -974,7 +988,7 @@ describe('a month with no budget: the empty state’s Add budget (the screen rev
     expect(v.first()).toBeNull();
     act(() => click(v.row('Food')!));
     await v.open('Groceries');
-    act(() => click(v.button('Delete…', v.dialog()!)!));
+    act(() => click(deleteRow(v.dialog()!)!));
     await act(async () => click(v.button('Delete', v.dialog()!)!));
     await settle(400);
     expect(v.dialog()).toBeNull();

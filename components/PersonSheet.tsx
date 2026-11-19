@@ -9,7 +9,7 @@
 // and handles out of Nya and keeps every amount, so no total moves. Never
 // their Nya account, an email, a phone number or bank details.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import { formatDay, formatMoney, hideAmountsIn } from '@/lib/format';
@@ -32,6 +32,8 @@ export default function PersonSheet({ id, open, tags, shared, onClose }: { id: s
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [asking, setAsking] = useState<'forget' | 'remove' | null>(null);
+  const errorId = useId();
+  const askId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -83,8 +85,57 @@ export default function PersonSheet({ id, open, tags, shared, onClose }: { id: s
   const items = id ? card.items.filter((i) => i.person === id) : [];
   const name = p?.name ?? REMOVED_NAME;
 
+  // The buttons, and why the last one failed beside them; asked to forget them or
+  // remove what was shared, Keep them and the action in their place.
+  const failed = error ? errorId : undefined;
+  const asked = (label: string, go: () => Promise<boolean>) => (
+    <>
+      <button
+        type="button"
+        className="btn secondary"
+        onClick={() => {
+          // What the action said when it failed goes with its question.
+          setAsking(null);
+          setError('');
+        }}
+        disabled={saving}
+      >
+        Keep them
+      </button>
+      <button type="button" className="btn danger" onClick={() => void go().then((ok) => ok && onClose())} disabled={saving} aria-describedby={failed ? `${askId} ${failed}` : askId}>
+        {label}
+      </button>
+    </>
+  );
+  // A forgotten person's sheet has nothing to save: no footer, unless to ask or say.
+  const footer = !error && !asking && p?.removed ? null : (
+    <>
+      {error && (
+        <div className="sheet-footer-note" id={errorId}>
+          <Notice level="critical" role="alert">
+            <Masked>{hideAmountsIn(error)}</Masked>
+          </Notice>
+        </div>
+      )}
+      {asking === 'forget'
+        ? asked('Forget them', () => run(SHARED_ROUTES.people, 'PATCH', { id, action: 'forget' }))
+        : asking === 'remove'
+          ? asked('Remove them', () => run(SHARED_ROUTES.people, 'PATCH', { id, action: 'remove-expenses' }, true))
+          : !p?.removed && (
+              <>
+                <button type="button" className="btn secondary" onClick={onClose} disabled={saving}>
+                  Cancel
+                </button>
+                <button type="button" className="btn" onClick={() => void save()} disabled={!ready || saving} aria-describedby={failed}>
+                  {saving ? 'Saving…' : id ? 'Save' : 'Add'}
+                </button>
+              </>
+            )}
+    </>
+  );
+
   return (
-    <Sheet open title={id ? name : 'Add someone'} onClose={() => !saving && onClose()}>
+    <Sheet open title={id ? name : 'Add someone'} onClose={() => !saving && onClose()} footer={footer}>
       {!p?.removed && (
         <div className="sheet-form">
           <label className="field">
@@ -140,21 +191,6 @@ export default function PersonSheet({ id, open, tags, shared, onClose }: { id: s
             </>
           )}
           <p className="panel-note">Only you see this. Nya keeps no one’s phone number, email or bank details, and never contacts them.</p>
-        </div>
-      )}
-      {error && (
-        <Notice level="critical" role="alert">
-          <Masked>{hideAmountsIn(error)}</Masked>
-        </Notice>
-      )}
-      {!p?.removed && (
-        <div className="button-pair">
-          <button onClick={() => void save()} disabled={!ready || saving}>
-            {saving ? 'Saving…' : id ? 'Save' : 'Add'}
-          </button>
-          <button className="secondary" onClick={onClose} disabled={saving}>
-            Cancel
-          </button>
         </div>
       )}
 
@@ -213,32 +249,16 @@ export default function PersonSheet({ id, open, tags, shared, onClose }: { id: s
       )}
       {asking === 'forget' && (
         <>
-          <p className="panel-note">
+          <p className="panel-note" id={askId}>
             Forget {name}? Their name, usernames, tag and requests go from Nya; every amount stays, as “{REMOVED_NAME}”, so no total and no balance changes.
           </p>
-          <div className="button-pair">
-            <button className="danger" onClick={() => void run(SHARED_ROUTES.people, 'PATCH', { id, action: 'forget' }).then((ok) => ok && onClose())} disabled={saving}>
-              Forget them
-            </button>
-            <button className="secondary" onClick={() => setAsking(null)} disabled={saving}>
-              Keep them
-            </button>
-          </div>
         </>
       )}
       {asking === 'remove' && (
         <>
-          <p className="panel-note">
+          <p className="panel-note" id={askId}>
             Remove everything you shared with {name}? Their parts of shared transactions become yours, on the days you bought them, so past totals go up; their IOUs go.
           </p>
-          <div className="button-pair">
-            <button className="danger" onClick={() => void run(SHARED_ROUTES.people, 'PATCH', { id, action: 'remove-expenses' }, true).then((ok) => ok && onClose())} disabled={saving}>
-              Remove them
-            </button>
-            <button className="secondary" onClick={() => setAsking(null)} disabled={saving}>
-              Keep them
-            </button>
-          </div>
         </>
       )}
     </Sheet>
