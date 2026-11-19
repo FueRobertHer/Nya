@@ -139,6 +139,34 @@ describe('the review', () => {
       ['Another file', 'btn secondary', null],
       ['Import 3 transactions', 'btn', foot.notes[0].id],
     ]);
+    // A refused import beside it too, each note describing Import.
+    const refused = footerOf(
+      renderToStaticMarkup(
+        <ReviewView
+          review={REVIEW}
+          file={picked}
+          options={{}}
+          account={account}
+          busy={false}
+          error="The account changed since the review."
+          acknowledged={false}
+          onAcknowledge={noop}
+          choices={{ each: {} }}
+          sentChoices={{ each: {} }}
+          onChoose={noop}
+          onChooseAll={noop}
+          conflicts={{ each: {} }}
+          onConflict={noop}
+          onConflictAll={noop}
+          onCovers={noop}
+          onFlip={noop}
+          onImport={noop}
+          onBack={noop}
+        />
+      )
+    );
+    expect(refused.notes.map((n) => n.cls)).toEqual(['stale-note sheet-footer-note', 'sheet-footer-note']);
+    expect(refused.buttons[1][2]).toBe(refused.notes.map((n) => n.id).join(' '));
     const answered = render({ each: { '4': 'new' } });
     expect(importButton(answered)[1]).not.toContain('disabled');
     expect(importButton(answered)[2]).toBe('Import 4 transactions');
