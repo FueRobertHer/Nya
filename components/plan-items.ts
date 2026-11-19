@@ -114,13 +114,13 @@ export function templateOf(x: PlanItem): ItemTemplate {
  *  rewritten (part-time work counts before the stop once it says what it
  *  replaces, and its amount may be before tax). */
 export const TEMPLATE_HELP: Record<string, string> = {
-  cost: 'A one-off from your investments, once or every few years: a car, a roof, a wedding, tuition. In today’s money, after tax. For a car, count only what comes from your investments: a car loan’s payments are already in your measured spending. Counted in Will it last? from where it starts, and in your FI date before then.',
+  cost: 'A one-off from your investments, once or every few years: a car, a roof, a wedding, tuition. In today’s money, after tax. For a car, count only what comes from your investments: a car loan’s payments are already in your measured spending. Counted in the stress test from where it starts, and in your FI date before then.',
   spending: 'How much more or less you would spend a year, for some years or for good: a child, travel, care for a parent, or a loan you will pay off, whose payments are in your measured spending until then. It changes what you save in its years too. A change for good that is already in effect when you stop working is part of your spending in retirement, and so of your FI number. Typing the plan’s own annual spending instead changes the FI number the same way, but leaves what you save as it is.',
   home: 'What you pay from your investments when you buy (0 if the down payment comes from cash the plan doesn’t count), and how your yearly spending changes from then: the mortgage, taxes and upkeep, less the rent you stop paying. A change for good that is already in effect when you stop working is part of your spending in retirement, and so of your FI number.',
-  'social-security': 'A year, from the age it starts, as your statement gives it. Counted in Will it last? from where it starts, and in your FI date before then.',
-  pension: 'A year, from the age it starts. Counted in Will it last? from where it starts, and in your FI date before then.',
-  'other-income': 'Money in a year from anything but your job: rent from a property, a business, an annuity. Counted in Will it last? from where it starts, and in your FI date before then.',
-  windfall: 'Money that comes in once (an inheritance, a sale), after tax, added to your investments at that age. From where Will it last? starts, it takes it as money in that year.',
+  'social-security': 'A year, from the age it starts, as your statement gives it. Counted in the stress test from where it starts, and in your FI date before then.',
+  pension: 'A year, from the age it starts. Counted in the stress test from where it starts, and in your FI date before then.',
+  'other-income': 'Money in a year from anything but your job: rent from a property, a business, an annuity. Counted in the stress test from where it starts, and in your FI date before then.',
+  windfall: 'Money that comes in once (an inheritance, a sale), after tax, added to your investments at that age. From where the stress test starts, it takes it as money in that year.',
   pay: 'Your own take-home pay, up or down: a raise, a pay cut, a new job, or a break for some years. It moves your FI date and what you’d have when you stop: it never changes your spending in retirement, or your FI number.',
   'part-time': 'Work in place of your job, or after you stop. Started before you stop, it also asks the take-home it replaces, so it counts in your FI date. The FI card’s Barista FI uses your plan’s own part-time income, not this.',
   milestone: 'A point on your path to watch for. It changes no figure: the Timeline says when you reach it, and items can start or end on it.',
@@ -256,7 +256,7 @@ export function templateHelp(id: string): string | undefined {
   return TEMPLATE_HELP[id];
 }
 
-/** Whether any of an item reaches Will it last?, which starts at startAge: it
+/** Whether any of an item reaches the stress test, which starts at startAge: it
  *  starts there or later, a repeat lands there, or its years run on past it.
  *  A change in pay never does: the job ends when you stop. */
 export function reachesStart(x: PlanItem, ages: { start: number; end: number | null }, startAge: number): boolean {
@@ -508,17 +508,17 @@ export function unplacedText(x: PlanItem, why: Unplaced | null, plan: Facts): st
 /** The lines under the Timeline's heading, one for each place its kinds count. */
 export function whereItCountsText(startAge: number | null): readonly [string, string] {
   const from = startAge === null ? 'where it starts' : `${startAge}, where it starts`;
-  return ['Your FI date counts costs, windfalls, changes in pay, work that starts before you stop and other money in, until you reach it.', `Will it last? counts costs, windfalls and income, from ${from}.`];
+  return ['Your FI date counts costs, windfalls, changes in pay, work that starts before you stop and other money in, until you reach it.', `The stress test counts costs, windfalls and income, from ${from}.`];
 }
 
-/** Part-time work's years before Will it last? starts, in words that are
+/** Part-time work's years before the stress test starts, in words that are
  *  true since E1: with what it replaces said, they count in your FI date;
  *  without it, the caution says what to do, and this says nothing. From
- *  today's assets Will it last? starts today, so nothing comes before it. */
+ *  today's assets the stress test starts today, so nothing comes before it. */
 export function beforeStartText(x: PlanItem, plan: Pick<FirePlanV2, 'start'>, startAge: number | null): string | null {
   if (x.kind !== 'part-time') return EVENT_PART_TEXT['before-start'];
   if (x.replaces === null || plan.start === 'assets' || startAge === null) return null;
-  return `Its years before ${startAge} count in your FI date, not in Will it last?, which starts at ${startAge}.`;
+  return `Its years before ${startAge} count in your FI date, not in the stress test, which starts at ${startAge}.`;
 }
 
 /** An item note's words, for its row and its sheet. */
@@ -530,7 +530,7 @@ export function notePartText(x: PlanItem, part: keyof typeof EVENT_PART_TEXT, pl
  *  the words its kind had before E2: a cost's and income's as the Income and
  *  one-off expenses card said them, the rest as the life events' did (with
  *  part-time's before-start as beforeStartText has it). `at` is where it
- *  starts; `end` where Will it last? ends. */
+ *  starts; `end` where the stress test ends. */
 export function rowNoteText(
   x: PlanItem,
   part: keyof typeof EVENT_PART_TEXT,
@@ -545,7 +545,7 @@ export function rowNoteText(
     if (part === 'before-start') {
       if (o.startAge === null) return 'Not in the simulation: add your age.';
       if (o.plan.age !== null && o.at !== null && o.at < o.plan.age) return 'Before today, so it isn’t counted: your measured figures may already count it.';
-      return o.inFi ? `Before ${o.startAge}, where Will it last? starts, so it counts in your FI date, not in Will it last?` : `Before ${o.startAge}, where Will it last? starts, so it isn’t counted anywhere.`;
+      return o.inFi ? `Before ${o.startAge}, where the stress test starts, so it counts in your FI date, not in the stress test.` : `Before ${o.startAge}, where the stress test starts, so it isn’t counted anywhere.`;
     }
     if (part === 'after-end') return `After the plan ends${o.end !== null ? ` at ${o.end}` : ''}: only the grid’s longer columns reach it.`;
   }
@@ -556,8 +556,8 @@ export function rowNoteText(
  *  (lib/fire/items.ts itemRules). On an anchor that moves they can still meet,
  *  and both count there (lib/fire/compile.ts), so each says so, by where the
  *  steady path has them. Only from today, since years gone count nowhere, and
- *  only where both do count: both in the FI date, or the years in Will it
- *  last? An item that runs no years meets nothing. */
+ *  only where both do count: both in the FI date, or the years in the
+ *  stress test. An item that runs no years meets nothing. */
 function overlapText(x: PlanItem, f: PlanFigures, i: number, startAge: number | null): string | null {
   const ages = f.resolution.ages[i];
   if (x.kind !== 'part-time' || !ages) return null;
@@ -584,8 +584,8 @@ export function itemWarnings(x: PlanItem, f: PlanFigures, i: number): string[] {
   return [...new Set(overlap ? [...said, overlap] : said)];
 }
 
-/** Whether an item is placed by the steady path in every run of Will it
- *  last? (on FI or a balance, or timed by one of those). */
+/** Whether an item is placed by the steady path in every run of the
+ *  stress test (on FI or a balance, or timed by one of those). */
 export function onSteadyPath(x: PlanItem, plan: Facts, seen = new Set<string>()): boolean {
   if (seen.has(x.id)) return false;
   seen.add(x.id);
@@ -600,18 +600,18 @@ export function onSteadyPath(x: PlanItem, plan: Facts, seen = new Set<string>())
 }
 
 /** The every-run note (timeline.md "Otherwise the steady-path year in every
- *  run"), its reason by where Will it last? starts. */
+ *  run"), its reason by where the stress test starts. */
 export function everyRunText(start: number | null, plan: Pick<FirePlanV2, 'start'>, perRun = false): string | null {
-  if (perRun) return 'Will it last? goes by each run’s own balance for this.';
+  if (perRun) return 'The stress test goes by each run’s own balance for this.';
   if (start === null) return null;
   const why =
     plan.start === 'fi-number'
-      ? 'Will it last? starts from your FI number, not your own path'
+      ? 'the stress test starts from your FI number, not your own path'
       : plan.start === 'custom'
-        ? 'Will it last? starts from the balance you typed, not your own path'
+        ? 'the stress test starts from the balance you typed, not your own path'
         : plan.start === 'at-stop'
           ? 'your FI date and what comes before your stop are the steady path’s, not each run’s'
-          : 'Will it last? starts from today’s assets, so each run’s path differs from the steady one';
+          : 'the stress test starts from today’s assets, so each run’s path differs from the steady one';
   return `Starts at ${start} in every run, as on your steady path: ${why}.`;
 }
 
@@ -719,7 +719,7 @@ export type PreviewInput = {
   /** In a copy, the lines say "this copy". */
   where: 'plan' | 'copy';
   money: Money;
-  /** Where Will it last? starts, with the draft in. */
+  /** Where the stress test starts, with the draft in. */
   startAge: number | null;
   /** The steady path's highest balance and its age, with the draft in. */
   most: { amount: number; age: number } | null;
@@ -740,7 +740,7 @@ export type PreviewInput = {
 export type AcrossAnswer = { working: true } | { fired: FiredResult; startAge: number };
 
 /** The item's start when it waits on a run's own balance: what to run, to say where it
- *  falls across the runs. Only when Will it last? starts from what you'd have at the
+ *  falls across the runs. Only when the stress test starts from what you'd have at the
  *  stop, and the steady path hasn't fired it by then. */
 export function waitingStart(f: PlanFigures, id: string): { sim: SimPlan; trigger: number; offset: number; startAge: number } | null {
   if (f.plan.start !== 'at-stop' || !('sim' in f.engine) || !f.engine.sim.conditional || f.engine.startAge === null) return null;
@@ -917,19 +917,19 @@ export function previewLines(p: PreviewInput): PreviewLines {
       lines.push(`${starts}, ${fiAge === ages.start ? 'the year you reach FI' : `before ${fiAge !== null ? 'your FI date' : 'you reach FI'}`}, so it counts in ${whose} FI date${x.kind === 'pay' ? ' every year until you reach it' : ''}.`);
     } else if (fiAge !== null && ages.start >= fiAge && !INCOME_KINDS.includes(x.kind)) {
       const there = x.kind !== 'pay' && (p.startAge === null || reachesStart(x, ages, p.startAge));
-      if (x.kind === 'pay') lines.push('It starts after you reach FI, and a change in pay ends when you stop, so it counts in neither your FI date nor Will it last?');
-      else if (there) lines.push(`It starts after you reach FI, so it counts in Will it last?, not in your FI date or your FI number.`);
-      else lines.push(`It comes after you reach FI and before ${p.startAge}, where Will it last? starts, so it counts in neither your FI date nor Will it last?`);
+      if (x.kind === 'pay') lines.push('It starts after you reach FI, and a change in pay ends when you stop, so it counts in neither your FI date nor the stress test.');
+      else if (there) lines.push(`It starts after you reach FI, so it counts in the stress test, not in your FI date or your FI number.`);
+      else lines.push(`It comes after you reach FI and before ${p.startAge}, where the stress test starts, so it counts in neither your FI date nor the stress test.`);
       // Still saving, a cost can undo what reaching FI meant.
       const next = p.points?.find((q) => q.age === ages.start + 1);
       const fiNumber = f.view.fiNumber;
       if (ONCE_KINDS.includes(x.kind) && (x.once ?? 0) > 0 && (stop === null || ages.start < stop) && next && fiNumber !== null && next.balance < fiNumber) {
-        lines.push(`At ${ages.start} it takes you back under your FI number${there ? ': Will it last? counts it' : ''}.`);
+        lines.push(`At ${ages.start} it takes you back under your FI number${there ? ': the stress test counts it' : ''}.`);
       }
     } else if (x.kind === 'part-time' && stop !== null && ages.start >= stop) {
-      lines.push(`Starts ${ages.start === stop ? 'when you stop' : `at ${ages.start}, after you stop`}: income in Will it last?. Your FI date, which assumes full-time work until then, ${after.kind === 'age' ? `stays around ${after.age}` : 'doesn’t move'}.`);
+      lines.push(`Starts ${ages.start === stop ? 'when you stop' : `at ${ages.start}, after you stop`}: income in the stress test. Your FI date, which assumes full-time work until then, ${after.kind === 'age' ? `stays around ${after.age}` : 'doesn’t move'}.`);
     } else if (p.startAge !== null && ages.start >= p.startAge) {
-      lines.push(`${starts}, from where Will it last? starts, so it counts there.`);
+      lines.push(`${starts}, from where the stress test starts, so it counts there.`);
     }
   }
   if (a.at === 'balance') lines.push('Checked on the balance at the start of each year, and started once, so the spending it adds can’t switch it off again.');

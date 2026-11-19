@@ -276,19 +276,19 @@ describe('the points', () => {
 
 describe('where it counts', () => {
   test('one line for each place, the FI date counting one-offs and income (D15)', () => {
-    expect(whereItCountsText(50)).toEqual(['Your FI date counts costs, windfalls, changes in pay, work that starts before you stop and other money in, until you reach it.', 'Will it last? counts costs, windfalls and income, from 50, where it starts.']);
-    expect(whereItCountsText(null)[1]).toBe('Will it last? counts costs, windfalls and income, from where it starts.');
+    expect(whereItCountsText(50)).toEqual(['Your FI date counts costs, windfalls, changes in pay, work that starts before you stop and other money in, until you reach it.', 'The stress test counts costs, windfalls and income, from 50, where it starts.']);
+    expect(whereItCountsText(null)[1]).toBe('The stress test counts costs, windfalls and income, from where it starts.');
   });
 
-  test('part-time before Will it last? starts, by what it replaces and the start', () => {
+  test('part-time before the stress test starts, by what it replaces and the start', () => {
     const pt = mk('pt', 'part-time', at(45), { until: at(55), yearly: 20_000, replaces: 30_000 });
-    expect(beforeStartText(pt, { start: 'fi-number' }, 50)).toBe('Its years before 50 count in your FI date, not in Will it last?, which starts at 50.');
+    expect(beforeStartText(pt, { start: 'fi-number' }, 50)).toBe('Its years before 50 count in your FI date, not in the stress test, which starts at 50.');
     expect(beforeStartText({ ...pt, replaces: null }, { start: 'fi-number' }, 50)).toBeNull();
     expect(beforeStartText(pt, { start: 'assets' }, 40)).toBeNull();
   });
 
-  test('every run, by where Will it last? starts', () => {
-    expect(everyRunText(58, { start: 'fi-number' })).toBe('Starts at 58 in every run, as on your steady path: Will it last? starts from your FI number, not your own path.');
+  test('every run, by where the stress test starts', () => {
+    expect(everyRunText(58, { start: 'fi-number' })).toBe('Starts at 58 in every run, as on your steady path: the stress test starts from your FI number, not your own path.');
     expect(everyRunText(58, { start: 'assets' })).toContain('each run’s path differs from the steady one');
   });
 
@@ -372,27 +372,27 @@ describe('what is possible', () => {
 
   const preview = (x: PlanItem, count = OFF) =>
     previewLines({ draft: { ok: x }, before: figures({}, count), after: figures({ items: [x] }, count), without: null, where: 'plan', money, startAge: 50, most: null, savings: 50_000, runsOutAt: null });
-  // FI around 46, Will it last? from 50.
-  const NEITHER = 'It comes after you reach FI and before 50, where Will it last? starts, so it counts in neither your FI date nor Will it last?';
+  // FI around 46, the stress test from 50.
+  const NEITHER = 'It comes after you reach FI and before 50, where the stress test starts, so it counts in neither your FI date nor the stress test.';
 
-  test('after FI, it says where it counts by where Will it last? starts, as its row does', () => {
+  test('after FI, it says where it counts by where the stress test starts, as its row does', () => {
     const cost = mk('c', 'one-off', at(48), { once: 1_000 });
     for (const count of [OFF, ON]) {
       const p = preview(cost, count);
       expect(p.lines).toContain(NEITHER);
-      expect(p.warnings).toEqual(['Before 50, where Will it last? starts, so it isn’t counted anywhere.']);
+      expect(p.warnings).toEqual(['Before 50, where the stress test starts, so it isn’t counted anywhere.']);
     }
-    expect(preview(mk('c', 'one-off', at(52), { once: 1_000 })).lines).toContain('It starts after you reach FI, so it counts in Will it last?, not in your FI date or your FI number.');
+    expect(preview(mk('c', 'one-off', at(52), { once: 1_000 })).lines).toContain('It starts after you reach FI, so it counts in the stress test, not in your FI date or your FI number.');
     // Its years past the start count there; one over by then doesn't.
     expect(preview(mk('s', 'spending', at(48), { yearly: 1_000, until: { years: 5 } })).lines).not.toContain(NEITHER);
     expect(preview(mk('s', 'spending', at(47), { yearly: 1_000, until: { years: 2 } })).lines).toContain(NEITHER);
-    expect(preview(mk('p', 'pay', at(48), { yearly: 1_000 })).lines).toContain('It starts after you reach FI, and a change in pay ends when you stop, so it counts in neither your FI date nor Will it last?');
+    expect(preview(mk('p', 'pay', at(48), { yearly: 1_000 })).lines).toContain('It starts after you reach FI, and a change in pay ends when you stop, so it counts in neither your FI date nor the stress test.');
   });
 
   test('before FI, as the app counts, the row and the sheet both say the FI date', () => {
     const p = preview(mk('c', 'one-off', at(44), { once: 1_000 }), ON);
-    expect(p.warnings).toEqual(['Before 50, where Will it last? starts, so it counts in your FI date, not in Will it last?']);
-    expect(preview(mk('c', 'one-off', at(44), { once: 1_000 }), OFF).warnings).toEqual(['Before 50, where Will it last? starts, so it isn’t counted anywhere.']);
+    expect(p.warnings).toEqual(['Before 50, where the stress test starts, so it counts in your FI date, not in the stress test.']);
+    expect(preview(mk('c', 'one-off', at(44), { once: 1_000 }), OFF).warnings).toEqual(['Before 50, where the stress test starts, so it isn’t counted anywhere.']);
   });
 
   test('before today, it says so; only a balance is already true', () => {
@@ -410,12 +410,12 @@ describe('what is possible', () => {
     expect(preview(rent, ON).cautions[0]).toContain('In your FI date after');
   });
 
-  test('a kind’s help says it counts in the FI date before Will it last? starts', () => {
+  test('a kind’s help says it counts in the FI date before the stress test starts', () => {
     for (const id of ['cost', 'social-security', 'pension', 'other-income']) expect(templateHelp(id)).toContain('and in your FI date before then.');
     expect(templateHelp('nothing')).toBeUndefined();
   });
 
-  test('what reaches Will it last?: its start, a repeat, or years that run on past it', () => {
+  test('what reaches the stress test: its start, a repeat, or years that run on past it', () => {
     const on = (x: PlanItem, end: number | null) => reachesStart(x, { start: 50, end }, 55);
     expect(on(mk('p', 'part-time', at(50), { yearly: 1_000 }), 60)).toBe(true);
     expect(on(mk('p', 'part-time', at(50), { yearly: 1_000 }), 55)).toBe(false);

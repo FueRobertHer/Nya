@@ -28,7 +28,7 @@
 //     one path at the answer places it: that path is the same up to its
 //     crossing whenever it fired.
 //
-// With D11's start (Will it last? from what you'd have at your stop age), a
+// With D11's start (the stress test from what you'd have at your stop age), a
 // balance anchor not fired by then fires per run instead, and an edge on one
 // follows it there (`perRun`, compiled by lib/fire/compile.ts conditionalFlows);
 // every other start, and an edge on FI, takes the steady path's year in every run.
@@ -268,7 +268,7 @@ function finish(plan: Plan, world: SteadyWorld, r: Settled, stop: number | null,
 }
 
 /** With D11's start, the edges that wait on a run's own balance: on a balance
- *  anchor the steady path hasn't fired by the time Will it last? starts. A
+ *  anchor the steady path hasn't fired by the time the stress test starts. A
  *  run's first balance is the steady path's there, so none of these fires before
  *  its second year. Nothing for any other start. */
 function perRunOf(plan: Plan, r: Settled, stop: number | null): Pick<Resolution, 'perRun'> {

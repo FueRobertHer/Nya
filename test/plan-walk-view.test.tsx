@@ -172,14 +172,14 @@ describe('the Timeline says where each kind counts', () => {
     return html.replace(/<[^>]+>/g, ' ').replaceAll('&#x27;', "'").replace(/\s+/g, ' ');
   };
 
-  test('one-offs and income count in the FI date until you reach it, and a one-off before Will it last? counts there only', () => {
-    expect(card()).toContain('Your FI date counts costs, windfalls, changes in pay, work that starts before you stop and other money in, until you reach it. Will it last? counts costs, windfalls and income, from 55, where it starts.');
-    expect(card()).toContain('Before 55, where Will it last? starts, so it counts in your FI date, not in Will it last?');
+  test('one-offs and income count in the FI date until you reach it, and a one-off before the stress test counts there only', () => {
+    expect(card()).toContain('Your FI date counts costs, windfalls, changes in pay, work that starts before you stop and other money in, until you reach it. The stress test counts costs, windfalls and income, from 55, where it starts.');
+    expect(card()).toContain('Before 55, where the stress test starts, so it counts in your FI date, not in the stress test.');
     expect(card()).toContain('Counts in your FI date');
     expect(card()).not.toContain('don’t count there yet');
   });
 
-  test('with Will it last? not run, no row says where it has them', () => {
+  test('with the stress test not run, no row says where it has them', () => {
     const p = { ...PLAN, spending: null, expenses: [ROOF, { id: 'late', label: 'Late', amount: 1_000, atAge: 99 }] };
     expect(figures(p, true).engine).toEqual({ missing: 'spending' });
     const text = card(p);

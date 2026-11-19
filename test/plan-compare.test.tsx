@@ -589,7 +589,7 @@ describe('the copy’s card and the Plans sheet', () => {
     // The method is set in the Assumptions sheet, which says there that a
     // copy can't change it (rollout 6d, C2); the answer's line names it, so
     // Drawdown's hero has no meta (the tax plan's P).
-    expect(st).toContain('Copy: Retire at 45 Will it last?');
+    expect(st).toContain('Copy: Retire at 45 Stress test');
     expect(sim).not.toContain('class="meta"');
     expect(sim).not.toContain('<button');
     const events = renderToStaticMarkup(

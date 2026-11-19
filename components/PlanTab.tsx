@@ -27,8 +27,8 @@
 //     that may be short says so; none is presented as complete when it may
 //     not be. Then the Timeline (components/PlanTimeline.tsx): everything
 //     the plan holds, on the points in time that place it.
-//   - Drawdown (Stress test until T1 of the tax plan): one notice when the
-//     spending or invested assets the simulation uses may be low, then "Will it last?": the plan run through
+//   - Drawdown (a segment named Stress test until T1 of the tax plan): one notice when the
+//     spending or invested assets the simulation uses may be low, then "Stress test": the plan run through
 //     history or Monte Carlo (lib/fire/simulate.ts), with the success rate
 //     and its definition, for a flexible rule the spending cuts beside it, a
 //     fan chart, the worst starting years, and every assumption listed under
@@ -3258,7 +3258,7 @@ function missingText(missing: Missing, view: FiView): string {
   return MISSING_TEXT[missing];
 }
 
-// Will it last?'s answer in words, where it can't be worked out.
+// The stress test's answer in words, where it can't be worked out.
 const MISSING_FIGURE: Record<Missing, string> = {
   spending: SPENDING_NEED,
   assets: 'Needs your invested assets',
@@ -3266,7 +3266,8 @@ const MISSING_FIGURE: Record<Missing, string> = {
   'stop-balance': 'Needs what you’d have at your stop age',
 };
 
-/** Drawdown's hero (the tax plan's P, Fue's call 2026-11-01): Will it last?,
+/** Drawdown's hero (the tax plan's P, Fue's call 2026-11-01; named Stress test,
+ *  not Will it last?, on Fue's call 2026-11-19): the stress test,
  *  the success rate at the hero size, over what it counts and what it means;
  *  then what it starts from, the setup it tests, and the result's chart, its
  *  worst starts and its ending balances. Its settings are the Assumptions
@@ -3374,7 +3375,7 @@ export function SimulationCard({
       </>
     ) : undefined;
   const hero = (figure: React.ReactNode, figureClass: string | undefined, line: React.ReactNode, body: React.ReactNode) => (
-    <Hero id="plan-last-title" level={3} label="Will it last?" className={pending && outcome && 'result' in outcome ? 'drawdown-hero drawdown-pending' : 'drawdown-hero'} top={top} figure={figure} figureClass={figureClass} line={line}>
+    <Hero id="plan-last-title" level={3} label="Stress test" className={pending && outcome && 'result' in outcome ? 'drawdown-hero drawdown-pending' : 'drawdown-hero'} top={top} figure={figure} figureClass={figureClass} line={line}>
       {body}
     </Hero>
   );
@@ -3604,7 +3605,7 @@ export function SimulationCard({
   );
 }
 
-/** Whether "Will it last?" shows an answer, and with it that the figures are
+/** Whether the stress test shows an answer, and with it that the figures are
  *  hypothetical: then the grid under it doesn't say so again. Working it out,
  *  or with no answer, it doesn't, and the grid does. */
 export function simulationAnswered(engine: EnginePlan | { missing: Missing }, outcome: Outcome | null): boolean {
@@ -3628,8 +3629,8 @@ export function GridCard({
   badge = null,
   sayHypothetical = true,
 }: {
-  /** That its figures are hypothetical, from US history: false when "Will it
-   *  last?" above it says so (simulationAnswered), so one view says it once. */
+  /** That its figures are hypothetical, from US history: false when the stress
+   *  test above it says so (simulationAnswered), so one view says it once. */
   sayHypothetical?: boolean;
   /** The open copy's name, said at the top; null with your plan open. */
   copyName?: string | null;

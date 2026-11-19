@@ -931,7 +931,7 @@ describe('Drawdown’s notice', () => {
     expect(notice(tab)).toEqual({ line: null, each: [['notice caution', `Caution: ${SPENDING}`]] });
     const stack = kids(tab.panel('drawdown'))[0];
     expect(stack.getAttribute('class')).toBe('stack loose');
-    expect(tab.titles(tab.panel('drawdown'))[0]).toBe('Will it last?');
+    expect(tab.titles(tab.panel('drawdown'))[0]).toBe('Stress test');
     // Inside the panel, so hidden while another segment is shown.
     expect([tab.panel('drawdown').hasAttribute('hidden'), tab.panel('drawdown').contains(top(tab))]).toEqual([true, true]);
     await act(async () => click(tab.tab('Drawdown')));
@@ -1077,7 +1077,7 @@ describe('the Assumptions sheet, and Drawdown’s rows', () => {
     expect(tab.dialog()).toBeNull();
     // Said in the answer's line (Drawdown's hero has no meta since the tax
     // plan's P) and on its row.
-    expect(tab.panel('drawdown').textContent).toMatch(/Will it last\?\d+(\.\d)?%of 5,000 Monte Carlo runs lasted/);
+    expect(tab.panel('drawdown').textContent).toMatch(/Stress test\d+(\.\d)?%of 5,000 Monte Carlo runs lasted/);
     expect(part(drawdownRow(tab, 'Assumptions')!, 'list-row-sub')?.textContent).toBe('Monte Carlo · 75/25/0 · Constant · 0.2% fee');
     expect(part(tab.row('Assumptions')!, 'list-row-sub')?.textContent).toBe('3.5% withdrawal · 5% growth after inflation until FI · 0% tax');
     await tab.unmount();

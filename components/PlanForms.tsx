@@ -30,7 +30,7 @@ import { STATE_CODES, type Filing, type StateCode, type Statute } from '@/lib/fi
 import { FILING_NAMES, fiLines, fiYearly, householdNotes, lawLabel, sharesNote, STATE_NAMES } from './plan-drawdown';
 import { MoneyLines } from './PlanDrawdown';
 import type { FiShares } from '@/lib/fire/plan-figures';
-import { METHOD_NAMES, RULE_NAMES, apartWords, ruleText, pct, saidAbove, saidRate, wholeMoney } from './plan-text';
+import { METHOD_NAMES, RULE_NAMES, apartWords, ruleText, pct, pctNumber, saidAbove, saidRate, wholeMoney } from './plan-text';
 import { BLOCK_MONTHS, DEFAULT_RUNS, DEFAULT_SEED } from '@/lib/fire/simulate';
 import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
 import { Masked, NO_EXAMPLE, spokenLabel } from './HideAmounts';
@@ -595,12 +595,12 @@ export function FiNumberForm(
       {names.length > 0 && (
         <Why label="What it leaves out">
           <p>
-            {names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`}: {lasting ? 'your path, Will it last? and your FI date' : 'your path and Will it last?'} count{' '}
+            {names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`}: {lasting ? 'your path, the stress test and your FI date' : 'your path and the stress test'} count{' '}
             {names.length === 1 ? 'it' : 'them'}.
           </p>
         </Why>
       )}
-      {plan.start === 'fi-number' && <p className="helper">Will it last? starts from this number.</p>}
+      {plan.start === 'fi-number' && <p className="helper">The stress test starts from this number.</p>}
       <div className="sheet-form">
         <div className="field">
           <span aria-hidden="true">Your FI date</span>
@@ -622,7 +622,7 @@ export function FiNumberForm(
               <Choice label="Lasts in at least" value={share} options={SHARE_OPTIONS} onChange={setShare} disabled={s.saving} />
             </div>
             <p className="helper">
-              The earliest age you could stop with your money lasting {plan.horizon !== null ? `${plan.horizon} years` : `to ${Math.max(PLAN_TO_AGE, plan.age ?? 0)}`} in at least this share of Will it last?’s{' '}
+              The earliest age you could stop with your money lasting {plan.horizon !== null ? `${plan.horizon} years` : `to ${Math.max(PLAN_TO_AGE, plan.age ?? 0)}`} in at least this share of the stress test’s{' '}
               {plan.method === 'historical' ? 'historical starts' : 'Monte Carlo runs'}, from what you’d have then. This number stays as it is: Home’s meter and the line on your path still measure against it.
             </p>
           </>
@@ -638,8 +638,8 @@ export function FiNumberForm(
         {s.under('Your own number')}
         <p className="helper">
           {lasting
-            ? 'If you set one, Home’s meter and the line on your path use it, and Will it last? tests your spending from it. Your FI date stays the earliest stop that lasts.'
-            : 'If you set one, your FI date and Home use it, and Will it last? tests your spending from it. Nothing else changes.'}
+            ? 'If you set one, Home’s meter and the line on your path use it, and the stress test starts from it. Your FI date stays the earliest stop that lasts.'
+            : 'If you set one, your FI date and Home use it, and the stress test starts from it. Nothing else changes.'}
         </p>
       </div>
       {plan.fiNumber !== null && (
@@ -1270,7 +1270,7 @@ export function AssumptionsForm(
             ? 'The plan’s rate: your own figure for invested assets grows at it.'
             : `The plan’s rate: every account grows at it unless you give one its own in Invested assets.${together && together.own > 0 ? ` With ${together.own === 1 ? '1 account at its own' : `${together.own} at their own`}, yours grow ${pct(together.growth)} a year together${detail ? `. On Drawdown, ${apartWords(together.growth)}` : ''}.` : ''}`}
         </p>
-        <p className="helper">{detail ? 'For years to FI, Coast FI, the balance at your stop age and the steady years on Drawdown, which your FI number’s tax and health coverage come from. Will it last? uses market history for its returns, and works out each year’s tax and health coverage on them.' : 'Only for the years until FI: years to FI, Coast FI and the balance at your stop age. Will it last? uses market history for its returns.'}</p>
+        <p className="helper">{detail ? 'For years to FI, Coast FI, the balance at your stop age and the steady years on Drawdown. Your FI number’s tax and health coverage come from the steady years. The stress test uses market history for its returns instead, and works out each year’s tax and health coverage on them.' : 'Only for the years until FI: years to FI, Coast FI and the balance at your stop age. The stress test uses market history for its returns instead.'}</p>
         {!taxWorked && (
           <>
         <label className="field">
@@ -1359,7 +1359,7 @@ export function AssumptionsForm(
             <p className="helper">Empty is the default, from CMS’s projections, the same field as on Health coverage.</p>
             <label className="field">
               Dividends and interest on taxable accounts (% a year)
-              <input type="number" inputMode="decimal" data-percent step="0.1" value={taxableYield} onChange={(e) => setTaxableYield(e.target.value)} placeholder={props.measuredYield != null ? pct(props.measuredYield, 1) : 'None measured'} {...s.field('The taxable yield')} disabled={s.saving} />
+              <input type="number" inputMode="decimal" data-percent step="0.1" value={taxableYield} onChange={(e) => setTaxableYield(e.target.value)} placeholder={props.measuredYield != null ? pctNumber(props.measuredYield, 1) : 'None measured'} {...s.field('The taxable yield')} disabled={s.saving} />
             </label>
             {s.under('The taxable yield')}
             <p className="helper">{props.measuredYield != null ? 'Empty is what your accounts paid over the last year.' : 'Empty counts none: nothing over the last year says what they pay, so taxes on it are left out.'}{plan.assets === null && ' An account’s own, set in Invested assets, comes first.'}</p>

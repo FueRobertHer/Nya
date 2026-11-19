@@ -1320,7 +1320,7 @@ describe('each taxable account’s dividends', () => {
     await openAssets(tab);
     await openRow(tab, 'Brokerage');
     expect(yieldField(tab)!.value).toBe('');
-    expect(yieldField(tab)!.getAttribute('placeholder')).toBe('2%');
+    expect(yieldField(tab)!.getAttribute('placeholder')).toBe('2');
     expect(tab.shown()).toContain(`Empty is what it paid over the last year, $2,800. ${ABOUT}`);
     expect(tab.shown()).not.toContain('From the last year’s activity.');
     await act(async () => type(yieldField(tab)!, '3'));
@@ -1369,7 +1369,7 @@ describe('each taxable account’s dividends', () => {
     const tab = await mount();
     await openAssets(tab);
     await openRow(tab, 'Brokerage');
-    expect(yieldField(tab)!.getAttribute('placeholder')).toBe('1.5%');
+    expect(yieldField(tab)!.getAttribute('placeholder')).toBe('1.5');
     expect(tab.shown()).toContain(`Empty is the plan’s 1.5%, set in Assumptions. ${ABOUT}`);
     await tab.unmount();
   }, SLOW);
@@ -1396,7 +1396,7 @@ describe('each taxable account’s dividends', () => {
       await openRow(tab, 'Brokerage');
       expect(tab.shown()).toContain('Empty is what it paid over the last year, ');
       expect(tab.shown()).not.toContain('2,800');
-      expect(yieldField(tab)!.getAttribute('placeholder')).toBe('2%');
+      expect(yieldField(tab)!.getAttribute('placeholder')).toBe('2');
       await tab.unmount();
     } finally {
       setAmountsHidden(false);
@@ -1412,6 +1412,11 @@ describe('each taxable account’s dividends', () => {
       'With 1 account at its own, yours grow 5.58% a year together. On Drawdown, from the stop on, taxable, tax-deferred, Roth and HSA money each grow at their own accounts’ rates, so together they drift from 5.58%.'
     );
     expect(tab.shown()).toContain('Empty is what your accounts paid over the last year. An account’s own, set in Invested assets, comes first.');
+    // A number under a label that already says %, as every percent field's.
+    expect(field(tab.dialog()!, 'Dividends and interest on taxable accounts (% a year)')!.getAttribute('placeholder')).toBe('2');
+    expect(tab.shown()).toContain(
+      'For years to FI, Coast FI, the balance at your stop age and the steady years on Drawdown. Your FI number’s tax and health coverage come from the steady years. The stress test uses market history for its returns instead, and works out each year’s tax and health coverage on them.'
+    );
     await tab.unmount();
   }, SLOW);
 

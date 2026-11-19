@@ -46,7 +46,7 @@ export type FirePlanV2 = Omit<FirePlan, 'version' | 'income' | 'expenses'> & {
   /** Your own FI number; null works it out from spending. */
   fiNumber: number | null;
   /** D9: the answer is the earliest stop whose money lasts in at least this
-   *  share of Will it last?'s starts (lib/fire/earliest.ts), one of
+   *  share of the stress test's starts (lib/fire/earliest.ts), one of
    *  LASTS_IN_CHOICES. Absent: when the walk reaches the FI number (decision 25).
    *  Never in DEFAULT_PLAN_V2, so never filled in by an upgrade. */
   lastsIn?: number;

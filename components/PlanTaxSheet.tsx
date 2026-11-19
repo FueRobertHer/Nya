@@ -43,7 +43,7 @@ export function PlanTaxSheet({
   withdrawalRate: number;
   /** The growth after inflation the plan runs at (FiView's). */
   growth: number;
-  /** The years Will it last? runs, when they aren't from the FI number itself. */
+  /** The years the stress test runs, when they aren't from the FI number itself. */
   start: Drawdown | null;
   startBalance: number | null;
   /** The sheet's last line. */

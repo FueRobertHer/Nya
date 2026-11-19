@@ -2,7 +2,7 @@
 //
 // The one figure on a screen (design-system.md "Hero"), on the page and never
 // in a card: Home's net worth (components/NetWorthCard.tsx), the Plan's answer
-// on Your path (components/PlanTab.tsx FiCard), Will it last? on its Drawdown
+// on Your path (components/PlanTab.tsx FiCard), the stress test on its Drawdown
 // (SimulationCard), the runway's months on the report page
 // (components/RunwayReport.tsx) and Accounts > Investments' returns
 // (components/InvestmentGrowth.tsx). Each draws the same shell: a

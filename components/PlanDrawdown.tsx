@@ -1,7 +1,7 @@
 'use client';
 
 // Year by year (the tax plan's T3): a detailed plan's years at a steady growth, on
-// Drawdown under Will it last?. A card with the balances by bucket and the stages; a
+// Drawdown under the stress test. A card with the balances by bucket and the stages; a
 // stage's sheet holds its years, and a year's sheet, a level over it, how it was
 // worked out. Words in components/plan-drawdown.ts.
 
