@@ -30,7 +30,7 @@
 // balance a service reports is shown with its sign in words ("owed",
 // "held"), never as what is owed before that is known.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import { formatDay, formatInstantDay, formatMoney, onDay } from '@/lib/format';
@@ -757,6 +757,8 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  // Why a step's request failed, beside its buttons in the footer.
+  const errorId = useId();
   // Read through a ref, so a new callback from the dashboard's render never
   // starts the ask over.
   const changed = useRef(onChanged);
@@ -979,25 +981,87 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
               ? `Undo carrying ${view.account.name} on?`
               : 'Your own sync';
 
+  // Each step's buttons, in the footer, the way out first, with why its
+  // request failed beside them; chosen by the step drawn, so the one sliding
+  // out keeps its own. None while working.
+  const failed = error ? errorId : undefined;
+  const errorNote = error ? (
+    <div className="sheet-footer-note" id={errorId}>
+      <Notice level="critical" role="alert">
+        {error}
+      </Notice>
+    </div>
+  ) : null;
+  const way = (words: string) => (
+    <button type="button" className="btn secondary" onClick={close} disabled={busy}>
+      {words}
+    </button>
+  );
+  const footer =
+    view?.kind === 'token' ? (
+      <>
+        {errorNote}
+        {way('Cancel')}
+        <button type="button" className="btn" onClick={() => submitToken(view)} disabled={busy || !token.trim()} aria-describedby={failed}>
+          {busy ? 'Connecting…' : 'Connect'}
+        </button>
+      </>
+    ) : view?.kind === 'choose' ? (
+      <>
+        {errorNote}
+        {way('Cancel')}
+        <button
+          type="button"
+          className="btn"
+          onClick={() => submitChoices(view)}
+          disabled={busy || (keep && stoppingUnsure(view, choices).some((a) => !signs[a.account_id])) || unanswered(view, choices, carry, continues)}
+          aria-describedby={failed}
+        >
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+      </>
+    ) : view?.kind === 'uncarry' ? (
+      <>
+        {errorNote}
+        {way('Cancel')}
+        <button type="button" className="btn danger" onClick={() => submitUncarry(view)} disabled={busy} aria-describedby={failed}>
+          {busy ? 'Undoing…' : 'Undo carrying it on'}
+        </button>
+      </>
+    ) : view?.kind === 'disconnect' ? (
+      <>
+        {errorNote}
+        {way('Cancel')}
+        <button
+          type="button"
+          className="btn danger"
+          onClick={() => submitDisconnect(view)}
+          disabled={busy || confirm.trim().toLowerCase() !== view.label.toLowerCase() || (keep && view.accounts.some((a) => a.needs_sign && !signs[a.account_id]))}
+          aria-describedby={failed}
+        >
+          {busy ? 'Disconnecting…' : 'Disconnect'}
+        </button>
+      </>
+    ) : view?.kind === 'sign' ? (
+      <>
+        {errorNote}
+        {way('Later')}
+        <button type="button" className="btn" onClick={() => submitSigns(view)} disabled={busy || view.accounts.every((a) => !signs[a.account_id])} aria-describedby={failed}>
+          {busy ? 'Saving…' : 'Save'}
+        </button>
+      </>
+    ) : view?.kind === 'done' ? (
+      <button type="button" className="btn" onClick={close}>
+        Done
+      </button>
+    ) : undefined;
+
   return (
-    <Sheet open={!!ask && !!step} title={title} onClose={close}>
+    <Sheet open={!!ask && !!step} title={title} onClose={close} footer={footer}>
       {view?.kind === 'token' && (
         <>
           <ConnectIntro again={!!view.connection_id} connector={view.connector} />
           <CredentialField connector={view.connector} value={token} busy={busy} onChange={setToken} />
-          {error && (
-            <Notice level="critical" role="alert">
-              {error}
-            </Notice>
-          )}
-          <div className="button-pair">
-            <button className="secondary" onClick={close} disabled={busy}>
-              Cancel
-            </button>
-            <button onClick={() => submitToken(view)} disabled={busy || !token.trim()}>
-              {busy ? 'Connecting…' : 'Connect'}
-            </button>
-          </div>
         </>
       )}
       {view?.kind === 'choose' && (
@@ -1020,41 +1084,9 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
           {keep && stoppingUnsure(view, choices).length > 0 && (
             <SignView label={view.label} accounts={stoppingUnsure(view, choices)} signs={signs} busy={busy} onSign={(id, sign) => setSigns((all) => ({ ...all, [id]: sign }))} />
           )}
-          {error && (
-            <Notice level="critical" role="alert">
-              {error}
-            </Notice>
-          )}
-          <div className="button-pair">
-            <button className="secondary" onClick={close} disabled={busy}>
-              Cancel
-            </button>
-            <button onClick={() => submitChoices(view)} disabled={busy || (keep && stoppingUnsure(view, choices).some((a) => !signs[a.account_id])) || unanswered(view, choices, carry, continues)}>
-              {busy ? 'Saving…' : 'Save'}
-            </button>
-          </div>
         </>
       )}
-      {view?.kind === 'uncarry' && (
-        <>
-          <div className="stack">
-            <p className="panel-note">{uncarryWords(view.account, view.label)}</p>
-            {error && (
-              <Notice level="critical" role="alert">
-                {error}
-              </Notice>
-            )}
-          </div>
-          <div className="button-pair">
-            <button className="secondary" onClick={close} disabled={busy}>
-              Cancel
-            </button>
-            <button className="danger" onClick={() => submitUncarry(view)} disabled={busy}>
-              {busy ? 'Undoing…' : 'Undo carrying it on'}
-            </button>
-          </div>
-        </>
-      )}
+      {view?.kind === 'uncarry' && <p className="panel-note">{uncarryWords(view.account, view.label)}</p>}
       {view?.kind === 'disconnect' && (
         <>
           <p className="panel-note" style={{ marginTop: 0 }}>
@@ -1093,23 +1125,6 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
             Name
             <input value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder={view.label} disabled={busy} autoCapitalize="off" autoCorrect="off" />
           </label>
-          {error && (
-            <Notice level="critical" role="alert">
-              {error}
-            </Notice>
-          )}
-          <div className="button-pair">
-            <button className="secondary" onClick={close} disabled={busy}>
-              Cancel
-            </button>
-            <button
-              className="danger"
-              onClick={() => submitDisconnect(view)}
-              disabled={busy || confirm.trim().toLowerCase() !== view.label.toLowerCase() || (keep && view.accounts.some((a) => a.needs_sign && !signs[a.account_id]))}
-            >
-              {busy ? 'Disconnecting…' : 'Disconnect'}
-            </button>
-          </div>
         </>
       )}
       {view?.kind === 'sign' && (
@@ -1120,29 +1135,13 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
             </p>
           )}
           <SignView label={view.label} accounts={view.accounts} signs={signs} busy={busy} onSign={(id, sign) => setSigns((all) => ({ ...all, [id]: sign }))} />
-          {error && (
-            <Notice level="critical" role="alert">
-              {error}
-            </Notice>
-          )}
-          <div className="button-pair">
-            <button className="secondary" onClick={close} disabled={busy}>
-              Later
-            </button>
-            <button onClick={() => submitSigns(view)} disabled={busy || view.accounts.every((a) => !signs[a.account_id])}>
-              {busy ? 'Saving…' : 'Save'}
-            </button>
-          </div>
         </>
       )}
       {view?.kind === 'working' && <div className="spinner" role="status" aria-label={view.text} />}
       {view?.kind === 'done' && (
-        <>
-          <p className="panel-note" style={{ marginTop: 0 }}>
-            {view.text}
-          </p>
-          <button onClick={close}>Done</button>
-        </>
+        <p className="panel-note" style={{ marginTop: 0 }}>
+          {view.text}
+        </p>
       )}
     </Sheet>
   );

@@ -36,10 +36,10 @@
     "inlineLayoutStyles": 2
   },
   "components/HistoryImportSheet.tsx": {
-    "inlineLayoutStyles": 17
+    "inlineLayoutStyles": 14
   },
   "components/ImportSheet.tsx": {
-    "inlineLayoutStyles": 31
+    "inlineLayoutStyles": 27
   },
   "components/IouSheet.tsx": {
     "inlineLayoutStyles": 2
