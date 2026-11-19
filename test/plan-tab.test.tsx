@@ -550,8 +550,8 @@ describe('the simulation card', () => {
     const html = render(p, measured, { badge: 'Inputs may be low' });
     const t = text(html);
     expect(html).toContain('<h4 class="plan-heading">From Your path</h4>');
-    expect(t).toContain('Social Security: $24,000 a year, at 67, for good.');
-    expect(t).toContain('Roof: $30,000, at 70.');
+    expect(t).toContain('Social Security: $24,000 comes in a year, at 67, for good.');
+    expect(t).toContain('Roof: $30,000 spent once, at 70.');
     expect(html).toContain('<div class="plan-card-badge"><span class="badge warn">Inputs may be low</span></div>');
   });
 

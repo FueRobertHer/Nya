@@ -225,29 +225,37 @@ export function endWords(x: PlanItem, plan: Facts, money: Money): string | null 
   return whenWords(x.until, x, plan, money, true);
 }
 
-/** An amount's line under it: a year, once, each, or a change's way. */
+/** An amount's line under it, saying which way the money goes: "comes in a
+ *  year", "spent a year", "more spent a year", "less pay a year", "spent
+ *  once", "spent each time", "comes in once". */
 export type ItemAmount = { amount: number; line: string };
 
 /** Null for a milestone, which holds no money. */
 export function itemAmount(x: PlanItem): ItemAmount | null {
   if (x.kind === 'milestone') return null;
   const yearly = x.yearly ?? 0;
-  const change = (v: number) => (v < 0 ? 'less a year' : 'more a year');
+  const spent = (v: number) => (v < 0 ? 'less spent a year' : 'more spent a year');
   switch (x.kind) {
     case 'spending':
+      return { amount: Math.abs(yearly), line: spent(yearly) };
     case 'pay':
-      return { amount: Math.abs(yearly), line: change(yearly) };
+      return { amount: Math.abs(yearly), line: yearly < 0 ? 'less pay a year' : 'more pay a year' };
     case 'loan-end':
-      return { amount: yearly, line: 'less a year' };
+      return { amount: yearly, line: 'less spent a year' };
+    case 'child':
+      return { amount: yearly, line: 'spent a year' };
     case 'home':
-      return (x.once ?? 0) > 0 || yearly === 0 ? { amount: x.once ?? 0, line: 'once' } : { amount: Math.abs(yearly), line: change(yearly) };
+      return (x.once ?? 0) > 0 || yearly === 0 ? { amount: x.once ?? 0, line: 'spent once' } : { amount: Math.abs(yearly), line: spent(yearly) };
     case 'car':
     case 'one-off':
-      return { amount: x.once ?? 0, line: x.every !== null ? 'each' : 'once' };
+      return { amount: x.once ?? 0, line: x.every !== null ? 'spent each time' : 'spent once' };
     case 'windfall':
-      return { amount: x.once ?? 0, line: 'once' };
-    default:
-      return { amount: yearly, line: 'a year' };
+      return { amount: x.once ?? 0, line: 'comes in once' };
+    case 'social-security':
+    case 'pension':
+    case 'other-income':
+    case 'part-time':
+      return { amount: yearly, line: 'comes in a year' };
   }
 }
 
@@ -323,7 +331,7 @@ export function coastNotReachedText(f: Pick<PlanFigures, 'plan'> & Parameters<ty
 }
 
 /** An item in one line, for how a copy differs and Also change it in:
- *  "$18,000 a year, at your partner’s 67, for good, before tax"; a
+ *  "$18,000 comes in a year, at your partner’s 67, for good, before tax"; a
  *  milestone's is what reaches it, "when invested assets reach $1,265,000". */
 export function itemSentence(x: PlanItem, plan: Facts, money: Money): string {
   const v = itemAmount(x);
@@ -333,7 +341,7 @@ export function itemSentence(x: PlanItem, plan: Facts, money: Money): string {
     const yearly = x.yearly ?? 0;
     amount = `${money(x.once ?? 0)} from your investments${yearly !== 0 ? `, then spending ${money(Math.abs(yearly))} a year ${yearly < 0 ? 'less' : 'more'}` : ''}`;
   } else {
-    amount = `${money(v.amount)}${v.line === 'once' ? '' : ` ${v.line}`}`;
+    amount = `${money(v.amount)} ${v.line}`;
   }
   const parts = [amount, lower(whenWords(x.from, x, plan, money))];
   const end = endWords(x, plan, money);
