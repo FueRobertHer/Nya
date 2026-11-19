@@ -688,7 +688,7 @@ function sam(today: string): DemoProfile {
       withdrawalRate: 0.0375,
       stocksPct: 80,
       bondsPct: 20,
-      income: [{ id: 'social-security', label: 'Social Security (both)', amount: 42_000, fromAge: 67, inflationAdjusted: true }],
+      income: [{ id: 'social-security', label: 'Social Security', amount: 42_000, fromAge: 67, inflationAdjusted: true }],
     },
     // The College fund's 529 stays out of these, to show the group it leaves
     // invested assets for.
@@ -745,8 +745,8 @@ function sam(today: string): DemoProfile {
       plan: {
         items: [
           planItem({ id: 'maya', label: 'Maya', kind: 'child', from: atAge(38), until: { years: 14 }, yearly: 9_000 }),
-          planItem({ id: 'sam-consulting', label: 'Sam consulting', kind: 'part-time', owner: 'you', from: atStop(), until: { years: 5 }, yearly: 30_000, replaces: 0 }),
-          planItem({ id: 'jordan-tutoring', label: 'Jordan tutoring', kind: 'part-time', owner: 'partner', from: atStop(1), until: { years: 5 }, yearly: 18_000, replaces: 0 }),
+          planItem({ id: 'sam-consulting', label: 'Consulting', kind: 'part-time', owner: 'you', from: atStop(), until: { years: 5 }, yearly: 30_000, replaces: 0 }),
+          planItem({ id: 'jordan-tutoring', label: 'Tutoring', kind: 'part-time', owner: 'partner', from: atStop(1), until: { years: 5 }, yearly: 18_000, replaces: 0 }),
           // Milestones, which move no figure: on an amount, one to watch and
           // one to time on; on the FI number, half of it and Coast FI.
           planItem({ id: 'lean-fi', label: 'Lean FI', kind: 'milestone', from: atBalance(1_500_000) }),
