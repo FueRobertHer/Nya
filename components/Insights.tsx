@@ -24,7 +24,7 @@ import { isBankCash, isCashOnHand } from '@/lib/balance';
 import { RECONNECT_ALERT_DAYS } from '@/lib/connection-state';
 import { missingMonthNotes, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
-import { spendingByCategory } from '@/lib/totals';
+import { spendingByCategory, tidy } from '@/lib/totals';
 import { budgetMeters, placeBudgets, EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
 import { withCarry, type Carries } from '@/lib/rollover';
 import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
@@ -197,9 +197,13 @@ export function budgetAlerts({ txns, fx = null, budgets = EMPTY_BUDGETS, taxonom
           budget < 0
           ? line(over, `overspending carried over left it ${formatMoney(-budget, displayCurrency)} over before this month${spent > 0 ? `, and ${formatMoney(spent, displayCurrency)} is spent` : ''}`)
           : line(over, `overspending carried over left nothing of it this month, and ${formatMoney(spent, displayCurrency)} is spent`)
-        : spent >= budget
+        : // Over only once spending is past the limit, as the Budgets tab's badge; exactly at it is used up.
+          // Compared tidied: spending is summed unrounded, so cents adding up to the limit can land a hair either side.
+          tidy(spent) > tidy(budget)
           ? line(over, `${formatMoney(spent, displayCurrency)} of ${formatMoney(budget, displayCurrency)}`)
-          : line(`Approaching your ${name} budget (${Math.round((spent / budget) * 100)}%)`)),
+          : tidy(spent) === tidy(budget)
+            ? line(`Your ${name} budget is used up`, `${formatMoney(spent, displayCurrency)} of ${formatMoney(budget, displayCurrency)}`)
+            : line(`Approaching your ${name} budget (${Math.round((spent / budget) * 100)}%)`)),
     });
   }
   return { alerts, more: Math.max(0, flagged.length - 2) };
