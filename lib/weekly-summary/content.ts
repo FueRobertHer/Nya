@@ -58,6 +58,7 @@ import { warningLapsed, type ConnectionWarning, type HealthState } from '../conn
 import { OUTAGE_NOTICE_DAYS, elapsedDays } from '../connection-notices';
 import type { ProjectionStatus } from '../goal-projection';
 import { dayIn } from '../report/period';
+import { tidy } from '../totals';
 import type { Weekday } from './settings';
 
 /** A section whose store couldn't be read. */
@@ -287,8 +288,9 @@ export function budgetFact(input: { ix: CategoryIndex; view: MonthBudgets; spent
   ];
   // The Budgets tab's own rule: over once spending is past the limit
   // (exactly at it is not over), or with nothing left at all once something
-  // is spent or the month began over.
-  const isOver = (c: { limit: number; spent: number }) => (c.limit > 0 ? c.spent > c.limit : c.spent > 0 || c.limit < 0);
+  // is spent or the month began over. Compared tidied, since spending is
+  // summed unrounded.
+  const isOver = (c: { limit: number; spent: number }) => (c.limit > 0 ? tidy(c.spent) > tidy(c.limit) : c.spent > 0 || c.limit < 0);
   const share = (c: { limit: number; spent: number }) => (c.limit > 0 ? c.spent / c.limit : Infinity);
   const byShare = (a: { name: string; limit: number; spent: number }, b: typeof a) => share(b) - share(a) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
   const over = candidates.filter(isOver).sort(byShare);

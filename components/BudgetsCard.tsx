@@ -49,6 +49,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { formatMoney } from '@/lib/format';
+import { tidy } from '@/lib/totals';
 import { budgetMeters, placeBudgets, type Budgets, type GroupMeter, type Reconcile } from '@/lib/budget-set';
 import { displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { carryText, monthName, withCarry, type Carries, type Carry } from '@/lib/rollover';
@@ -66,8 +67,10 @@ function meterState(ratio: number): '' | ' warn' {
 }
 
 /** Over once spending is past the limit (exactly at it is not over); with
- *  nothing available, once something is spent or the month began over. */
-const isOver = (spent: number, limit: number) => (limit > 0 ? spent > limit : spent > 0 || limit < 0);
+ *  nothing available, once something is spent or the month began over.
+ *  Compared tidied, since spending is summed unrounded and cents adding up
+ *  to the limit can land a hair past it. */
+const isOver = (spent: number, limit: number) => (limit > 0 ? tidy(spent) > tidy(limit) : spent > 0 || limit < 0);
 
 /** Spending against a limit: full once the limit is used up, or when there
  *  is none left at all (a carry deeper than the budget). Spans, since a row

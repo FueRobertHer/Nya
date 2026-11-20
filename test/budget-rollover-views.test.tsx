@@ -137,6 +137,8 @@ describe('the meters, against what is available', () => {
     expect(at(100)).not.toContain('>Over<');
     expect(at(100)).toContain('meter-fill warn" style="width:100%"');
     expect(at(100.01)).toContain('>Over<');
+    // A float sum a hair past the limit is still exactly at it.
+    expect(at(100.00000000000001)).not.toContain('>Over<');
   });
 
   test('the reconcile rule with nothing left on one side says so in words', () => {
@@ -604,6 +606,19 @@ describe('Home’s budget alerts weigh what is available', () => {
     expect(exact).toContain('Your groceries budget is used up: $300.00 of $300.00');
     expect(exact).not.toContain('Over your groceries budget');
     expect(alerts(carries({ [GROCERIES]: { carry: 20 } }))).toContain('Your groceries budget is used up: $320.00 of $320.00');
+  });
+
+  test('cents that add up to the limit are used up, whichever side the float sum lands', () => {
+    const fifty = { categories: { [GROCERIES]: { amount: 50 } }, groups: {} };
+    // Summed as floats, these come to 50.00000000000001 and 49.99999999999999.
+    for (const amounts of [
+      [1.67, 1.75, 3.8, 4.78, 4.24, 3.53, 5.58, 5.91, 6.75, 11.99],
+      [8.51, 8.79, 2.2, 10.1, 20.4],
+    ]) {
+      const t = budgetTexts({ txns: amounts.map(row), budgets: fifty, taxonomy, budgetCarries: null });
+      expect(t).toContain('Your groceries budget is used up: $50.00 of $50.00');
+      expect(t).not.toContain('Over your groceries budget');
+    }
   });
 
   test('nothing available after what was overspent: its own sentence, never "of" a limit of zero or less', () => {
