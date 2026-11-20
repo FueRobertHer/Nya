@@ -197,9 +197,12 @@ export function budgetAlerts({ txns, fx = null, budgets = EMPTY_BUDGETS, taxonom
           budget < 0
           ? line(over, `overspending carried over left it ${formatMoney(-budget, displayCurrency)} over before this month${spent > 0 ? `, and ${formatMoney(spent, displayCurrency)} is spent` : ''}`)
           : line(over, `overspending carried over left nothing of it this month, and ${formatMoney(spent, displayCurrency)} is spent`)
-        : spent >= budget
+        : // Over only once spending is past the limit, as the Budgets tab's badge; exactly at it is used up.
+          spent > budget
           ? line(over, `${formatMoney(spent, displayCurrency)} of ${formatMoney(budget, displayCurrency)}`)
-          : line(`Approaching your ${name} budget (${Math.round((spent / budget) * 100)}%)`)),
+          : spent === budget
+            ? line(`Your ${name} budget is used up`, `${formatMoney(spent, displayCurrency)} of ${formatMoney(budget, displayCurrency)}`)
+            : line(`Approaching your ${name} budget (${Math.round((spent / budget) * 100)}%)`)),
     });
   }
   return { alerts, more: Math.max(0, flagged.length - 2) };

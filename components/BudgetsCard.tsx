@@ -65,9 +65,9 @@ function meterState(ratio: number): '' | ' warn' {
   return ratio >= 0.85 ? ' warn' : '';
 }
 
-/** Over once the limit is used up; with nothing available, once something
- *  is spent or the month began over. */
-const isOver = (spent: number, limit: number) => (limit > 0 ? spent >= limit : spent > 0 || limit < 0);
+/** Over once spending is past the limit (exactly at it is not over); with
+ *  nothing available, once something is spent or the month began over. */
+const isOver = (spent: number, limit: number) => (limit > 0 ? spent > limit : spent > 0 || limit < 0);
 
 /** Spending against a limit: full once the limit is used up, or when there
  *  is none left at all (a carry deeper than the budget). Spans, since a row

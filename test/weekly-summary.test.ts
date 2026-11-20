@@ -338,11 +338,13 @@ const monthView = (budgets: Budgets, spending: Record<string, Record<string, num
   budgetsInMonth({ ix, budgets, months, month, today: month, spending: (m) => new Map(Object.entries(spending[m] ?? {})), earliest: '2026-01', uncertain: () => false });
 
 describe('budgets over and close', () => {
-  test('as the Budgets tab meters them: over once used up, close from 85%, the most over first', () => {
+  test('as the Budgets tab meters them: over once past the limit, close from 85%, the most over first', () => {
     const budgets = budgetsOf({ [GROCERIES]: 400, [RESTAURANTS]: 100, [COFFEE]: 50 });
-    const spent = { [GROCERIES]: 500, [RESTAURANTS]: 100, [COFFEE]: 43 };
+    const spent = { [GROCERIES]: 500, [RESTAURANTS]: 100.01, [COFFEE]: 43 };
     const view = monthView(budgets, { '2026-10': spent });
     expect(budgetFact({ ix, view, spent, month: '2026-10', running: true })).toEqual({ month: '2026-10', running: true, over: ['groceries', 'restaurants'], close: ['coffee'] });
+    // Exactly at the limit is not over: while the month runs, it is close.
+    expect(budgetFact({ ix, view, spent: { [RESTAURANTS]: 100 }, month: '2026-10', running: true })).toEqual({ month: '2026-10', running: true, over: [], close: ['restaurants'] });
     // 84% is not close.
     expect(budgetFact({ ix, view, spent: { [COFFEE]: 42 }, month: '2026-10', running: true })).toBeNull();
   });
@@ -351,7 +353,8 @@ describe('budgets over and close', () => {
     const budgets = budgetsOf({ [COFFEE]: 50 });
     const view = monthView(budgets, {});
     expect(budgetFact({ ix, view, spent: { [COFFEE]: 45 }, month: '2026-09', running: false })).toBeNull();
-    expect(budgetFact({ ix, view, spent: { [COFFEE]: 50 }, month: '2026-09', running: false })).toMatchObject({ over: ['coffee'], close: [] });
+    expect(budgetFact({ ix, view, spent: { [COFFEE]: 50 }, month: '2026-09', running: false })).toBeNull();
+    expect(budgetFact({ ix, view, spent: { [COFFEE]: 51 }, month: '2026-09', running: false })).toMatchObject({ over: ['coffee'], close: [] });
   });
 
   test('a group with a budget of its own is metered as a whole', () => {

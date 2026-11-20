@@ -120,6 +120,25 @@ describe('the meters, against what is available', () => {
     expect(at(12)).toContain('meter-fill warn" style="width:100%"');
   });
 
+  test('exactly at its limit is used up, not over; a cent past it is over', () => {
+    const at = (spent: number) =>
+      renderToStaticMarkup(
+        <BudgetsCard
+          taxonomy={taxonomy}
+          budgets={{ categories: { [GROCERIES]: { amount: 100 } }, groups: {} }}
+          spent={{ [GROCERIES]: spent }}
+          currency="USD"
+          editable
+          noSpending={false}
+          onSave={async () => true}
+          open={[FOOD]}
+        />
+      );
+    expect(at(100)).not.toContain('>Over<');
+    expect(at(100)).toContain('meter-fill warn" style="width:100%"');
+    expect(at(100.01)).toContain('>Over<');
+  });
+
   test('the reconcile rule with nothing left on one side says so in words', () => {
     const own = card({
       budgets: { categories: { [GROCERIES]: { amount: 300 }, [RESTAURANTS]: { amount: 100 } }, groups: { [FOOD]: { amount: 350 } } },
@@ -578,6 +597,13 @@ describe('Home’s budget alerts weigh what is available', () => {
     expect(alerts(null)).toContain('Over your groceries budget: $320.00 of $300.00');
     expect(alerts(carries({ [GROCERIES]: { carry: 150 } }))).not.toContain('groceries budget');
     expect(alerts(carries({ [GROCERIES]: { carry: -50 } }))).toContain('Over your groceries budget: $320.00 of $250.00');
+  });
+
+  test('exactly at the limit: used up, not over', () => {
+    const exact = budgetTexts({ txns: [row(300)], budgets, taxonomy, budgetCarries: null });
+    expect(exact).toContain('Your groceries budget is used up: $300.00 of $300.00');
+    expect(exact).not.toContain('Over your groceries budget');
+    expect(alerts(carries({ [GROCERIES]: { carry: 20 } }))).toContain('Your groceries budget is used up: $320.00 of $320.00');
   });
 
   test('nothing available after what was overspent: its own sentence, never "of" a limit of zero or less', () => {
