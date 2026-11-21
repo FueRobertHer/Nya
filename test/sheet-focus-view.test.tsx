@@ -161,4 +161,34 @@ describe('a sheet keeps Tab inside it', () => {
     expect(v.focused() === v.named('Close')).toBe(true);
     v.unmount();
   });
+
+  test('changing levels resets the sheet body scroll position and Escape prevents default', async () => {
+    const host = dom.document.createElement('div');
+    dom.document.body.appendChild(host);
+    const root = createRoot(host as unknown as HTMLElement);
+    let closed = 0;
+    const draw = (level: string) =>
+      act(() =>
+        root.render(
+          <Sheet open title={level} level={level} onClose={() => closed++}>
+            <p>{level}</p>
+          </Sheet>
+        )
+      );
+    draw('list');
+    await settle();
+    const body = host.findAll((e) => e.getAttribute('class') === 'sheet-body')[0] as FakeElement & { scrollTop?: number };
+    body.scrollTop = 240;
+    draw('compare');
+    await settle();
+    expect(body.scrollTop).toBe(0);
+    const esc = new FakeEvent('keydown');
+    esc.key = 'Escape';
+    act(() => {
+      body.dispatchEvent(esc);
+    });
+    expect(esc.defaultPrevented).toBe(true);
+    expect(closed).toBe(1);
+    act(() => root.unmount());
+  });
 });

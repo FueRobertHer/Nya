@@ -445,6 +445,35 @@ describe('Activity: the bar and its segments', () => {
     v.unmount();
   });
 
+  test('when transactions fail to load with a reconnect note, the month stays visible and offers Check connections', () => {
+    let opened = 0;
+    const v = mount({
+      txns: [],
+      notes: ['Chase needs to be reconnected to load its transactions.'],
+      onOpenConnections: () => opened++,
+    });
+    expect(v.month()).toBe(longName(month));
+    expect(v.text()).toContain('No transactions loaded.');
+    const btn = v.all((e) => e.tagName === 'BUTTON' && e.textContent === 'Check connections')[0];
+    expect(btn).toBeDefined();
+    act(() => click(btn));
+    expect(opened).toBe(1);
+    v.unmount();
+  });
+
+  test('daily headers explain when transfers or loan payments are included in the day net', () => {
+    const v = mount({
+      txns: [
+        row(`${month}-05`, 'Whole Foods', 50, 'groceries'),
+        row(`${month}-05`, 'Credit Card Payment', 500, 'loan payments'),
+      ],
+    });
+    const [dayHeader] = v.all((e) => e.getAttribute('class') === 'txn-day');
+    const netSpan = dayHeader.findAll((e) => e.getAttribute('class') === 'money')[0];
+    expect(netSpan.getAttribute('title')).toContain('transfers and loan payments');
+    v.unmount();
+  });
+
   test('kept by the caller: a choice goes to it, and the segment it gives is shown', () => {
     const chosen: Segment[] = [];
     const v = mount({ segment: 'spending', onSegment: (s) => chosen.push(s) });
