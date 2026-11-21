@@ -3,7 +3,8 @@ name: CI
 # Typecheck and test on every pull request and every push to main. sync-preview.yml
 # merges main into preview on every push, so a broken main would otherwise reach
 # the demo deployment unattended. Runs the same pair as
-# `bun run typecheck && bun run test`, so a green local run means a green CI run.
+# `bun run typecheck && bun run test`, so a green local run means a green CI run:
+# the two jobs below split that one suite, every file in exactly one of them.
 
 on:
   pull_request:
@@ -19,7 +20,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  # On a runner of its own, so the tests below don't wait for it.
+  typecheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -36,6 +38,17 @@ jobs:
       - run: bun install --frozen-lockfile
 
       - run: bun run typecheck
+
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.x
+
+      - run: bun install --frozen-lockfile
 
       # The Lua scripts (compare-and-set, the snapshot lock) are also tested
       # against a real Redis, which the runner does not ship. Those tests skip
@@ -54,4 +67,22 @@ jobs:
 
       # `bun test --parallel`: the files run across the runner's cores, each in
       # a fresh global. Run in one process, the suite took about five minutes.
-      - run: bun run test --timings=.bun-test-timings.json --update-timings
+      # Every file but hide-amounts, which runs in the job below.
+      - run: bun run test --timings=.bun-test-timings.json --update-timings --path-ignore-patterns=test/hide-amounts.test.tsx
+
+  # test/hide-amounts.test.tsx on a runner of its own. Its backstop runs every
+  # view suite again in a nested `bun test --parallel`; beside the suite above
+  # the two runs shared the same cores, and the backstop alone held the job for
+  # about 160 of its 233 seconds. It needs neither Redis nor the timings.
+  hidden-amounts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.x
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run test test/hide-amounts.test.tsx
