@@ -3,7 +3,8 @@ name: CI
 # Typecheck and test on every pull request and every push to main. sync-preview.yml
 # merges main into preview on every push, so a broken main would otherwise reach
 # the demo deployment unattended. Runs the same pair as
-# `bun run typecheck && bun run test`, so a green local run means a green CI run.
+# `bun run typecheck && bun run test`, so a green local run means a green CI run:
+# the test jobs below split that one suite, every file in exactly one of them.
 
 on:
   pull_request:
@@ -19,7 +20,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  # On a runner of its own, so the tests below don't wait for it.
+  typecheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -37,21 +39,109 @@ jobs:
 
       - run: bun run typecheck
 
+  # Every test file but hide-amounts (the job below), split across two runners
+  # by `bun test --shard`. On one runner the files took about 700 seconds of
+  # its 4 cores, so it was the whole run's slowest job.
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      # Both shards finish, so a failure in one doesn't hide the other's.
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.x
+
+      - run: bun install --frozen-lockfile
+
       # The Lua scripts (compare-and-set, the snapshot lock) are also tested
       # against a real Redis, which the runner does not ship. Those tests skip
       # without one locally, but fail under CI rather than pass unseen.
       - run: sudo apt-get update && sudo apt-get install -y redis-server
 
-      # Each file's duration in the last run, so the slowest files start first
-      # rather than one holding up the end. Every passing run saves its own
-      # (the key never repeats, re-runs included) and restores the newest; the
-      # first restores nothing.
-      - uses: actions/cache@v6
+      # Each file's duration in the last passing run, which balances the
+      # shards by time and starts each shard's slowest files first. Both shards
+      # restore the same entry: only check-shards saves one, once the whole run
+      # has passed, so a shard re-run alone reads what its sibling read. The
+      # first run reads none.
+      - uses: actions/cache/restore@v6
         with:
-          path: .bun-test-timings.json
-          key: bun-test-timings-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: bun-test-timings-
+          path: .bun-test-timings-all.json
+          key: bun-test-timings-all-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: bun-test-timings-all-
 
       # `bun test --parallel`: the files run across the runner's cores, each in
       # a fresh global. Run in one process, the suite took about five minutes.
-      - run: bun run test --timings=.bun-test-timings.json --update-timings
+      # --update-timings writes this shard's durations to the first --timings
+      # file, which starts empty, so both shards read the same timings and so
+      # split the suite the same way. The JUnit report says which files this
+      # shard ran, for the check after both.
+      - run: >-
+          bun run test
+          --shard=${{ matrix.shard }}/2
+          --path-ignore-patterns=test/hide-amounts.test.tsx
+          --timings=.bun-test-timings.json
+          --timings=.bun-test-timings-all.json
+          --update-timings
+          --reporter=junit
+          --reporter-outfile=junit.xml
+
+      # The report's top-level suites are its test files. Named without a
+      # leading dot, as upload-artifact leaves hidden files out.
+      - run: |
+          grep -oE '^  <testsuite name="[^"]+" file="[^"]+"' junit.xml | sed -E 's/.* file="([^"]+)"/\1/' | sort > shard-files-${{ matrix.shard }}.txt
+          mv .bun-test-timings.json shard-timings-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: shard-${{ matrix.shard }}
+          path: |
+            shard-files-${{ matrix.shard }}.txt
+            shard-timings-${{ matrix.shard }}.json
+
+  # The shards ran every test file once. If they read different timings (a
+  # newer run saved between their restores), they could split the suite two
+  # ways, and a file neither ran would otherwise pass unseen. Then it saves
+  # both shards' timings as one entry for the next run.
+  check-shards:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: shard-*
+          merge-multiple: true
+
+      - run: |
+          git ls-files | grep -E '(\.|_)(test|spec)\.[cm]?[jt]sx?$' | grep -vx test/hide-amounts.test.tsx | sort > expected.txt
+          sort shard-files-*.txt > ran.txt
+          diff expected.txt ran.txt && echo "Every test file ran in exactly one shard: $(wc -l < ran.txt) files."
+
+      - run: |
+          jq -s '{version: 1, files: (map(.files) | add)}' shard-timings-*.json > .bun-test-timings-all.json
+      - uses: actions/cache/save@v6
+        with:
+          path: .bun-test-timings-all.json
+          key: bun-test-timings-all-${{ github.run_id }}-${{ github.run_attempt }}
+
+  # test/hide-amounts.test.tsx on a runner of its own. Its backstop runs every
+  # view suite again in a nested `bun test --parallel`; beside the suite above
+  # the two runs shared the same cores, and the backstop alone held the job for
+  # about 160 of its 233 seconds. It needs neither Redis nor the timings.
+  hidden-amounts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.x
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run test test/hide-amounts.test.tsx
