@@ -1525,8 +1525,8 @@ button:active:not(:disabled):not([aria-disabled="true"]):not([class*="cl-"]) {
   position: absolute;
   top: 100%;
   right: 0;
-  /* Over the content that follows it; the header and sheets stay above. */
-  z-index: 1;
+  /* Over sticky tab bars and page content; the bottom tab bar and sheets stay above. */
+  z-index: var(--z-header);
   display: flex;
   flex-direction: column;
   min-width: 220px;
@@ -3489,6 +3489,11 @@ span.meter-fill {
    label’s 13px they would inherit; a class of their own still sets its own. */
 .field :where(select, textarea) {
   font-size: var(--fs-3);
+}
+
+.field select {
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .invite-link {

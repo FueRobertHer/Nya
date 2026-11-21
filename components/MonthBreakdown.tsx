@@ -29,7 +29,7 @@ import MonthFigures from "./MonthFigures";
 import { formatDay, formatInstantDay, formatMoney, signedMoney, spoken } from "@/lib/format";
 import { textWidth } from "@/lib/sankey";
 import { Masked } from "./HideAmounts";
-import { countsInTotals, countTransactions, currencyOf, historyCount, isExcluded, leftOutByCurrency, leftOutText, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
+import { countsInTotals, countTransactions, currencyOf, historyCount, isExcluded, isTransfer, leftOutByCurrency, leftOutText, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
 import { conversionIn, convertedText, leftOutWhy, totalsIn } from "@/lib/fx/totals";
 import type { FxTable } from "@/lib/fx/rates";
 import { localDate, localMonth } from "@/lib/local-date";
@@ -197,9 +197,9 @@ export function findTxnRow(id: string): HTMLElement | null {
   return document.querySelectorAll<HTMLElement>(`button[data-txn-row="${id}"]`)[0] ?? null;
 }
 
-export function emptyListWords(on: { query: boolean; tag: boolean; review: boolean; unsure?: boolean; receipt: ReceiptChoice; pick: boolean }): string {
+export function emptyListWords(on: { query: boolean; tag: boolean; review: boolean; unsure?: boolean; receipt: ReceiptChoice; pick: boolean; unloaded?: boolean }): string {
   const count = [on.query, on.tag, on.review, !!on.unsure, on.receipt !== ""].filter(Boolean).length;
-  if (count === 0) return on.pick ? "Nothing to list." : "No transactions this month.";
+  if (count === 0) return on.pick ? "Nothing to list." : on.unloaded ? "No transactions loaded." : "No transactions this month.";
   if (count > 1) return on.query ? "No transactions match your search and filters." : "No transactions match these filters.";
   if (on.review) return "Nothing listed needs review.";
   if (on.unsure) return "No category listed is one Plaid was unsure of.";
@@ -342,6 +342,7 @@ export default function MonthBreakdown({
   sharedSegment = null,
   viewMonth,
   onViewMonth,
+  onOpenConnections,
 }: {
   txns: Txn[] | null;
   /** What the totals convert with, once a home currency is chosen
@@ -431,6 +432,8 @@ export default function MonthBreakdown({
    *  its writer; without them the tab keeps its own. */
   viewMonth?: ViewMonth;
   onViewMonth?: (m: ViewMonth) => void;
+  /** Opens Accounts / Connections when a bank's transactions need reconnecting. */
+  onOpenConnections?: () => void;
 }) {
   const [ownSegment, setOwnSegment] = useState<ActivitySegment>("transactions");
   const segment = segmentShown ?? ownSegment;
@@ -695,16 +698,17 @@ export default function MonthBreakdown({
   // the header adds up the rows shown under it. A row the person excluded is
   // left out of it, as of every total.
   const days = useMemo(() => {
-    const groups: { date: string; nets: Map<string | null, number>; txns: Txn[] }[] = [];
+    const groups: { date: string; nets: Map<string | null, number>; hasTransfer: boolean; txns: Txn[] }[] = [];
     for (const t of visible) {
       let g = groups[groups.length - 1];
       if (!g || g.date !== t.date) {
-        g = { date: t.date, nets: new Map(), txns: [] };
+        g = { date: t.date, nets: new Map(), hasTransfer: false, txns: [] };
         groups.push(g);
       }
       g.txns.push(t);
       // Not counted: excluded, or counted in a group dated before this year (#39).
       if (isExcluded(t) || t.group_outside) continue;
+      if (isTransfer(t)) g.hasTransfer = true;
       const c = currencyOf(t) ?? currency;
       g.nets.set(c, (g.nets.get(c) ?? 0) - t.amount);
     }
@@ -785,15 +789,15 @@ export default function MonthBreakdown({
     setFlowPick(null);
   };
   const shownMonth: ActivityMonth | null =
-    segment !== "shared" && selected
+    segment !== "shared" && (selected || (!loading && (notes.length > 0 || asideNotes.length > 0)))
       ? {
-          value: selected,
-          months,
+          value: selected ?? thisMonth,
+          months: selected ? months : [thisMonth],
           label: monthName,
           optionLabel: (m) => (m === thisMonth ? `${monthName(m)} (this month)` : monthName(m)),
           onMonth: goMonth,
           back:
-            opensOn && selected !== opensOn
+            selected && opensOn && selected !== opensOn
               ? {
                   label: opensOn === thisMonth ? "This month" : "Latest month",
                   onBack: () => goMonth(null),
@@ -970,6 +974,11 @@ export default function MonthBreakdown({
             {n}
           </div>
         ))}
+      {!onSpending && onOpenConnections && notes.some((n) => /reconnect/i.test(n)) && (
+        <button type="button" className="btn ghost" onClick={onOpenConnections}>
+          Check connections
+        </button>
+      )}
     </MonthFigures>
   );
 
@@ -1260,14 +1269,14 @@ export default function MonthBreakdown({
                 </Notice>
               )}
               {visible.length === 0 ? (
-                <p className="empty-note">{emptyListWords({ query: !!query, tag: !!filterTag, review: reviewing, unsure: unsureOnly, receipt: byReceipt, pick: !!flowPick })}</p>
+                <p className="empty-note">{emptyListWords({ query: !!query, tag: !!filterTag, review: reviewing, unsure: unsureOnly, receipt: byReceipt, pick: !!flowPick, unloaded: !selected && notes.length > 0 })}</p>
               ) : (
                 <ul className="list-rows txn-list">
                   {days.map((g) => (
                     <Fragment key={g.date}>
                       <li className="txn-day">
                         <span>{fmtTxnDate(g.date)}</span>
-                        <span className="money">
+                        <span className="money" title={g.hasTransfer ? "Day net includes transfers and loan payments listed below" : undefined}>
                           <Masked>{fmtDayNet(g.nets, currency)}</Masked>
                         </span>
                       </li>

@@ -149,7 +149,9 @@ export default function InstitutionCard({
       <div className="card-header">
         <h2 id={cardHeadingId(inst.item_id)} tabIndex={-1}>
           {inst.institution_name}
-          {inst.manual && <> <span className="badge">{inst.connector ? `via ${inst.health?.detail?.label ?? connectorLabel(inst.connector)}` : 'Manual'}</span></>}
+          {inst.manual && (inst.connector || inst.institution_name.trim().toLowerCase() !== 'manual') && (
+            <> <span className="badge">{inst.connector ? `via ${inst.health?.detail?.label ?? connectorLabel(inst.connector)}` : 'Manual'}</span></>
+          )}
           {badge && severity && <> <span className={`badge ${severity === 'critical' ? 'neg' : 'warn'}`}>{badge}</span></>}
         </h2>
         <span className="money">
