@@ -267,6 +267,13 @@ describe('the account rows', () => {
     const row = text(html.slice(html.indexOf('<button class="list-row"')));
     expect(row).toContain('Cash Checking · in EUR');
     expect(row).toMatch(/Updated Oct 8, \d+:05 [AP]M/);
+    expect(html).toContain('Wallet <span class="badge">Manual</span>');
+  });
+
+  test('a manual institution named Manual does not repeat the Manual badge', () => {
+    const html = render(manual({ institution_name: 'Manual' }));
+    expect(html).not.toContain('<span class="badge">Manual</span>');
+    expect(text(html)).not.toContain('Manual Manual');
   });
 
   test('a synced balance says whose day it is', () => {

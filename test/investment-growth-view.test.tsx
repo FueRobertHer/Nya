@@ -684,6 +684,46 @@ describe('the chooser', () => {
       act(() => root.unmount());
     }
   });
+
+  test('duplicate account names across institutions are disambiguated with the institution name in helper copy', async () => {
+    const host = dom.document.createElement('div');
+    dom.document.body.appendChild(host);
+    const root = createRoot(host as unknown as HTMLElement);
+    const saved = globalThis.fetch;
+    globalThis.fetch = (async (url: string) => {
+      const u = new URL(url, 'http://x');
+      if (u.pathname === '/api/account-history') return Response.json({ histories: { dup_a: [], dup_b: [] } });
+      if (u.pathname === '/api/allocation-settings') return Response.json({ settings: { v: 1, buckets: [], funds: [], accounts: [], target: null } });
+      return Response.json({ txns: [], flows: [], flows_from: '2026-01-01', totals: null, note: null });
+    }) as unknown as typeof fetch;
+    const dupInst = (item: string, name: string, account_id: string): Institution => ({
+      institution_name: name,
+      item_id: item,
+      accounts: [{ account_id, name: 'Plaid IRA', official_name: null, mask: null, type: 'investment', subtype: 'ira', balance: 1000, limit: null, currency: 'USD' }],
+      holdings: [],
+      error: null,
+      needs_reauth: false,
+    });
+    try {
+      act(() =>
+        root.render(
+          <InvestmentGrowth
+            institutions={[dupInst('item_a', 'First Platypus Bank', 'dup_a'), dupInst('item_b', 'Tartan Bank', 'dup_b')]}
+            main="USD"
+            refreshKey={null}
+            onOpenAccount={() => {}}
+            onMoneyInOut={() => {}}
+          />
+        )
+      );
+      await pass(50);
+      expect(words(host)).toContain('Plaid IRA (First Platypus Bank)');
+      expect(words(host)).toContain('Plaid IRA (Tartan Bank)');
+    } finally {
+      act(() => root.unmount());
+      globalThis.fetch = saved;
+    }
+  });
 });
 
 describe('what the figures are short of', () => {

@@ -577,7 +577,7 @@ export default function SharedExpensesCard({
             Add an IOU
           </button>
         )}
-        <button className="link-btn" onClick={() => setShowSettings(!showSettings)} aria-expanded={showSettings}>
+        <button type="button" className="btn ghost" onClick={() => setShowSettings(!showSettings)} aria-expanded={showSettings}>
           {showSettings ? 'Hide settings' : 'Settings'}
         </button>
       </div>

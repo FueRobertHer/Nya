@@ -232,34 +232,42 @@ export default function InvestmentGrowth({
   }, [keys, refreshKey]);
 
   const buckets = useMemo(() => overridesOf(settings?.value ?? null).buckets, [settings]);
-  const accounts = useMemo(
-    (): Shown[] =>
-      linked.map(({ inst, a, key }) => {
-        const raw = activities[key] ?? LOADING;
-        const points = histories?.[a.account_id] ?? null;
-        // Through the seam the account's chart uses, so the two agree: the
-        // months' ends before its first recorded day, their deposits and
-        // withdrawals before Nya's activity.
-        const data = raw.state === 'ready' ? raw.data : null;
-        const past = data && points ? withPastMonths(points, data, data.investment_months, a.currency) : null;
-        return {
-          key,
-          account_id: a.account_id,
-          item_id: inst.item_id,
-          currency: a.currency,
-          activity: past && data ? { state: 'ready', data: { ...data, flows: past.flows, flows_from: past.flows_from, totals_from: past.totals_from } } : raw,
-          points: past ? past.points : points,
-          name: a.name,
-          mask: a.mask,
-          title: withMask(a.name, a.mask),
-          institution: inst.institution_name,
-          retirement: isRetirement(a.subtype, buckets.get(a.account_id)),
-          raw,
-          past,
-        };
-      }),
-    [linked, activities, histories, buckets]
-  );
+  const accounts = useMemo((): Shown[] => {
+    const baseTitles = linked.map(({ a }) => withMask(a.name, a.mask));
+    const institutionsByTitle = new Map<string, Set<string>>();
+    linked.forEach(({ inst }, i) => {
+      const t = baseTitles[i];
+      const set = institutionsByTitle.get(t) ?? new Set<string>();
+      set.add(inst.institution_name);
+      institutionsByTitle.set(t, set);
+    });
+    return linked.map(({ inst, a, key }, i) => {
+      const raw = activities[key] ?? LOADING;
+      const points = histories?.[a.account_id] ?? null;
+      // Through the seam the account's chart uses, so the two agree: the
+      // months' ends before its first recorded day, their deposits and
+      // withdrawals before Nya's activity.
+      const data = raw.state === 'ready' ? raw.data : null;
+      const past = data && points ? withPastMonths(points, data, data.investment_months, a.currency) : null;
+      const baseTitle = baseTitles[i];
+      const title = (institutionsByTitle.get(baseTitle)?.size ?? 0) > 1 ? `${baseTitle} (${inst.institution_name})` : baseTitle;
+      return {
+        key,
+        account_id: a.account_id,
+        item_id: inst.item_id,
+        currency: a.currency,
+        activity: past && data ? { state: 'ready', data: { ...data, flows: past.flows, flows_from: past.flows_from, totals_from: past.totals_from } } : raw,
+        points: past ? past.points : points,
+        name: a.name,
+        mask: a.mask,
+        title,
+        institution: inst.institution_name,
+        retirement: isRetirement(a.subtype, buckets.get(a.account_id)),
+        raw,
+        past,
+      };
+    });
+  }, [linked, activities, histories, buckets]);
 
   // The chooser: presets for all of them, and for the retirement ones or the
   // others when both kinds are there, and any set of accounts.

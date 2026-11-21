@@ -189,6 +189,7 @@ export function Sheet({
   const [mounted, setMounted] = useState(open);
   const [shown, setShown] = useState(false);
   const panel = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
 
   // A footer the body's levels give (SheetFooter): drawn while one claims it.
   const [claims, setClaims] = useState(0);
@@ -225,8 +226,10 @@ export function Sheet({
     root.style.overflow = 'hidden';
     panel.current?.focus({ preventScroll: true });
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') escape.current();
-      else if (e.key === 'Tab' && panel.current) trapTab(e, panel.current);
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        escape.current();
+      } else if (e.key === 'Tab' && panel.current) trapTab(e, panel.current);
     };
     window.addEventListener('keydown', onKey);
     return () => {
@@ -240,9 +243,16 @@ export function Sheet({
     };
   }, [active]);
 
-  // A new level (back or forward) starts with focus on the panel, not lost
-  // with the button that went away.
+  // A new level (back or forward) starts at the top with focus on the panel,
+  // not lost with the button that went away. Reset scroll in useLayoutEffect
+  // so a level that restores its own scroll position in useEffect (PlanTune)
+  // can still win on Back.
   const level = levelName ?? (onBack ? 'inner' : 'top');
+  const prevLevel = useRef(level);
+  useLayoutEffect(() => {
+    if (active && prevLevel.current !== level && bodyRef.current) bodyRef.current.scrollTop = 0;
+    prevLevel.current = level;
+  }, [level, active]);
   useEffect(() => {
     if (active) panel.current?.focus({ preventScroll: true });
   }, [level, active]);
@@ -269,7 +279,7 @@ export function Sheet({
           </button>
         </div>
         <FooterSlotContext.Provider value={slot}>
-          <div className="sheet-body">{children}</div>
+          <div className="sheet-body" ref={bodyRef}>{children}</div>
         </FooterSlotContext.Provider>
         {(footer || claims > 0) && (
           <div className="sheet-footer">

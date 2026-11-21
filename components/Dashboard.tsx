@@ -2706,6 +2706,10 @@ export default function Dashboard({
                   onSegment={setActivitySegment}
                   viewMonth={viewMonth.month}
                   onViewMonth={viewMonth.set}
+                  onOpenConnections={() => {
+                    openAccounts();
+                    goToFirstToFix();
+                  }}
                   // Shared expenses (#49): who owes what, on its own segment.
                   sharedSegment={
                     <SharedExpensesCard
