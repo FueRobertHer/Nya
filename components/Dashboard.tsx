@@ -1997,9 +1997,7 @@ export default function Dashboard({
               loads says what it suggests, which ends Home's row about any it
               no longer does (a decline changes no figures, so nothing else is
               reloaded), and draws its title, which a jump may be waiting for. */}
-          <AccountLinks onChanged={() => loadNetWorth(true)}
-            onLoaded={linkOfferLoaded}
-            refreshKey={reloadKey}
+          <AccountLinks onChanged={() => loadNetWorth(true)} onLoaded={linkOfferLoaded} refreshKey={reloadKey}
             empty={
               connected && allHiddenInstitutions.length === 0 && cardlessConnectors.size === 0 ? (
                 <div className="card stack">

@@ -153,7 +153,7 @@ describe('what it reads', () => {
 describe('the page', () => {
   test('its environment under the title, its cards in order, Needs attention only when something does, and what it leaves out', async () => {
     const quiet = await html();
-    expect(text(quiet)).toStartWith('Nya Admin Preview. Only you see this page.');
+    expect(text(quiet)).toStartWith('Nya Back to Settings Admin Preview. Only you see this page.');
     expect(titles(quiet)).toEqual(['Feature switches', 'Jobs and storage', 'Demo accounts', 'Tax law', 'Environment', 'Operations', 'Changes']);
     expect(text(quiet)).toEndWith('Not on this page: any account’s financial data, or running an operation.');
     expect(quiet).toContain('href="/?settings=admin"');

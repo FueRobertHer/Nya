@@ -191,10 +191,11 @@ describe('Activity: the bar and its segments', () => {
     for (let p = strip()[0].parentNode as FakeElement | null; p; p = p.parentNode as FakeElement | null) expect((p.getAttribute?.('class') ?? '').split(' ')).not.toContain('card');
     // Its heading, for a screen reader alone: the bar names the month.
     expect(strip()[0].findAll((e) => e.tagName === 'H2')[0].textContent).toBe(`In and out, ${longName(month)}`);
-    // Spending: after the period's switch, before the cash flow, which has none of its own.
+    // Spending: after the top row (period switch + Reports quick link), before the cash flow, which has none of its own.
     act(() => click(v.tab('Spending')));
     expect(strip()).toHaveLength(1);
-    expect(kids()[0].getAttribute('class')).toBe('segmented spending-period');
+    expect(kids()[0].getAttribute('class')).toBe('spending-top-row');
+    expect(kids()[0].findAll((e) => e.getAttribute('class') === 'segmented spending-period')).toHaveLength(1);
     expect(kids()[1]).toBe(strip()[0]);
     expect(v.all((e) => (e.getAttribute('class') ?? '').split(' ').includes('summary-row'))).toHaveLength(1);
     expect(v.all((e) => e.getAttribute('class') === 'inst-name' && e.textContent === 'In and out')).toHaveLength(0);
