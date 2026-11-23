@@ -18,3 +18,12 @@ export default function ReportsEntry() {
     </div>
   );
 }
+
+/** Compact above-the-fold link to /reports in Activity > Spending. */
+export function ReportsQuickLink() {
+  return (
+    <a className="btn ghost spending-reports-link" href="/reports">
+      Reports
+    </a>
+  );
+}

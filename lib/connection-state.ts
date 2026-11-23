@@ -59,7 +59,7 @@ export const RECONNECT_SOON_DAYS = 7;
  *  disconnection" (PendingDisconnectWebhookReason in the plaid package). */
 export const PENDING_DISCONNECT_LEAD_DAYS = 7;
 /** How many days before a connection ends the Home tab raises it too. */
-export const RECONNECT_ALERT_DAYS = 3;
+export const RECONNECT_ALERT_DAYS = 7;
 
 /** Where a notice email sends the person: the card of the first connection
  *  that needs attention on the Accounts tab, or Settings > Connections when it

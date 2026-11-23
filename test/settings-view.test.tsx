@@ -84,7 +84,7 @@ describe('the dashboard', () => {
     const homes: Record<string, string[]> = {
       preferences: ['<CurrencyCard', '<WeeklySummaryCard'],
       transactions: ['<CategoriesCard', '<TagsCard', '<RulesCard', '<VendorDefaultsCard', '<ReviewSettingsCard'],
-      connections: ['allHiddenInstitutions.map', '<AccountLinks'],
+      connections: ['allHiddenInstitutions.map', '<AccountLinks', 'All your bank connections are on the Accounts tab.', 'Go to Accounts'],
       data: ['<DownloadMyData', '{filesMode?.connected && <ReceiptsCard', '<InventoryEntry', '<div id="bring-back" tabIndex={-1}>', '<ApiTokens'],
       // Its card (components/AccountSettings.tsx), with password mode's two.
       account: ['<AccountSettings', 'onSignOut={logout}', 'onSignOutEverywhere={signOutEverywhere}'],

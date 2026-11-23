@@ -134,6 +134,15 @@ export function reportQuery(form: ReportForm, tz?: string, format?: 'csv'): stri
 
 const requestOf = (f: ReportForm): ReportRequest => (f.kind === 'year' ? { kind: 'year', year: f.year } : { kind: 'range', start: f.start, end: f.end });
 
+/** Whether the Accountant tab should default to the current year instead of the
+ *  prior calendar year when no explicit year was requested: true when the prior
+ *  year has fewer than 3 months with transactions and the current year has more. */
+export function shouldPreferCurrentYear(prior: Pick<Report, 'months'>, current: Pick<Report, 'months'>): boolean {
+  const active = (r: Pick<Report, 'months'>) => r.months.filter((m) => m.transactions > 0).length;
+  const priorActive = active(prior);
+  return priorActive < 3 && active(current) > priorActive;
+}
+
 /** The CSV of the report on screen, from its own period, currency and time
  *  zone: never from a form changed since it was made. */
 export function csvQuery(report: Pick<Report, 'period' | 'currency'>): string {
@@ -178,7 +187,7 @@ export default function ReportsPage() {
     }
   }, []);
 
-  const load = useCallback(async (f: ReportForm, tz: string) => {
+  const load = useCallback(async (f: ReportForm, tz: string, opts?: { fallbackYear?: number }) => {
     const checked = resolvePeriod(requestOf(f), tz, Date.now());
     if ('error' in checked) {
       setError(checked.error);
@@ -196,9 +205,29 @@ export default function ReportsPage() {
         setReport(null);
         setError(typeof body.error === 'string' ? body.error : 'The report couldn’t be made.');
       } else {
-        setReport(body.report as Report);
+        const fetched = body.report as Report;
+        const fallbackYear = opts?.fallbackYear;
+        if (
+          fallbackYear !== undefined &&
+          f.kind === 'year' &&
+          f.year < fallbackYear &&
+          fetched.months.filter((m) => m.transactions > 0).length < 3
+        ) {
+          const nextForm: ReportForm = { ...f, year: fallbackYear, currency: null };
+          const curRes = await fetch(`/api/reports?${reportQuery(nextForm, tz)}`).catch(() => null);
+          const curBody = curRes?.ok ? await curRes.json().catch(() => null) : null;
+          if (n !== latest.current) return;
+          if (curBody?.report && shouldPreferCurrentYear(fetched, curBody.report as Report)) {
+            const preferred = curBody.report as Report;
+            window.history.replaceState(null, '', `/reports?${reportQuery(nextForm)}`);
+            setReport(preferred);
+            setForm({ ...nextForm, currency: preferred.currency });
+            return;
+          }
+        }
+        setReport(fetched);
         // The currency the report chose, so the picker shows it.
-        setForm((cur) => (cur ? { ...cur, currency: (body.report as Report).currency } : cur));
+        setForm((cur) => (cur ? { ...cur, currency: fetched.currency } : cur));
       }
     } catch {
       if (n !== latest.current) return;
@@ -215,15 +244,20 @@ export default function ReportsPage() {
   useEffect(() => {
     const tz = browserZone();
     const day = localDate();
-    const f = formFrom(window.location.search, day);
+    const search = window.location.search;
+    const f = formFrom(search, day);
+    const params = new URLSearchParams(search);
+    const explicitPeriod = params.has('year') || params.has('kind');
     // Read before load() rewrites the address to the form's.
-    const opening = asksStopped(window.location.search);
-    const choice = reportChoice(window.location.search);
+    const opening = asksStopped(search);
+    const choice = reportChoice(search);
     setZone(tz);
     setToday(day);
     setForm(f);
     setWhich(choice);
-    if (choice === 'accountant') void load(f, tz);
+    if (choice === 'accountant') {
+      void load(f, tz, !explicitPeriod ? { fallbackYear: Number(day.slice(0, 4)) } : undefined);
+    }
     void loadStopped(opening);
   }, [load, loadStopped]);
 

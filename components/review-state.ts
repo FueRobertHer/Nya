@@ -23,16 +23,30 @@ import { approvalViaOf, merchantOf, recategorizedRow } from './transaction-edits
 import { localDate } from '@/lib/local-date';
 import type { Taxonomy } from '@/lib/categories';
 
-/** The queue as /api/transactions sends it: on from a day or off, whether
- *  its settings couldn't be read, and how many approvals of the rows read
- *  couldn't be (`unknown`). */
-export type ReviewView = { on: boolean; since: string | null; unread: boolean; unknown: number };
+/** The queue as /api/transactions sends it: on from a day or off, optional
+ *  queue filters, whether its settings couldn't be read, and how many
+ *  approvals of the rows read couldn't be (`unknown`). */
+export type ReviewView = {
+  on: boolean;
+  since: string | null;
+  skip_transfers?: boolean;
+  posted_only?: boolean;
+  unread: boolean;
+  unknown: number;
+};
 
 export function reviewViewOf(v: unknown): ReviewView | null {
   if (!v || typeof v !== 'object') return null;
   const r = v as Record<string, unknown>;
   if (typeof r.on !== 'boolean' || typeof r.unread !== 'boolean' || !(r.since === null || typeof r.since === 'string')) return null;
-  return { on: r.on, since: r.since, unread: r.unread, unknown: typeof r.unknown === 'number' && r.unknown > 0 ? r.unknown : 0 };
+  return {
+    on: r.on,
+    since: r.since,
+    ...(typeof r.skip_transfers === 'boolean' ? { skip_transfers: r.skip_transfers } : {}),
+    ...(typeof r.posted_only === 'boolean' ? { posted_only: r.posted_only } : {}),
+    unread: r.unread,
+    unknown: typeof r.unknown === 'number' && r.unknown > 0 ? r.unknown : 0,
+  };
 }
 
 /** What undoes an approval request: each transaction, when it was approved,
@@ -109,17 +123,64 @@ export function useReview({
 
   /** Turns the queue on, from `since` (today when null), or off. */
   const turn = useCallback(
-    async (on: boolean, since: string | null = null): Promise<boolean> => {
+    async (on: boolean, since: string | null = null, opts?: { skip_transfers?: boolean; posted_only?: boolean }): Promise<boolean> => {
       setError(null);
       setSaving(true);
       try {
-        const res = await post('/api/review', on ? { action: 'start', today: localDate(), ...(since ? { since } : {}) } : { action: 'stop' }).catch(() => null);
+        const res = await post(
+          '/api/review',
+          on
+            ? {
+                action: 'start',
+                today: localDate(),
+                ...(since ? { since } : {}),
+                ...(opts?.skip_transfers !== undefined ? { skip_transfers: opts.skip_transfers } : {}),
+                ...(opts?.posted_only !== undefined ? { posted_only: opts.posted_only } : {}),
+              }
+            : { action: 'stop' }
+        ).catch(() => null);
         if (!res?.ok) {
           setError(await refusal(res, 'Could not change the review queue. Please try again.'));
           return false;
         }
         const data = await res.json().catch(() => null);
-        setView((v) => ({ on: !!data?.review?.on, since: data?.review?.since ?? null, unread: false, unknown: v?.unknown ?? 0 }));
+        setView((v) => ({
+          on: !!data?.review?.on,
+          since: data?.review?.since ?? null,
+          ...(typeof data?.review?.skip_transfers === 'boolean' ? { skip_transfers: data.review.skip_transfers } : {}),
+          ...(typeof data?.review?.posted_only === 'boolean' ? { posted_only: data.review.posted_only } : {}),
+          unread: false,
+          unknown: v?.unknown ?? 0,
+        }));
+        reload();
+        return true;
+      } finally {
+        setSaving(false);
+      }
+    },
+    [reload]
+  );
+
+  /** Updates review queue filter preferences without changing on/since. */
+  const updateOptions = useCallback(
+    async (opts: { skip_transfers?: boolean; posted_only?: boolean }): Promise<boolean> => {
+      setError(null);
+      setSaving(true);
+      try {
+        const res = await post('/api/review', { action: 'options', ...opts }).catch(() => null);
+        if (!res?.ok) {
+          setError(await refusal(res, 'Could not update the review queue options. Please try again.'));
+          return false;
+        }
+        const data = await res.json().catch(() => null);
+        setView((v) => ({
+          on: !!data?.review?.on,
+          since: data?.review?.since ?? null,
+          ...(typeof data?.review?.skip_transfers === 'boolean' ? { skip_transfers: data.review.skip_transfers } : {}),
+          ...(typeof data?.review?.posted_only === 'boolean' ? { posted_only: data.review.posted_only } : {}),
+          unread: false,
+          unknown: v?.unknown ?? 0,
+        }));
         reload();
         return true;
       } finally {
@@ -253,7 +314,7 @@ export function useReview({
     [undo, refresh]
   );
 
-  return { view, accept, turn, approve, undo, unapprove, recategorizeAndApprove, undoRecategorize, error, setError, saving, refresh };
+  return { view, accept, turn, updateOptions, approve, undo, unapprove, recategorizeAndApprove, undoRecategorize, error, setError, saving, refresh };
 }
 
 export type ReviewControls = ReturnType<typeof useReview>;

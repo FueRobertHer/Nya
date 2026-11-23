@@ -244,7 +244,7 @@ export function WeeklySummaryView({ loaded, clerk, onOpen }: { loaded: Loaded; c
           {whenLine(loaded.setting) && <p className="as-of">{whenLine(loaded.setting)}</p>}
           {!loaded.canSend && loaded.whyNot && <p className="stale-note">{loaded.whyNot}</p>}
           <button className="secondary" onClick={onOpen}>
-            {loaded.setting?.enabled ? 'Change or preview' : 'Set up and preview'}
+            {loaded.demo && !loaded.setting?.enabled ? 'Preview this week’s summary' : loaded.setting?.enabled ? 'Change or preview' : 'Set up and preview'}
           </button>
         </>
       )}
@@ -317,7 +317,11 @@ export function WeeklySummarySheetBody(props: {
       <p className="panel-note">
         Each summary covers the seven days before its day, on this time zone’s calendar. {comesText(draft.weekday, draft.time_zone, props.now)}
       </p>
-      {props.demo && <p className="stale-note">Demo accounts can’t get the weekly summary: everyone who tries the demo shares its data.</p>}
+      {props.demo && (
+        <p className="stale-note">
+          Demo accounts can’t get the weekly summary: everyone who tries the demo shares its data. You can still preview what this week’s summary would say below.
+        </p>
+      )}
       {/* Save and why it failed, kept in view at the sheet's foot over the long preview. */}
       <SheetFooter>
         {props.saveError && (
@@ -330,7 +334,7 @@ export function WeeklySummarySheetBody(props: {
         <button type="button" className="btn secondary" onClick={props.onCancel} disabled={props.saving}>
           Cancel
         </button>
-        <button type="button" className="btn" onClick={props.onSave} disabled={props.saving || unchanged} aria-describedby={props.saveError ? errorId : undefined}>
+        <button type="button" className="btn" onClick={props.onSave} disabled={props.saving || unchanged || (props.demo && !saved?.enabled)} aria-describedby={props.saveError ? errorId : undefined}>
           {props.saving ? 'Saving…' : 'Save'}
         </button>
       </SheetFooter>
@@ -356,7 +360,7 @@ export function WeeklySummarySheetBody(props: {
           </p>
         </>
       )}
-      <button className="secondary" onClick={props.onSendNow} disabled={!props.canSend || props.sending}>
+      <button className="secondary" onClick={props.onSendNow} disabled={!props.canSend || props.demo || props.sending}>
         {props.sending ? 'Sending…' : 'Send me one now'}
       </button>
       {!props.canSend && props.whyNot && <p className="panel-note">{props.whyNot}</p>}

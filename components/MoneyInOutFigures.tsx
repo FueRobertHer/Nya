@@ -24,11 +24,13 @@
 //
 // Nothing while the account has no activity Nya can carry them through.
 
+import { useState } from 'react';
 import { formatDay, formatMoney, roundsToNothing } from '@/lib/format';
 import { sinceStarted, usableTotals, type BalancePoint, type Flow } from '@/lib/growth';
 import { monthText } from '@/lib/investment-months';
 import type { MoneyInOut } from '@/lib/money-in-out';
 import { Masked } from './HideAmounts';
+import { moneyInOutSaved } from './InvestmentActivity';
 import { Notice } from './TotalCaveats';
 
 /** What the form needs to open on an account (components/MoneyInOutSheet.tsx). */
@@ -109,6 +111,17 @@ export default function MoneyInOutFigures({
     );
   }
 
+  if (totals?.no_activity) {
+    return (
+      <div className="stack tight">
+        <p className="helper">
+          {`Counted with no deposits or withdrawals since ${day(totals.as_of)}. Set your deposits and withdrawals to see all-time returns.`}
+        </p>
+        {edit('Set deposits and withdrawals')}
+      </div>
+    );
+  }
+
   if (!totals) {
     return (
       <div className="stack tight">
@@ -142,6 +155,63 @@ export default function MoneyInOutFigures({
         <Masked>{`All time counts from your totals for ${day(totals.as_of)}${moved ? `, and ${moved} since` : ''}.`}</Masked>
       </p>
       {edit('Change deposits and withdrawals')}
+    </div>
+  );
+}
+
+/** One-tap confirmation for a linked investment account whose brokerage returned
+ *  zero transactions, letting the user confirm no deposits or withdrawals since
+ *  its first recorded day so returns can be counted without guessing. */
+export function NoActivityPrompt({
+  accountId,
+  itemId,
+  currency,
+  firstDay,
+}: {
+  accountId: string;
+  itemId: string;
+  currency: string | null;
+  firstDay: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const confirm = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/money-in-out', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ account_id: accountId, in: 0, out: 0, as_of: firstDay, currency, no_activity: true }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(typeof data?.error === 'string' ? data.error : 'Could not save just now. Try again.');
+        return;
+      }
+      moneyInOutSaved(accountId, itemId, (data?.money_in_out ?? null) as MoneyInOut | null);
+    } catch {
+      setError('Nya could not be reached. Check your connection and try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="stack tight">
+      <p className="helper">
+        {`No investment activity came back for this account. If there have been no deposits or withdrawals since ${day(firstDay)}, confirm to count its returns.`}
+      </p>
+      <div>
+        <button type="button" className="btn ghost" disabled={busy} onClick={() => void confirm()}>
+          {busy ? 'Saving…' : `No deposits or withdrawals since ${day(firstDay)}`}
+        </button>
+      </div>
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
     </div>
   );
 }

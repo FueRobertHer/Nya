@@ -53,6 +53,9 @@ export default function ReviewSettingsCard({ review, toReview }: { review: Revie
   const today = localDate();
   const choices = startChoices(today);
   const [since, setSince] = useState(today);
+  // Newly enabled queues default to skipping transfers and waiting for posted charges.
+  const [skipTransfers, setSkipTransfers] = useState(true);
+  const [postedOnly, setPostedOnly] = useState(true);
   const [confirming, setConfirming] = useState<'repair' | 'room' | null>(null);
   const [repaired, setRepaired] = useState<string | null>(null);
   const [repairing, setRepairing] = useState(false);
@@ -193,6 +196,24 @@ export default function ReviewSettingsCard({ review, toReview }: { review: Revie
           </button>
           <p className="rename-hint">Turning it off keeps your approvals.</p>
           <label className="review-keys-switch">
+            <input
+              type="checkbox"
+              checked={view.skip_transfers === true}
+              disabled={review.saving}
+              onChange={(e) => void review.updateOptions({ skip_transfers: e.target.checked })}
+            />
+            Skip transfers and loan payments
+          </label>
+          <label className="review-keys-switch">
+            <input
+              type="checkbox"
+              checked={view.posted_only === true}
+              disabled={review.saving}
+              onChange={(e) => void review.updateOptions({ posted_only: e.target.checked })}
+            />
+            Wait until pending transactions post
+          </label>
+          <label className="review-keys-switch">
             <input type="checkbox" checked={keysOn} onChange={(e) => setActivityKeys(e.target.checked)} />
             Keyboard shortcuts on the Activity tab (R, N, Shift+A, U), on this device
           </label>
@@ -212,6 +233,14 @@ export default function ReviewSettingsCard({ review, toReview }: { review: Revie
               </label>
             ))}
           </fieldset>
+          <label className="review-keys-switch">
+            <input type="checkbox" checked={skipTransfers} onChange={(e) => setSkipTransfers(e.target.checked)} />
+            Skip transfers and loan payments
+          </label>
+          <label className="review-keys-switch">
+            <input type="checkbox" checked={postedOnly} onChange={(e) => setPostedOnly(e.target.checked)} />
+            Wait until pending transactions post
+          </label>
           {loadError && (
             <>
               <p className="stale-note">{loadError}</p>
@@ -220,7 +249,7 @@ export default function ReviewSettingsCard({ review, toReview }: { review: Revie
               </button>
             </>
           )}
-          <button disabled={review.saving || !view} onClick={() => void review.turn(true, since)}>
+          <button disabled={review.saving || !view} onClick={() => void review.turn(true, since, { skip_transfers: skipTransfers, posted_only: postedOnly })}>
             Turn on
           </button>
         </>

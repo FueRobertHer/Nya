@@ -137,6 +137,12 @@ export function hiddenFigure(text: string): string {
   return hidden ? MASK : text;
 }
 
+/** A share quantity with locale grouping and up to three decimal places, or
+ *  MASK while amounts are hidden. */
+export function formatQuantity(quantity: number): string {
+  return hidden ? MASK : quantity.toLocaleString(undefined, { maximumFractionDigits: 3 });
+}
+
 // An amount in text written elsewhere (an answer from the server): a
 // currency's symbol before the figures (with a code's letters, "CA$12.00",
 // or an ISO code and a no-break space, "XAU 12.00"), a symbol after them
@@ -286,6 +292,15 @@ const joinedParts = (parts: { type: string; value: string }[]) =>
 // sentence) is written in full, never abbreviated.
 export function compactMoney(amount: number, currency?: string | null): string {
   return hidden ? hiddenMoney(amount, currency) : fullCompact(amount, currency);
+}
+
+/** Compact form with an explicit sign (+$8.9K, −$1.2K), for tight chart bar labels. */
+export function signedCompactMoney(amount: number, currency?: string | null, opts: { always?: boolean } = {}): string {
+  const n = amount === 0 ? 0 : amount;
+  if (hidden) return hiddenMoney(n, currency, opts.always ? 'always' : 'exceptZero');
+  if (n < 0) return fullCompact(n, currency);
+  const body = fullCompact(n, currency);
+  return n > 0 || opts.always ? `+${body}` : body;
 }
 
 /** compactMoney's figures, whatever the switch says: only for what is

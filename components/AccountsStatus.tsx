@@ -57,6 +57,7 @@ export default function AccountsStatus({
   const { critical, caution } = statusCounts(entries);
   if (critical > 0) {
     const also = caution > 0 ? `, ${caution} to check` : '';
+    const visible = `${critical} problem${critical === 1 ? '' : 's'}${caution > 0 ? ` · ${caution} to check` : ''}`;
     return (
       <button
         type="button"
@@ -64,7 +65,7 @@ export default function AccountsStatus({
         aria-label={`${critical} problem${critical === 1 ? '' : 's'}${also}: go to the first connection`}
         onClick={onGo}
       >
-        {`${critical} problem${critical === 1 ? '' : 's'}`}
+        {visible}
         {CHEVRON}
       </button>
     );

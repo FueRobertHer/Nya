@@ -29,8 +29,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import NetWorthChart, { type HistoryPoint, type MonthsInfo } from './NetWorthChart';
 import { loadInvestmentActivity, onMoneyInOutSaved, type InvestmentActivityPayload } from './InvestmentActivity';
-import MoneyInOutFigures, { MoneyInOutSkeleton, type MoneyInOutTarget } from './MoneyInOutFigures';
+import MoneyInOutFigures, { MoneyInOutSkeleton, NoActivityPrompt, type MoneyInOutTarget } from './MoneyInOutFigures';
 import { contributionBaseline, usableTotals } from '@/lib/growth';
+import { confirmedZeroActivity } from '@/lib/growth-summary';
 import { allTimeFromMonths, countingImport, withPastMonths } from '@/lib/investment-months';
 import { Notice } from './TotalCaveats';
 
@@ -116,20 +117,22 @@ export default function AccountSparkline({
     () => (points && activity && !previewWith ? withPastMonths(points, activity, activity.investment_months, currency) : null),
     [points, activity, previewWith, currency]
   );
+  const confirmed = activity ? confirmedZeroActivity(activity) : null;
   const drawn = past?.points ?? points;
-  const flows = past ? past.flows : (activity?.flows ?? null);
-  const flowsFrom = past ? past.flows_from : (activity?.flows_from ?? null);
+  const flows = past ? past.flows : (activity?.flows ?? (confirmed ? [] : null));
+  const flowsFrom = past ? past.flows_from : (activity?.flows_from ?? confirmed);
+  const flowsTo = confirmed ? null : activity?.flows_to;
   // The totals, when the grey line can be carried from them: set against
   // Nya's own activity, never the months.
   const totals = activity?.money_in_out ?? null;
-  const carried = usableTotals(totals, past ? past.totals_from : activity?.flows_from) ? totals : null;
+  const carried = !totals?.no_activity && usableTotals(totals, past ? past.totals_from : flowsFrom) ? totals : null;
   // Or all time from the months, from when it opened, with no totals.
   const opened = allTimeFromMonths(past, totals, !!activity?.money_in_out_unreadable);
   // Given the selected range's points, so money in, out and growth count from
   // the start of the range.
   const baselineFor = useCallback(
-    (shown: HistoryPoint[]) => (activity ? contributionBaseline(shown, flows, flowsFrom, activity.flows_to, carried, activity.moves) : null),
-    [activity, flows, flowsFrom, carried]
+    (shown: HistoryPoint[]) => (activity ? contributionBaseline(shown, flows, flowsFrom, flowsTo, carried, activity.moves) : null),
+    [activity, flows, flowsFrom, flowsTo, carried]
   );
   const months: MonthsInfo | null = past?.applied
     ? { source: 'Vanguard’s Performance page', firm: 'Vanguard', first_recorded: past.applied.first_recorded, activity_from: past.applied.activity_from, entered_to: past.applied.entered_to, joined: past.applied.joined }
@@ -141,7 +144,7 @@ export default function AccountSparkline({
   if (moneyInOut && itemId && !previewWith) {
     // Nothing once the activity has failed to load: InvestmentActivity says so.
     if (!activity) figures = activityFailed ? null : <MoneyInOutSkeleton />;
-    else if (activity.flows && activity.flows_from) {
+    else if ((activity.flows && activity.flows_from) || confirmed) {
       figures = (
         <MoneyInOutFigures
           target={{
@@ -150,11 +153,11 @@ export default function AccountSparkline({
             label: moneyInOut.label,
             currency: currency ?? null,
             totals,
-            flows: activity.flows,
-            flows_from: activity.flows_from,
+            flows: activity.flows ?? [],
+            flows_from: activity.flows_from ?? confirmed!,
           }}
           unreadable={!!activity.money_in_out_unreadable}
-          flowsTo={activity.flows_to}
+          flowsTo={flowsTo}
           balance={moneyInOut.balance}
           points={points}
           onEdit={moneyInOut.onEdit}
@@ -162,6 +165,11 @@ export default function AccountSparkline({
           opened={opened}
         />
       );
+    } else if (!activity.note && (activity.txns?.length ?? 0) === 0 && !activity.money_in_out_unreadable) {
+      const firstReal = points?.find((p) => !p.estimated)?.date ?? null;
+      if (firstReal) {
+        figures = <NoActivityPrompt accountId={accountId} itemId={itemId} currency={currency ?? null} firstDay={firstReal} />;
+      }
     }
   }
 

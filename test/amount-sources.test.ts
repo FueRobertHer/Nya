@@ -472,7 +472,6 @@ describe('a field the CSS hook covers while amounts are hidden', () => {
 const NEVER_AN_AMOUNT = [
   'components/FiProgressCard.tsx {leftOut.excluded}',
   'components/FiProgressCard.tsx {leftOut.otherCurrencies}',
-  'components/GoalsCard.tsx {stateText(v)}',
   'components/ManualTxnSheet.tsx {balanceNote}',
 ];
 

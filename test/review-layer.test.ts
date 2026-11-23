@@ -382,4 +382,21 @@ describe('counting and listing', () => {
   test('an approval never keeps a provisional category id', () => {
     expect(approvalInputOf({ ...row('t1'), category_id: 'new:abc' }).category_id).toBeNull();
   });
+
+  test('skip_transfers and posted_only exclude transfers, loan payments, and pending rows from needs_review', () => {
+    const transfer = row('t_xfer', { category: 'transfer out', pfc_primary: 'TRANSFER_OUT', transaction_code: 'transfer' });
+    const loan = row('t_loan', { category: 'loan payments', pfc_primary: 'LOAN_PAYMENTS' });
+    const pending = row('t_pend', { pending: true });
+    const posted = row('t_spend', { category: 'groceries', pending: false });
+    const filtered = read(
+      [transfer, loan, pending, posted],
+      layer({ queue: { since: SINCE, skip_transfers: true, posted_only: true } })
+    );
+    expect(filtered.map((t) => [t.transaction_id, !!t.needs_review])).toEqual([
+      ['t_xfer', false],
+      ['t_loan', false],
+      ['t_pend', false],
+      ['t_spend', true],
+    ]);
+  });
 });

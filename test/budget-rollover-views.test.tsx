@@ -115,7 +115,7 @@ describe('the meters, against what is available', () => {
     expect(text(at(0))).toContain('Groceries $100.00 overspent, carried over $0.00 spent, nothing left');
     expect(at(0)).not.toContain('>Over<');
     expect(at(0)).not.toContain('Began the month');
-    expect(at(0)).toContain('meter-fill" style="width:0%"');
+    expect(at(0)).toContain('meter-fill empty" style="width:0%"');
     expect(text(at(12))).toContain('Groceries Over $100.00 overspent, carried over $12.00 spent, nothing left');
     expect(at(12)).toContain('meter-fill warn" style="width:100%"');
   });
@@ -481,7 +481,7 @@ describe('the Budgets tab, with the month loaded', () => {
         budgetMonth={state(view({ carries: carries({ [GROCERIES]: { carry: -500 } }) }))}
       />
     );
-    expect(text(html)).toContain('Spent $80.00 spent, nothing left');
+    expect(text(html)).toContain('Budgeted spending $80.00 spent, nothing left');
     expect(text(html)).not.toContain('of −$');
     expect(html).toContain('meter-fill warn" style="width:100%"');
   });

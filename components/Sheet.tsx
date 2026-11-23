@@ -165,6 +165,7 @@ export function Sheet({
   backLabel = 'Back',
   level: levelName,
   footer,
+  wide = false,
   children,
 }: {
   open: boolean;
@@ -183,6 +184,8 @@ export function Sheet({
   /** Its buttons, kept in view at the foot while the body scrolls. A level
    *  inside the body can give them instead, with SheetFooter. */
   footer?: ReactNode;
+  /** Uses a wider right-side drawer on desktop (e.g. side-by-side plan compare). */
+  wide?: boolean;
   children: ReactNode;
 }) {
   // Stays mounted while it slides out, and slides in one frame after mounting.
@@ -261,7 +264,7 @@ export function Sheet({
   return (
     <>
       <div className="sheet-backdrop" data-open={shown} onClick={onClose} aria-hidden="true" />
-      <div className="sheet" data-open={shown} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} ref={panel}>
+      <div className={wide ? "sheet sheet-wide" : "sheet"} data-open={shown} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} ref={panel}>
         <div className="sheet-handle" aria-hidden="true" />
         <div className="sheet-header">
           {onBack && (

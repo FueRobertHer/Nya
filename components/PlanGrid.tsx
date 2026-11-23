@@ -31,13 +31,29 @@ import { plainNumber } from '@/lib/format';
 /** A cell that couldn't be worked out. */
 export type FailedCell = { rate: number | null; years: number };
 
+/** Distance within which the plan's own rate replaces a standard grid row
+ *  instead of adding a near-duplicate row (0.05 percentage points). */
+const OWN_RATE_MERGE = 0.0005 + 1e-9;
+
 /** The grid's rates with the plan's own among them: in place of the row its
- *  label would repeat (pct, as each row is labeled), so a worked-out rate of
- *  0.0349997 is the 3.5% row, still the plan's own, not a second "3.5%";
- *  else added in order. */
+ *  label would repeat (pct, as each row is labeled) or any standard row within
+ *  OWN_RATE_MERGE (0.05%, so 2.99% replaces 3% instead of adding a near-duplicate
+ *  row), still marked as the plan's own; else added in order. */
 export function withOwnRate(rates: readonly number[], own: number): number[] {
   const label = pct(own);
-  return rates.some((v) => pct(v) === label) ? rates.map((v) => (pct(v) === label ? own : v)) : [...rates, own].sort((a, b) => a - b);
+  const exact = rates.findIndex((v) => pct(v) === label);
+  if (exact >= 0) return rates.map((v, i) => (i === exact ? own : v));
+  let nearest = -1;
+  let best = Infinity;
+  for (let i = 0; i < rates.length; i++) {
+    const diff = Math.abs(rates[i] - own);
+    if (diff <= OWN_RATE_MERGE && diff < best) {
+      best = diff;
+      nearest = i;
+    }
+  }
+  if (nearest >= 0) return rates.map((v, i) => (i === nearest ? own : v));
+  return [...rates, own].sort((a, b) => a - b);
 }
 
 export default function PlanGrid({

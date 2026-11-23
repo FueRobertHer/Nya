@@ -257,7 +257,11 @@ export function useConnectors(refreshKey: unknown): { data: ListBody | null; err
   const [data, setData] = useState<ListBody | null>(null);
   const [error, setError] = useState('');
   const reload = useCallback(async () => {
-    const res = await send('/api/connectors', 'GET');
+    let res = await send('/api/connectors', 'GET');
+    if (!res.ok && res.status === 401) {
+      await new Promise((r) => setTimeout(r, 800));
+      res = await send('/api/connectors', 'GET');
+    }
     if (res.ok) {
       setData(res.data);
       setError('');

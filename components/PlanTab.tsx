@@ -933,9 +933,9 @@ export default function PlanTab({
   // Answers for the visit, by job: the Plan's reused by compare mode.
   const answers = useRef(new Map<string, SimResult>()).current;
 
-  // The runner (and its worker) for as long as the tab is open. Made on first
-  // use rather than in a memo, so a development-mode remount, which disposes
-  // it, gets a new one.
+  // The runner (and its worker pool) for as long as the tab is open. Made on
+  // first use rather than in a memo, so a development-mode remount, which
+  // disposes it, gets a new one.
   const runnerRef = useRef<PlanRunner | null>(null);
   const runner = () =>
     (runnerRef.current ??= createPlanRunner({
@@ -946,6 +946,7 @@ export default function PlanTab({
         const [{ runPlanJob }, { usMarket }] = await Promise.all([import('@/lib/fire/jobs'), import('@/lib/fire/us-market')]);
         return runPlanJob(job, usMarket());
       },
+      concurrency: typeof navigator !== 'undefined' ? Math.min(4, Math.max(2, (navigator.hardwareConcurrency || 2) - 1)) : 2,
     }));
   useEffect(
     () => () => {
@@ -959,11 +960,13 @@ export default function PlanTab({
   // jobs, so the old runner is gone before they ask for one; their cleanups,
   // which run before any effect, have already stopped listening to it.
   const [attempt, setAttempt] = useState(0);
+  const gridCache = useRef(new Map<string, { cells: GridCell[]; failed: FailedCell[]; unavailable: boolean }>()).current;
   useEffect(() => {
     if (attempt === 0) return;
+    gridCache.clear();
     runnerRef.current?.dispose();
     runnerRef.current = null;
-  }, [attempt]);
+  }, [attempt, gridCache]);
   const retry = () => setAttempt((n) => n + 1);
 
   // The simulation, recomputed only when what it runs on changes. While a new
@@ -1008,7 +1011,9 @@ export default function PlanTab({
   // failure doesn't.
   const outcome = main && !(pending && 'error' in main.outcome) ? main.outcome : null;
 
-  // The grid, one cell per job, filling in as the answers arrive.
+  // The grid, one cell per job, filling in as the answers arrive. Completed
+  // grids are cached in memory by gridKey (LRU 12) so switching segments or
+  // copies never recomputes a grid that has already finished.
   const vpw = plan.rule === 'vpw';
   const ownRate = 'rate' in engine ? engine.rate : plan.withdrawalRate;
   const gridRates = useMemo<(number | null)[]>(
@@ -1021,11 +1026,19 @@ export default function PlanTab({
   useEffect(() => {
     const s = simRef.current;
     if (!gridKey || !s) return;
+    const cached = gridCache.get(gridKey);
+    if (cached) {
+      gridCache.delete(gridKey);
+      gridCache.set(gridKey, cached);
+      setGrid({ key: gridKey, ...cached });
+      return;
+    }
     let live = true;
     // The cells not yet run are dropped if the plan changes meanwhile.
     const stop = new AbortController();
     const cells: GridCell[] = [];
     const failed: FailedCell[] = [];
+    const expected = gridYears.length * gridRates.length;
     let unavailable = false;
     const method = methodRef.current;
     for (const years of gridYears) {
@@ -1039,7 +1052,13 @@ export default function PlanTab({
               failed.push({ rate, years });
               if (!r.ok && r.unavailable) unavailable = true;
             }
-            setGrid({ key: gridKey, cells: cells.slice(), failed: failed.slice(), unavailable });
+            const nextGrid = { cells: cells.slice(), failed: failed.slice(), unavailable };
+            if (cells.length + failed.length === expected && failed.length === 0 && !unavailable) {
+              gridCache.delete(gridKey);
+              gridCache.set(gridKey, nextGrid);
+              while (gridCache.size > 12) gridCache.delete(gridCache.keys().next().value as string);
+            }
+            setGrid({ key: gridKey, ...nextGrid });
           });
       }
     }
@@ -1050,7 +1069,8 @@ export default function PlanTab({
     // gridKey stands for everything the grid is computed from, and the attempt.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gridKey]);
-  const shownGrid = grid && grid.key === gridKey ? grid : null;
+  const cachedGrid = gridKey ? gridCache.get(gridKey) ?? null : null;
+  const shownGrid = grid && grid.key === gridKey ? grid : gridKey && cachedGrid ? { key: gridKey, ...cachedGrid } : null;
 
   // The drawer, and the plan it was opened for: the copy open, at the
   // version it was opened on, or null for your plan. A form saves only to
@@ -3560,13 +3580,15 @@ export function SimulationCard({
     // length.
     <div className="stack tight plan-answer-lines drawdown-line">
       <p className="helper">{`of ${plainNumber(r.paths)} ${nouns}${r.firstStart && r.lastStart ? ` (${monthName(r.firstStart)} to ${monthName(r.lastStart)})` : ''} lasted ${sim.years} years${startAge !== null ? `, from ${startAge}` : ''}`}</p>
-      <p className="plan-definition">
-        {successDefinition(sim.years)}
-        {flexible ? ' This rule lasts by cutting spending when markets fall; Lowest year, below, says how far.' : ''}
-        {detail && setupHeld ? ` ${WITH_EACH_YEARS_TAX}` : ''}
-      </p>
-      {said && !historyFar(said) && <p className="plan-definition">{historyLine(said)}</p>}
-      <p className="plan-definition">{detail ? hypotheticalDrawdown(detail.lawYear) : HYPOTHETICAL_LABEL}</p>
+      <Why label="How this is worked out">
+        <p className="plan-definition">
+          {successDefinition(sim.years)}
+          {flexible ? ' This rule lasts by cutting spending when markets fall; Lowest year, below, says how far.' : ''}
+          {detail && setupHeld ? ` ${WITH_EACH_YEARS_TAX}` : ''}
+        </p>
+        {said && !historyFar(said) && <p className="plan-definition">{historyLine(said)}</p>}
+        <p className="plan-definition">{detail ? hypotheticalDrawdown(detail.lawYear) : HYPOTHETICAL_LABEL}</p>
+      </Why>
     </div>,
     <>
       {said && historyFar(said) && (

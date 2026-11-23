@@ -17,6 +17,8 @@ import {
   stopReview,
   todayOf,
   undoApprovals,
+  updateReviewOptions,
+  type ReviewOptions,
 } from '@/lib/review-store';
 
 // The review queue (lib/review-store.ts): turning it on or off, approving
@@ -26,13 +28,17 @@ import {
 //
 // GET  the queue's settings and how many approvals are kept, of how many
 //      at most, and how many making room forgets:
-//      { review: { on, since }, approvals: { kept, max, room } }, 409 when
-//      the settings can't be read (with `repairable` when their bytes are
+//      { review: { on, since, skip_transfers?, posted_only? }, approvals: { kept, max, room } },
+//      409 when the settings can't be read (with `repairable` when their bytes are
 //      damaged, never for settings a later release wrote).
 // POST { action, ... }, one of:
-//   start    { today, since? }  turn it on: transactions dated from `since`
+//   start    { today, since?, skip_transfers?, posted_only? }
+//                               turn it on: transactions dated from `since`
 //                               (today, as the page has it, when absent; at
 //                               most MAX_SINCE_DAYS back) need review
+//   options  { skip_transfers?, posted_only? }
+//                               update queue filter preferences while keeping
+//                               on/since unchanged
 //   stop     {}                  turn it off; every approval is kept
 //   approve  { items }           approve each transaction as the page showed
 //                               it: { transaction_id, amount, currency,
@@ -55,9 +61,10 @@ import {
 // ones are ever offered for removal.
 
 const MAX_BODY_CHARS = 256 * 1024;
-const ACTIONS = new Set(['start', 'stop', 'approve', 'undo', 'repair', 'make-room']);
+const ACTIONS = new Set(['start', 'options', 'stop', 'approve', 'undo', 'repair', 'make-room']);
 const FIELDS: Record<string, readonly string[]> = {
-  start: ['today', 'since'],
+  start: ['today', 'since', 'skip_transfers', 'posted_only'],
+  options: ['skip_transfers', 'posted_only'],
   stop: [],
   approve: ['items'],
   undo: ['items'],
@@ -66,6 +73,28 @@ const FIELDS: Record<string, readonly string[]> = {
 };
 
 const bad = (error: string, status = 400) => NextResponse.json({ error }, { status });
+
+function parseOptions(body: Record<string, unknown>): ReviewOptions {
+  const opts: ReviewOptions = {};
+  if (body.skip_transfers !== undefined) {
+    if (typeof body.skip_transfers !== 'boolean') throw new ApprovalError('skip_transfers must be true or false.');
+    opts.skip_transfers = body.skip_transfers;
+  }
+  if (body.posted_only !== undefined) {
+    if (typeof body.posted_only !== 'boolean') throw new ApprovalError('posted_only must be true or false.');
+    opts.posted_only = body.posted_only;
+  }
+  return opts;
+}
+
+function reviewJson(settings: { on: boolean; since: string | null; skip_transfers?: boolean; posted_only?: boolean } | null) {
+  return {
+    on: !!settings?.on,
+    since: settings?.since ?? null,
+    ...(settings?.skip_transfers !== undefined ? { skip_transfers: settings.skip_transfers } : {}),
+    ...(settings?.posted_only !== undefined ? { posted_only: settings.posted_only } : {}),
+  };
+}
 
 export async function GET() {
   try {
@@ -78,7 +107,7 @@ export async function GET() {
       );
     }
     const kept = await approvalStore.count(ctx);
-    return NextResponse.json({ review: { on: !!settings?.on, since: settings?.since ?? null }, approvals: { kept, max: MAX_APPROVALS, room: ROOM } });
+    return NextResponse.json({ review: reviewJson(settings), approvals: { kept, max: MAX_APPROVALS, room: ROOM } });
   } catch (err) {
     return storeFailure(err, 'Failed to read the review queue');
   }
@@ -104,12 +133,19 @@ export async function POST(req: Request) {
 
     if (action === 'start') {
       const today = todayOf(body.today);
-      const settings = await startReview(ctx, startDay(body.since, today));
-      return NextResponse.json({ review: { on: settings.on, since: settings.since } });
+      const opts = parseOptions(body);
+      const settings = await startReview(ctx, startDay(body.since, today), undefined, Object.keys(opts).length > 0 ? opts : undefined);
+      return NextResponse.json({ review: reviewJson(settings) });
+    }
+    if (action === 'options') {
+      const opts = parseOptions(body);
+      if (opts.skip_transfers === undefined && opts.posted_only === undefined) return bad('Say which review option to change.');
+      const settings = await updateReviewOptions(ctx, opts);
+      return NextResponse.json({ review: reviewJson(settings) });
     }
     if (action === 'stop') {
       const settings = await stopReview(ctx);
-      return NextResponse.json({ review: { on: false, since: settings?.since ?? null } });
+      return NextResponse.json({ review: reviewJson(settings ? { ...settings, on: false } : null) });
     }
     if (action === 'approve') {
       const items = parseApprovals(body.items);

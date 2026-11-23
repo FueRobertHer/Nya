@@ -130,4 +130,18 @@ describe("the spending figures in a month that may be missing a connection's tra
     expect(mount).toContain('incomplete={txnIncomplete}');
     expect(mount).toContain('stopped={stoppedTxns}');
   });
+
+  test('omits low-balance insight for an account that already has an open question, and renders clickable buttons when onGo is passed', () => {
+    const html = renderToStaticMarkup(
+      <Insights
+        txns={spent}
+        accounts={[
+          { name: 'Old Savings', type: 'depository', subtype: 'savings', balance: 0, currency: 'USD', hasQuestion: true },
+        ]}
+        onGo={() => {}}
+      />
+    );
+    expect(text(html)).not.toContain('Old Savings');
+    expect(html).toContain('<button type="button" class="list-row">');
+  });
 });

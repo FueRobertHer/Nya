@@ -95,7 +95,7 @@ describe('each template', () => {
     await fill(tab.dialog()!, 'Starts at age', '65');
     await press(button(tab.dialog(), 'Add to your plan'));
     await settle(400);
-    const added = (await stored()).byName['First plan'].plan.items.find((x: PlanItem) => x.label === 'Rent from the flat');
+    const added = (await stored()).byName['Main plan'].plan.items.find((x: PlanItem) => x.label === 'Rent from the flat');
     expect([added?.kind, added?.yearly, added?.beforeTax]).toEqual(['pension', 12_000, true]);
     await tab.unmount();
   }, 30_000);
@@ -116,7 +116,7 @@ describe('each template', () => {
     await press(button(tab.dialog(), 'Done'));
     await press(button(tab.dialog(), 'Add to your plan'));
     await settle(400);
-    const added = (await stored()).byName['First plan'].plan.items.find((x: PlanItem) => x.label === 'A career break');
+    const added = (await stored()).byName['Main plan'].plan.items.find((x: PlanItem) => x.label === 'A career break');
     expect([added?.kind, added?.yearly, added?.until]).toEqual(['pay', -30_000, { years: 2 }]);
     await tab.unmount();
   }, 30_000);
@@ -168,7 +168,7 @@ describe('kinds with no row of their own', () => {
       await fill(sheet, 'Name', `${x.label}, renamed`);
       await press(button(tab.dialog(), 'Save'));
       await settle(400);
-      const saved = (await stored()).byName['First plan'].plan.items.find((y: PlanItem) => y.id === x.id);
+      const saved = (await stored()).byName['Main plan'].plan.items.find((y: PlanItem) => y.id === x.id);
       expect(saved).toEqual({ ...x, label: `${x.label}, renamed` });
     }
     await tab.unmount();
@@ -227,7 +227,7 @@ describe('Starts and Ends', () => {
     expect(dom.document.activeElement).toBe(tab.sheetRow('Ends')!);
     await press(button(tab.dialog(), 'Add to your plan'));
     await settle(400);
-    const saved = (await stored()).byName['First plan'].plan.items.find((x: PlanItem) => x.label === 'A change in spending')!;
+    const saved = (await stored()).byName['Main plan'].plan.items.find((x: PlanItem) => x.label === 'A change in spending')!;
     expect([saved.from, saved.until, saved.yearly]).toEqual([{ anchor: { at: 'balance', amount: 700_000 }, offset: 0 }, { years: 3 }, 4_000]);
     await tab.unmount();
   }, 30_000);
@@ -500,7 +500,7 @@ describe('an item there', () => {
     await press(button(tab.dialog(), 'Save'));
     await settle(400);
     expect(writes()).toEqual(['PUT /api/fire-plan']);
-    expect((await stored()).byName['First plan'].plan.items[0].yearly).toBe(30_000);
+    expect((await stored()).byName['Main plan'].plan.items[0].yearly).toBe(30_000);
     await tab.unmount();
   }, 30_000);
 
@@ -516,7 +516,7 @@ describe('an item there', () => {
     expect(writes()).toEqual(['POST /api/plans']);
     expect(tab.title()).toBe('Copy: Social Security at 67');
     const { byName } = await stored();
-    expect(byName['First plan'].plan.items[0].yearly).toBe(24_000);
+    expect(byName['Main plan'].plan.items[0].yearly).toBe(24_000);
     await tab.unmount();
   }, 30_000);
 
@@ -596,7 +596,7 @@ describe('a save that fails', () => {
     await settle(400);
     expect(tab.dialog()).toBeNull();
     expect(tab.row('New roof')).not.toBeNull();
-    expect((await stored()).byName['First plan'].plan.items.map((x: PlanItem) => x.label)).toEqual(['Roof', 'New roof']);
+    expect((await stored()).byName['Main plan'].plan.items.map((x: PlanItem) => x.label)).toEqual(['Roof', 'New roof']);
     await tab.unmount();
   }, 30_000);
 });
@@ -639,7 +639,7 @@ describe('a milestone', () => {
     expect(tab.dialog()!.textContent).toContain('To time an item on it, pick Lean FI under that item’s Starts or Ends.');
     await press(button(tab.dialog(), 'Add to your plan'));
     await settle(400);
-    const added = (await stored()).byName['First plan'].plan.items.find((x: PlanItem) => x.label === 'Lean FI');
+    const added = (await stored()).byName['Main plan'].plan.items.find((x: PlanItem) => x.label === 'Lean FI');
     expect(added).toMatchObject({ kind: 'milestone', from: { anchor: { at: 'balance', amount }, offset: 0 }, until: null, once: null, yearly: null, owner: null });
     await tab.unmount();
   }, 30_000);
@@ -656,7 +656,7 @@ describe('a milestone', () => {
     expect(tab.dialog()!.textContent).toContain('Items timed on it move together when you change the age.');
     await press(button(tab.dialog(), 'Add to your plan'));
     await settle(400);
-    const added = (await stored()).byName['First plan'].plan.items.find((x: PlanItem) => x.label === 'Partner at 60');
+    const added = (await stored()).byName['Main plan'].plan.items.find((x: PlanItem) => x.label === 'Partner at 60');
     expect(added).toMatchObject({ kind: 'milestone', from: { anchor: { at: 'age', age: 60 }, offset: 0 }, owner: 'partner' });
     await tab.unmount();
   }, 30_000);
@@ -709,7 +709,7 @@ describe('a milestone', () => {
     await press(button(tab.dialog(), 'Done'));
     await press(button(tab.dialog(), 'Add to your plan'));
     await settle(400);
-    const added = (await stored()).byName['First plan'].plan.items.find((x: PlanItem) => x.label === 'Travel more');
+    const added = (await stored()).byName['Main plan'].plan.items.find((x: PlanItem) => x.label === 'Travel more');
     expect(added?.from).toEqual({ anchor: { at: 'item', id: 'lean', edge: 'start' }, offset: 1 });
     await press(tab.row('Travel more'));
     await press(tab.sheetRow('Starts'));
@@ -735,7 +735,7 @@ describe('a milestone on your FI number', () => {
     expect(tab.dialog()!.textContent).toContain('Checked on the balance at the start of each year against your FI number as it stands then');
     await press(button(tab.dialog(), 'Add to your plan'));
     await settle(400);
-    let items = (await stored()).byName['First plan'].plan.items as PlanItem[];
+    let items = (await stored()).byName['Main plan'].plan.items as PlanItem[];
     expect(items.find((x) => x.label === 'Halfway')).toMatchObject({ kind: 'milestone', from: { anchor: { at: 'share', percent: 50 }, offset: 0 }, owner: null });
     await addTemplate(tab, 'A milestone');
     await pick(tab.dialog()!, 'Coast FI');
@@ -744,7 +744,7 @@ describe('a milestone on your FI number', () => {
     await rest();
     await press(button(tab.dialog(), 'Add to your plan'));
     await settle(400);
-    items = (await stored()).byName['First plan'].plan.items as PlanItem[];
+    items = (await stored()).byName['Main plan'].plan.items as PlanItem[];
     expect(items.find((x) => x.label === 'Coast FI')).toMatchObject({ kind: 'milestone', from: { anchor: { at: 'coast' }, offset: 0 }, owner: null });
     // Each reopens on its own option.
     await press(tab.row('Milestone: Halfway'));
@@ -770,7 +770,7 @@ describe('Try it in a copy', () => {
     await settle(400);
     expect(tab.title()).toBe('Copy: Part-time work when you stop');
     const { byName } = await stored();
-    expect(byName['First plan'].plan.items).toEqual([]);
+    expect(byName['Main plan'].plan.items).toEqual([]);
     expect(byName['Part-time work when you stop'].plan.items[0].from).toEqual({ anchor: { at: 'stop' }, offset: 0 });
     await tab.unmount();
   }, 30_000);

@@ -4,9 +4,12 @@ import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { NextRequest } from 'next/server';
 import { ReportView, reportDay, reportTime, reportHeading, footerCss } from '@/components/ReportView';
-import { MarkCategoriesView, formFrom, reportQuery, csvQuery, accountantMenu } from '@/components/ReportsPage';
-import ReportsEntry from '@/components/ReportsEntry';
+import { MarkCategoriesView, formFrom, reportQuery, csvQuery, accountantMenu, shouldPreferCurrentYear } from '@/components/ReportsPage';
+import { PageHeader } from '@/components/PageHeader';
+import { YearOverYearView } from '@/components/YearOverYearReport';
+import ReportsEntry, { ReportsQuickLink } from '@/components/ReportsEntry';
 import { buildReport, type ReportInput, type SourceFacts } from '@/lib/report/build';
+import { buildYearOverYear } from '@/lib/report/year-over-year';
 import { resolvePeriod, type Period, type ReportRequest } from '@/lib/report/period';
 import type { Txn } from '@/lib/transactions';
 
@@ -423,6 +426,88 @@ describe('the page around it', () => {
     expect(activity.match(/\{segment === "spending" && <ReportsEntry \/>\}/g)?.length).toBe(2);
     const spending = activity.slice(activity.indexOf('segment === "spending" ? ('), activity.indexOf('{summaryCard}', activity.indexOf(') : (', activity.indexOf('segment === "spending" ? ('))));
     expect(spending).toContain('<ReportsEntry />');
+  });
+
+  test('PageHeader shows contextual back affordance for in-app pages and keeps public pages clean', () => {
+    const reports = renderToStaticMarkup(<PageHeader back="/?tab=activity" />);
+    expect(reports).toContain('aria-label="Back to Activity"');
+    expect(reports).toContain('page-back-chevron');
+    expect(text(reports)).toContain('Back to Activity');
+
+    const yourData = renderToStaticMarkup(<PageHeader back="/?settings=data" />);
+    expect(yourData).toContain('aria-label="Back to Settings"');
+    expect(text(yourData)).toContain('Back to Settings');
+
+    const pub = renderToStaticMarkup(<PageHeader />);
+    expect(pub).toContain('aria-label="Back to Nya"');
+    expect(pub).not.toContain('page-back-chevron');
+    expect(pub).not.toContain('page-back-label');
+  });
+
+  test('Accountant defaults to current year when prior year has fewer than 3 active months and current year has more', () => {
+    const months = (active: number) =>
+      Array.from({ length: 12 }, (_, i) => {
+        const m = String(i + 1).padStart(2, '0');
+        return {
+          month: `2025-${m}`,
+          start: `2025-${m}-01`,
+          end: `2025-${m}-28`,
+          future: false,
+          money_in: 0,
+          money_out: 0,
+          net: 0,
+          transactions: i < active ? 5 : 0,
+          uncertain: false,
+          gaps: [],
+        };
+      });
+    expect(shouldPreferCurrentYear({ months: months(1) }, { months: months(11) })).toBe(true);
+    expect(shouldPreferCurrentYear({ months: months(2) }, { months: months(4) })).toBe(true);
+    expect(shouldPreferCurrentYear({ months: months(3) }, { months: months(11) })).toBe(false);
+    expect(shouldPreferCurrentYear({ months: months(1) }, { months: months(1) })).toBe(false);
+    expect(renderToStaticMarkup(<ReportsQuickLink />)).toContain('href="/reports"');
+  });
+
+  test('YearOverYear MonthTable hoists uniform notes above the table and omits the Notes column, keeping it when months differ', () => {
+    const makeYoy = (shortMonths: string[]) => {
+      const short = new Map(shortMonths.map((m) => [m, { uncertain: true, institutions: ['Chase'] }]));
+      const built = buildYearOverYear({
+        today: '2026-03-15',
+        rows: [
+          row('y1', '2026-01-10', 100, { category: 'groceries' }),
+          row('y2', '2026-02-10', 120, { category: 'groceries' }),
+          row('y3', '2026-03-10', 80, { category: 'groceries' }),
+        ],
+        taxonomy: null,
+        currency: 'USD',
+        short,
+      });
+      return {
+        ...built,
+        version: 1 as const,
+        today: '2026-03-15',
+        time_zone: NY,
+        generated_at: new Date(NOW).toISOString(),
+        data_as_of: new Date(NOW).toISOString(),
+        gaps: [],
+        caveats: {
+          hidden: false,
+          scope: { investment: false, loans: false },
+          names_unread: false,
+          notes: [],
+        },
+      };
+    };
+
+    // Uniform note across all 3 months (last year Jan-Mar all short of Chase)
+    const uniform = renderToStaticMarkup(<YearOverYearView report={makeYoy(['2025-01', '2025-02', '2025-03'])} />);
+    expect(text(uniform)).toContain('All months shown: Last year may be short of Chase.');
+    expect(uniform).not.toContain('<th scope="col">Notes</th>');
+
+    // Differing notes across months (only Jan 2025 short)
+    const varied = renderToStaticMarkup(<YearOverYearView report={makeYoy(['2025-01'])} />);
+    expect(varied).toContain('<th scope="col">Notes</th>');
+    expect(text(varied)).not.toContain('All months shown:');
   });
 
   test('gated like the dashboard: signed out, the page sends to the login and the data is refused', async () => {

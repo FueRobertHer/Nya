@@ -688,6 +688,13 @@ const STORES: Readonly<Record<string, Entry>> = {
     kept: 'Your home currency and your own exchange rates',
     seen: ['shared', 'api', 'email'],
   },
+  'debt-payoff': {
+    group: 'plans',
+    name: 'Your debt payoff plan',
+    about: 'The interest rates, monthly payments, payoff order, extra payment and account choices you entered in the debt payoff planner.',
+    unit: VALUE,
+    kept: 'Your data',
+  },
   // A demo account's resets (lib/demo-seed/store.ts): only ever on a demo
   // account, on Preview. The count is the reset's lock as much as its limit.
   'demo-reset': {

@@ -315,7 +315,7 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
       <div className="stack tight">
         <div className="inst-header">
           <div className="inst-name">Allocation</div>
-          {hasAccounts && (
+          {hasAccounts && view === 'class' && (
             <button className="plan-edit" onClick={() => open({ kind: 'target' })} disabled={!editable}>
               {current.target ? 'Change target' : 'Set a target'}
             </button>
@@ -341,7 +341,10 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
       {settingsLocked && <p className="panel-note">Your target, fund splits and tax buckets are the same for every plan: change them with your plan open.</p>}
 
       {!hasAccounts ? (
-        <p className="empty-note">No investment accounts to show. Connect a brokerage or retirement account, or add one by hand on the Accounts tab.</p>
+        <>
+          <p className="empty-note">No investment accounts to show. Connect a brokerage or retirement account, or add one by hand on the Accounts tab.</p>
+          <AllocationHistory currency={currency} version={saves} accounts={seriesAccounts} accountNames={accountNames} caveats={alloc.caveats} />
+        </>
       ) : (
         <>
           <div className="as-of">
@@ -360,25 +363,29 @@ export default function AllocationCard({ allocation, plan, onUseMix, settingsLoc
           />
           <div id={ALLOCATION_PANEL} role="tabpanel" aria-labelledby={allocationTabId(view)}>
             {view === 'class' ? (
-              <ClassView alloc={alloc} money={money} editable={editable} settings={current} open={open} />
+              <>
+                <ClassView alloc={alloc} money={money} editable={editable} settings={current} open={open} />
+                <AllocationNotes alloc={alloc} money={money} />
+                <DriftSection
+                  alloc={alloc}
+                  target={withSettings ? current.target : null}
+                  waiting={withSettings ? null : settings.status === 'error' ? 'unreadable' : 'loading'}
+                  money={money}
+                  editable={editable}
+                  onSet={() => open({ kind: 'target' })}
+                />
+                <MixSection mix={mix} plan={plan} ready={withSettings} onUse={onUseMix} currency={currency} />
+                <AllocationHistory currency={currency} version={saves} accounts={seriesAccounts} accountNames={accountNames} caveats={alloc.caveats} />
+              </>
             ) : (
-              <BucketView alloc={alloc} money={money} editable={editable} open={open} typedBasis={typedBasis} />
+              <>
+                <BucketView alloc={alloc} money={money} editable={editable} open={open} typedBasis={typedBasis} />
+                <AllocationNotes alloc={alloc} money={money} />
+              </>
             )}
           </div>
-          <AllocationNotes alloc={alloc} money={money} />
-          <DriftSection
-            alloc={alloc}
-            target={withSettings ? current.target : null}
-            waiting={withSettings ? null : settings.status === 'error' ? 'unreadable' : 'loading'}
-            money={money}
-            editable={editable}
-            onSet={() => open({ kind: 'target' })}
-          />
-          <MixSection mix={mix} plan={plan} ready={withSettings} onUse={onUseMix} currency={currency} />
         </>
       )}
-
-      <AllocationHistory currency={currency} version={saves} accounts={seriesAccounts} accountNames={accountNames} caveats={alloc.caveats} />
 
       <Sheet
         open={!!sheet}
@@ -1513,10 +1520,21 @@ export function AllocationHistoryChart({
   const plotW = W - PAD_LEFT - PAD_RIGHT;
   const plotH = H - PAD_TOP - PAD_BOTTOM;
   const slot = plotW / span;
-  // Columns at most 24px, a 2px gap between neighbours while there is room
-  // for one; past that the days touch, and read as an area.
-  const width = slot >= 4 ? Math.min(24, slot - 2) : slot;
-  const xs = days.map((d) => PAD_LEFT + (dayNum(d.date) - first) * slot + (slot - width) / 2);
+  // Adaptive column width: readable stacked bars for sparse monthly snapshots
+  // (4px to 20px), bounded by the tightest gap between consecutive recorded
+  // days so dense daily records still touch cleanly as an area without overlap.
+  let minGap = Infinity;
+  for (let k = 1; k < days.length; k++) {
+    const gap = (dayNum(days[k].date) - dayNum(days[k - 1].date)) * slot;
+    if (gap < minGap) minGap = gap;
+  }
+  const target = Math.max(4, Math.min(20, Math.floor(plotW / Math.max(days.length * 2, 1))));
+  const width = Number.isFinite(minGap) ? (minGap >= 4 ? Math.min(target, Math.max(2, minGap - 2)) : Math.max(slot, minGap)) : target;
+  const maxX = PAD_LEFT + Math.max(0, plotW - width);
+  const xs = days.map((d) => {
+    const ideal = PAD_LEFT + (dayNum(d.date) - first) * slot + (slot - width) / 2;
+    return Math.max(PAD_LEFT, Math.min(maxX, ideal));
+  });
   const i = active ?? days.length - 1;
   const day = days[i];
   const negative = days.some((d) => Object.values(d.classes).some((v) => (v ?? 0) < 0 && isMoney(v ?? 0)));

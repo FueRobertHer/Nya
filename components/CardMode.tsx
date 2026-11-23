@@ -37,6 +37,8 @@ import { importedChangedNote } from '@/lib/history-import/view';
 import CategoryPicker from './CategoryPicker';
 import { Masked } from './HideAmounts';
 import TagChips from './TagChips';
+import TxnTagsNote, { type TagChange } from './TxnTagsNote';
+import { exclusionOffer } from './txn-words';
 import { cardKey, pickerKey, CARD_KEYS } from './review-keys';
 import { swipeMove, swipeOffset, swipeRelease, swipeStart, type Point, type Swipe } from './swipe';
 import { cardCounts, cardPosition, currentCard, dealSkipped, openCards, pickerOn, undoStep, withoutStep, withStep, type Cards, type Picker } from './card-mode-state';
@@ -134,12 +136,16 @@ export default function CardMode(props: {
   onSplit: (t: Txn) => void;
   /** Its group sheet: on a new group from the transaction, or on its group's row. */
   onGroup: (t: Txn) => void;
+  /** Optional quick actions to tag, annotate, or exclude directly inside Card Mode. */
+  onChangeTags?: (t: Txn, change: TagChange) => unknown;
+  onSaveNote?: (t: Txn, note: string) => unknown;
+  onToggleExcluded?: (t: Txn, excluded: boolean) => unknown;
 }) {
   if (!props.open) return null;
   return <CardDeck {...props} />;
 }
 
-function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, onGroup }: Parameters<typeof CardMode>[0]) {
+function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, onGroup, onChangeTags, onSaveNote, onToggleExcluded }: Parameters<typeof CardMode>[0]) {
   const rows = txns ?? [];
   const whole = bankRows(rows, { groups: 'members' });
   const byId = new Map(whole.map((t) => [t.transaction_id, t]));
@@ -153,6 +159,7 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
   // and closed when another card comes up under it (the effect on `id`), so
   // a category picked for one card is never used on another.
   const [picker, setPicker] = useState<Picker | null>(null);
+  const [annotating, setAnnotating] = useState(false);
   const open = pickerOn(picker, id);
   const picking = open !== null;
   const draft = open?.draft ?? '';
@@ -215,17 +222,24 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
     // refresh passing over the one shown): what it showed was for the other.
     setPicker(null);
   }, [id]);
+  useEffect(() => {
+    setAnnotating(false);
+  }, [id]);
 
   const act = async (kind: 'approve' | 'recategorize' | 'skip') => {
     if (!t || leaving || acting.current === t.transaction_id) return;
     if (kind === 'recategorize') {
       // A split transaction's parts have categories of their own.
-      if (!t.split_parts) setPicker({ id: t.transaction_id, draft: t.category_id ?? taxonomy?.uncategorized ?? '' });
+      if (!t.split_parts) {
+        setAnnotating(false);
+        setPicker({ id: t.transaction_id, draft: t.category_id ?? taxonomy?.uncategorized ?? '' });
+      }
       return;
     }
     // Approved or skipped with the picker open: it closes, never left open
     // on the next card.
     setPicker(null);
+    setAnnotating(false);
     const row = t;
     acting.current = row.transaction_id;
     await leave(kind === 'approve' ? 'right' : 'down');
@@ -266,6 +280,7 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
     if (!step) return;
     setCards(next);
     setPicker(null);
+    setAnnotating(false);
     // An approved one counts again once it is back; a skipped one never left.
     setSaid(doneWords('undone', ((r) => (r ? shownName(r) : 'it'))(byId.get(step.id)), left(next) + (step.kind === 'skipped' ? 0 : 1)));
     if (step.kind === 'approved') {
@@ -280,7 +295,7 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
   const onKeyDown = (e: React.KeyboardEvent) => {
     // Tab stays inside: the page behind is covered, so nothing there is for now.
     if (e.key === 'Tab' && root.current) {
-      const focusable = [...root.current.querySelectorAll<HTMLElement>('button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex="0"]')];
+      const focusable = [...root.current.querySelectorAll<HTMLElement>('button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex="0"]')];
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (first && last && e.shiftKey && document.activeElement === first) {
@@ -305,6 +320,7 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
     e.preventDefault();
     if (k === 'close') {
       if (picking) setPicker(null);
+      else if (annotating) setAnnotating(false);
       else onClose();
     } else if (k === 'help') setHelp((h) => !h);
     else if (k === 'undo') void undoLast();
@@ -314,7 +330,7 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
   // The swipe, by hand: the card follows a sideways drag and decides on release.
   const at = (e: React.PointerEvent): Point => ({ x: e.clientX, y: e.clientY, t: e.timeStamp });
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (picking || leaving || (e.pointerType === 'mouse' && e.button !== 0)) return;
+    if (picking || annotating || leaving || (e.pointerType === 'mouse' && e.button !== 0)) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
     drag.current = swipeStart(at(e));
   };
@@ -354,6 +370,8 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
   const position = cardPosition(cards, id);
   const counts = cardCounts(cards);
   const groupRow = t?.group_id ? rows.find((r) => r.group_id === t.group_id && r.group_members) : undefined;
+  const canAnnotate = !!(onChangeTags || onSaveNote);
+  const canExclude = !!(t && onToggleExcluded && !t.group_members && !t.group_outside && exclusionOffer(t) === 'toggle');
   // Where the card is drawn: following the drag, or flying off its way.
   const tilt = reduced ? 0 : leaving === 'right' ? 8 : leaving === 'left' ? -8 : offset / 24;
   const shift = leaving === 'right' ? '120%' : leaving === 'left' ? '-120%' : `${offset}px`;
@@ -435,6 +453,7 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
                 <Masked>{importedChangedNote(t, (n) => formatMoney(n, currencyOf(t) ?? currency))}</Masked>
               </div>
             )}
+            {t.excluded === true && <div className="card-mode-hint">{t.excluded_by_rule ? 'Hidden by a rule: out of budgets and reports' : 'Excluded from budgets and reports'}</div>}
             {t.split_parts && (
               <ul className="card-mode-parts" aria-label="Its parts">
                 {t.split_parts.map((p) => (
@@ -448,8 +467,28 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
               </ul>
             )}
             {groupRow && <div className="card-mode-hint">In the group “{groupRow.name}”</div>}
-            {t.note && <div className="card-mode-note">{t.note}</div>}
-            <TagChips ids={t.tags} tags={tags} />
+            {annotating && canAnnotate ? (
+              <div className="card-mode-annotate">
+                <TxnTagsNote
+                  t={t}
+                  tags={tags}
+                  onChangeTags={async (change) => {
+                    const ok = await Promise.resolve(onChangeTags?.(t, change));
+                    return ok !== false;
+                  }}
+                  onSaveNote={async (note) => {
+                    const ok = await Promise.resolve(onSaveNote?.(t, note));
+                    if (ok !== false) setSaid(note ? 'Note saved.' : 'Note cleared.');
+                    return ok !== false;
+                  }}
+                />
+              </div>
+            ) : (
+              <>
+                {t.note && <div className="card-mode-note">{t.note}</div>}
+                <TagChips ids={t.tags} tags={tags} />
+              </>
+            )}
           </div>
 
           <div className="card-mode-actions">
@@ -470,6 +509,31 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
             <button className="secondary" disabled={t.pending || (!!t.split_parts && !groupRow)} onClick={() => onGroup(groupRow ?? t)}>
               {groupRow ? 'Edit group' : 'Group'}
             </button>
+            {canAnnotate && (
+              <button
+                className="secondary"
+                disabled={t.pending}
+                aria-expanded={annotating}
+                onClick={() => {
+                  setPicker(null);
+                  setAnnotating((a) => !a);
+                }}
+              >
+                {annotating ? 'Hide note' : 'Tag / Note'}
+              </button>
+            )}
+            {canExclude && (
+              <button
+                className="secondary"
+                onClick={() => {
+                  const next = t.excluded !== true;
+                  void onToggleExcluded!(t, next);
+                  setSaid(next ? `Excluded ${shownName(t)} from budgets and reports.` : `Included ${shownName(t)} in budgets and reports.`);
+                }}
+              >
+                {t.excluded === true ? 'Include' : 'Exclude'}
+              </button>
+            )}
             <button className="secondary" disabled={cards.steps.length === 0} onClick={() => void undoLast()}>
               Undo
             </button>

@@ -134,6 +134,8 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   // The home currency and own rates (lib/fx/settings.ts): one value the
   // rest is shown through, never referred to by what is stored.
   'currency-settings': 'setting',
+  // What the person typed in the debt payoff planner (lib/debt-payoff-store.ts).
+  'debt-payoff': 'data',
   // Shared expenses (lib/shared-expenses/store.ts): what people owe, the
   // person's own; and the one setting how they count.
   'expense-dismissed': 'data',

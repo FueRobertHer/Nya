@@ -63,7 +63,7 @@
 
 import { LATE_START_DAYS, availableRanges, initialRange, rangeLabel, rangeStart, type RangeKey } from './chart-range';
 import { contributionBaseline, rangeSplit, usableTotals, type BalancePoint, type BaselinePoint, type Flow, type Move, type RangeSplit } from './growth';
-import type { MoneyInOut } from './money-in-out';
+import { latestAsOf, type MoneyInOut } from './money-in-out';
 import type { InvestmentMonths } from './investment-months';
 import { returnsRate, totalReturn, type Rate, type RateLeg, type TotalReturn } from './returns-rate';
 
@@ -206,10 +206,19 @@ const daysBetween = (a: string, b: string) => Math.round((parse(b) - parse(a)) /
 const shiftDays = (d: string, n: number) => new Date(parse(d) + n * DAY_MS).toISOString().slice(0, 10);
 const cents = (n: number) => Math.round(n * 100) / 100;
 
+/** When a quiet account (no Plaid investment transactions, no error/busy note)
+ *  has saved deposits/withdrawals or a "no activity since" confirmation, its
+ *  `as_of` day starts a zero-flow baseline. */
+export function confirmedZeroActivity(a: GrowthActivity, now: number = Date.now()): string | null {
+  if (a.flows || a.flows_from || a.note || (a.txns?.length ?? 0) > 0) return null;
+  if (a.money_in_out_unreadable || !a.money_in_out) return null;
+  return a.money_in_out.as_of <= latestAsOf(now) ? a.money_in_out.as_of : null;
+}
+
 function statusOf(activity: ActivityState): RowStatus {
   if (activity.state !== 'ready') return activity.state;
   const a = activity.data;
-  if (a.flows && a.flows_from) return 'counted';
+  if ((a.flows && a.flows_from) || confirmedZeroActivity(a)) return 'counted';
   if (a.note?.includes(ACTIVITY_STILL_LOADING)) return 'busy';
   // A fetch that failed with nothing saved, or rows Nya can't vouch for yet:
   // either way the figures are short of it.
@@ -217,10 +226,10 @@ function statusOf(activity: ActivityState): RowStatus {
   return 'none';
 }
 
-function totalsOf(a: GrowthActivity): TotalsState {
+function totalsOf(a: GrowthActivity, flowsFrom: string | null | undefined): TotalsState {
   if (a.money_in_out_unreadable) return 'unreadable';
-  if (!a.money_in_out) return 'unset';
-  return usableTotals(a.money_in_out, a.totals_from ?? a.flows_from) ? 'set' : 'outdated';
+  if (!a.money_in_out || a.money_in_out.no_activity) return 'unset';
+  return usableTotals(a.money_in_out, a.totals_from ?? flowsFrom) ? 'set' : 'outdated';
 }
 
 /** Why a split starts on `from`: a brokerage's month (its first, from
@@ -286,7 +295,11 @@ export function summarizeGrowth<A extends GrowthAccount>(
     const row: GrowthRow<A> = { account, status, split: null, from: null, to: null, totals: null, figures: null, rate: null, total: null };
     if (status !== 'counted' || account.activity.state !== 'ready') return row;
     const a = account.activity.data;
-    row.totals = totalsOf(a);
+    const confirmed = confirmedZeroActivity(a);
+    const flows = confirmed ? [] : a.flows;
+    const flowsFrom = confirmed ?? a.flows_from;
+    const flowsTo = confirmed ? null : a.flows_to;
+    row.totals = totalsOf(a, flowsFrom);
     // Only totals Nya can carry: checked against its own activity, which
     // months from a file can reach before.
     const totals = row.totals === 'set' ? (a.money_in_out ?? null) : null;
@@ -299,12 +312,12 @@ export function summarizeGrowth<A extends GrowthAccount>(
     const own = account.points[account.points.length - 1]?.date;
     if (!own || (start !== null && own < start)) return row;
     const shown = start === null ? account.points : account.points.filter((p) => p.date >= start);
-    row.split = rangeSplit(shown, a.flows, a.flows_from, a.flows_to, totals, a.moves);
+    row.split = rangeSplit(shown, flows, flowsFrom, flowsTo, totals, a.moves);
     if (!row.split) return row;
     const split = row.split;
     // The same line rangeSplit reads, on its recorded days.
     const real = new Map(shown.filter((p) => !p.estimated).map((p) => [p.date, p] as const));
-    const line = contributionBaseline(shown, a.flows, a.flows_from, a.flows_to, totals, a.moves) ?? [];
+    const line = contributionBaseline(shown, flows, flowsFrom, flowsTo, totals, a.moves) ?? [];
     tracks.set(
       row,
       line

@@ -40,15 +40,18 @@ import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 
 import FieldError from './FieldError';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { Sheet } from './Sheet';
+import ChipSelect from './ChipSelect';
 import ForecastChart, { fmtDay } from './ForecastChart';
 import { addDays, type RecurringSeries } from '@/lib/recurring';
 import {
   buildForecast,
+  cashAccountsOf,
   cashPosition,
   forecastConvertedText,
   forecastEvents,
   withPurchase,
   FORECAST_RANGES,
+  type CashAccountChoice,
   type CashPosition,
   type Forecast,
   type ForecastEvent,
@@ -94,6 +97,37 @@ function savedWhen(iso: string, today: string): string {
   return `${onDay(formatDay(localDate(d), { sentence: true, now: new Date(`${today}T12:00:00`) }))} at ${time}`;
 }
 
+/** Which cash accounts the forecast includes: all cash, checking only, or one account by id. */
+export type ForecastScope = 'all' | 'checking' | `id:${string}`;
+
+/** Resolves a scope choice against the available cash accounts, falling back to 'all'. */
+export function resolveForecastScope(
+  accounts: readonly CashAccountChoice[],
+  scope: ForecastScope
+): { scope: ForecastScope; accountIds: ReadonlySet<string> | null; accountKeys: ReadonlySet<string> | null } {
+  if (scope === 'checking') {
+    const checking = accounts.filter((a) => a.subtype?.toLowerCase() === 'checking');
+    if (checking.length > 0 && checking.length < accounts.length) {
+      return {
+        scope: 'checking',
+        accountIds: new Set(checking.map((a) => a.account_id)),
+        accountKeys: new Set(checking.map((a) => `${a.institution}|${a.name}`)),
+      };
+    }
+  } else if (scope.startsWith('id:')) {
+    const id = scope.slice(3);
+    const match = accounts.find((a) => a.account_id === id);
+    if (match) {
+      return {
+        scope,
+        accountIds: new Set([match.account_id]),
+        accountKeys: new Set([`${match.institution}|${match.name}`]),
+      };
+    }
+  }
+  return { scope: 'all', accountIds: null, accountKeys: null };
+}
+
 /** What the forecast is worked out from. */
 export type ForecastInput = {
   institutions: ForecastInstitution[];
@@ -110,6 +144,8 @@ export type ForecastInput = {
   /** The viewer's day (lib/local-date.ts). */
   today: string;
   range: ForecastRange;
+  /** Which cash accounts to include (defaults to 'all'). */
+  scope?: ForecastScope;
   /** The loaded transactions, for the charges still pending. */
   txns?: PendingRow[];
   /** With a home currency, what converts what is in another currency into
@@ -130,6 +166,10 @@ export type ForecastInput = {
 export type Forecasting = {
   /** Where it starts: the cash accounts, their currency and balance. */
   position: CashPosition;
+  /** Every non-hidden cash account eligible for the scope selector. */
+  cashAccounts: CashAccountChoice[];
+  /** The resolved account scope in effect. */
+  scope: ForecastScope;
   /** Whether there is a forecast at all: a cash account to start from. */
   has: boolean;
   /** The warning in force, and the one set in another currency. */
@@ -157,10 +197,16 @@ export function useForecast({
   dismissed = NO_DISMISSED,
   today,
   range,
+  scope = 'all',
   txns = NO_ROWS,
   fx = null,
 }: ForecastInput): Forecasting {
-  const position = useMemo(() => cashPosition(institutions, txns, { fx, today }), [institutions, txns, fx, today]);
+  const cashAccounts = useMemo(() => cashAccountsOf(institutions), [institutions]);
+  const resolved = useMemo(() => resolveForecastScope(cashAccounts, scope), [cashAccounts, scope]);
+  const position = useMemo(
+    () => cashPosition(institutions, txns, { fx, today, accountIds: resolved.accountIds }),
+    [institutions, txns, fx, today, resolved.accountIds]
+  );
   const warn = thresholdOf(plannedDrawn ? planned : EMPTY_PLANNED, position.currency);
   const threshold = warn.amount;
   const until = addDays(today, range);
@@ -170,12 +216,13 @@ export function useForecast({
         series,
         planned: plannedDrawn ? planned.items : [],
         dismissed: plannedDrawn ? dismissed : NO_DISMISSED,
+        accounts: resolved.accountKeys,
         currency: position.currency,
         today,
         until,
         fx,
       }),
-    [series, planned, plannedDrawn, dismissed, position.currency, today, until, fx]
+    [series, planned, plannedDrawn, dismissed, resolved.accountKeys, position.currency, today, until, fx]
   );
   const { events } = expected;
   const forecast = useMemo(
@@ -184,6 +231,8 @@ export function useForecast({
   );
   return {
     position,
+    cashAccounts,
+    scope: resolved.scope,
     has: position.included.length > 0 || position.noBalance.length > 0,
     warn,
     threshold,
@@ -206,6 +255,7 @@ type WarnSheet = { open: boolean; draft: string; seen: string | null };
 export function ForecastView({
   work,
   onRange,
+  onScope,
   planned,
   plannedStatus = 'ready',
   onSavePlanned,
@@ -222,6 +272,8 @@ export function ForecastView({
   start?: readonly Caveat[];
   /** Chooses how far ahead it goes. */
   onRange: (range: ForecastRange) => void;
+  /** Chooses which cash accounts the forecast starts from (All cash, Checking only, or one account). */
+  onScope?: (scope: ForecastScope) => void;
   /** The planned items as drawn, which the warning is saved with. */
   planned: Planned;
   /** Until 'ready', the warning can't be changed (its row opens nothing). */
@@ -397,6 +449,40 @@ export function ForecastView({
           </button>
         ))}
       </div>
+
+      {onScope && work.cashAccounts.length >= 2 && (() => {
+        const counts = new Map<string, number>();
+        for (const a of work.cashAccounts) counts.set(a.name, (counts.get(a.name) ?? 0) + 1);
+        const labelOf = (a: CashAccountChoice) => ((counts.get(a.name) ?? 0) > 1 ? `${a.name} (${a.institution})` : a.name);
+        const hasChecking = work.cashAccounts.some((a) => a.subtype?.toLowerCase() === 'checking');
+        const hasOtherCash = work.cashAccounts.some((a) => a.subtype?.toLowerCase() !== 'checking');
+        const picked = work.scope.startsWith('id:') ? work.cashAccounts.find((a) => a.account_id === work.scope.slice(3)) : null;
+        const shown =
+          work.scope === 'checking'
+            ? 'Accounts: Checking only'
+            : picked
+              ? `Accounts: ${labelOf(picked)}`
+              : 'Accounts: All cash';
+        return (
+          <div className="chip-row">
+            <ChipSelect
+              label="Accounts"
+              shown={shown}
+              on={work.scope !== 'all'}
+              value={work.scope}
+              onChange={(v) => onScope(v as ForecastScope)}
+            >
+              <option value="all">All cash</option>
+              {hasChecking && hasOtherCash && <option value="checking">Checking only</option>}
+              {work.cashAccounts.map((a) => (
+                <option key={a.account_id} value={`id:${a.account_id}`}>
+                  {labelOf(a)}
+                </option>
+              ))}
+            </ChipSelect>
+          </div>
+        );
+      })()}
 
       {warning && (
         <Notice level={warning.level}>
@@ -657,6 +743,7 @@ export default function ForecastCard({
 }) {
   // The card without the segment's notice: its load states are the panel's to say.
   const [range, setRange] = useState<ForecastRange>(30);
+  const [scope, setScope] = useState<ForecastScope>('all');
   const input: ForecastInput = {
     institutions,
     series,
@@ -665,6 +752,7 @@ export default function ForecastCard({
     dismissed,
     today,
     range,
+    scope,
     txns,
     fx,
     incomplete,
@@ -678,6 +766,7 @@ export default function ForecastCard({
       work={work}
       start={start}
       onRange={setRange}
+      onScope={setScope}
       planned={planned}
       plannedStatus={plannedStatus}
       onSavePlanned={onSavePlanned}

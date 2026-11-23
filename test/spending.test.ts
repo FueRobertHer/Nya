@@ -296,9 +296,9 @@ describe('no total adds up amounts in two currencies', () => {
 
   test('the day’s header gives one figure per currency, never a sum across them, and leaves an excluded row out', () => {
     const t = text(activity([...MONTH, RAMEN]));
-    // In: $100; out: $30 and the $500 transfer (the day's rows, as listed);
-    // the excluded laptop isn't in it; the ramen is its own figure.
-    expect(t).toContain('−$430.00 · −¥3,200');
+    // In: $100; out: $30 (the $500 transfer and excluded laptop are excluded
+    // from day net, matching the summary strip); the ramen is its own figure.
+    expect(t).toContain('+$70.00 · −¥3,200');
     expect(t).not.toContain('−$3,');
   });
 

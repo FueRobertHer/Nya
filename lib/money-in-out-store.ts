@@ -63,7 +63,14 @@ export async function saveMoneyInOut(ctx: Ctx, change: MoneyInOutChange, now: nu
     await moneyInOutStore.remove(ctx, change.account_id, ...others);
     return null;
   }
-  const entry: MoneyInOut = { in: change.in, out: change.out, as_of: change.as_of, currency: change.currency, set_at: new Date(now).toISOString() };
+  const entry: MoneyInOut = {
+    in: change.in,
+    out: change.out,
+    as_of: change.as_of,
+    currency: change.currency,
+    set_at: new Date(now).toISOString(),
+    ...(change.no_activity ? { no_activity: true } : {}),
+  };
   // The current id's first: it wins on read, so a failure dropping the others
   // never leaves older totals showing.
   await moneyInOutStore.set(ctx, change.account_id, entry);

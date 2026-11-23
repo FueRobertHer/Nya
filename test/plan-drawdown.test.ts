@@ -341,9 +341,10 @@ describe('the chart’s marks', () => {
     expect(markRows([{ x: 10, label: '59½' }, { x: 16, label: '65' }, { x: 200, label: 'RMD age 75' }])).toEqual([0, 1, 0]);
   });
 
-  // As the chart lays them out at 320px (a 254px card): RMD age 75's name
-  // clears 65's on the top row, but its rule would run down through Social
-  // Security 67's name on the row under it, so it goes a row lower.
+  // As the chart lays them out at 320px (a 254px card): with the wider label
+  // clearance, 65 staggers below 59½, Social Security 67 goes below 65, and
+  // RMD age 75's rule would run through Social Security 67's name so it goes
+  // one row lower.
   test('no mark’s rule runs through another’s name', () => {
     const marks = [
       { x: 75, label: '59½' },
@@ -351,7 +352,16 @@ describe('the chart’s marks', () => {
       { x: 112, label: 'Social Security 67' },
       { x: 152, label: 'RMD age 75' },
     ];
-    expect(markRows(marks)).toEqual([0, 0, 1, 2]);
+    expect(markRows(marks)).toEqual([0, 1, 2, 3]);
+    // With wider desktop spacing where 59½ and 65 clear each other, 65 and
+    // Social Security 67 (9px apart) still stagger cleanly onto separate rows.
+    const desktop = [
+      { x: 145, label: '59½' },
+      { x: 210, label: '65' },
+      { x: 233, label: 'Social Security 67' },
+      { x: 325, label: 'RMD age 75' },
+    ];
+    expect(markRows(desktop)).toEqual([0, 0, 1, 2]);
   });
 });
 

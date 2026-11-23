@@ -34,7 +34,7 @@ import { Masked } from './HideAmounts';
 import type { LifecycleTarget } from './AccountLifecycle';
 import type { HistoryImportTarget } from './HistoryImportSheet';
 import { withMask } from '@/lib/account-names';
-import { formatDay, hiddenFigure } from '@/lib/format';
+import { formatDay, formatQuantity } from '@/lib/format';
 import { readableName } from '@/lib/merchant-name';
 import { isInvestmentType, isOwedType } from '@/lib/balance';
 import { isVanguard } from '@/lib/investment-months';
@@ -127,17 +127,26 @@ export function HoldingsTable({ holdings, flagged }: { holdings: Holding[]; flag
       <tbody>
         {holdings.map((h, i) => {
           const isCash = isCashHolding(h);
+          const ticker = !isCash && h.ticker && !h.ticker.startsWith('CUR:') ? h.ticker : null;
+          const label = readableName(h.name);
           return (
             <tr key={i}>
               <td>
-                {readableName(h.name)}
+                {ticker ? (
+                  <>
+                    <strong>{ticker}</strong>
+                    {label && label !== ticker && <div className="list-row-sub">{label}</div>}
+                  </>
+                ) : (
+                  label
+                )}
                 {/* The chip says WHICH row is cash; the amber says it's
                     worth doing something about, and only the owning
                     account can decide that. */}
                 {isCash && <span className={`cash-chip${h.account_id && flagged.has(h.account_id) ? ' idle' : ''}`}>Cash</span>}
               </td>
               <td className="num">
-                <Masked>{h.quantity != null ? hiddenFigure(h.quantity.toFixed(3)) : '--'}</Masked>
+                {!isCash && h.quantity != null ? <Masked>{formatQuantity(h.quantity)}</Masked> : '--'}
               </td>
               <td className="num">
                 <Masked>{fmt(h.value)}</Masked>

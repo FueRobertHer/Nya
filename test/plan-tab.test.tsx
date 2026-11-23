@@ -527,6 +527,7 @@ describe('the simulation card', () => {
     expect(t).toContain('Stop working at 65 with $1,000,000 (your FI number), withdrawing 4% of it, $40,000 a year after tax, your spending now, for 30 years (to age 95)');
     expect(t).toContain(`${successText(r.successRate, 1)} of ${r.paths.toLocaleString('en-US')} historical starts (${monthName(r.firstStart!)} to ${monthName(r.lastStart!)}) lasted 30 years, from 65`);
     expect(t).toContain('It counts as lasting if every year’s withdrawal is paid in full, for all 30 years.');
+    expect(html).toMatch(/<details class="why"><summary>How this is worked out<\/summary>/);
     expect(html).toContain('<p class="plan-definition">Hypothetical, from US history: not a prediction, and not advice.</p>');
     // Behind its disclosure.
     expect(html).toMatch(/<details class="why"><summary>Worst starting years<\/summary>/);
@@ -798,12 +799,15 @@ describe('the grid', () => {
     expect(html).not.toContain('--accent');
   });
 
-  test('a worked-out rate said like a grid row is that row, still your plan’s, not a second one', () => {
+  test('a worked-out rate said like or within 0.05% of a grid row takes that row, still your plan’s, not a second one', () => {
     const grid = [0.03, 0.035, 0.04, 0.045, 0.05];
     // 3.49997% prints as 3.5%: it takes that row's place.
     expect(withOwnRate(grid, 0.0349997)).toEqual([0.03, 0.0349997, 0.04, 0.045, 0.05]);
+    // Within 0.05% (0.0005) of 3%: replaces 3% instead of adding a near-duplicate row.
+    expect(withOwnRate(grid, 0.0299)).toEqual([0.0299, 0.035, 0.04, 0.045, 0.05]);
+    expect(withOwnRate(grid, 0.0305)).toEqual([0.0305, 0.035, 0.04, 0.045, 0.05]);
     expect(withOwnRate(grid, 0.04)).toEqual(grid);
-    // One that reads differently joins in order.
+    // One farther than 0.05% from every standard row joins in order.
     expect(withOwnRate(grid, 0.0425)).toEqual([0.03, 0.035, 0.04, 0.0425, 0.045, 0.05]);
     const rates = withOwnRate(grid, 0.0349997);
     const html = renderToStaticMarkup(

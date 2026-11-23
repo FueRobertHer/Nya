@@ -177,4 +177,66 @@ describe('the runner', () => {
     expect(await runner.run(job)).toEqual({ ok: false, error: 'stopped' });
     expect(worker.terminated).toBe(true);
   });
+
+  test('with concurrency > 1, spawns workers lazily up to the cap and runs independent jobs in parallel', async () => {
+    const workers: FakeWorker[] = [];
+    const runner = createPlanRunner({
+      startWorker: () => {
+        const w = new FakeWorker();
+        w.answer = false;
+        workers.push(w);
+        return w;
+      },
+      runHere: here,
+      concurrency: 3,
+    });
+    const j1 = runner.run({ ...job, plan: { ...plan, years: 20 } });
+    const j2 = runner.run({ ...job, plan: { ...plan, years: 25 } });
+    const j3 = runner.run({ ...job, plan: { ...plan, years: 30 } });
+    const j4 = runner.run({ ...job, plan: { ...plan, years: 35 } });
+    // Three workers spawned for 4 jobs; 4th stays queued until one finishes.
+    expect(workers).toHaveLength(3);
+    expect(workers.map((w) => w.posted.length)).toEqual([1, 1, 1]);
+    workers[1].respond();
+    const r2 = await j2;
+    expect(r2.ok && r2.kind === 'simulate' && r2.result.years).toBe(25);
+    // Worker 1 picks up the 4th queued job.
+    expect(workers[1].posted).toHaveLength(2);
+    workers[0].respond();
+    workers[2].respond();
+    workers[1].respond();
+    const [r1, r3, r4] = await Promise.all([j1, j3, j4]);
+    expect(r1.ok && r1.kind === 'simulate' && r1.result.years).toBe(20);
+    expect(r3.ok && r3.kind === 'simulate' && r3.result.years).toBe(30);
+    expect(r4.ok && r4.kind === 'simulate' && r4.result.years).toBe(35);
+    runner.dispose();
+    expect(workers.every((w) => w.terminated)).toBe(true);
+  });
+
+  test('when one worker in a pool fails, all pool workers terminate and every in-flight job finishes on the page in order', async () => {
+    const workers: FakeWorker[] = [];
+    const onPage: number[] = [];
+    const runner = createPlanRunner({
+      startWorker: () => {
+        const w = new FakeWorker();
+        w.answer = false;
+        workers.push(w);
+        return w;
+      },
+      runHere: async (j) => {
+        if (j.kind === 'simulate') onPage.push(j.plan.years);
+        return here(j);
+      },
+      concurrency: 2,
+    });
+    const a = runner.run({ ...job, plan: { ...plan, years: 20 } });
+    const b = runner.run({ ...job, plan: { ...plan, years: 30 } });
+    const c = runner.run({ ...job, plan: { ...plan, years: 40 } });
+    expect(workers).toHaveLength(2);
+    workers[1].fail();
+    const results = await Promise.all([a, b, c]);
+    expect(results.every((r) => r.ok)).toBe(true);
+    expect(workers.every((w) => w.terminated)).toBe(true);
+    expect(onPage).toEqual([20, 30, 40]);
+  });
 });

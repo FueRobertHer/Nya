@@ -101,9 +101,11 @@ describe('the payoff planner', () => {
     expect(t).not.toMatch(/· (auto|credit card|mortgage)\b/);
   });
 
-  test('a manual loan has no terms: it is needed, says why, and the plan waits for it', () => {
+  test('a manual loan has no terms: ready debts still plan while the incomplete loan is named separately', () => {
     const html = panel([chase([sapphire]), ...alliant]);
-    expect(html).toContain('Add the missing rate or payment for 1 debt below, or leave it out, to see the plan.');
+    expect(html).toContain('Not included until rate and payment are added: Auto Loan.');
+    expect(html).toContain('Paid off');
+    expect(html).toContain('1 needing terms');
     expect(html).toContain('Needed');
     // The screen review: "Needed" in orange under both fields of every debt.
     // The caution line above counts them once; each field's hint is plain.
@@ -114,6 +116,9 @@ describe('the payoff planner', () => {
     expect(html).toContain('A manual account has no terms from a bank');
     expect(html).not.toContain('Debt-free');
     expect(html).toContain('updated'); // a typed balance says when it was set
+    // Loan rate field uses loan-appropriate placeholder; card uses credit-card placeholder.
+    expect(html).toContain('placeholder="e.g. 6.50"');
+    expect(html).toContain('placeholder="e.g. 24.99"');
   });
 
   test('typed terms are planned and labelled as typed, with a way back to Plaid', () => {
@@ -234,7 +239,7 @@ describe('the payoff planner', () => {
 
   test("a mortgage reporting escrow waits for its principal and interest, says why by the headline, and offers it worked out", () => {
     const html = panel([chase([sapphire, mortgage])]);
-    expect(html).toContain('Add the missing rate or payment for 1 debt below');
+    expect(html).toContain('Not included until rate and payment are added: Mortgage ••0001.');
     expect(html).toContain("Mortgage ••0001: Plaid's $3,141.54 payment includes escrow, which doesn't pay down the loan, so its principal and interest are needed.");
     expect(html).toContain('the escrow account holds $3,141.54');
     expect(html).toContain('Use $2,026.57, worked out from the original $425,000.00 over 30 years at 3.99%');
@@ -478,5 +483,54 @@ describe('the payoff planner', () => {
   test('hidden accounts stay out of it entirely', () => {
     const html = panel([chase([sapphire, { ...mortgage, hidden: true }])]);
     expect(html).not.toContain('Mortgage');
+  });
+
+  test('suggests detected recurring monthly loan payment when a non-card loan is missing its payment', () => {
+    const recurring = [
+      {
+        id: 'rec-auto',
+        group: 'g1',
+        kind: 'bill' as const,
+        name: 'Alliant Auto Payment',
+        institution: 'Chase',
+        account: 'Checking',
+        accountType: 'depository',
+        cadence: 'monthly' as const,
+        amount: 465,
+        agreement: 'same' as const,
+        currency: 'USD',
+        logo_url: null,
+        firstDate: '2026-07-05',
+        lastDate: '2026-10-05',
+        nextDate: '2026-11-05',
+        seen: 4,
+        schedule: { unit: 'month' as const, every: 1, days: [5], month: '2026-11', slot: 0 },
+      },
+      {
+        id: 'rec-netflix',
+        group: 'g2',
+        kind: 'bill' as const,
+        name: 'Netflix',
+        institution: 'Chase',
+        account: 'Checking',
+        accountType: 'depository',
+        cadence: 'monthly' as const,
+        amount: 15.99,
+        agreement: 'same' as const,
+        currency: 'USD',
+        logo_url: null,
+        firstDate: '2026-07-05',
+        lastDate: '2026-10-05',
+        nextDate: '2026-11-05',
+        seen: 4,
+        schedule: { unit: 'month' as const, every: 1, days: [5], month: '2026-11', slot: 0 },
+      },
+    ];
+    const html = renderToStaticMarkup(
+      <PayoffPanel institutions={[chase([sapphire]), ...alliant]} inputs={NO_INPUTS} onChange={noop} startMonth={START} series={recurring} />
+    );
+    expect(html).toContain('Detected $465.00/mo from Checking');
+    expect(html).toContain('Use $465.00');
+    expect(html).not.toContain('15.99');
   });
 });

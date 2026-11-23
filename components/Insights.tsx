@@ -95,6 +95,8 @@ export function reconnectAlerts(soon: ReconnectSoon[], now: Date = new Date()): 
 export type IdleCashAccount = {
   /** React key. Account NAMES collide across institutions; ids don't. */
   account_id: string;
+  /** Owning Plaid Item or manual institution id, for opening its sheet. */
+  item_id?: string;
   name: string;
   /** Last 4, where the institution reports it. Two accounts at one broker can
    *  share a name, and the Accounts tab tells them apart the same way. */
@@ -122,12 +124,21 @@ export type InsightAccount = {
   subtype?: string | null;
   balance: number | null;
   currency: string | null;
+  /** True when the account already has an open lifecycle question in Needs attention. */
+  hasQuestion?: boolean;
   liability?: {
     minimum_payment: number | null;
     next_due_date: string | null;
     is_overdue: boolean | null;
   };
 };
+
+/** Where tapping a Home This month insight row navigates. */
+export type InsightTarget =
+  | { kind: 'txn'; txn: Txn }
+  | { kind: 'account'; item_id: string; account_id: string }
+  | { kind: 'spending' }
+  | { kind: 'upcoming' };
 
 /** An account a payment is about, with what opens its sheet, and its
  *  institution and mask, which tell it from another of the same name. */
@@ -138,7 +149,7 @@ const MAX_INSIGHTS = 6;
 
 // Each says what it is in words: no color of its own (rollout.md "Decided in
 // 4c"), since amber is for what needs the person and red for a short number.
-type Insight = { key: string; text: string };
+type Insight = { key: string; text: string; target?: InsightTarget };
 
 /** What the budget alerts read: as the Budgets tab meters this month. */
 export type BudgetAlertInput = {
@@ -325,6 +336,12 @@ export function spendingNotes(
  * components/FiProgressCard.tsx, loaded after Home paints). A low balance
  * stays here: it has no fix to go to and no way to set it aside.
  */
+const INSIGHT_CHEVRON = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="m9 6 6 6-6 6" />
+  </svg>
+);
+
 export default function Insights({
   txns,
   fx = null,
@@ -336,6 +353,7 @@ export default function Insights({
   incomplete = NO_GAPS,
   stopped = NO_STOPPED,
   fi = null,
+  onGo,
 }: {
   txns: Txn[] | null;
   /** What the figures convert with, once a home currency is chosen
@@ -355,6 +373,8 @@ export default function Insights({
   stopped?: Stopped[];
   /** The FI line, an <li> once its figures are in (components/FiProgressLoader.tsx). */
   fi?: ReactNode;
+  /** Opens what an insight describes (a transaction, account sheet, Spending, or Upcoming). */
+  onGo?: (target: InsightTarget) => void;
 }) {
   // The texts name amounts, so they are written again when hiding amounts is
   // turned on or off (components/hide-amounts.ts).
@@ -375,10 +395,9 @@ export default function Insights({
     // institution as a linked one), and a duplicate React key would drop an alert.
     // Not cash on hand (lib/balance.ts): a wallet running low is no risk of an
     // overdraft. Nor a health savings account its bank reports as a bank
-    // account (isBankCash): no bills are paid from it.
-    // One row: the first, and how many more. Several small accounts kept on
-    // purpose would otherwise push the month's own figures off the card.
-    const low = [...accounts.entries()].filter(([, a]) => isBankCash(a) && !isCashOnHand(a) && a.balance != null && a.balance < LOW_BALANCE_THRESHOLD);
+    // account (isBankCash): no bills are paid from it. Skip accounts that already
+    // have an open lifecycle question (e.g. "Closed?") in Needs attention.
+    const low = [...accounts.entries()].filter(([, a]) => !a.hasQuestion && isBankCash(a) && !isCashOnHand(a) && a.balance != null && a.balance < LOW_BALANCE_THRESHOLD);
     if (low.length > 0) {
       const [i, a] = low[0];
       const more = low.length - 1;
@@ -403,6 +422,7 @@ export default function Insights({
         // line (as in the low-balance block above).
         key: `idle-cash-${a.account_id}`,
         text: `${where}: ${formatMoney(a.cash, a.currency)} uninvested${howMuch}`,
+        ...(a.item_id ? { target: { kind: 'account' as const, item_id: a.item_id, account_id: a.account_id } } : {}),
       });
     }
 
@@ -421,6 +441,7 @@ export default function Insights({
         out.push({
           key: `bill-${b.name}`,
           text: late ? `Expected: ${shownName(b)} (${amount}), due ${day(due)} and not in yet` : `Upcoming: ${shownName(b)} (${amount}) ${due === localDate(now) ? 'today' : `around ${day(due)}`}`,
+          target: { kind: 'upcoming' },
         });
         if (seen.size >= 2) break;
       }
@@ -450,10 +471,12 @@ export default function Insights({
               ? {
                   key: 'pace',
                   text: `Spending is tracking about even with ${monthName}'s pace`,
+                  target: { kind: 'spending' },
                 }
               : {
                   key: 'pace',
                   text: `Spending is tracking ${pct.toFixed(0)}% ${ratio > 1 ? 'above' : 'below'} ${monthName}'s pace`,
+                  target: { kind: 'spending' },
                 }
           );
         }
@@ -475,6 +498,7 @@ export default function Insights({
         out.push({
           key: 'biggest',
           text: `Biggest purchase this month: ${shownName(own)}, ${formatMoney(own.amount, currencyOf(own) ?? figures)}`,
+          target: { kind: 'txn', txn: own },
         });
       }
     }
@@ -509,11 +533,20 @@ export default function Insights({
       <ul className="list-rows">
         {insights.map((i, n) => (
           <li key={i.key}>
-            <div className="list-row">
-              <span className="list-row-text">
-                <Masked>{i.text}</Masked>
-              </span>
-            </div>
+            {onGo && i.target ? (
+              <button type="button" className="list-row" onClick={() => onGo(i.target!)}>
+                <span className="list-row-text">
+                  <Masked>{i.text}</Masked>
+                </span>
+                {INSIGHT_CHEVRON}
+              </button>
+            ) : (
+              <div className="list-row">
+                <span className="list-row-text">
+                  <Masked>{i.text}</Masked>
+                </span>
+              </div>
+            )}
             {said && n === last && <SpendingNotes leftOut={leftOut} missing={missing} />}
           </li>
         ))}

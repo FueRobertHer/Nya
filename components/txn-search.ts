@@ -19,13 +19,15 @@ import { unsureCategory } from './txn-words';
 export type Searchable = {
   name: string;
   category: string | null;
+  category_id?: string;
   category_name?: string | null;
+  account_id?: string;
   account_name: string;
   institution_name: string;
   note?: string | null;
   tags?: string[];
   split_parent?: { note?: string | null };
-  group_members?: readonly { name: string; note?: string | null; needs_review?: true }[];
+  group_members?: readonly { name: string; note?: string | null; needs_review?: true; account_id?: string; account_name?: string; institution_name?: string }[];
   needs_review?: true;
   // For the Unsure category chip (unsureCategory); optional, as other
   // callers' rows don't carry them.
@@ -35,13 +37,34 @@ export type Searchable = {
   group_outside?: unknown;
 };
 
+/** Stable filter key for a transaction's account (uses account_id when present). */
+export function accountFilterKey(t: Pick<Searchable, 'account_id' | 'account_name' | 'institution_name'>): string {
+  return t.account_id || `${t.institution_name}\0${t.account_name}`;
+}
+
+/** Stable filter key for a transaction's category (uses category_id when present). */
+export function categoryFilterKey(t: Pick<Searchable, 'category_id' | 'category' | 'category_name'>): string {
+  if (t.category_id) return `id:${t.category_id}`;
+  const raw = t.category_name !== undefined ? t.category_name : t.category;
+  return `name:${(raw ?? 'other').trim().toLowerCase()}`;
+}
+
+export type SearchOptions = {
+  query: string;
+  tag: string;
+  review?: boolean;
+  unsure?: boolean;
+  account?: string;
+  category?: string;
+};
+
 /**
  * The rows the search and the filter keep, as the Activity tab lists them:
  * with a part of a split transaction, every other part of it too (#39), so
  * the transaction is listed whole, all its parts under it, and editing its
  * split starts from all of them. In the rows' order.
  */
-export function searchEntries<T extends Searchable & { split_of?: string }>(rows: readonly T[], opts: { query: string; tag: string; review?: boolean; unsure?: boolean }, tags: readonly Tag[]): readonly T[] {
+export function searchEntries<T extends Searchable & { split_of?: string }>(rows: readonly T[], opts: SearchOptions, tags: readonly Tag[]): readonly T[] {
   const kept = searchRows(rows, opts, tags);
   const split = new Set(kept.flatMap((t) => (t.split_of !== undefined ? [t.split_of] : [])));
   if (split.size === 0) return kept;
@@ -51,14 +74,25 @@ export function searchEntries<T extends Searchable & { split_of?: string }>(rows
 
 /** The rows the search and the filters keep, in their order. `tag` is a
  *  tag's id, or "" for every row; `review`, only those that need review;
- *  `unsure`, only those whose category Plaid wasn't sure of. */
-export function searchRows<T extends Searchable>(rows: readonly T[], opts: { query: string; tag: string; review?: boolean; unsure?: boolean }, tags: readonly Tag[]): readonly T[] {
+ *  `unsure`, only those whose category Plaid wasn't sure of; `account` and
+ *  `category`, only rows matching those filter keys. */
+export function searchRows<T extends Searchable>(rows: readonly T[], opts: SearchOptions, tags: readonly Tag[]): readonly T[] {
   const q = opts.query.trim().toLowerCase();
   const reviewed = opts.review ? rows.filter(needsReview) : rows;
   const waiting = opts.unsure ? reviewed.filter(unsureCategory) : reviewed;
   const tagged = opts.tag ? waiting.filter((t) => t.tags?.includes(opts.tag)) : waiting;
-  if (!q) return tagged;
-  return tagged.filter((t) => {
+  const byAccount = opts.account
+    ? tagged.filter(
+        (t) =>
+          accountFilterKey(t) === opts.account ||
+          (t.group_members ?? []).some(
+            (m) => (m.account_id || m.account_name) && accountFilterKey({ account_id: m.account_id, account_name: m.account_name ?? '', institution_name: m.institution_name ?? '' }) === opts.account
+          )
+      )
+    : tagged;
+  const byCategory = opts.category ? byAccount.filter((t) => categoryFilterKey(t) === opts.category) : byAccount;
+  if (!q) return byCategory;
+  return byCategory.filter((t) => {
     const category = t.category_name !== undefined ? t.category_name : t.category;
     return (
       t.name.toLowerCase().includes(q) ||

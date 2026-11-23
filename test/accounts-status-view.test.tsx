@@ -33,7 +33,7 @@ describe('what it says', () => {
       { key: 'b', severity: 'caution' },
       { key: 'c', severity: 'caution' },
     ]);
-    expect(html).toContain('<button type="button" class="chip neg" aria-label="1 problem, 2 to check: go to the first connection">1 problem<svg');
+    expect(html).toContain('<button type="button" class="chip neg" aria-label="1 problem, 2 to check: go to the first connection">1 problem · 2 to check<svg');
   });
 
   test('several problems', () => {

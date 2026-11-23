@@ -306,6 +306,9 @@ describe('annual savings', () => {
     expect(t.line).toBe('43% savings rate');
     expect(t.why).toBe('An estimate: income minus spending over the same 12 months. That is a savings rate of 43% of income.');
     expect(notesOf(t)).toEqual([['caution', 'pay before it reaches a bank', PAYROLL_NOTE]]);
+    // Already at or past stop age: payroll deduction caution is irrelevant and suppressed.
+    const retired = figureNotes(at({ plan: { age: 47, targetAge: 47 } })).savings;
+    expect(notesOf(retired)).toEqual([]);
     const scaled = figureNotes(at({ flows: { ...flows, scaled: true, days: 152, from: '2026-05-08' } })).savings;
     expect(scaled.sub).toBe('Estimated from 5 months, scaled up');
     expect(scaled.why).toBe('An estimate: income minus spending over the same span. That is a savings rate of 43% of income.');

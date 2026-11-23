@@ -3422,6 +3422,9 @@ span.meter-fill {
     transform: translateX(100%);
     padding-top: env(safe-area-inset-top);
   }
+  .sheet.sheet-wide {
+    width: min(680px, 92vw);
+  }
   .sheet[data-open="true"] {
     transform: translateX(0);
   }
@@ -4664,12 +4667,16 @@ button.danger-outline {
   display: flex;
   justify-content: center;
   gap: 20px;
-  margin: 24px 0 4px;
+  margin: var(--sp-3) 0 0;
   font-size: var(--fs-2);
 }
 
 .trust-links a {
   position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  padding: 0 var(--sp-1);
   color: var(--text-2);
   text-decoration: none;
 }
@@ -9243,6 +9250,175 @@ button.receipts-item {
   margin-top: 4px;
   font-size: var(--fs-2);
   color: var(--text-2);
+}
+
+.hero-range-readout .chart-readout-value {
+  font-size: var(--fs-2);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+@media (max-width: 360px) {
+  .card-header {
+    flex-wrap: wrap;
+    row-gap: var(--sp-1);
+  }
+  .card-header > :is(h2, h3) {
+    flex: 1 1 100%;
+  }
+}
+
+/* --- Activity polish (Phase 3) --- */
+
+.sankey-link.loan {
+  fill: var(--tag-blue);
+}
+
+.sankey-node.loan .sankey-bar {
+  fill: var(--tag-blue);
+}
+
+.trend-wrap {
+  position: relative;
+}
+
+.trend-wrap.fade-left::before,
+.trend-wrap.fade-right::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 24px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.trend-wrap.fade-left::before {
+  left: 0;
+  background: linear-gradient(to right, var(--surface), transparent);
+}
+
+.trend-wrap.fade-right::after {
+  right: 0;
+  background: linear-gradient(to left, var(--surface), transparent);
+}
+
+.txn-logo-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+}
+
+.txn-logo-img {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.txn-logo-img.loaded {
+  opacity: 1;
+}
+
+.txn-search-scope {
+  margin-top: var(--sp-2);
+}
+
+.card-mode-more {
+  flex-wrap: wrap;
+}
+
+.card-mode-annotate {
+  margin-top: var(--sp-3);
+  width: 100%;
+  text-align: left;
+}
+
+/* Phase 4: PageHeader back affordance and Activity > Spending Reports link */
+.page-back-chevron {
+  width: 18px;
+  height: 18px;
+  color: var(--text-2);
+  flex: 0 0 auto;
+}
+
+.page-back-label {
+  font-size: var(--fs-2);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+  margin-left: var(--sp-1);
+}
+
+@media (max-width: 360px) {
+  .page-back-label {
+    display: none;
+  }
+}
+
+.spending-top-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0 var(--sp-3);
+}
+
+.spending-top-row > .spending-period {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.spending-reports-link {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+/* Phase 5: omit 2px sliver on 0% budget meters */
+.meter-fill.empty {
+  min-width: 0;
+}
+
+/* Demo reset progress indicator (components/DemoDataCard.tsx). */
+.demo-reset-progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.demo-progress {
+  position: relative;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--elevated);
+  overflow: hidden;
+}
+
+.demo-progress-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 38%;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  animation: demo-progress-slide 1.5s var(--ease) infinite;
+}
+
+@keyframes demo-progress-slide {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .demo-progress-bar {
+    width: 60%;
+    transform: none;
+    animation: none;
+  }
 }
 
 /* --- stack: spacing set by the container, not by each child ---

@@ -431,7 +431,7 @@ describe('where focus goes', () => {
     await press(button(sheet, 'Add to your plan'));
     await settle(400);
     expect(dom.document.activeElement).toBe(tab.row('A windfall')!);
-    expect((await stored()).byName['First plan'].plan.items.map((x) => x.label)).toEqual(['A cost', 'A windfall']);
+    expect((await stored()).byName['Main plan'].plan.items.map((x) => x.label)).toEqual(['A cost', 'A windfall']);
 
     await press(tab.row('A windfall'));
     await press(tab.dialog()!.findAll((e) => e.tagName === 'BUTTON' && e.textContent.startsWith('Remove from your plan'))[0]);
@@ -487,7 +487,7 @@ describe('Remove sends no also', () => {
     await press(button(tab.dialog(), 'Remove'));
     await settle(400);
     const { byName } = await stored();
-    expect(byName['First plan'].plan.items).toEqual([]);
+    expect(byName['Main plan'].plan.items).toEqual([]);
     expect(byName['With roof'].plan.items.map((x) => x.id)).toEqual(['roof']);
     await tab.unmount();
     await rest();

@@ -201,7 +201,7 @@ function allocationOf(target: NonNullable<SeedExtras['allocation']>['target']) {
 }
 
 function moneyInOutOf(account_id: string, m: NonNullable<SeedExtras['moneyInOut']>[number]) {
-  const change = parseMoneyInOutChange({ account_id, in: m.in, out: m.out, as_of: m.as_of, currency: USD });
+  const change = parseMoneyInOutChange({ account_id, in: m.in, out: m.out, as_of: m.as_of, currency: USD, ...(m.no_activity ? { no_activity: true } : {}) });
   if (typeof change === 'string') throw new Error(`Deposits and withdrawals for ${m.mask} are refused: ${change}`);
   return change;
 }

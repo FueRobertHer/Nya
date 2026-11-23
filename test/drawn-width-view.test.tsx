@@ -429,6 +429,19 @@ describe('a chart drawn at its width', () => {
     v.unmount();
   });
 
+  test('the forecast enforces a minimum 5% vertical span so a 0.6% dip reads as a gentle ripple', () => {
+    setObserver(true);
+    laidOut = 340;
+    const calm = buildForecast(25_000, [ev('2026-10-15', -150, 'Internet')], TODAY, 30, 0, 'USD');
+    const v = mount(<ForecastChart forecast={calm} currency="USD" threshold={0} />);
+    const path = v.svg()!.findAll((e) => e.tagName.toLowerCase() === 'path' && e.getAttribute('stroke') === 'var(--data)')[0];
+    const ys = [...(path.getAttribute('d') ?? '').matchAll(/,(-?\d+(?:\.\d+)?)/g)].map((m) => Number(m[1]));
+    const verticalSwing = Math.max(...ys) - Math.min(...ys);
+    // Plot height at 340px width is 150 - 8 - 24 = 118px; a 0.6% dip over >= 5% span should stay under 20% of plot height.
+    expect(verticalSwing).toBeLessThan(24);
+    v.unmount();
+  });
+
   // With no money on the plot, every day is in a table: rendered once opened,
   // each day's low (as the readout's lowest is) and its end, masked under
   // hidden amounts; under a what-if, the line with the purchase and each

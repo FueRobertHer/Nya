@@ -91,6 +91,14 @@ export default function ForecastChart({
     const values = series.flatMap(points);
     let lo = Math.min(...values);
     let hi = Math.max(...values);
+    // Keep a minimum 5% vertical span around the range so tiny wiggles on a
+    // large cash balance read as gentle ripples rather than vertical cliffs.
+    const minSpan = Math.max(Math.abs(hi), Math.abs(lo), 1) * 0.05;
+    if (hi - lo < minSpan) {
+      const mid = (lo + hi) / 2;
+      lo = mid - minSpan / 2;
+      hi = mid + minSpan / 2;
+    }
     // Zero, and the warning, are drawn only when the line comes within a
     // fifth of the plot's height of them: room is kept for them then.
     const span = hi - lo || Math.max(Math.abs(hi), 1);
