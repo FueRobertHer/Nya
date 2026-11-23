@@ -6,22 +6,23 @@
 // correction) from the person, and shows when everything is paid off and the
 // interest that costs: avalanche or snowball, beside paying only the minimums.
 //
-// Nothing is saved. What the person types (rates, payments, the extra amount,
-// the order, what is left in or out) is state in this component, which the
-// Dashboard mounts once outside the tabs: it lasts while the app is open,
-// through closing the drawer and switching tabs, and a reload starts again from
-// Plaid's terms. Keeping it in browser storage would be one more place for
-// financial details to outlive a sign-out, to save retyping a rate.
+// Entered rates, monthly payments, extra amount, order and account choices
+// persist to the encrypted debt-payoff value store (/api/debt-payoff) so they
+// survive reloads and are included in Data Export and Your data.
 
-import { useId, useMemo, useState, type PointerEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react';
 import FieldError from './FieldError';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
+import { Notice } from './TotalCaveats';
 import { FALLBACK_WIDTH, useDrawnWidth } from './drawn-width';
 import { keysHelp, useChartKeys } from './chart-keys';
 import { compactMoney, fieldAmount, formatDay, formatInstantDay, formatMoney, hiddenFigure } from '@/lib/format';
 import { localMonth } from '@/lib/local-date';
 import { distinctAccountNames } from '@/lib/account-names';
+import { onBankCash } from '@/lib/balance';
+import { shownName } from '@/lib/merchant-name';
+import type { RecurringSeries } from '@/lib/recurring';
 import { kindWords } from './accounts-format';
 import {
   HORIZON_MONTHS,
@@ -165,20 +166,224 @@ function spotText(s: BlindSpot): string {
   }
 }
 
-/** The drawer, and the state that outlives it. */
+export type SuggestedPayment = { cents: number; from: string; name: string };
+
+const SUBTYPE_HINTS: Record<string, string[]> = {
+  auto: ['auto', 'car', 'vehicle', 'motor', 'toyota', 'honda', 'ford', 'subaru', 'mazda', 'bmw', 'nissan', 'chevy'],
+  mortgage: ['mortgage', 'home loan', 'escrow', 'quicken', 'rocket', 'pennymac', 'mr cooper', 'freedom mortgage'],
+  student: ['student', 'nelnet', 'navient', 'mohela', 'aidvantage', 'sallie', 'edfinancial', 'great lakes'],
+  personal: ['personal', 'sofi', 'lightstream', 'marcus', 'upstart', 'lendingclub'],
+};
+
+const STOP_TOKENS = new Set(['loan', 'bank', 'inc', 'llc', 'the', 'and', 'payment', 'pay', 'from', 'account']);
+
+/** Suggests a detected monthly loan payment from recurring bank-cash bills when
+ *  a non-card loan is missing its monthly payment term. */
+export function suggestedLoanPayment(
+  account: Pick<DebtAccount, 'type' | 'subtype' | 'name' | 'institution' | 'currency'>,
+  series: readonly RecurringSeries[],
+  needingLoans = 1
+): SuggestedPayment | null {
+  if (account.type === 'credit' || series.length === 0) return null;
+  const candidates = series.filter(
+    (s) =>
+      s.kind === 'bill' &&
+      !s.paysCard &&
+      s.cadence === 'monthly' &&
+      s.amount > 0 &&
+      onBankCash(s) &&
+      (!s.currency || !account.currency || s.currency === account.currency)
+  );
+  if (candidates.length === 0) return null;
+  const tokens = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(' ')
+      .filter((t) => t.length >= 3 && !STOP_TOKENS.has(t));
+  const instTokens = tokens(account.institution);
+  const nameTokens = tokens(account.name);
+  const subHints = account.subtype ? (SUBTYPE_HINTS[account.subtype.toLowerCase()] ?? []) : [];
+  const score = (s: RecurringSeries) => {
+    const hay = `${shownName(s)} ${s.name}`.toLowerCase();
+    let pts = 0;
+    for (const t of instTokens) if (hay.includes(t)) pts += 3;
+    for (const t of nameTokens) if (hay.includes(t)) pts += 2;
+    for (const h of subHints) if (hay.includes(h)) pts += 2;
+    if (/\bloan\b|\bmortgage\b|\bauto\b|\bfinance\b/.test(hay)) pts += 1;
+    return pts;
+  };
+  let best: { s: RecurringSeries; pts: number } | null = null;
+  for (const s of candidates) {
+    const pts = score(s);
+    if (pts >= 2 && (!best || pts > best.pts)) best = { s, pts };
+  }
+  if (!best && needingLoans === 1) {
+    const loanLike = candidates.filter((s) => /\bloan\b|\bmortgage\b|\bauto\b|\bstudent\b/.test(`${shownName(s)} ${s.name}`.toLowerCase()));
+    if (loanLike.length === 1) best = { s: loanLike[0], pts: 1 };
+  }
+  if (!best) return null;
+  return {
+    cents: Math.round(best.s.amount * 100),
+    from: best.s.account || best.s.institution,
+    name: shownName(best.s),
+  };
+}
+
+type PersistStatus = 'idle' | 'loading' | 'ready' | 'saving' | 'saved' | 'error' | 'unreadable';
+
+type SaveControls = {
+  status: PersistStatus;
+  error: string | null;
+  dirty: boolean;
+  onSaveNow: () => void;
+};
+
+/** The drawer, persisting inputs to /api/debt-payoff so typed terms survive reloads. */
 export default function DebtPayoff({
   open,
   onClose,
   institutions,
+  series,
+  onPlanChange,
 }: {
   open: boolean;
   onClose: () => void;
   institutions: DebtInstitutionInput[];
+  /** Detected recurring bills, used to suggest missing loan payments. */
+  series?: readonly RecurringSeries[];
+  /** Called once loaded or saved so Budgets > Goals can reflect the summary. */
+  onPlanChange?: (inputs: PayoffInputs) => void;
 }) {
   const [inputs, setInputs] = useState<PayoffInputs>(NO_INPUTS);
+  const [persist, setPersist] = useState<{ status: PersistStatus; error: string | null }>({ status: 'idle', error: null });
+  const [dirty, setDirty] = useState(false);
+  const loadedRef = useRef(false);
+  const inputsRef = useRef(inputs);
+  inputsRef.current = inputs;
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  const persistRef = useRef(persist.status);
+  persistRef.current = persist.status;
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onPlanChangeRef = useRef(onPlanChange);
+  onPlanChangeRef.current = onPlanChange;
+
+  useEffect(() => {
+    if (!open || loadedRef.current) return;
+    loadedRef.current = true;
+    let active = true;
+    setPersist({ status: 'loading', error: null });
+    fetch('/api/debt-payoff')
+      .then(async (res) => {
+        const data = (await res.json().catch(() => null)) as { plan?: Partial<PayoffInputs> | null; error?: string; unreadable?: boolean } | null;
+        if (!active) return;
+        if (res.status === 409 && data?.unreadable) {
+          setPersist({ status: 'unreadable', error: data.error ?? "Your saved debt payoff plan couldn't be read, so changes won't overwrite it." });
+          return;
+        }
+        if (!res.ok) {
+          setPersist({ status: 'error', error: data?.error ?? "Couldn't load your saved debt payoff plan." });
+          return;
+        }
+        if (data?.plan) {
+          const next: PayoffInputs = {
+            typed: data.plan.typed ?? {},
+            leftOut: data.plan.leftOut ?? {},
+            withoutAccrued: data.plan.withoutAccrued ?? {},
+            sharedSplit: data.plan.sharedSplit ?? {},
+            extra: data.plan.extra ?? {},
+            strategy: data.plan.strategy === 'snowball' ? 'snowball' : 'avalanche',
+            currency: data.plan.currency ?? null,
+          };
+          setInputs(next);
+          onPlanChangeRef.current?.(next);
+        }
+        setPersist({ status: 'ready', error: null });
+      })
+      .catch(() => {
+        if (active) setPersist({ status: 'error', error: "Couldn't load your saved debt payoff plan." });
+      });
+    return () => {
+      active = false;
+    };
+  }, [open]);
+
+  const flushSave = useCallback(async (snapshot: PayoffInputs) => {
+    if (persistRef.current === 'unreadable') return;
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setPersist({ status: 'saving', error: null });
+    try {
+      const res = await fetch('/api/debt-payoff', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: snapshot }),
+      });
+      const data = (await res.json().catch(() => null)) as { error?: string; unreadable?: boolean } | null;
+      if (res.status === 409 && data?.unreadable) {
+        setPersist({ status: 'unreadable', error: data.error ?? "Your saved debt payoff plan couldn't be read." });
+        return;
+      }
+      if (!res.ok) {
+        setPersist({ status: 'error', error: data?.error ?? "Couldn't save your debt payoff plan." });
+        return;
+      }
+      setDirty(false);
+      setPersist({ status: 'saved', error: null });
+      onPlanChangeRef.current?.(snapshot);
+    } catch {
+      setPersist({ status: 'error', error: "Couldn't save your debt payoff plan." });
+    }
+  }, []);
+
+  const handleChange = useCallback(
+    (update: (prev: PayoffInputs) => PayoffInputs) => {
+      setInputs((prev) => {
+        const next = update(prev);
+        inputsRef.current = next;
+        onPlanChangeRef.current?.(next);
+        if (persistRef.current !== 'unreadable') {
+          setDirty(true);
+          if (timerRef.current) clearTimeout(timerRef.current);
+          timerRef.current = setTimeout(() => {
+            void flushSave(inputsRef.current);
+          }, 700);
+        }
+        return next;
+      });
+    },
+    [flushSave]
+  );
+
+  useEffect(
+    () => () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    },
+    []
+  );
+
+  const handleClose = () => {
+    if (dirtyRef.current && persistRef.current !== 'unreadable') void flushSave(inputsRef.current);
+    onClose();
+  };
+
   return (
-    <Sheet open={open} title="Payoff plan" onClose={onClose}>
-      <PayoffPanel institutions={institutions} inputs={inputs} onChange={setInputs} />
+    <Sheet open={open} title="Payoff plan" onClose={handleClose}>
+      <PayoffPanel
+        institutions={institutions}
+        inputs={inputs}
+        onChange={handleChange}
+        series={series}
+        saveControls={{
+          status: persist.status,
+          error: persist.error,
+          dirty,
+          onSaveNow: () => void flushSave(inputsRef.current),
+        }}
+      />
     </Sheet>
   );
 }
@@ -188,12 +393,18 @@ export function PayoffPanel({
   inputs,
   onChange,
   startMonth,
+  series,
+  saveControls,
 }: {
   institutions: DebtInstitutionInput[];
   inputs: PayoffInputs;
   onChange: (update: (prev: PayoffInputs) => PayoffInputs) => void;
   /** This month (YYYY-MM): the plan's first payment is a month on. Tests pin it. */
   startMonth?: string;
+  /** Detected recurring bills, used to suggest missing loan payments. */
+  series?: readonly RecurringSeries[];
+  /** Persistence status and manual Save trigger when hosted inside DebtPayoff. */
+  saveControls?: SaveControls;
 }) {
   const start = startMonth ?? localMonth();
   const extraError = useId();
@@ -215,12 +426,14 @@ export function PayoffPanel({
   );
   const extraText = inputs.extra[key] ?? '';
   const extra = parseCents(extraText);
+  // Compute a plan whenever at least one debt has complete terms, even if
+  // other debts are still waiting on terms (listed clearly as not included).
   const comparison = useMemo(
     () =>
-      waiting === 0 && debts.length > 0 && extra !== 'invalid'
+      debts.length > 0 && extra !== 'invalid'
         ? comparePlans(debts, { startMonth: start, extraCents: extra ?? 0 })
         : null,
-    [debts, waiting, extra, start]
+    [debts, extra, start]
   );
 
   const spotNote = spots.length > 0 && (
@@ -262,6 +475,7 @@ export function PayoffPanel({
   const noBalance = rows.filter((r) => r.status === 'no-balance').length;
   const paidInFull = rows.filter((r) => r.status === 'paid-in-full').length;
   const outside = rows.filter((r) => r.status === 'left-out' || r.status === 'paid-in-full').length;
+  const needingLoans = rows.filter((r) => r.status === 'needs-terms' && r.account.type !== 'credit' && r.minimum.value === null).length;
 
   let summary: ReactNode;
   if (owing.length === 0) {
@@ -274,7 +488,7 @@ export function PayoffPanel({
             : `${noBalance} of these reported no balance and the rest owe nothing, so there's nothing to plan.`}
       </p>
     );
-  } else if (waiting > 0) {
+  } else if (debts.length === 0 && waiting > 0) {
     summary = <Waiting rows={rows} waiting={waiting} money={money} accountName={accountName} />;
   } else if (debts.length === 0) {
     summary = (
@@ -287,24 +501,28 @@ export function PayoffPanel({
   } else if (!comparison) {
     summary = <div className="stale-note">Enter an extra amount of 0 or more to see the plan.</div>;
   } else {
-    // "Debt-free" only when nothing owed may be outside this plan: left out,
-    // with no balance reported, in another currency, or at an institution the
-    // plan can't see.
+    // "Debt-free" only when nothing owed may be outside this plan: waiting on
+    // terms, left out, with no balance reported, in another currency, or at an
+    // institution the plan can't see.
     const complete =
-      outside === 0 && noBalance === 0 && groups.length === 1 && !spots.some((s) => s.kind !== 'dated');
+      waiting === 0 && outside === 0 && noBalance === 0 && groups.length === 1 && !spots.some((s) => s.kind !== 'dated');
     summary = (
-      <PlanSummary
-        comparison={comparison}
-        strategy={inputs.strategy}
-        money={money}
-        nameOf={nameOf}
-        complete={complete}
-        outside={outside}
-        noBalance={noBalance}
-        only={groups.length > 1 ? currency ?? 'Other' : null}
-        extraCents={typeof extra === 'number' ? extra : 0}
-        interestNowCents={debts.reduce((sum, d) => sum + firstInterestCents(d), 0)}
-      />
+      <>
+        <PlanSummary
+          comparison={comparison}
+          strategy={inputs.strategy}
+          money={money}
+          nameOf={nameOf}
+          complete={complete}
+          waiting={waiting}
+          outside={outside}
+          noBalance={noBalance}
+          only={groups.length > 1 ? currency ?? 'Other' : null}
+          extraCents={typeof extra === 'number' ? extra : 0}
+          interestNowCents={debts.reduce((sum, d) => sum + firstInterestCents(d), 0)}
+        />
+        {waiting > 0 && <Waiting rows={rows} waiting={waiting} partial money={money} accountName={accountName} />}
+      </>
     );
   }
 
@@ -436,6 +654,7 @@ export function PayoffPanel({
             row={row}
             typed={inputs.typed[row.account.id] ?? {}}
             money={money}
+            suggested={series ? suggestedLoanPayment(row.account, series, needingLoans) : null}
             onTerm={(field, value) => setTerm(row.account.id, field, value)}
             onLeftOut={(out) => setLeftOut(row.account.id, out)}
             onAccrued={(without) => setWithoutAccrued(row.account.id, without)}
@@ -444,11 +663,33 @@ export function PayoffPanel({
         ))}
       </section>
 
+      {saveControls && (
+        <section className="panel-section">
+          {saveControls.error && <Notice level="caution">{saveControls.error}</Notice>}
+          {saveControls.status === 'saved' && !saveControls.dirty && <Notice level="done">Saved to your account.</Notice>}
+          {saveControls.status !== 'unreadable' && (saveControls.dirty || saveControls.status === 'saving' || saveControls.status === 'error') && (
+            <div className="btn-row">
+              <button
+                type="button"
+                className="btn secondary"
+                onClick={saveControls.onSaveNow}
+                disabled={saveControls.status === 'saving'}
+              >
+                {saveControls.status === 'saving' ? 'Saving…' : 'Save plan'}
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
       <p className="panel-note">
         Interest is worked out monthly, at the APR / 12, rounded to the cent. Card issuers charge it daily, so
         real interest on a card runs a little higher. Payments stay at today&apos;s amounts, nothing new is
         charged, fees aren&apos;t included, and a promotional rate is taken as lasting, since when it ends
-        isn&apos;t known. Nothing typed here is saved: it lasts until the app is reloaded.
+        isn&apos;t known.{' '}
+        {saveControls
+          ? 'Rates, payments and choices you enter here are saved to your account.'
+          : 'Nothing typed here is saved: it lasts until the app is reloaded.'}
       </p>
     </>
   );
@@ -475,10 +716,22 @@ function holdReason(a: DebtAccount, money: (cents: number) => string): string | 
 }
 
 /** The plan is waiting on terms: how many, and the debts held for a reason. */
-function Waiting({ rows, waiting, money, accountName }: { rows: PlanRow[]; waiting: number; money: (cents: number) => string; accountName: (a: DebtAccount) => string }) {
-  const held = rows.filter(
-    (r) => r.status === 'needs-terms' && r.minimum.value === null && !r.minimum.error && r.account.minimumHold
-  );
+function Waiting({
+  rows,
+  waiting,
+  partial = false,
+  money,
+  accountName,
+}: {
+  rows: PlanRow[];
+  waiting: number;
+  /** True when other debts already have complete terms and are planned above. */
+  partial?: boolean;
+  money: (cents: number) => string;
+  accountName: (a: DebtAccount) => string;
+}) {
+  const missing = rows.filter((r) => r.status === 'needs-terms');
+  const held = missing.filter((r) => r.minimum.value === null && !r.minimum.error && r.account.minimumHold);
   // One line per debt, but one per group for a shared minimum: the question
   // is the group's, and asking it once per loan would only repeat it.
   const lines = new Map<string, string>();
@@ -489,11 +742,13 @@ function Waiting({ rows, waiting, money, accountName }: { rows: PlanRow[]; waiti
       : accountName(r.account);
     lines.set(s ? s.group : r.account.id, `${names}: ${holdReason(r.account, money)}`);
   }
+  const missingNames = listNames(missing.map((r) => accountName(r.account)));
   return (
     <div className="stale-note payoff-notes">
       <p>
-        Add the missing rate or payment for {waiting === 1 ? '1 debt' : `${waiting} debts`} below, or leave{' '}
-        {plural(waiting, 'it', 'them')} out, to see the plan.
+        {partial
+          ? `Not included until rate and payment are added: ${missingNames}. Add the missing terms below, or leave ${plural(waiting, 'it', 'them')} out.`
+          : `Add the missing rate or payment for ${waiting === 1 ? '1 debt' : `${waiting} debts`} below, or leave ${plural(waiting, 'it', 'them')} out, to see the plan.`}
       </p>
       {[...lines].map(([key, line]) => (
         <p key={key}>
@@ -518,6 +773,7 @@ function PlanSummary({
   money,
   nameOf,
   complete,
+  waiting = 0,
   outside,
   noBalance,
   only,
@@ -530,6 +786,8 @@ function PlanSummary({
   nameOf: (id: string) => string;
   /** Nothing owed is outside this plan, so it can say "Debt-free". */
   complete: boolean;
+  /** Debts still needing a rate or payment, excluded from the partial plan. */
+  waiting?: number;
   /** Debts left out of the plan (by the person, or paid in full). */
   outside: number;
   /** Cards and loans with no balance reported, which may owe something. */
@@ -585,6 +843,7 @@ function PlanSummary({
   }
 
   const notes = [
+    waiting > 0 ? `${waiting} needing terms` : null,
     outside > 0 ? `${outside} left out` : null,
     noBalance > 0 ? `${noBalance} with no balance reported` : null,
     only ? `${only} only` : null,
@@ -741,6 +1000,7 @@ function DebtRow({
   row,
   typed,
   money,
+  suggested = null,
   onTerm,
   onLeftOut,
   onAccrued,
@@ -750,6 +1010,8 @@ function DebtRow({
   /** What was typed for it, as typed (undefined fields are untouched). */
   typed: TypedTerms;
   money: (cents: number) => string;
+  /** Detected recurring loan payment from bank cash, when available. */
+  suggested?: SuggestedPayment | null;
   onTerm: (field: keyof TypedTerms, value: string | undefined) => void;
   /** true leaves it out, false puts it in, undefined goes back to the default. */
   onLeftOut: (out: boolean | undefined) => void;
@@ -890,7 +1152,7 @@ function DebtRow({
               min={0}
               max={MAX_APR}
               step="any"
-              placeholder="e.g. 24.99"
+              placeholder={card ? 'e.g. 24.99' : 'e.g. 6.50'}
               value={aprText}
               onChange={(e) => onTerm('apr', e.target.value)}
             />
@@ -928,6 +1190,18 @@ function DebtRow({
             restore={fallback !== null ? `Use ${row.shared === 'split' ? 'the shared split' : "Plaid's"} ${money(fallback)}` : null}
             onRestore={() => onTerm('minimum', undefined)}
           />
+          {minimumNeeded && suggested && (
+            <div className="payoff-source">
+              <Masked>{`Detected ${money(suggested.cents)}/mo${suggested.from ? ` from ${suggested.from}` : ''}`}</Masked>
+              <button
+                type="button"
+                className="btn ghost payoff-choice-btn"
+                onClick={() => onTerm('minimum', cents(suggested.cents))}
+              >
+                Use <Masked>{money(suggested.cents)}</Masked>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 

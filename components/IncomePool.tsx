@@ -24,7 +24,21 @@ import { chevron, RIGHT } from './ActivityBar';
 const POOL_TITLE = 'budgets-pool-title';
 
 /** "Available to allocate", with the pool's history. */
-export function IncomePoolHeader({ pool, currency, month, today }: { pool: IncomePool; currency: string | null; month: string; today: string }) {
+export function IncomePoolHeader({
+  pool,
+  currency,
+  month,
+  today,
+  coveredByNotice = false,
+}: {
+  pool: IncomePool;
+  currency: string | null;
+  month: string;
+  today: string;
+  /** When the segment's top notice already explains every incomplete month in
+   *  pool.uncertain, show a compact badge instead of repeating the caution box. */
+  coveredByNotice?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const money = (n: number) => formatMoney(n, currency);
   const name = (m: string) => monthName(m, today);
@@ -56,11 +70,16 @@ export function IncomePoolHeader({ pool, currency, month, today }: { pool: Incom
         <Masked>{month === pool.from ? 'Nothing carried in' : `${money(pool.carried_in)} left from ${last}`}</Masked>, plus <Masked>{money(pool.income)}</Masked> income
         {running ? ' so far' : ''}, less <Masked>{money(pool.spending)}</Masked> spent
       </p>
-      {pool.uncertain.length > 0 && (
-        <Notice level="caution">
-          May be off: {monthsText(pool.uncertain, today)} {pool.uncertain.length === 1 ? 'is' : 'are'} incomplete.
-        </Notice>
-      )}
+      {pool.uncertain.length > 0 &&
+        (coveredByNotice ? (
+          <div>
+            <span className="badge warn">May be off</span>
+          </div>
+        ) : (
+          <Notice level="caution">
+            May be off: {monthsText(pool.uncertain, today)} {pool.uncertain.length === 1 ? 'is' : 'are'} incomplete.
+          </Notice>
+        ))}
       {pool.clamped && (
         <p className="helper">
           Counting from {name(pool.from)}, the first month with transactions (it was set to start in {name(pool.start)}).

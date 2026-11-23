@@ -55,7 +55,7 @@
 // have happened yet.
 
 import { type Cadence, type RecurringSeries, expectedDates, addDays, dayNumber } from './recurring';
-import { plannedDates, type PlannedCadence, type PlannedItem } from './planned';
+import { nextPlannedDate, plannedDates, type PlannedCadence, type PlannedItem } from './planned';
 import { inCurrency, isMoneyMovement, leftOutText, type LeftOut } from './spending';
 import { dominantCurrency, formatMoney } from './format';
 import { minorDigits } from './manual-txn-input';
@@ -260,17 +260,36 @@ export function minorScale(currency: string | null): number {
 
 const toMinor = (n: number, scale: number) => Math.round(n * scale);
 
+/** A non-hidden cash account eligible for the forecast's scope selector. */
+export type CashAccountChoice = {
+  account_id: string;
+  name: string;
+  institution: string;
+  subtype: string | null;
+};
+
+/** Every non-hidden cash account eligible for the forecast. */
+export function cashAccountsOf(institutions: readonly ForecastInstitution[]): CashAccountChoice[] {
+  return institutions.flatMap((i) =>
+    i.accounts
+      .filter((a) => isBankCash(a) && !a.hidden)
+      .map((a) => ({ account_id: a.account_id, name: a.name, institution: i.institution_name, subtype: a.subtype ?? null }))
+  );
+}
+
 /** Where a forecast starts: the cash accounts, their currency and balance,
  *  less the charges pending on them (see the header). `fx` and `today`: with
  *  a home currency, what converts an account in another currency, and the
- *  viewer's day. */
+ *  viewer's day. `accountIds`: restrict to a chosen subset of cash accounts. */
 export function cashPosition(
   institutions: readonly ForecastInstitution[],
   txns: readonly PendingRow[] = [],
-  opts: { fx?: FxTable | null; today?: string } = {}
+  opts: { fx?: FxTable | null; today?: string; accountIds?: ReadonlySet<string> | null } = {}
 ): CashPosition {
   const cash = institutions.flatMap((i) =>
-    i.accounts.filter((a) => isBankCash(a) && !a.hidden).map((a) => ({ a, institution: i.institution_name, manual: !!i.manual && !i.connector }))
+    i.accounts
+      .filter((a) => isBankCash(a) && !a.hidden && (!opts.accountIds || opts.accountIds.has(a.account_id)))
+      .map((a) => ({ a, institution: i.institution_name, manual: !!i.manual && !i.connector }))
   );
   const currency = dominantCurrency(cash.map(({ a }) => ({ iso_currency_code: a.currency })));
   const scale = minorScale(currency);
@@ -427,6 +446,8 @@ export function forecastEvents(opts: {
   series: readonly RecurringSeries[];
   planned: readonly PlannedItem[];
   dismissed?: ReadonlySet<string>;
+  /** When set, include only recurring series on these `${institution}|${account}` keys. */
+  accounts?: ReadonlySet<string> | null;
   currency: string | null;
   today: string;
   until: string;
@@ -448,6 +469,7 @@ export function forecastEvents(opts: {
 
   for (const s of opts.series) {
     if (opts.dismissed?.has(s.id)) continue;
+    if (opts.accounts && !opts.accounts.has(`${s.institution}|${s.account}`)) continue;
     const { status, dates } = expectedDates(s, today, until);
     if (s.accountType === null) {
       if (status !== 'ended' && s.agreement !== 'varies') named.unplaced.push(s);
@@ -593,6 +615,33 @@ export function buildForecast(
  *  `date`. */
 export function withPurchase(events: readonly ForecastEvent[], purchase: { amount: number; date: string }): ForecastEvent[] {
   return [...events, { date: purchase.date, amount: -Math.abs(purchase.amount), name: 'What if', source: 'what-if', ref: 'what-if' }];
+}
+
+/** Whether a planned item likely duplicates a non-dismissed recurring series:
+ *  same direction (income vs expense), compatible currency, amount within 5%,
+ *  and an expected date within 5 days of the planned item's next date. */
+export function matchingRecurring(
+  item: PlannedItem,
+  series: readonly RecurringSeries[],
+  dismissed: ReadonlySet<string>,
+  today: string
+): RecurringSeries | null {
+  const next = nextPlannedDate(item, today);
+  if (!next || item.amount <= 0) return null;
+  const targetDay = dayNumber(next);
+  const until = addDays(next, 5);
+  for (const s of series) {
+    if (dismissed.has(s.id)) continue;
+    if ((item.kind === 'income') !== (s.kind === 'income')) continue;
+    if (s.currency && item.currency && s.currency !== item.currency) continue;
+    if (s.amount <= 0) continue;
+    const diff = Math.abs(item.amount - s.amount);
+    if (diff > Math.max(item.amount, s.amount) * 0.05) continue;
+    if (Math.abs(dayNumber(s.nextDate) - targetDay) <= 5) return s;
+    const { dates } = expectedDates(s, today, until);
+    if (dates.some((d) => Math.abs(dayNumber(d.date) - targetDay) <= 5)) return s;
+  }
+  return null;
 }
 
 /** How the notes name a day: a recovered balance's snapshot day (with the

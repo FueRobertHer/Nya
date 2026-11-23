@@ -28,6 +28,7 @@ import './budget-store';
 import './category-store';
 import './connection-records';
 import './connectors/store';
+import './debt-payoff-store';
 import './demo-seed/store';
 import './flag-store';
 import './fx/ecb-store';

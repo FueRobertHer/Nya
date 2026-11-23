@@ -95,6 +95,7 @@ const GROUPS: readonly (readonly [words: string, families: readonly string[]])[]
   ['months you imported for investment accounts', ['investment-months']],
   ['transactions you imported for investment accounts', ['investment-imports']],
   ['planned bills and income', ['planned-items']],
+  ['your debt payoff plan', ['debt-payoff']],
   ['runway scenarios you saved', ['runway-scenarios']],
   ['copies of your plan', ['fire-plans']],
   ['the plan you saved as your plan', ['fire-plan-saved']],

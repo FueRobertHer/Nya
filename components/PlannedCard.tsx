@@ -38,6 +38,11 @@ import {
   type PlannedItem,
   type PlannedKind,
 } from '@/lib/planned';
+import { matchingRecurring } from '@/lib/forecast';
+import type { RecurringSeries } from '@/lib/recurring';
+
+const NO_SERIES: RecurringSeries[] = [];
+const NO_DISMISSED: ReadonlySet<string> = new Set();
 
 /** A day mid sentence: "today", "Oct 5", "Oct 5, 2025", on the card's own today. */
 function fmtDay(iso: string, today: string): string {
@@ -70,6 +75,8 @@ export default function PlannedCard({
   onSave,
   today,
   currency,
+  series = NO_SERIES,
+  dismissed = NO_DISMISSED,
   edit,
   adding = false,
 }: {
@@ -90,6 +97,9 @@ export default function PlannedCard({
   today: string;
   /** A new item's currency to start with: the forecast's. */
   currency: string | null;
+  /** Detected recurring bills and income, used to flag likely forecast duplicates. */
+  series?: readonly RecurringSeries[];
+  dismissed?: ReadonlySet<string>;
   /** An item whose sheet is open at first, by id. */
   edit?: string;
   /** Add a planned item's sheet open at first. */
@@ -245,13 +255,29 @@ export default function PlannedCard({
           ) : (
             <ul className="list-rows planned-rows">
               {items.map(({ item, next }) => {
+                const dup = series.length > 0 ? matchingRecurring(item, series, dismissed, today) : null;
                 const body = (
                   <>
                     <span className="list-row-text">
-                      <span className="list-row-title">{item.name}</span>
+                      <span className="list-row-title">
+                        {item.name}
+                        {dup && (
+                          <>
+                            {' '}
+                            <span className="badge warn">May count twice</span>
+                          </>
+                        )}
+                      </span>
                       <span className="list-row-sub">
                         {plannedCadenceLabel(item.cadence)} · {next ? `next ${fmtDay(next, today)}` : `was ${fmtDay(item.date, today)}`}
                       </span>
+                      {dup && (
+                        <span className="list-row-sub">
+                          {item.kind === 'income'
+                            ? 'Matches recurring income; may count twice in the forecast'
+                            : 'Matches a recurring bill; may count twice in the forecast'}
+                        </span>
+                      )}
                     </span>
                     <span className={`list-row-value money planned-amount${item.kind === 'income' ? ' inflow' : ''}`}>
                       <Masked>{`${item.kind === 'income' ? '+' : MINUS}${formatMoney(item.amount, item.currency)}`}</Masked>

@@ -635,6 +635,7 @@ export default function Dashboard({
   const [detailsFor, setDetailsFor] = useState<string | null>(null);
   // The debt payoff planner, opened from Budgets > Goals (components/DebtPayoff.tsx).
   const [payoffOpen, setPayoffOpen] = useState(false);
+  const [payoffPlan, setPayoffPlan] = useState<import('./DebtPayoff').PayoffInputs | null>(null);
   const closePayoff = useCallback(() => setPayoffOpen(false), []);
   const [disconnectTarget, setDisconnectTarget] = useState<Institution | null>(null);
   // What the SimpleFIN drawer is asked to do (components/Connectors.tsx).
@@ -2832,6 +2833,7 @@ export default function Dashboard({
                   // Whenever there is a card or loan on screen to plan: hidden
                   // accounts left out, as everywhere the accounts are listed.
                   onPayoff={allAccounts.some((a) => isOwedType(a.type)) ? () => setPayoffOpen(true) : undefined}
+                  payoffPlan={payoffPlan}
                 />
               )}
 
@@ -2865,8 +2867,8 @@ export default function Dashboard({
         {/* At the foot of every tab: how the data is protected, and who can read it. */}
         <TrustLinks />
       </main>
-      {/* Mounted outside the tabs so what was typed into it lasts until a reload. */}
-      <DebtPayoff open={payoffOpen} onClose={closePayoff} institutions={institutions} />
+      {/* Mounted outside the tabs so what was typed into it lasts across tab switches and persists via /api/debt-payoff. */}
+      <DebtPayoff open={payoffOpen} onClose={closePayoff} institutions={institutions} series={recurring ?? undefined} onPlanChange={setPayoffPlan} />
       {/* The offer, from its row in Needs attention: a choice closes it and
           opens the sheet that confirms one, never one over the other. */}
       <CurrencyOfferSheet

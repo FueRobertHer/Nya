@@ -79,7 +79,7 @@ function Meter({ spent, limit }: { spent: number; limit: number }) {
   const ratio = limit > 0 ? spent / limit : spent > 0 || limit < 0 ? 1 : 0;
   return (
     <span className={`meter-track${meterState(ratio)}`} role="meter" aria-label="Spent of the budget" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(Math.min(ratio * 100, 100))}>
-      <span className={`meter-fill${meterState(ratio)}`} style={{ width: `${Math.min(ratio * 100, 100)}%` }} />
+      <span className={`meter-fill${meterState(ratio)}${ratio <= 0 ? ' empty' : ''}`} style={{ width: `${Math.min(ratio * 100, 100)}%` }} />
     </span>
   );
 }
@@ -439,6 +439,11 @@ export default function BudgetsCard({
             const expanded = open.has(m.group.id);
             const groupTarget: Target = { kind: 'group', id: m.group.id };
             const own = budgets.groups[m.group.id]?.amount ?? null;
+            const budgetedCats = m.categories.filter((c) => c.budget !== null).length;
+            const partialCoverage =
+              own === null && budgetedCats > 0 && budgetedCats < m.categories.length
+                ? `${budgetedCats} of ${m.categories.length} categories budgeted`
+                : null;
             const listId = `${uid}-${m.group.id}`;
             // Opened, its budgets say their own carry.
             const groupCarry = !expanded ? carryLine(groupTarget) : null;
@@ -463,8 +468,10 @@ export default function BudgetsCard({
                       {!noSpending && isOver(m.spent, m.limit) && OVER}
                     </span>
                     {!noSpending && <Meter spent={m.spent} limit={m.limit} />}
-                    {(groupCarry || m.reconcile) && (
+                    {(partialCoverage || groupCarry || m.reconcile) && (
                       <span className="list-row-sub">
+                        {partialCoverage}
+                        {partialCoverage && (groupCarry || m.reconcile) && ' · '}
                         {groupCarry}
                         {groupCarry && m.reconcile && ' '}
                         {m.reconcile && <span className="badge">{m.reconcile.binds === 'group' ? 'Capped by the group’s budget' : 'Limited to its categories’ budgets'}</span>}

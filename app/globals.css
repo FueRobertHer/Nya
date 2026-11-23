@@ -9368,6 +9368,11 @@ button.receipts-item {
   text-decoration: none;
 }
 
+/* Phase 5: omit 2px sliver on 0% budget meters */
+.meter-fill.empty {
+  min-width: 0;
+}
+
 /* --- stack: spacing set by the container, not by each child ---
    Children of a stack carry no block margins of their own; the gap spaces
    them. Use it instead of style={{ marginTop }} on notes, labels and buttons

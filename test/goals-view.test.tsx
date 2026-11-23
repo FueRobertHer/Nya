@@ -77,7 +77,7 @@ describe('the card', () => {
 
   test('a goal on a monthly target is projected at it, labelled; one paced by contributions waits for them', () => {
     const t = text(card([goal('Trip', 'sav', 12_000, { monthly_target: 500 }), goal('Car', 'yen', 200_000)]));
-    expect(t).toContain('On track for');
+    expect(t).toContain('At this pace, reached in');
     expect(t).toContain('at your $500.00 monthly target');
     expect(t).not.toContain('No history to go by');
   });
@@ -98,6 +98,13 @@ describe('the card', () => {
     expect(t).toContain('owed, not saved');
     expect(t).not.toContain('$1,200.00 of');
     expect(t).toContain('No balance is known for its account yet');
+  });
+
+  test('an unlinked goal surfaces its saved monthly target and target date alongside No account linked', () => {
+    const t = text(card([goal('Japan trip', null, 6_000, { monthly_target: 300, target_date: '2027-06-01' })]));
+    expect(t).toContain('No account linked');
+    expect(t).toContain('Target $300.00/mo');
+    expect(t).toContain('By Jun 1, 2027');
   });
 
   test('an account that ended: the goal says so with its day, and its balance is no one’s (#50)', () => {

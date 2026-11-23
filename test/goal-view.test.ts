@@ -146,7 +146,7 @@ describe('a goal without an allocation, as before', () => {
     expect(v).toMatchObject({ state: 'tracked', saved: 10_000, currency: 'USD', sharing: [], shouldHave: null });
     // 5000.00 / 298.45 = 16.75, so seventeen months: March 2028.
     expect(v.projection).toMatchObject({ status: 'on_track', rate: 298.45, completion: '2028-03' });
-    expect(outlookText(v, nameOf)).toBe('On track for March 2028');
+    expect(outlookText(v, nameOf)).toBe('At this pace, reached in March 2028');
     expect(paceText(v)).toBe('$298.45 a month went into Savings on average over the last 3 months, plus $3.81 of interest and dividends, not counted');
     expect(meterLabel(v)).toBe('$10,000.00 of $15,000.00 saved, 66%.');
   });
@@ -244,7 +244,7 @@ describe('the outlook in words', () => {
     const withTarget = viewsOf([goal('jar', 'manual_jar', 1000, { monthly_target: 50 })]).views.get('jar')!;
     expect(withTarget.currency).toBe('USD');
     // 659.75 / 50 = 13.2, so fourteen months: December 2027.
-    expect(outlookText(withTarget, nameOf)).toBe('On track for December 2027 at your $50.00 monthly target');
+    expect(outlookText(withTarget, nameOf)).toBe('At this pace, reached in December 2027 at your $50.00 monthly target');
     const without = viewsOf([goal('jar', 'manual_jar', 1000)]).views.get('jar')!;
     expect(outlookText(without, nameOf)).toBe('No history to go by yet: set a monthly target to see when it will be reached');
   });
