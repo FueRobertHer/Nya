@@ -178,8 +178,13 @@ export function earlyRetiree(today: string): DemoProfile {
         threshold: 3_000,
       },
       runway: [{ name: 'If the market drops and I stop drawing', months: 12, lower_by: 500, income_until: today, planned: true, leave_out_one_offs: false }],
-      // Typed as of three months back: more taken out than put in.
-      moneyInOut: [{ mask: '6604', in: 402_000, out: 436_500, as_of: lastDay(months[8]) }],
+      // Typed as of three months back: more taken out than put in; and the two
+      // buy-and-hold IRAs confirmed with no deposits or withdrawals over the year.
+      moneyInOut: [
+        { mask: '6604', in: 402_000, out: 436_500, as_of: lastDay(months[8]) },
+        { mask: '6611', in: 0, out: 0, as_of: addDays(today, -365), no_activity: true },
+        { mask: '6612', in: 0, out: 0, as_of: addDays(today, -365), no_activity: true },
+      ],
       allocation: { target: { 'us-stocks': 60, 'intl-stocks': 15, bonds: 25 } },
       plan: {
         items: [planItem({ id: 'consulting', label: 'Consulting', kind: 'part-time', from: atAge(47), until: { years: 6 }, yearly: 14_000, replaces: 0 })],

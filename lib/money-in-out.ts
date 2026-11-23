@@ -35,12 +35,15 @@ export type MoneyInOut = {
   /** When they were saved (an ISO time): of two entries on one account, the
    *  newest wins after its current id's own. */
   set_at: string;
+  /** True when the user only confirmed "no deposits or withdrawals since as_of"
+   *  for a quiet account with no Plaid transactions (all-time totals stay unknown). */
+  no_activity?: boolean;
 };
 
 /** The earliest day the totals may be for: nothing in Nya is older. */
 export const FIRST_AS_OF = '1970-01-01';
 const CURRENCY = /^[A-Za-z0-9]{2,12}$/;
-const KEYS = ['in', 'out', 'as_of', 'currency', 'set_at'];
+const KEYS = ['in', 'out', 'as_of', 'currency', 'set_at', 'no_activity'];
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -61,7 +64,8 @@ export function isMoneyInOut(v: unknown): v is MoneyInOut {
     (v.currency === null || (typeof v.currency === 'string' && CURRENCY.test(v.currency))) &&
     typeof v.set_at === 'string' &&
     v.set_at.length <= 64 &&
-    Number.isFinite(Date.parse(v.set_at))
+    Number.isFinite(Date.parse(v.set_at)) &&
+    (v.no_activity === undefined || v.no_activity === true)
   );
 }
 
@@ -74,7 +78,7 @@ export function latestAsOf(now: number = Date.now()): string {
 const ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 
 export type MoneyInOutChange =
-  | { kind: 'set'; account_id: string; in: number; out: number; as_of: string; currency: string | null }
+  | { kind: 'set'; account_id: string; in: number; out: number; as_of: string; currency: string | null; no_activity?: boolean }
   | { kind: 'clear'; account_id: string };
 
 /**
@@ -94,15 +98,25 @@ export function parseMoneyInOutChange(body: unknown, now: number = Date.now()): 
     if (body.clear !== true || Object.keys(body).some((k) => k !== 'account_id' && k !== 'clear')) return 'Clearing takes the account alone';
     return { kind: 'clear', account_id };
   }
-  const extra = Object.keys(body).find((k) => !['account_id', 'in', 'out', 'as_of', 'currency'].includes(k));
+  const extra = Object.keys(body).find((k) => !['account_id', 'in', 'out', 'as_of', 'currency', 'no_activity'].includes(k));
   if (extra) return `${extra.slice(0, 40)} isn’t part of deposits and withdrawals`;
+  if (body.no_activity !== undefined && body.no_activity !== true) return 'no_activity must be true';
   if (!isTotal(body.in)) return 'Deposits must be an amount, $0.00 or more';
   if (!isTotal(body.out)) return 'Withdrawals must be an amount, $0.00 or more';
+  if (body.no_activity && (body.in !== 0 || body.out !== 0)) return 'Confirming no activity takes $0.00 in and out';
   if (!isCalendarDay(body.as_of) || body.as_of < FIRST_AS_OF) return 'The day is a date, YYYY-MM-DD, from 1970 on';
   if (body.as_of > latestAsOf(now)) return 'The day can’t be in the future';
   const currency = body.currency ?? null;
   if (currency !== null && (typeof currency !== 'string' || !CURRENCY.test(currency))) return 'Invalid currency';
-  return { kind: 'set', account_id, in: round2(body.in), out: round2(body.out), as_of: body.as_of, currency };
+  return {
+    kind: 'set',
+    account_id,
+    in: round2(body.in),
+    out: round2(body.out),
+    as_of: body.as_of,
+    currency,
+    ...(body.no_activity ? { no_activity: true } : {}),
+  };
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;

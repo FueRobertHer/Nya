@@ -1078,8 +1078,9 @@ describe('what a seed sets up', () => {
     expect(saved).toBeCloseTo(rows.filter((t) => t.subtype === 'contribution').length * 583, 2);
   });
 
-  test('the months meet the recorded year at its balance less what came in since the month began, that day’s too', () => {
-    // A year back on the 16th is a deposit day, which the recorded balance holds.
+  test('the months meet the recorded year at its balance less what came in before its first day', () => {
+    // A year back on the 16th is a deposit day; the 13:00 UTC snapshot on that
+    // day holds only flows dated before it, matching lib/growth.ts.
     for (const today of [TODAY, '2026-11-16', '2027-01-16']) {
       const profile = scenarioById('vanguard-history')!.build(today);
       const a = profile.institutions.flatMap((i) => i.accounts).find((x) => x.mask === '7788')!;
@@ -1090,9 +1091,27 @@ describe('what a seed sets up', () => {
       const first = addDays(today, -RECORDED_DAYS);
       const joinAt = made.months.filter((m) => `${nextMonth(m.month)}-01` < first).length - 1;
       const began = `${nextMonth(made.months[joinAt].month)}-01`;
-      const since = a.investment_transactions!.filter((t) => t.type === 'cash' && t.date >= began && t.date <= first).reduce((n, t) => n + (t.quantity < 0 ? t.price : -t.price), 0);
+      const since = a.investment_transactions!.filter((t) => t.type === 'cash' && t.date >= began && t.date < first).reduce((n, t) => n + (t.quantity < 0 ? t.price : -t.price), 0);
       expect(made.months[joinAt].end).toBeCloseTo(byDay.get(first)! - since, 2);
     }
+  });
+
+  test('lump-sum Jan 5 Roth contributions do not produce negative YTD returns, and early retiree confirms quiet IRAs', async () => {
+    const { rangeSplit } = await import('@/lib/growth');
+    const sam = demoProfile('Sam', TODAY);
+    const ids = new Map(sam.institutions.flatMap((i) => i.accounts.map((x) => [x.mask, x.mask] as const)));
+    const measured = sam.institutions.flatMap((i) => i.accounts.map((x) => ({ account_id: x.mask, type: x.type, balance: x.balance })));
+    const days = recordedYear(sam, TODAY, measured, ids, new Map());
+    for (const mask of ['7741', '7742']) {
+      const a = sam.institutions.flatMap((i) => i.accounts).find((x) => x.mask === mask)!;
+      const flows = flowsOf(a);
+      const pts = [...days.map((d) => ({ date: d.date, value: d.accounts[mask] })), { date: TODAY, value: a.balance }].filter((p) => p.date >= '2026-01-01');
+      const split = rangeSplit(pts, flows, flows[0].date, TODAY);
+      expect(split).not.toBeNull();
+      expect(split!.growth).toBeGreaterThan(0);
+    }
+    const riley = scenarioById('early-retiree')!.build(TODAY);
+    expect(riley.extras?.moneyInOut?.filter((m) => m.no_activity).map((m) => m.mask)).toEqual(['6611', '6612']);
   });
 
   test('the saved plan’s savings count each account over its own part of the year', () => {

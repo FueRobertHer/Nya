@@ -91,6 +91,20 @@ describe('contributionBaseline start day', () => {
     const flows = [{ date: '2026-08-31', amount: 100 }, { date: '2026-09-01', amount: 100 }];
     expect(contributionBaseline(points, flows, '2026-01-01')?.[0]).toEqual(b('2026-09-01', 1000));
   });
+
+  // Lump-sum deposit on flows_from where an intraday snapshot already holds it:
+  // wait for a quiet day so the deposit is never double-counted as a loss.
+  test('skips a non-zero starting day that has a flow dated on the same day when a quiet day follows', () => {
+    const points = [
+      r('2026-01-05', 60_000),
+      r('2026-01-06', 60_050),
+      r('2026-01-09', 60_200),
+      r('2026-11-05', 65_000),
+    ];
+    const flows = [{ date: '2026-01-05', amount: 7_000 }];
+    const split = rangeSplit(points, flows, '2026-01-05', '2026-11-05');
+    expect(split).toEqual({ from: '2026-01-09', to: '2026-11-05', in: 0, out: 0, growth: 4_800 });
+  });
 });
 
 // The mocks' account (Vanguard Individual): $2,000 in on the 1st of each
