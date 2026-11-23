@@ -790,7 +790,7 @@ export function customUserConfig(inst: SeedInstitution, today: string): object {
       subtype: a.subtype,
       starting_balance: a.balance,
       currency: 'USD',
-      meta: { name: a.name, mask: a.mask, ...(a.limit !== undefined ? { limit: a.limit } : {}), ...(a.apy !== undefined ? { apy: a.apy } : {}) },
+      meta: { name: a.name, official_name: a.name, mask: a.mask, ...(a.limit !== undefined ? { limit: a.limit } : {}), ...(a.apy !== undefined ? { apy: a.apy } : {}) },
       transactions: a.transactions.map((t) => ({
         date_transacted: t.date,
         // A posting date still to come is how Plaid's sandbox makes a row pending.

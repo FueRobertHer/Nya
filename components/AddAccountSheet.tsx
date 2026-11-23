@@ -59,7 +59,7 @@ export default function AddAccountSheet({
     ...CONNECT_OPTIONS.filter((option) => brokerage || option.kind === 'bank').map((option) => ({
       key: option.kind,
       title: connecting && starting === option.kind ? 'Starting…' : option.label,
-      sub: option.note,
+      sub: !brokerage && option.kind === 'bank' ? 'Checking, savings, credit cards, loans, and supported brokerage accounts.' : option.note,
       disabled: connecting,
       onSelect: () => {
         setStarting(option.kind);
@@ -106,6 +106,11 @@ export default function AddAccountSheet({
         <Why label="Which should I use?">
           <div className="stack tight">
             <CoverageNote />
+            {!brokerage && (
+              <p className="helper">
+                For investment or retirement accounts not listed under your bank, you can connect through SimpleFIN or Lunch Flow, or add them as manual accounts.
+              </p>
+            )}
             {onConnectSimpleFin && <p className="helper">{SIMPLEFIN_OPTION.note}</p>}
             {onConnectLunchFlow && <p className="helper">{LUNCHFLOW_OPTION.note}</p>}
           </div>

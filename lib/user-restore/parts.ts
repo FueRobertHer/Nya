@@ -83,6 +83,7 @@ export const SEAM: Readonly<Record<string, SeamPart>> = {
   'connector-connections': { kind: 'map', restore: 'write', max: 2 },
   'connector-ended': { kind: 'map', restore: 'write' },
   'currency-settings': { kind: 'value', restore: 'write' },
+  'debt-payoff': { kind: 'value', restore: 'write' },
   // MAX_DISMISSED, MAX_IOUS, MAX_PAYMENTS, MAX_PEOPLE, MAX_SHARES
   // (lib/shared-expenses/model.ts).
   'expense-dismissed': { kind: 'map', restore: 'write', max: 2_000 },

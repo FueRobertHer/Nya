@@ -87,9 +87,9 @@ export function pastMonths(a: SeedAccount, spec: Spec, today: string, valueOn: (
   if (joinAt < 1) throw new Error(`The months for ${a.mask} must reach back before the recorded year`);
   const atFirst = valueOn(firstRecorded);
   if (atFirst === undefined) throw new Error(`No recorded balance for ${a.mask} on ${firstRecorded}`);
-  // The recorded balance holds that day's own flows, as a month's end does
-  // its last day's: so they come off too.
-  ends[joinAt] = toCents(atFirst) - flowedIn(flows, endDay(list[joinAt]), addDays(firstRecorded, 1));
+  // The recorded balance on firstRecorded holds flows dated before that day,
+  // matching Nya's 13:00 UTC snapshot timing.
+  ends[joinAt] = toCents(atFirst) - flowedIn(flows, endDay(list[joinAt]), firstRecorded);
 
   // Walked back at a market of its own, the first opening at $0.
   const r = rng(seed);

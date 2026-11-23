@@ -191,10 +191,11 @@ describe('Activity: the bar and its segments', () => {
     for (let p = strip()[0].parentNode as FakeElement | null; p; p = p.parentNode as FakeElement | null) expect((p.getAttribute?.('class') ?? '').split(' ')).not.toContain('card');
     // Its heading, for a screen reader alone: the bar names the month.
     expect(strip()[0].findAll((e) => e.tagName === 'H2')[0].textContent).toBe(`In and out, ${longName(month)}`);
-    // Spending: after the period's switch, before the cash flow, which has none of its own.
+    // Spending: after the top row (period switch + Reports quick link), before the cash flow, which has none of its own.
     act(() => click(v.tab('Spending')));
     expect(strip()).toHaveLength(1);
-    expect(kids()[0].getAttribute('class')).toBe('segmented spending-period');
+    expect(kids()[0].getAttribute('class')).toBe('spending-top-row');
+    expect(kids()[0].findAll((e) => e.getAttribute('class') === 'segmented spending-period')).toHaveLength(1);
     expect(kids()[1]).toBe(strip()[0]);
     expect(v.all((e) => (e.getAttribute('class') ?? '').split(' ').includes('summary-row'))).toHaveLength(1);
     expect(v.all((e) => e.getAttribute('class') === 'inst-name' && e.textContent === 'In and out')).toHaveLength(0);
@@ -461,16 +462,21 @@ describe('Activity: the bar and its segments', () => {
     v.unmount();
   });
 
-  test('daily headers explain when transfers or loan payments are included in the day net', () => {
+  test('daily headers exclude transfers and loan payments from day net and show -- on transfer-only days', () => {
     const v = mount({
       txns: [
         row(`${month}-05`, 'Whole Foods', 50, 'groceries'),
         row(`${month}-05`, 'Credit Card Payment', 500, 'loan payments'),
+        row(`${month}-04`, 'Savings Transfer', 1500, 'transfer out'),
       ],
     });
-    const [dayHeader] = v.all((e) => e.getAttribute('class') === 'txn-day');
-    const netSpan = dayHeader.findAll((e) => e.getAttribute('class') === 'money')[0];
-    expect(netSpan.getAttribute('title')).toContain('transfers and loan payments');
+    const [day5, day4] = v.all((e) => e.getAttribute('class') === 'txn-day');
+    const net5 = day5.findAll((e) => e.getAttribute('class') === 'money')[0];
+    expect(net5.textContent).toBe('−$50.00');
+    expect(net5.getAttribute('title')).toContain('excludes transfers and loan payments');
+    const net4 = day4.findAll((e) => e.getAttribute('class') === 'money')[0];
+    expect(net4.textContent).toBe('--');
+    expect(net4.getAttribute('title')).toContain('excludes transfers and loan payments');
     v.unmount();
   });
 

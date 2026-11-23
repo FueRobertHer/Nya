@@ -573,10 +573,35 @@ describe('the settings in Settings, Transactions', () => {
     const off = text(renderToStaticMarkup(<ReviewSettingsCard review={controls(false)} toReview={0} />));
     expect(off).toContain('Approve new transactions as they arrive');
     expect(off).toContain('New transactions from today');
+    expect(off).toContain('Skip transfers and loan payments');
+    expect(off).toContain('Wait until pending transactions post');
     expect(off).toContain('Turn on');
     const on = text(renderToStaticMarkup(<ReviewSettingsCard review={controls(true)} toReview={3} />));
     expect(on).toContain('3 waiting now');
+    expect(on).toContain('Skip transfers and loan payments');
+    expect(on).toContain('Wait until pending transactions post');
     expect(on).toContain('Turn off');
     expect(on).toContain('Turning it off keeps your approvals.');
+  });
+
+  test('Card Mode shows Tag / Note and Exclude buttons when wired', () => {
+    const html = renderToStaticMarkup(
+      <CardMode
+        open
+        txns={[txn('t1', { needs_review: true })]}
+        taxonomy={taxonomy}
+        tags={[]}
+        currency="USD"
+        review={controls()}
+        onClose={() => {}}
+        onSplit={() => {}}
+        onGroup={() => {}}
+        onChangeTags={async () => true}
+        onSaveNote={async () => true}
+        onToggleExcluded={async () => true}
+      />
+    );
+    expect(html).toContain('Tag / Note');
+    expect(html).toContain('Exclude');
   });
 });

@@ -404,3 +404,27 @@ describe("Plaid's account subtypes in words", () => {
     expect(subtypeWords('sep ira', 'investment', true)).toBe('SEP IRA');
   });
 });
+
+describe('sortInstitutions', () => {
+  test('orders Cash & Credit, then Investments, then Loans, then Manual, alphabetical within each tier', async () => {
+    const { sortInstitutions } = await import('@/components/account-groups');
+    const list = [
+      institution({ institution_name: 'Manual', manual: true, accounts: [account({ type: 'other' })] }),
+      institution({ institution_name: 'Beacon Mortgage', accounts: [account({ type: 'loan' })] }),
+      institution({ institution_name: 'Vanguard', accounts: [account({ type: 'investment' })] }),
+      institution({ institution_name: 'Betterment', accounts: [account({ type: 'investment' })] }),
+      institution({ institution_name: 'Tartan Bank', accounts: [account({ type: 'credit' })] }),
+      institution({ institution_name: 'Platypus Bank', accounts: [account({ type: 'depository' })] }),
+      institution({ institution_name: 'Auto Credit Union', accounts: [account({ type: 'loan' })] }),
+    ];
+    expect(sortInstitutions(list).map((i) => i.institution_name)).toEqual([
+      'Platypus Bank',
+      'Tartan Bank',
+      'Betterment',
+      'Vanguard',
+      'Auto Credit Union',
+      'Beacon Mortgage',
+      'Manual',
+    ]);
+  });
+});

@@ -139,6 +139,7 @@ const BROUGHT: readonly (readonly [part: string, words: (n: number) => string])[
   ['store:budget-months', () => 'your budgets by month, with their rollover'],
   ['goals', () => 'your goals'],
   ['store:goal-plans', (n) => `the plans of ${plural(n, 'goal')}`],
+  ['store:debt-payoff', () => 'your debt payoff plan'],
   ['store:planned-items', () => 'your planned bills and income'],
   ['store:fire-plans', (n) => plural(n, 'plan')],
   ['store:fire-plan-saved', () => 'the plan you saved as your plan'],

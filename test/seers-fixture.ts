@@ -121,6 +121,8 @@ export async function seedEveryKind(
   const { plannedStore } = await import('@/lib/planned-store');
   const { EMPTY_PLANNED } = await import('@/lib/planned');
   await plannedStore.set(ctx, EMPTY_PLANNED);
+  const { debtPayoffStore } = await import('@/lib/debt-payoff-store');
+  await debtPayoffStore.set(ctx, { v: 1, strategy: 'avalanche', currency: 'USD', extra: { USD: '200' }, leftOut: {}, withoutAccrued: {}, sharedSplit: {}, typed: { acc_card: { apr: '24.99', minimum: '40' } } });
   const { reportSettingsStore } = await import('@/lib/report/store');
   await reportSettingsStore.set(ctx, { v: 1, marked: ['food and drink'] });
   const { reviewSettingsStore, approvalStore } = await import('@/lib/review-store');

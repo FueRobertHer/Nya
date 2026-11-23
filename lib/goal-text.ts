@@ -120,7 +120,7 @@ export function outlookText(view: GoalView, nameOf: (id: string) => string): str
     case 'behind': {
       if (p.beyond) return `Not within 50 years at this pace${date ? `, and its date is ${dayLabel(date)}` : ''}`;
       const when = monthLabel(p.completion!);
-      if (!date) return `On track for ${when}${atTarget}`;
+      if (!date) return `At this pace, reached in ${when}${atTarget}`;
       if (p.datePassed) return `Its date, ${dayLabel(date)}, has passed; at this pace, reached in ${when}`;
       const due = monthLabel(date.slice(0, 7));
       if (p.status === 'on_track') {

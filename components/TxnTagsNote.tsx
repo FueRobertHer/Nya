@@ -158,14 +158,6 @@ export default function TxnTagsNote({
           ))}
         </div>
       )}
-      {onManageTags && tags.length > 0 && (
-        // In a row of its own: the column would stretch the button to its width.
-        <div>
-          <button type="button" className="btn ghost" aria-haspopup="dialog" onClick={onManageTags}>
-            Rename or delete tags
-          </button>
-        </div>
-      )}
       <textarea
         ref={noteField}
         aria-describedby={refused === 'note' ? refusedBy : undefined}
@@ -177,28 +169,37 @@ export default function TxnTagsNote({
         placeholder="Note"
         aria-label={`Note on ${shownName(t)}`}
       />
-      <div className="rename-row">
-        <button
-          className="secondary"
-          disabled={note.trim() === (t.note ?? '').trim()}
-          onClick={() => {
-            // Pressed again while it saves: sent once.
-            if (noteOut.current) return;
-            noteOut.current = true;
-            setRefused(null);
-            const pressed = document.activeElement;
-            void onSaveNote(note.trim()).then((saved) => {
-              noteOut.current = false;
-              if (saved) return;
-              setRefused('note');
-              focusBack(noteField.current, pressed);
-            });
-          }}
-        >
-          {note.trim() || !t.note ? 'Save note' : 'Clear note'}
-        </button>
-      </div>
+      {note.trim() !== (t.note ?? '').trim() && (
+        <div className="rename-row">
+          <button
+            className="secondary"
+            onClick={() => {
+              // Pressed again while it saves: sent once.
+              if (noteOut.current) return;
+              noteOut.current = true;
+              setRefused(null);
+              const pressed = document.activeElement;
+              void onSaveNote(note.trim()).then((saved) => {
+                noteOut.current = false;
+                if (saved) return;
+                setRefused('note');
+                focusBack(noteField.current, pressed);
+              });
+            }}
+          >
+            {note.trim() || !t.note ? 'Save note' : 'Clear note'}
+          </button>
+        </div>
+      )}
       <div className="rename-hint">Tags and notes are yours: sharing never shows them.</div>
+      {onManageTags && tags.length > 0 && (
+        // Subtle helper placement below tags and note so it doesn't interrupt editing.
+        <div>
+          <button type="button" className="btn ghost" aria-haspopup="dialog" onClick={onManageTags}>
+            Rename or delete tags
+          </button>
+        </div>
+      )}
     </div>
   );
 }

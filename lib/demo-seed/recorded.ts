@@ -65,8 +65,8 @@ const seedOf = (name: string) => [...name].reduce((h, ch) => (Math.imul(h, 31) +
 
 const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 
-/** What an investment account held on `day`: each fund's quantity and its
- *  cash, before the activity after that day. */
+/** What an investment account held at the start of `day` (before activity on
+ *  or after that day, matching Nya's 13:00 UTC daily snapshot timing). */
 function heldOn(holdings: readonly SeedHolding[], txns: readonly SeedInvTxn[], day: string): { quantities: Map<string, number>; cash: number } {
   const quantities = new Map<string, number>();
   let cash = 0;
@@ -75,7 +75,7 @@ function heldOn(holdings: readonly SeedHolding[], txns: readonly SeedInvTxn[], d
     else quantities.set(h.ticker, (quantities.get(h.ticker) ?? 0) + h.quantity);
   }
   for (const t of txns) {
-    if (t.date <= day) continue;
+    if (t.date < day) continue;
     if (t.type === 'cash') {
       // Money in (quantity -1) wasn't there yet; money out still was.
       cash += t.quantity < 0 ? -t.price : t.price;
@@ -103,7 +103,8 @@ function worthRatio(a: SeedAccount, today: string, day: string, w: number): numb
     for (const [ticker, q] of quantities) total += q * priceOn(price.get(ticker) ?? 0, today, d, wd);
     return total;
   };
-  const now = worth(today, 0);
+  let now = 0;
+  for (const h of holdings) now += h.ticker === CASH ? h.quantity : h.quantity * h.price;
   return now > 0 ? Math.max(0, worth(day, w)) / now : 1;
 }
 

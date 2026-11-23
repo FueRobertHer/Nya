@@ -30,7 +30,7 @@ import type { Incomplete, Stopped } from '@/lib/month-coverage';
 import type { NoSpending, NoTransactionsView } from '@/lib/no-transactions';
 import type { FxTable } from '@/lib/fx/rates';
 import TotalCaveats from './TotalCaveats';
-import { ForecastView, useForecast, type ForecastInput } from './ForecastCard';
+import { ForecastView, useForecast, type ForecastInput, type ForecastScope } from './ForecastCard';
 import UpcomingList from './UpcomingList';
 import CalendarView from './CalendarView';
 import RecurringCard from './RecurringCard';
@@ -119,6 +119,7 @@ export default function UpcomingPanel({
   noSpending: NoSpending | null;
 }) {
   const [range, setRange] = useState<ForecastRange>(30);
+  const [scope, setScope] = useState<ForecastScope>('all');
   const [view, setView] = useState<UpcomingView>('list');
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
 
@@ -132,6 +133,7 @@ export default function UpcomingPanel({
     dismissed,
     today,
     range,
+    scope,
     txns: txns ?? undefined,
     fx,
     incomplete,
@@ -165,6 +167,7 @@ export default function UpcomingPanel({
         work={work}
         start={start}
         onRange={setRange}
+        onScope={setScope}
         planned={planned}
         plannedStatus={plannedStatus}
         onSavePlanned={onSavePlanned}
@@ -251,6 +254,8 @@ export default function UpcomingPanel({
         onSave={onSavePlanned}
         today={today}
         currency={plannedCurrency}
+        series={series}
+        dismissed={dismissed}
       />
     </div>
   );

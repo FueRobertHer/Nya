@@ -514,7 +514,13 @@ export function AboutForm(props: SaveProps & { detail?: DetailForm | null }) {
             more.current = household.read();
             // Under FI the stop age is hidden, and may be behind you: kept.
             if (atFi) return { ...plan, age: a, partnerAge: p, stopAtFi: true };
-            return { ...plan, ...ages(a, readNumber(target, 'Stop age', min, max, { integer: true, optional: true })), partnerAge: p, stopAtFi: false };
+            const t = readNumber(target, 'Stop age', min, max, { integer: true, optional: true });
+            const nextAges = ages(a, t);
+            const prevStop = stopOf(plan);
+            const wasStopped = plan.age !== null && prevStop !== null && plan.age >= prevStop;
+            const nowStopped = a !== null && t !== null && a >= t;
+            const start = nowStopped && !wasStopped && plan.start === 'fi-number' ? 'at-stop' : plan.start;
+            return { ...plan, ...nextAges, partnerAge: p, stopAtFi: false, start };
           })
         }
       />

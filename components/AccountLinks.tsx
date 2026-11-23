@@ -23,7 +23,7 @@
 // jump before it is made. Nothing links without a tap here.
 
 import type { CarriedEnd } from '@/lib/link-ends';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import AccountSparkline from './AccountSparkline';
 import { formatDay, formatMoney, onDay, plainNumber } from '@/lib/format';
 import { earlierNames } from '@/lib/earlier-names';
@@ -134,6 +134,7 @@ export default function AccountLinks({
   onChanged,
   onLoaded,
   refreshKey,
+  empty,
 }: {
   onChanged: () => void;
   /** After each load, with the reconnected accounts it suggests linking, by
@@ -143,6 +144,8 @@ export default function AccountLinks({
   /** Changes whenever the page's data reloads (its as-of time), so a re-added
    *  institution's suggestion appears without reopening the tab. */
   refreshKey?: string | null;
+  /** Rendered once loaded when there are no suggestions, links or earlier accounts to show. */
+  empty?: ReactNode;
 }) {
   const [data, setData] = useState<Payload | null>(null);
   const [busy, setBusy] = useState(false);
@@ -233,6 +236,7 @@ export default function AccountLinks({
       }}
       onAct={act}
       onEarlierOpen={setCheckEarlier}
+      empty={empty}
     />
   );
 }
@@ -251,6 +255,7 @@ export function AccountLinksView({
   onAct,
   onEarlierOpen,
   open,
+  empty,
 }: {
   /** Sections to start expanded (for tests and previews). */
   open?: { byHand?: boolean; earlier?: boolean };
@@ -267,6 +272,7 @@ export function AccountLinksView({
   onPreview: (p: { old: string; to: string } | null) => void;
   onPick: (old: string, to: string) => void;
   onAct: (method: 'POST' | 'DELETE', body: Record<string, string>) => void;
+  empty?: ReactNode;
 }) {
   const broken = data?.broken ?? [];
   const manual = useMemo(() => data?.manual ?? [], [data]);
@@ -277,17 +283,17 @@ export function AccountLinksView({
   const [byHandOpen, setByHandOpen] = useState(open?.byHand ?? false);
   const [byHandOld, setByHandOld] = useState('');
   const [byHandTo, setByHandTo] = useState('');
+  if (!data) return null;
   if (
-    !data ||
-    (data.suggestions.length === 0 &&
-      data.unclaimed.length === 0 &&
-      manual.length === 0 &&
-      earlier.length === 0 &&
-      data.links.length === 0 &&
-      broken.length === 0 &&
-      !data.stopped)
+    data.suggestions.length === 0 &&
+    data.unclaimed.length === 0 &&
+    manual.length === 0 &&
+    earlier.length === 0 &&
+    data.links.length === 0 &&
+    broken.length === 0 &&
+    !data.stopped
   ) {
-    return null;
+    return empty ? <>{empty}</> : null;
   }
   // Only a choice still listed: anything else would act on an account the
   // dropdowns aren't showing.

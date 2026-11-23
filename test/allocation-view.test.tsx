@@ -625,6 +625,20 @@ describe('the mix over time', () => {
     expect(dayMixText(d)).toBe('100% US stocks');
   });
 
+  test('13 monthly snapshots across a year draw readable stacked bars rather than 1px hairlines', () => {
+    const months = [
+      '2025-10-01', '2025-11-01', '2025-12-01', '2026-01-01', '2026-02-01', '2026-03-01',
+      '2026-04-01', '2026-05-01', '2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01', '2026-10-01',
+    ];
+    const html = renderToStaticMarkup(
+      <AllocationHistoryChart days={months.map((m) => day(m, { 'us-stocks': 75_000, bonds: 25_000 }))} currency="USD" answer={{ accounts: [] }} nameOf={(id) => id} />
+    );
+    const widths = [...html.matchAll(/<rect[^>]*width="([^"]+)"/g)].map((m) => Number(m[1]));
+    expect(widths.length).toBe(26);
+    // At fallback 340px width (plotW = 300), 13 monthly bars should be ~11px wide (well above 4px).
+    for (const w of widths) expect(w).toBeGreaterThanOrEqual(8);
+  });
+
   test('asks for the accounts the allocation above shows, with each one’s currency and whether it is kept by hand', () => {
     expect(seriesAccountsOf(institutions)).toEqual([
       { account_id: 'brk', currency: 'USD', manual: false, shown: true },

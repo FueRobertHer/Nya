@@ -197,14 +197,26 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
   }, [shown, plan.age]);
   const figures = planned ? { ...measured, view: planned.view } : measured;
   if (loaded === 'unreadable') return <FiRow what="FI isn’t worked out" detail="Your saved plan couldn’t be read: the Plan tab says why." onOpenPlan={onOpenPlan} notes={[]} />;
+  const contributionsPending = (inputs.contributions === null && workplacePlansOf(institutions).length > 0) || shared.childPending;
   if (
     !ready({
       plan: loaded === null ? 'loading' : loaded === 'failed' ? 'failed' : 'loaded',
       txns,
       txnsLoading,
-      contributionsPending: (inputs.contributions === null && workplacePlansOf(institutions).length > 0) || shared.childPending,
+      contributionsPending,
     })
   ) {
+    if (loaded !== 'failed' && txns && txns.length > 0) {
+      return (
+        <li aria-hidden="true">
+          <div className="list-row">
+            <span className="list-row-text">
+              <span className="skeleton lines-skeleton-line" />
+            </span>
+          </div>
+        </li>
+      );
+    }
     return null;
   }
   return (
@@ -314,9 +326,10 @@ export function FiProgressView({
   // As the Plan's FI card warns (components/PlanTab.tsx FiCard), by the same
   // rule: transactions that couldn't be read, or that a connection doesn't
   // bring in. The savings rate is measured from the same transactions.
+  const alreadyStopped = plan.age !== null && view.stopAge !== null && plan.age >= view.stopAge;
   const missing = transactionsMissing(inputs.unread, inputs.coverage);
   const spendingShort = view.spending.source === 'measured' && missing !== null;
-  const rateShort = savingsRate !== null && missing !== null;
+  const rateShort = !alreadyStopped && savingsRate !== null && missing !== null;
   const assetsShort = view.assets.source === 'measured' && inputs.assets.caveats.some((c) => c.kind !== 'stale');
   const workplaceAdded = (inputs.workplace?.total ?? 0) > 0;
   const leftOut = spendingLeftOut(inputs.flows);
@@ -332,14 +345,19 @@ export function FiProgressView({
     body: (
       <>
         Estimates, {saved ? `from your plan: ${rates}` : `from the Plan's default assumptions: ${rates}. Set your own on the Plan tab`}.
-        {typed.length ? ` Using the ${typed.join(' and ')} you typed there.` : ''} The savings rate is income minus spending as a share of income
-        {workplaceAdded ? ', with what went into workplace plans counted on both sides' : ''}
-        {childTaken(inputs) > 0 ? ', less what your bank paid into accounts for a child’s education' : ''}
-        {view.savings.source === 'typed' && savingsRate !== null ? ', from your transactions, not the savings you typed' : ''}.
+        {typed.length ? ` Using the ${typed.join(' and ')} you typed there.` : ''}
+        {!alreadyStopped && (
+          <>
+            {' '}The savings rate is income minus spending as a share of income
+            {workplaceAdded ? ', with what went into workplace plans counted on both sides' : ''}
+            {childTaken(inputs) > 0 ? ', less what your bank paid into accounts for a child’s education' : ''}
+            {view.savings.source === 'typed' && savingsRate !== null ? ', from your transactions, not the savings you typed' : ''}.
+          </>
+        )}
       </>
     ),
   });
-  if (!workplaceAdded && view.savings.source === 'measured') notes.push({ key: 'payroll', severity: 'info', summary: 'pay before it reaches a bank', body: PAYROLL_NOTE });
+  if (!alreadyStopped && !workplaceAdded && view.savings.source === 'measured') notes.push({ key: 'payroll', severity: 'info', summary: 'pay before it reaches a bank', body: PAYROLL_NOTE });
   // What the year's figures leave out, in the Plan's own words: the savings
   // rate is always from the year's transactions, so these are said whenever
   // there are any.
@@ -384,7 +402,7 @@ export function FiProgressView({
   const runsOutAt = walk ? walk.runsOutAt : runsOut && plan.age !== null ? plan.age + runsOut.year : null;
   const head = fiHeadline(view, { age: plan.age, stopAge: view.stopAge, stopAtFi: plan.stopAtFi, lasting: lasting !== null }, { noDate: !!walk?.short, runsOutAt, saving: (view.savings.value ?? 0) > 0 });
   const there = view.progress !== null ? progressText(view.progress) : null;
-  const rate = savingsRate !== null ? `${savingsRateText(savingsRate)} savings rate, ${inputs.flows?.scaled ? `since ${dayName(inputs.flows.from)}` : 'last 12 months'}` : null;
+  const rate = !alreadyStopped && savingsRate !== null ? `${savingsRateText(savingsRate)} savings rate, ${inputs.flows?.scaled ? `since ${dayName(inputs.flows.from)}` : 'last 12 months'}` : null;
   const lower = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
   let title: string;
   let withNumber = true;

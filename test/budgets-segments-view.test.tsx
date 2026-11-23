@@ -144,7 +144,7 @@ describe('Budgets: the bar and its segments', () => {
     // Focusable by script, so Home's jump can land on it.
     expect(v.heading().getAttribute('tabindex')).toBe('-1');
     expect(v.shown()).toEqual([v.panelOf('Month')]);
-    expect(v.panelOf('Month').textContent).toContain('Spent');
+    expect(v.panelOf('Month').textContent).toContain('Budgeted spending');
     // Each tab controls its own panel, labelled by it.
     for (const label of ['Month', 'Upcoming', 'Goals']) expect(v.tab(label).getAttribute('aria-controls')).toBe(v.panelOf(label).getAttribute('id'));
     v.unmount();

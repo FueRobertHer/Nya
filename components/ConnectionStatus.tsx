@@ -315,7 +315,6 @@ export function ConnectionStatus({
         <p className="helper">
           {lastSyncedText(h)}
           {side ? ` · ${side}` : ''}
-          {h.code ? ` · Plaid code ${h.code}` : ''}
         </p>
       )}
       {carried.map((c) => (

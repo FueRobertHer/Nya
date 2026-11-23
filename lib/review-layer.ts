@@ -58,9 +58,9 @@
 import type { OlderTxn, Txn } from './transactions';
 import type { Approval, ApprovalInput } from './review-store';
 import { defaultOn, defaultsByVendor, type DefaultFor, type VendorDefaults } from './vendor-defaults';
-import { categoryById, choiceText, isProvisionalId, resolveCategory, type Category, type CategoryIndex } from './categories';
+import { categoryById, choiceText, groupOf, isProvisionalId, resolveCategory, type Category, type CategoryIndex } from './categories';
 import { toUnits, unitScale } from './split-rows';
-import { currencyOf } from './spending';
+import { currencyOf, isTransfer } from './spending';
 import { isConnectorKind } from './connectors/types';
 
 /** Transactions one request approves or puts back (app/api/review): a bulk
@@ -80,9 +80,9 @@ export type ReviewLayer = {
   approvalsUnknown: ReadonlySet<string>;
   /** Each merchant's default, by vendor key (lib/vendor-defaults.ts defaultsByVendor). */
   defaults: ReadonlyMap<string, DefaultFor>;
-  /** The queue: on from a day, off (null), or not known (its settings
-   *  couldn't be read). */
-  queue: { since: string } | null | 'unknown';
+  /** The queue: on from a day (with optional filters), off (null), or not known
+   *  (its settings couldn't be read). */
+  queue: { since: string; skip_transfers?: boolean; posted_only?: boolean } | null | 'unknown';
 };
 
 /** What would file an approved row elsewhere now, offered rather than
@@ -222,7 +222,14 @@ export function applyReview(t: Row, layer: ReviewLayer, f: ReviewFacts): void {
     if (reviewable(t)) marks.review_unknown = true;
     return;
   }
-  if (layer.queue && reviewable(t) && t.date >= layer.queue.since) marks.needs_review = true;
+  if (layer.queue && reviewable(t) && t.date >= layer.queue.since) {
+    const pendingSkip = layer.queue.posted_only === true && 'pending' in t && t.pending;
+    const resolvedKind = f.ix ? groupOf(f.ix, resolveCategory(f.ix, t).category).kind : undefined;
+    const transferSkip =
+      layer.queue.skip_transfers === true &&
+      (resolvedKind === 'transfer' || isTransfer({ ...t, category_kind: resolvedKind ?? ('category_kind' in t ? t.category_kind : undefined) }));
+    if (!pendingSkip && !transferSkip) marks.needs_review = true;
+  }
 }
 
 // ---- From what was read ----
@@ -230,7 +237,7 @@ export function applyReview(t: Row, layer: ReviewLayer, f: ReviewFacts): void {
 /** What the layer is built from, as read (lib/review-read.ts) or as a
  *  download holds it (lib/export-layers.ts). */
 export type ReviewParts = {
-  settings: { on: boolean; since: string } | null;
+  settings: { on: boolean; since: string; skip_transfers?: boolean; posted_only?: boolean } | null;
   /** The settings couldn't be read (damaged, or a later release's). */
   settingsUnread: boolean;
   defaults: VendorDefaults | null;
@@ -245,7 +252,15 @@ export type ReviewParts = {
  *  to review, for a reader that shows those marks (the app). */
 export function reviewLayerOf(parts: ReviewParts, ix: CategoryIndex | null): { layer: ReviewLayer; notes: string[]; queueNote: string | null } {
   const resolve = (id: string) => (ix ? (categoryById(ix, id)?.id ?? null) : null);
-  const queue = parts.settingsUnread ? 'unknown' : parts.settings?.on ? { since: parts.settings.since } : null;
+  const queue = parts.settingsUnread
+    ? 'unknown'
+    : parts.settings?.on
+      ? {
+          since: parts.settings.since,
+          ...(parts.settings.skip_transfers !== undefined ? { skip_transfers: parts.settings.skip_transfers } : {}),
+          ...(parts.settings.posted_only !== undefined ? { posted_only: parts.settings.posted_only } : {}),
+        }
+      : null;
   const n = parts.approvalsUnknown.size;
   const notes = [
     ...(parts.defaultsUnread ? ["Your merchants’ default categories couldn’t be read, so none files a transaction until they can be."] : []),

@@ -106,6 +106,11 @@ const inEmptyState = (html: string, text: string) => {
   const e = NOW_AN_EMPTY_STATE[text];
   return !!e && html.includes(`>${e.title}</h3><p class="helper">${e.line}</p>`) && html.includes('class="empty-state"');
 };
+// When the top notice already explains every incomplete earlier month in the
+// income pool, Available to allocate shows a compact "May be off" badge instead
+// of repeating the caution box.
+const deduplicatedPoolBadge = (scene: string, html: string, text: string) =>
+  scene.startsWith('tab:') && text.startsWith('May be off: ') && html.includes('<span class="badge warn">May be off</span>');
 
 describe('every note the month said is still said, in its words and at its level', () => {
   test('the recording covers every scene drawn now', () => {
@@ -120,6 +125,7 @@ describe('every note the month said is still said, in its words and at its level
         .filter((n) => !(scene.startsWith('tab:') && IN_THE_SETTING.has(n.text)))
         .filter((n) => !(n.text in NOW_A_STATUS && html.includes(`role="status">${NOW_A_STATUS[n.text]}</p>`)))
         .filter((n) => !inEmptyState(html, n.text))
+        .filter((n) => !deduplicatedPoolBadge(scene, html, n.text))
         .map((n) => ({ text: filled(n.text), level: n.level }))
         .filter((n) => !said.some((s) => s.level === n.level && s.text.includes(n.text)));
       expect(missing).toEqual([]);
@@ -316,10 +322,22 @@ describe('the Spent card', () => {
 
   test('its title, what is spent of what is available, and its notes for the figures, each in full or gathered', () => {
     const spent = spentCard(tab({ budgetMonth: ready(VIEW) }));
-    expect(spent).toContain('<h3 id="budgets-spent-title">Spent</h3>');
-    expect(text(spent)).toMatch(/^Spent \$\d[\d,.]* of \$\d[\d,.]*/);
+    expect(spent).toContain('<h3 id="budgets-spent-title">Budgeted spending</h3>');
+    expect(text(spent)).toMatch(/^Budgeted spending \$\d[\d,.]* of \$\d[\d,.]*/);
     // Four notes, none of them about anything wrong: gathered, neutral.
     expect(spent).toContain('<summary class="notice info">');
     expect(text(spent)).toContain('Note: 4 notes: other currencies left out, other currencies left out of rollover, split amounts changed and 1 more');
+  });
+
+  test('shows unbudgeted spending line when month spending exceeds budgeted spending, and shows partial group coverage', () => {
+    const extraTxn = { ...TAB.txns![0], transaction_id: 'unbudgeted-1', category: 'travel', amount: 125 };
+    const html = tab({
+      txns: [...TAB.txns!, extraTxn],
+      budgetMonth: ready(VIEW),
+    });
+    expect(text(spentCard(html))).toContain('Plus $125.00 in unbudgeted categories.');
+    // Partial group coverage when a group has multiple categories and only one is budgeted.
+    const partial = card({ open: [], budgets: { categories: { [GROCERIES]: { amount: 250 } }, groups: {} } });
+    expect(text(partial)).toContain('1 of 2 categories budgeted');
   });
 });

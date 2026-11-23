@@ -16,6 +16,8 @@ import { historySpan } from '@/lib/fire/history-span';
 import { HYPOTHETICAL_LABEL, METHOD_NAMES, monthName } from './plan-text';
 import { plainNumber } from '@/lib/format';
 
+const DIFFERENT_START = 'starts with a different balance';
+
 export default function PlanCompare({
   columns,
   method,
@@ -76,7 +78,13 @@ export default function PlanCompare({
                     )}
                   </td>
                   <td className="plan-compare-diff">
-                    <Masked>{c.diff}</Masked>
+                    {c.diff === DIFFERENT_START ? (
+                      <span className="plan-muted" aria-label={DIFFERENT_START} title={DIFFERENT_START}>
+                        --
+                      </span>
+                    ) : (
+                      <Masked>{c.diff}</Masked>
+                    )}
                   </td>
                 </tr>
               ))}

@@ -155,9 +155,15 @@ describe('the sheet', () => {
     // the browser calls it: never offered over the one saved.
     expect(sheet({ draft: { enabled: true, weekday: 1, time_zone: 'Asia/Kolkata' }, device: 'Asia/Calcutta' })).not.toContain('Use this device’s time zone');
     expect(sheet({ draft: { enabled: true, weekday: 1, time_zone: 'Europe/Berlin' }, device: 'Europe/Paris' })).not.toContain('Use this device’s time zone');
-    const demo = sheet({ demo: true, draft: { enabled: false, weekday: 1, time_zone: 'UTC' }, saved: null });
+    const demoCard = card(ready({ demo: true, canSend: false, whyNot: 'Demo accounts can’t get the weekly summary.' }));
+    expect(demoCard).toContain('Preview this week’s summary');
+    const demo = sheet({ demo: true, canSend: false, draft: { enabled: false, weekday: 1, time_zone: 'UTC' }, saved: null });
     expect(demo).toContain('Demo accounts can’t get the weekly summary');
+    expect(demo).toContain('You can still preview what this week’s summary would say below.');
+    expect(demo).toContain('Your week in Nya: a quiet week');
     expect(demo).toMatch(/<input type="checkbox" disabled=""/);
+    expect(demo).toMatch(/<button type="button" class="btn" disabled="">Save<\/button>/);
+    expect(demo).toMatch(/<button class="secondary" disabled="">Send me one now<\/button>/);
   });
 });
 

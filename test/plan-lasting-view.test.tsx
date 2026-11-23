@@ -200,7 +200,7 @@ describe('Your FI date, in the FI number’s sheet', () => {
     await press(button(tab.dialog(), 'Save'));
     await settle(400);
   };
-  const lastsIn = async () => (await stored()).byName['First plan'].plan.lastsIn;
+  const lastsIn = async () => (await stored()).byName['Main plan'].plan.lastsIn;
 
   test('starts on when you reach it, saying how that age is found', async () => {
     await seedPlan();
@@ -245,7 +245,7 @@ describe('Your FI date, in the FI number’s sheet', () => {
     await press(tab.row('FI number'));
     await pick(tab.dialog()!, 'When you reach it');
     await save(tab);
-    expect(Object.hasOwn((await stored()).byName['First plan'].plan, 'lastsIn')).toBe(false);
+    expect(Object.hasOwn((await stored()).byName['Main plan'].plan, 'lastsIn')).toBe(false);
     expect(answerOf(tab)).toContain('Around age 52');
     expect(answerOf(tab)).toContain('Saving $30,000 a year, growing a steady 5% a year after inflation.');
     expect(answerOf(tab)).not.toContain('lasts');

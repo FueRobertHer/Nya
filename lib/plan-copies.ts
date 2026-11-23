@@ -34,7 +34,7 @@ export const planFactsStore = defineValueStore<PlanFacts>('plan-facts', {
 });
 
 /** Your plan's name when its entry is first made. */
-export const FIRST_PLAN = 'First plan';
+export const FIRST_PLAN = 'Main plan';
 
 /** Your plan's entry, and the facts read beside it (null without
  *  `plan-facts`, where the entry's own fields hold them). `missing` when it

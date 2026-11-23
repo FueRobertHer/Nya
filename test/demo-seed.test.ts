@@ -572,7 +572,7 @@ describe('seeding', () => {
     // Seeded as your plan's entry, version 2 as this release saves, in USD
     // (the sandbox's currency) since it types an income; then the facts.
     const mine = await firePlansStore.get(ctx, MAIN_ID);
-    expect(mine).toMatchObject({ name: 'First plan', currency: 'USD' });
+    expect(mine).toMatchObject({ name: 'Main plan', currency: 'USD' });
     const plan = mine!.plan;
     if (plan.version !== 2) throw new Error('expected a version 2 plan');
     expect([plan.age, plan.targetAge]).toEqual([38, 52]);
@@ -609,7 +609,7 @@ describe('seeding', () => {
       await seedDemoAccount(TEST_CTX, `user_${name.toLowerCase()}`, profile, TODAY, quick);
       const entries = await firePlansStore.getAll(TEST_CTX);
       expect([name, entries.has(MAIN_ID), entries.size]).toEqual([name, true, 1 + (profile.extras?.plan?.copies?.length ?? 0)]);
-      expect([...entries.values()].map((e) => e.name).sort()).toEqual(['First plan', ...(profile.extras?.plan?.copies ?? []).map((c) => c.name)].sort());
+      expect([...entries.values()].map((e) => e.name).sort()).toEqual(['Main plan', ...(profile.extras?.plan?.copies ?? []).map((c) => c.name)].sort());
       for (const [id, e] of entries) {
         if (holdsAmounts(e.plan)) expect([name, id, e.currency]).toEqual([name, id, 'USD']);
         else expect([name, id, e.currency]).toEqual([name, id, null]);
@@ -631,7 +631,7 @@ describe('seeding', () => {
 
   test('seeds your plan over what was there: the plans and their facts go with the rest, so the plan seeded is the one read', async () => {
     const at = '2026-10-01T00:00:00.000Z';
-    await firePlansStore.set(TEST_CTX, MAIN_ID, { name: 'First plan', plan: DEFAULT_PLAN, tax: null, currency: null, createdAt: at, updatedAt: at });
+    await firePlansStore.set(TEST_CTX, MAIN_ID, { name: 'Main plan', plan: DEFAULT_PLAN, tax: null, currency: null, createdAt: at, updatedAt: at });
     await firePlansStore.set(TEST_CTX, 'x', { name: 'A visitor’s copy', plan: { ...DEFAULT_PLAN, age: 60 }, tax: null, currency: null, createdAt: at, updatedAt: at });
     await planFactsStore.set(TEST_CTX, { version: 1, main: 'x', ...factsOf({ ...DEFAULT_PLAN, age: 60 }) });
     await seedDemoAccount(TEST_CTX, 'user_alex', demoProfile('Alex', TODAY), TODAY, quick);
@@ -831,7 +831,7 @@ describe('what a seed sets up', () => {
     expect(mine.items.map((i) => i.id)).toEqual(['japan-trip']);
     expect(mine.planFunding).toEqual([{ account_id: idOf('3314'), paidFrom: 'payroll' }]);
     expect(mine.partTimeIncome).toBe(18_000);
-    const copies = [...(await firePlansStore.getAll(TEST_CTX)).values()].filter((e) => e.name !== 'First plan');
+    const copies = [...(await firePlansStore.getAll(TEST_CTX)).values()].filter((e) => e.name !== 'Main plan');
     const coast = copies.find((c) => c.name === 'Coast from 40')!.plan;
     if (coast.version !== 2) throw new Error('expected version 2');
     expect([coast.targetAge, coast.rule, coast.items.map((i) => i.id)]).toEqual([40, 'guardrails', ['japan-trip', 'freelance']]);
@@ -876,7 +876,7 @@ describe('what a seed sets up', () => {
     expect((await lifecycleStore.get(TEST_CTX, idOf('4402')))!.lifecycle).toEqual({ state: 'closed', on: x.ended![0].on, note: 'Closed once the family card came' });
     expect(await moneyInOutStore.get(TEST_CTX, idOf('9013'))).toMatchObject({ in: 104_000, out: 8_500 });
     const copies = [...(await firePlansStore.getAll(TEST_CTX)).values()].map((e) => e.name).sort();
-    expect(copies).toEqual(['A bigger home', 'First plan', 'Jordan part-time at 48', 'Travel more at Travel fund']);
+    expect(copies).toEqual(['A bigger home', 'Jordan part-time at 48', 'Main plan', 'Travel more at Travel fund']);
   });
 
   test('a row whose bank’s history hasn’t all come is passed over, and the report says so', async () => {
@@ -1078,8 +1078,9 @@ describe('what a seed sets up', () => {
     expect(saved).toBeCloseTo(rows.filter((t) => t.subtype === 'contribution').length * 583, 2);
   });
 
-  test('the months meet the recorded year at its balance less what came in since the month began, that day’s too', () => {
-    // A year back on the 16th is a deposit day, which the recorded balance holds.
+  test('the months meet the recorded year at its balance less what came in before its first day', () => {
+    // A year back on the 16th is a deposit day; the 13:00 UTC snapshot on that
+    // day holds only flows dated before it, matching lib/growth.ts.
     for (const today of [TODAY, '2026-11-16', '2027-01-16']) {
       const profile = scenarioById('vanguard-history')!.build(today);
       const a = profile.institutions.flatMap((i) => i.accounts).find((x) => x.mask === '7788')!;
@@ -1090,9 +1091,27 @@ describe('what a seed sets up', () => {
       const first = addDays(today, -RECORDED_DAYS);
       const joinAt = made.months.filter((m) => `${nextMonth(m.month)}-01` < first).length - 1;
       const began = `${nextMonth(made.months[joinAt].month)}-01`;
-      const since = a.investment_transactions!.filter((t) => t.type === 'cash' && t.date >= began && t.date <= first).reduce((n, t) => n + (t.quantity < 0 ? t.price : -t.price), 0);
+      const since = a.investment_transactions!.filter((t) => t.type === 'cash' && t.date >= began && t.date < first).reduce((n, t) => n + (t.quantity < 0 ? t.price : -t.price), 0);
       expect(made.months[joinAt].end).toBeCloseTo(byDay.get(first)! - since, 2);
     }
+  });
+
+  test('lump-sum Jan 5 Roth contributions do not produce negative YTD returns, and early retiree confirms quiet IRAs', async () => {
+    const { rangeSplit } = await import('@/lib/growth');
+    const sam = demoProfile('Sam', TODAY);
+    const ids = new Map(sam.institutions.flatMap((i) => i.accounts.map((x) => [x.mask, x.mask] as const)));
+    const measured = sam.institutions.flatMap((i) => i.accounts.map((x) => ({ account_id: x.mask, type: x.type, balance: x.balance })));
+    const days = recordedYear(sam, TODAY, measured, ids, new Map());
+    for (const mask of ['7741', '7742']) {
+      const a = sam.institutions.flatMap((i) => i.accounts).find((x) => x.mask === mask)!;
+      const flows = flowsOf(a);
+      const pts = [...days.map((d) => ({ date: d.date, value: d.accounts[mask] })), { date: TODAY, value: a.balance }].filter((p) => p.date >= '2026-01-01');
+      const split = rangeSplit(pts, flows, flows[0].date, TODAY);
+      expect(split).not.toBeNull();
+      expect(split!.growth).toBeGreaterThan(0);
+    }
+    const riley = scenarioById('early-retiree')!.build(TODAY);
+    expect(riley.extras?.moneyInOut?.filter((m) => m.no_activity).map((m) => m.mask)).toEqual(['6611', '6612']);
   });
 
   test('the saved plan’s savings count each account over its own part of the year', () => {

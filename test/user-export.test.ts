@@ -1246,6 +1246,7 @@ describe('stores built on the storage seam', () => {
       'connector-connections',
       'connector-ended',
       'currency-settings',
+      'debt-payoff',
       'expense-dismissed',
       'expense-ious',
       'expense-payments',

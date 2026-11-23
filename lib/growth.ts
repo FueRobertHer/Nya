@@ -153,9 +153,13 @@ export function contributionBaseline(
     // A leg counts from the day after its date: from `date` on, one leg is
     // in the balance and the other isn't.
     if ((moves ?? []).some((m) => m.from < p.date && p.date <= m.to)) return false;
+    // A flow dated on a non-zero starting day may already be in that snapshot
+    // (an institution updating intraday). Wait for a quiet day when one exists;
+    // an opening day at $0 cannot already hold a rollover dated on it.
+    const sameDayInDoubt = p.value !== 0 && sorted.some((f) => f.date === p.date);
     // A month's ending balance holds every flow dated before its day, so
     // nothing just before it is in doubt (the snapshot's ambiguity).
-    return !!p.entered || !sorted.some((f) => f.date >= from && f.date < p.date);
+    return !!p.entered || (!sameDayInDoubt && !sorted.some((f) => f.date >= from && f.date < p.date));
   };
   const start = candidates.find(settled) ?? candidates[0];
   const carried = usableTotals(totals, flowsFrom) ? totals : null;

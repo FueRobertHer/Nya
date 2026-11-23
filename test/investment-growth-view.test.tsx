@@ -770,12 +770,14 @@ describe('what the figures are short of', () => {
     }
   });
 
-  test('no investment activity at all: its row says so, and nothing is short', async () => {
+  test('no investment activity at all: its row says so, it is named in Not counted, and nothing is short', async () => {
     const { host, root, range } = setup({ answers: { roth: { noActivity: true } } });
     try {
       await pass(50);
       expect(byClass(host, 'critical')).toHaveLength(0);
+      expect(words(host)).toContain('Not counted: Roth IRA ••3302. Nya has no investment activity for it.');
       expect(rows(host)[1]).toBe('Roth IRA ••3302 Vanguard · No investment activity yet');
+      expect(words(host)).toContain('Confirm no deposits or withdrawals since Dec 1, 2025');
       // The two left have their totals: all time across them.
       range('All');
       expect(card(host)).toContain('All time Beginning balance $0.00 Deposits & withdrawals +$108,000.00 Investment returns +$68,000.00 Ending balance $176,000.00');
@@ -789,6 +791,7 @@ describe('what the figures are short of', () => {
     try {
       await pass(50);
       expect(byClass(host, 'empty-note').map(words)).toContain('Nothing to draw yet: Nya has no investment activity for this account, so its returns can’t be told apart from deposits and withdrawals.');
+      expect(words(host)).toContain('No deposits or withdrawals since Dec 1, 2025');
       expect(words(host)).not.toContain('it builds as balances are recorded');
     } finally {
       act(() => root.unmount());

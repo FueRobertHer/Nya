@@ -234,6 +234,31 @@ describe('all time', () => {
     expect(g.basis).toBe('range');
     expect(g.failed.map((r) => r.account.account_id)).toEqual(['failed']);
   });
+
+  test('a quiet account confirmed with no_activity counts over ranges without faking all-time returns', () => {
+    const quiet = account('quiet', {
+      activity: {
+        state: 'ready',
+        data: {
+          flows: null,
+          flows_from: null,
+          flows_to: null,
+          note: null,
+          txns: [],
+          money_in_out: { in: 0, out: 0, as_of: '2025-12-01', currency: 'USD', set_at: '2026-11-01T00:00:00.000Z', no_activity: true },
+        },
+      },
+      points: [{ date: '2025-12-01', value: 500_000 }, { date: '2026-01-01', value: 510_000 }, { date: '2026-11-05', value: 560_000 }],
+    });
+    const ytd = sum([quiet], 'YTD').groups[0];
+    expect(ytd.rows[0].status).toBe('counted');
+    expect(ytd.figures).toEqual({ begin: 510_000, dw: 0, returns: 50_000, end: 560_000 });
+    // On All, no_activity keeps totals as unset so it counts from first recorded day, not $0.
+    const all = sum([quiet], 'ALL').groups[0];
+    expect(all.basis).toBe('range');
+    expect(all.rows[0].totals).toBe('unset');
+    expect(all.figures).toEqual({ begin: 500_000, dw: 0, returns: 60_000, end: 560_000 });
+  });
 });
 
 describe('the rate of return', () => {

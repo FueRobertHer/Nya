@@ -21,7 +21,14 @@ import type { OlderTxn, Txn } from './transactions';
 export async function readReviewBasics(ctx: Ctx): Promise<Pick<ReviewParts, 'settings' | 'settingsUnread' | 'defaults' | 'defaultsUnread'>> {
   const [settings, defaults] = await Promise.all([readReviewSettings(ctx), readVendorDefaults(ctx)]);
   return {
-    settings: settings.settings ? { on: settings.settings.on, since: settings.settings.since } : null,
+    settings: settings.settings
+      ? {
+          on: settings.settings.on,
+          since: settings.settings.since,
+          ...(settings.settings.skip_transfers !== undefined ? { skip_transfers: settings.settings.skip_transfers } : {}),
+          ...(settings.settings.posted_only !== undefined ? { posted_only: settings.settings.posted_only } : {}),
+        }
+      : null,
     settingsUnread: settings.unreadable || settings.unrecognised,
     defaults: defaults.state,
     defaultsUnread: defaults.unreadable || defaults.unrecognised,

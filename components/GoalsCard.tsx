@@ -30,7 +30,7 @@ import type { ListStatus } from '@/lib/whole-list-store';
 import { formatMoney, hideAmountsIn, spoken } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
 import { goalViews, type GoalAccount, type GoalView } from '@/lib/goal-view';
-import { archivedText, gapItem, goalNotes, meterLabel, outlookText, sourceNote, splitText, stateText, type GapItem } from '@/lib/goal-text';
+import { archivedText, dayLabel, gapItem, goalNotes, meterLabel, outlookText, sourceNote, splitText, stateText, type GapItem } from '@/lib/goal-text';
 import { MAX_GOALS, type Goal } from '@/lib/goal-model';
 import { useGoalFlows, type GoalFlowsState } from './goal-flows-state';
 import GoalSheet from './GoalSheet';
@@ -284,7 +284,17 @@ export function GoalsCardView({
                 </div>
               ) : (
                 <div className="type-tag">
-                  <Masked>{stateText(v)}</Masked>
+                  <Masked>
+                    {[
+                      stateText(v),
+                      v.state === 'untracked' && goal.plan?.monthly_target !== undefined
+                        ? `Target ${formatMoney(goal.plan.monthly_target, v.currency)}/mo`
+                        : null,
+                      v.state === 'untracked' && goal.plan?.target_date ? `By ${dayLabel(goal.plan.target_date)}` : null,
+                    ]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </Masked>
                 </div>
               )}
             </button>

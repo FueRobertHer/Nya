@@ -517,8 +517,9 @@ function savingsText(a: FigureArgs, coverage: Coverage, flowsGap: Gap): FigureTe
   // so nothing is counted twice unseen (lib/fire/inputs.ts workplaceSavings).
   const plans = workplace?.plans ?? [];
   const fromBank = workplace?.fromBank ?? [];
+  const alreadyStopped = a.plan.age !== null && view.stopAge !== null && a.plan.age >= view.stopAge;
   add('caution', NOTE_KINDS.checking, workplaceCount === null ? 'Checking contributions to workplace plans…' : null);
-  add('caution', NOTE_KINDS.payroll, workplaceCount === 0 ? PAYROLL_NOTE : null);
+  add('caution', NOTE_KINDS.payroll, workplaceCount === 0 && !alreadyStopped ? PAYROLL_NOTE : null);
   for (const x of plans) {
     add(
       'caution',

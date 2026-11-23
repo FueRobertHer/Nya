@@ -424,8 +424,27 @@ describe('a tap lists the node’s transactions in the Activity list', () => {
     const mount = source.slice(source.indexOf('<CashFlowSankey'), source.indexOf('/>', source.indexOf('<CashFlowSankey')));
     // The rows as the totals count them: converted, with a home currency (lib/fx/totals.ts).
     for (const prop of ['txns={counted.rows}', 'taxonomy={taxonomy}', 'currency={currency}', 'incomplete={incomplete}', 'stopped={stopped}', 'withoutTransactions={withoutTransactions}', 'pick={flowPick}']) expect(mount).toContain(prop);
-    expect(source).toContain('searchEntries(listed, { query, tag: filterTag, review: reviewing, unsure: unsureOnly }, tags)');
+    expect(source).toContain('searchEntries(listed, searchOpts, tags)');
+    expect(source).toContain('{ query, tag: filterTag, account: filterAccount, category: filterCategory, review: reviewing, unsure: unsureOnly }');
     expect(source).toContain('<FlowShown pick={flowPick}');
+  });
+
+  test('non-card loan payments appear as a separate branch without changing Money out, while card payments stay excluded', () => {
+    const withLoans = [
+      row(day(1), 'ACME CORP', -6000, 'income'),
+      row(day(2), 'Whole Foods', 500, 'groceries'),
+      row(day(3), 'Tattersall Mortgage', 2500, 'loan payments', { subcategory: 'mortgage payment' }),
+      row(day(4), 'Auto Loan', 450, 'loan payments', { subcategory: 'car payment' }),
+      row(day(5), 'Card Autopay', 1200, 'loan payments', { subcategory: 'credit card payment' }),
+    ];
+    const html = sankey({ txns: withLoans });
+    const t = text(html);
+    expect(flowTotal(html, 'Money out')).toBe(formatMoney(500, 'USD'));
+    expect(t).toContain('Loan & debt payments');
+    expect(t).toContain('$2,950.00');
+    expect(t).toContain('Left over, of what came in $2,550.00');
+    expect(html).toContain('class="sankey-node loan tappable"');
+    expect(t).toContain('Mortgage, auto, student, and personal loan payments are shown separately on this chart');
   });
 
   test('the chart waits for the categories it draws by: none without them', () => {

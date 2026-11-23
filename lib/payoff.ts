@@ -1079,3 +1079,55 @@ export function planRows(
   }
   return { rows, debts, waiting };
 }
+
+export type DebtPayoffSummary = {
+  /** Number of non-hidden credit/loan accounts with a positive balance owed in `currency`. */
+  accounts: number;
+  /** Primary currency of the owed accounts, or null when unlabelled. */
+  currency: string | null;
+  /** Total balance owed across those accounts, in cents. */
+  owedCents: number;
+  /** Count of additional currencies that also hold owed accounts. */
+  otherCurrencies: number;
+  /** Projected payoff YYYY-MM when all planned debts in `currency` have complete terms, else null. */
+  payoffMonth: string | null;
+};
+
+/** Compact 1-line summary for the Budgets > Goals "Payoff plan" row: total debt
+ *  owed across accounts, plus projected payoff month when terms are complete. */
+export function debtPayoffSummary(
+  institutions: readonly DebtInstitutionInput[],
+  opts: {
+    startMonth: string;
+    choices?: PlanChoices;
+    strategy?: Strategy;
+    extra?: Readonly<Record<string, string>>;
+    currency?: string | null;
+  }
+): DebtPayoffSummary | null {
+  const groups = byCurrency(debtAccounts([...institutions]));
+  if (groups.length === 0) return null;
+  const keyOf = (c: string | null) => c ?? '';
+  const group = groups.find((g) => keyOf(g.currency) === opts.currency) ?? groups[0];
+  const choices: PlanChoices = opts.choices ?? { typed: {}, leftOut: {}, withoutAccrued: {}, sharedSplit: {} };
+  const { rows, debts, waiting } = planRows(group.accounts, choices);
+  const owing = rows.filter((r) => r.owedCents !== null && r.owedCents > 0);
+  if (owing.length === 0) return null;
+  const owedCents = owing.reduce((sum, r) => sum + r.owedCents!, 0);
+  let payoffMonth: string | null = null;
+  if (waiting === 0 && debts.length > 0) {
+    const extra = parseCents(opts.extra?.[keyOf(group.currency)] ?? '');
+    if (extra !== 'invalid') {
+      const comp = comparePlans(debts, { startMonth: opts.startMonth, extraCents: extra ?? 0 });
+      payoffMonth = comp[opts.strategy ?? 'avalanche'].month;
+    }
+  }
+  return {
+    accounts: owing.length,
+    currency: group.currency,
+    owedCents,
+    otherCurrencies: groups.length - 1,
+    payoffMonth,
+  };
+}
+

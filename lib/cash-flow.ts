@@ -75,7 +75,23 @@
 // transaction with only its parts in the node under it, a group's row with
 // its transactions.
 
-import { countTransactions, countsInTotals, historyCount, isHistoryRow, transactionCounter, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote, type Countable, type LeftOut } from './spending';
+import {
+  categoryKey,
+  countTransactions,
+  countsInTotals,
+  historyCount,
+  inCurrency,
+  isExcluded,
+  isHistoryRow,
+  isTransfer,
+  LOAN_PAYMENTS,
+  transactionCounter,
+  uncategorizedFrom,
+  uncategorizedFromConnector,
+  uncategorizedNote,
+  type Countable,
+  type LeftOut,
+} from './spending';
 import { summarize, tidy, type TotalsRow } from './totals';
 import { categoryById, displayName, filedId, groupOf, uncategorizedOf, type CategoryIndex, type CategoryKind } from './categories';
 import { addMonths, monthName, monthsFrom, monthsText } from './rollover';
@@ -84,11 +100,20 @@ import { coveredOutOf, refusedNames, unallowedNames, withoutNote, NO_CONNECTIONS
 import { importedRowsNote } from './history-import/view';
 import type { LabelSide, SankeyLinkInput } from './sankey';
 
+/** Plaid's details for non-card loan payments (same set as lib/fire/inputs.ts):
+ *  shown as a separate outflow branch on the Cash Flow chart while staying out
+ *  of Money out and budgets. */
+const LOAN_PAYMENT_DETAILS = new Set(['mortgage payment', 'car payment', 'student loan payment', 'personal loan payment']);
+
 /** What the flows read of a transaction: what the totals read, and its id
  *  and name. */
 export type FlowRow = TotalsRow & {
   transaction_id: string;
   name: string;
+  /** Plaid's finer category detail, when present (for non-card loan payments). */
+  subcategory?: string | null;
+  /** Paired SimpleFIN/connector transfer kind, when present. */
+  paired?: 'card' | 'loan' | 'transfer';
   /** A rule hides it (lib/rules.ts): left out as an exclusion is, and
    *  counted apart, as the Activity tab says them. */
   excluded_by_rule?: true;
@@ -99,12 +124,22 @@ export type FlowRow = TotalsRow & {
   group_members?: readonly FlowRow[];
 };
 
+/** Whether a transaction is a non-card loan outflow (mortgage, auto, student,
+ *  or personal loan payment) left out of totals as a transfer. */
+export function isLoanPaymentOut(t: FlowRow, currency: string | null): boolean {
+  if (!(t.amount > 0) || isExcluded(t) || t.group_outside || !inCurrency(t, currency)) return false;
+  if (!isTransfer(t) || categoryKey(t) !== LOAN_PAYMENTS) return false;
+  if (t.paired === 'loan') return true;
+  return LOAN_PAYMENT_DETAILS.has((t.subcategory ?? '').toLowerCase());
+}
+
 /** One payer's counted money in. `key` is its name as compared. `rows` are
  *  the rows it sums (their ids, `ids`), by which a fold counts its
  *  transactions, each once (see SPLITS AND GROUPS above). */
 export type Payer = { key: string; name: string; amount: number; transactions: number; refund: boolean; ids: string[]; rows: FlowRow[] };
 export type FlowCategory = { id: string; name: string; amount: number; transactions: number; ids: string[]; rows: FlowRow[] };
 export type FlowGroup = { id: string; name: string; kind: CategoryKind; amount: number; transactions: number; ids: string[]; categories: FlowCategory[] };
+export type LoanPaymentFlow = { amount: number; transactions: number; ids: string[]; rows: FlowRow[] };
 
 export type CashFlow = {
   /** The one currency every amount is in (totalsCurrency over the rows the
@@ -117,6 +152,9 @@ export type CashFlow = {
   left_over: number;
   /** money_out less money_in when more went out, else 0. */
   from_savings_or_debt: number;
+  /** Non-card loan outflows (mortgage, auto, student, personal loan payments)
+   *  shown separately on the chart while remaining out of money_out/budgets. */
+  loan_payments: LoanPaymentFlow;
   /** Money in by payer, most first: they add up to money_in. */
   payers: Payer[];
   /** Money out by group, most first, each with its categories, most first:
@@ -163,6 +201,7 @@ export function cashFlow(rows: readonly FlowRow[], inRange: (date: string) => bo
   type GroupSum = { name: string; kind: CategoryKind; amount: number; tally: Tally; ids: string[]; categories: Map<string, CategorySum> };
   const payers = new Map<string, PayerSum>();
   const groups = new Map<string, GroupSum>();
+  const loanPayments = { amount: 0, tally: transactionCounter(), ids: [] as string[], rows: [] as FlowRow[] };
   const hidden = transactionCounter();
   const cameIn = transactionCounter();
   const wentOut = transactionCounter();
@@ -170,7 +209,16 @@ export function cashFlow(rows: readonly FlowRow[], inRange: (date: string) => bo
   for (const t of rows) {
     if (!inRange(t.date)) continue;
     if (t.excluded === true && t.excluded_by_rule) hidden.add(t);
-    if (t.amount === 0 || !countsInTotals(t, currency)) continue;
+    if (t.amount === 0) continue;
+    if (!countsInTotals(t, currency)) {
+      if (isLoanPaymentOut(t, currency)) {
+        loanPayments.amount += t.amount;
+        loanPayments.tally.add(t);
+        loanPayments.ids.push(t.transaction_id);
+        loanPayments.rows.push(t);
+      }
+      continue;
+    }
     const category = categoryById(ix, filedId(ix, t)) ?? uncategorized;
     const group = groupOf(ix, category);
     if (t.amount < 0) {
@@ -206,6 +254,12 @@ export function cashFlow(rows: readonly FlowRow[], inRange: (date: string) => bo
     net: totals.net,
     left_over: totals.net > 0 ? totals.net : 0,
     from_savings_or_debt: totals.net < 0 ? tidy(-totals.net) : 0,
+    loan_payments: {
+      amount: tidy(loanPayments.amount),
+      transactions: loanPayments.tally.n,
+      ids: loanPayments.ids,
+      rows: loanPayments.rows,
+    },
     payers: [...payers]
       .map(([key, p]) => ({ key, name: p.name, amount: tidy(p.amount), transactions: p.tally.n, refund: p.refund, ids: p.ids, rows: p.rows }))
       .sort((a, b) => byAmount(a, b) || (a.key < b.key ? -1 : 1)),
@@ -235,7 +289,7 @@ export function cashFlow(rows: readonly FlowRow[], inRange: (date: string) => bo
 
 // ---- The chart's nodes and links ----
 
-export type FlowNodeKind = 'payer' | 'other-income' | 'deficit' | 'total' | 'group' | 'left-over' | 'category' | 'other-categories';
+export type FlowNodeKind = 'payer' | 'other-income' | 'deficit' | 'total' | 'group' | 'loan-payments' | 'left-over' | 'category' | 'other-categories';
 
 /** A node of the chart, for lib/sankey.ts: what it is, what it is called, its
  *  amount, and the rows behind it (what tapping it shows; null for the left
@@ -293,8 +347,12 @@ export function flowGraph(flow: CashFlow, opts: { minShare?: number; maxPayers?:
   const categories = opts.categories ?? true;
   const minShare = opts.minShare ?? MIN_SHARE;
   const maxPayers = opts.maxPayers ?? MAX_PAYERS;
-  const total = Math.max(flow.money_in, flow.money_out);
+  const loanOut = flow.loan_payments.amount;
+  const totalOut = tidy(flow.money_out + loanOut);
+  const total = Math.max(flow.money_in, totalOut);
   if (!(total > 0)) return { nodes: [], links: [], total: 0 };
+  const deficit = totalOut > flow.money_in ? tidy(totalOut - flow.money_in) : 0;
+  const leftOver = flow.money_in > totalOut ? tidy(flow.money_in - totalOut) : 0;
   const big = (amount: number) => amount >= minShare * total;
   const nodes: FlowNode[] = [];
   const links: SankeyLinkInput[] = [];
@@ -322,10 +380,10 @@ export function flowGraph(flow: CashFlow, opts: { minShare?: number; maxPayers?:
     });
     links.push({ source: 'other-income', target: 'total', value });
   }
-  if (flow.from_savings_or_debt > 0) {
+  if (deficit > 0) {
     // Among the sources, so its label says what, not where from.
-    nodes.push({ id: 'deficit', column: 0, side: 'right', kind: 'deficit', label: 'Savings or debt', value: flow.from_savings_or_debt, transactions: 0, ids: null });
-    links.push({ source: 'deficit', target: 'total', value: flow.from_savings_or_debt });
+    nodes.push({ id: 'deficit', column: 0, side: 'right', kind: 'deficit', label: 'Savings or debt', value: deficit, transactions: 0, ids: null });
+    links.push({ source: 'deficit', target: 'total', value: deficit });
   }
 
   nodes.push({
@@ -335,17 +393,31 @@ export function flowGraph(flow: CashFlow, opts: { minShare?: number; maxPayers?:
     kind: 'total',
     label: 'Everything counted',
     value: total,
-    transactions: flow.counted,
-    ids: [...flow.payers.flatMap((p) => p.ids), ...flow.groups.flatMap((g) => g.ids)],
+    transactions: flow.counted + flow.loan_payments.transactions,
+    ids: [...flow.payers.flatMap((p) => p.ids), ...flow.groups.flatMap((g) => g.ids), ...flow.loan_payments.ids],
   });
 
   for (const g of flow.groups) {
     nodes.push({ id: `group:${g.id}`, column: 2, side: 'left', kind: 'group', label: g.name, value: g.amount, transactions: g.transactions, ids: g.ids });
     links.push({ source: 'total', target: `group:${g.id}`, value: g.amount });
   }
-  if (flow.left_over > 0) {
-    nodes.push({ id: 'left-over', column: 2, side: 'left', kind: 'left-over', label: 'Left over', value: flow.left_over, transactions: 0, ids: null });
-    links.push({ source: 'total', target: 'left-over', value: flow.left_over });
+  if (loanOut > 0) {
+    nodes.push({
+      id: 'loan-payments',
+      column: 2,
+      side: 'left',
+      kind: 'loan-payments',
+      label: 'Loan & debt payments',
+      short: 'Loan payments',
+      value: loanOut,
+      transactions: flow.loan_payments.transactions,
+      ids: flow.loan_payments.ids,
+    });
+    links.push({ source: 'total', target: 'loan-payments', value: loanOut });
+  }
+  if (leftOver > 0) {
+    nodes.push({ id: 'left-over', column: 2, side: 'left', kind: 'left-over', label: 'Left over', value: leftOver, transactions: 0, ids: null });
+    links.push({ source: 'total', target: 'left-over', value: leftOver });
   }
 
   for (const g of categories ? flow.groups : []) {
@@ -603,6 +675,9 @@ export function cashFlowNotes(input: { flow: CashFlow } & GapInput): { gaps: str
     `Transfers, cash withdrawals and loan payments are left out, as in the month's totals${flow.transfers > 0 ? ` (${flow.transfers} here)` : ''}.` +
       (excluded.length > 0 ? ` So ${byYou + hidden === 1 ? 'is' : 'are'} ${joinNames(excluded)}.` : '')
   );
+  if (flow.loan_payments.amount > 0) {
+    counted.push('Mortgage, auto, student, and personal loan payments are shown separately on this chart and stay out of Money out and budgets.');
+  }
   if (flow.exclusion_unknown > 0) {
     const n = flow.exclusion_unknown;
     counted.push(`Whether you excluded ${plural(n, 'transaction')} couldn't be read, so ${n === 1 ? 'it counts' : 'they count'} here.`);

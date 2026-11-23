@@ -47,10 +47,11 @@ import { currencyPlural, formatDay, formatMoney, roundsToNothing, signedMoney, s
 import { isInvestmentType } from '@/lib/balance';
 import { RANGE_TEXT, type RangeKey } from '@/lib/chart-range';
 import { connectorLabel } from '@/lib/connectors/types';
-import { summarizeGrowth, type ActivityState, type CurrencyGroup, type Figures, type GrowthAccount, type GrowthRow } from '@/lib/growth-summary';
+import { confirmedZeroActivity, summarizeGrowth, type ActivityState, type CurrencyGroup, type Figures, type GrowthAccount, type GrowthRow } from '@/lib/growth-summary';
 import { joinNames } from '@/lib/month-coverage';
 import type { BalancePoint } from '@/lib/growth';
 import { monthText, previousMonth, withPastMonths, type PastMonthsResult } from '@/lib/investment-months';
+import type { MoneyInOut } from '@/lib/money-in-out';
 import AccountsChooser, { presetOf, type ChooserPreset } from './AccountsChooser';
 import type { Institution } from './accounts-format';
 import { Hero } from './Hero';
@@ -58,8 +59,8 @@ import { useAmountsHidden } from './hide-amounts';
 import { HeroInfo, HeroScrub, type HeroReading } from './hero-scrub';
 import { Masked } from './HideAmounts';
 import { CHEVRON } from './InstitutionCard';
-import { loadInvestmentActivity, onMoneyInOutSaved } from './InvestmentActivity';
-import type { MoneyInOutTarget } from './MoneyInOutFigures';
+import { loadInvestmentActivity, moneyInOutSaved, onMoneyInOutSaved } from './InvestmentActivity';
+import { NoActivityPrompt, type MoneyInOutTarget } from './MoneyInOutFigures';
 import NetWorthChart from './NetWorthChart';
 import { HeroFigure } from './NetWorthCard';
 import { useSettingsRead } from './plan-detailed-home';
@@ -296,15 +297,23 @@ export default function InvestmentGrowth({
   const historyLoading = histories === null && !historyFailed;
   const s = useMemo(() => summarizeGrowth<Shown>(picks, picked, main, historyLoading), [picks, picked, main, historyLoading]);
 
-  // Manual and SimpleFIN or Lunch Flow accounts under the preset shown; a set
-  // of accounts chosen one by one has none.
-  const notCounted = unlinked
-    .filter(({ a }) => {
-      if (preset === 'all') return true;
-      if (preset === 'retirement' || preset === 'other') return isRetirement(a.subtype, buckets.get(a.account_id)) === (preset === 'retirement');
-      return false;
-    })
-    .map((u) => u.words);
+  // Manual and SimpleFIN or Lunch Flow accounts under the preset shown, plus
+  // any linked account whose brokerage returned no investment activity (when
+  // at least one other account in its group is counted, so figures aren't
+  // silently short of quiet IRAs).
+  const noneLinked = s.groups.flatMap((gr) =>
+    gr.loading || gr.rows.every((r) => r.status === 'none') ? [] : gr.rows.filter((r) => r.status === 'none').map((r) => r.account.title)
+  );
+  const notCounted = [
+    ...unlinked
+      .filter(({ a }) => {
+        if (preset === 'all') return true;
+        if (preset === 'retirement' || preset === 'other') return isRetirement(a.subtype, buckets.get(a.account_id)) === (preset === 'retirement');
+        return false;
+      })
+      .map((u) => u.words),
+    ...noneLinked,
+  ];
   const notCountedWords = `Not counted: ${joinNames(notCounted)}. Nya has no investment activity for ${notCounted.length === 1 ? 'it' : 'them'}.`;
   const notCountedNotice = notCounted.length > 0 && <Notice level="info">{notCountedWords}</Notice>;
 
@@ -933,6 +942,11 @@ function RangeCard({
           {`Deposits and withdrawals for ${joinNames(g.unreadable.map((r) => r.account.title))} can’t be read just now, so all-time returns across these accounts aren’t shown.`}
         </Notice>
       )}
+      {g.rows.length === 1 && !g.loading && g.rows[0].status === 'none' && (() => {
+        const a = g.rows[0].account;
+        const firstReal = a.points?.find((p) => !p.estimated)?.date ?? null;
+        return firstReal ? <NoActivityPrompt accountId={a.account_id} itemId={a.item_id} currency={a.currency} firstDay={firstReal} /> : null;
+      })()}
       <Why>
         <Masked>
           {all
@@ -946,15 +960,61 @@ function RangeCard({
         <>
           <h3 className="section-label">By account</h3>
           <ul className="list-rows">
-            {g.rows.map((r) => (
-              <li key={r.account.key}>
-                <Row row={r} currency={g.currency} loading={g.loading} all={all} onOpen={() => onOpenAccount(r.account.item_id, r.account.account_id)} />
-              </li>
-            ))}
+            {g.rows.map((r) => {
+              const firstReal = !g.loading && r.status === 'none' ? (r.account.points?.find((p) => !p.estimated)?.date ?? null) : null;
+              return (
+                <li key={r.account.key}>
+                  <Row row={r} currency={g.currency} loading={g.loading} all={all} onOpen={() => onOpenAccount(r.account.item_id, r.account.account_id)} />
+                  {firstReal && <ConfirmNoActivityButton account={r.account} firstDay={firstReal} />}
+                </li>
+              );
+            })}
           </ul>
         </>
       )}
     </section>
+  );
+}
+
+/** Compact 1-tap action under a quiet account row on Accounts > Investments. */
+function ConfirmNoActivityButton({ account, firstDay }: { account: Shown; firstDay: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const confirm = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/money-in-out', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ account_id: account.account_id, in: 0, out: 0, as_of: firstDay, currency: account.currency, no_activity: true }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(typeof data?.error === 'string' ? data.error : 'Could not save just now. Try again.');
+        return;
+      }
+      moneyInOutSaved(account.account_id, account.item_id, (data?.money_in_out ?? null) as MoneyInOut | null);
+    } catch {
+      setError('Nya could not be reached. Check your connection and try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="stack tight">
+      <div>
+        <button type="button" className="btn ghost" disabled={busy} onClick={() => void confirm()}>
+          {busy ? 'Saving…' : `Confirm no deposits or withdrawals since ${day(firstDay)}`}
+        </button>
+      </div>
+      {error && (
+        <Notice level="critical" role="alert">
+          {error}
+        </Notice>
+      )}
+    </div>
   );
 }
 
@@ -970,7 +1030,7 @@ function targetFor(r: GrowthRow<Shown>): MoneyInOutTarget {
     currency: a.currency,
     totals: data?.money_in_out ?? null,
     flows: data?.flows ?? [],
-    flows_from: data?.flows_from ?? '',
+    flows_from: data?.flows_from ?? (data ? confirmedZeroActivity(data) : null) ?? '',
   };
 }
 

@@ -44,7 +44,7 @@ const spentBy = (by: Record<string, number>) => Object.fromEntries(Object.entrie
 describe('the Budgets tab’s group meters', () => {
   test('collapsed at first: each group with a budget as one meter, its categories hidden', () => {
     const t = card({ budgets: { categories: amounts({ groceries: 300, restaurants: 200 }), groups: {} }, spent: spentBy({ groceries: 120, restaurants: 30, coffee: 5 }) });
-    expect(t).toContain('Food $150.00 of $500.00');
+    expect(t).toContain('Food 2 of 3 categories budgeted $150.00 of $500.00');
     expect(t).not.toContain('groceries');
     expect(t).not.toContain('Groceries $120.00');
   });

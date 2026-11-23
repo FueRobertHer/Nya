@@ -72,11 +72,14 @@ describe('every word the three cards said is still on the institution’s card',
       const r = recorded[c.name];
       const shown = text(card(c));
       // "Working" was the healthy row's badge; a healthy card says when it last synced instead.
-      const sentences = [...r.card, ...r.health.filter((s) => s !== 'Working'), ...r.connectorWarnings];
+      // Raw Plaid error codes moved off the main card into Connection details (where they stay for support).
+      const sentences = [...r.card, ...r.health.filter((s) => s !== 'Working').map((s) => s.replace(/ · Plaid code [A-Z0-9_]+/, '')), ...r.connectorWarnings];
       for (const s of sentences) expect([c.name, s, shown.includes(s)]).toEqual([c.name, s, true]);
-      if (c.conn) {
-        const details = text(renderToStaticMarkup(<ConnectionDetailsBody inst={c.inst} place={{ conn: c.conn, first: true, firstName: null }} requests={{ left: 5, limit: 8, resets_in_seconds: 3600 }} fx={null} onConnector={noop} />));
+      const plaidCode = r.health.map((s) => /Plaid code ([A-Z0-9_]+)/.exec(s)?.[1]).find(Boolean);
+      if (c.conn || plaidCode) {
+        const details = text(renderToStaticMarkup(<ConnectionDetailsBody inst={c.inst} place={c.conn ? { conn: c.conn, first: true, firstName: null } : null} requests={{ left: 5, limit: 8, resets_in_seconds: 3600 }} fx={null} onConnector={noop} />));
         for (const s of r.connectorNotes) expect([c.name, s, details.includes(s)]).toEqual([c.name, s, true]);
+        if (plaidCode) expect([c.name, plaidCode, details.includes(plaidCode)]).toEqual([c.name, plaidCode, true]);
       }
     });
   }

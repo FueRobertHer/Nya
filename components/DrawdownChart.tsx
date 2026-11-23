@@ -37,6 +37,8 @@ export type DrawdownMark = { age: number; label: string; short: string; spelled?
  *  names beside it, no rule from a row above runs through it, and its own
  *  rule runs through no name below; where no row can do all three (a rule
  *  under a name moved in from the edge), the first that clears the names. */
+const MARK_LABEL_GAP = MIN_LABEL_GAP + 8;
+
 export function markRows(marks: readonly { x: number; label: string; at?: number }[]): number[] {
   const placed: { from: number; to: number; at: number; row: number }[] = [];
   const crosses = (at: number, from: number, to: number) => at > from - 1 && at < to + 1;
@@ -44,7 +46,7 @@ export function markRows(marks: readonly { x: number; label: string; at?: number
     const from = m.x;
     const to = m.x + labelWidth(m.label);
     const at = m.at ?? m.x;
-    const clears = (row: number) => placed.every((p) => p.row !== row || from >= p.to + MIN_LABEL_GAP || p.from >= to + MIN_LABEL_GAP);
+    const clears = (row: number) => placed.every((p) => p.row !== row || from >= p.to + MARK_LABEL_GAP || p.from >= to + MARK_LABEL_GAP);
     const uncrossed = (row: number) => placed.every((p) => (p.row < row ? !crosses(p.at, from, to) : p.row > row ? !crosses(at, p.from, p.to) : true));
     const last = placed.length;
     let row = -1;

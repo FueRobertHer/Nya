@@ -79,9 +79,10 @@ import { gapText, monthName as nameOfMonth, monthsText, type IncomeCarryover, ty
 import { dismissedSeries, type RecurringSeries } from '@/lib/recurring';
 import { localDate, localMonth } from '@/lib/local-date';
 import { cashPosition, type ForecastInstitution } from '@/lib/forecast';
+import { debtPayoffSummary, type DebtInstitutionInput, type PlanChoices, type Strategy } from '@/lib/payoff';
 import { EMPTY_PLANNED, type Planned } from '@/lib/planned';
 import { formatInstantDay, formatMoney } from '@/lib/format';
-import { spendingByCategory } from '@/lib/totals';
+import { spendingByCategory, tidy } from '@/lib/totals';
 import type { Incomplete, Stopped } from '@/lib/month-coverage';
 import { noSpending as noSpendingOf, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import GoalsCard, { type Goal, type GoalAccount } from './GoalsCard';
@@ -182,6 +183,7 @@ export default function BudgetsTab({
   viewMonth,
   onViewMonth,
   onPayoff,
+  payoffPlan,
 }: {
   txns: Txn[] | null;
   /** What spending in other currencies converts with, once a home currency
@@ -262,6 +264,8 @@ export default function BudgetsTab({
   /** Opens the debt payoff plan (components/DebtPayoff.tsx), when there is a
    *  card or loan on screen to plan; left out, Goals doesn't offer it. */
   onPayoff?: () => void;
+  /** Latest saved or edited debt payoff inputs, for the 1-line summary on Goals. */
+  payoffPlan?: (PlanChoices & { strategy?: Strategy; extra?: Record<string, string>; currency?: string | null }) | null;
 }) {
   const [ownSegment, setOwnSegment] = useState<BudgetsSegment>('month');
   const segment = segmentShown ?? ownSegment;
@@ -450,6 +454,23 @@ export default function BudgetsTab({
       {body}
     </div>
   );
+  const payoffSummary = useMemo(
+    () =>
+      onPayoff
+        ? debtPayoffSummary(institutions as unknown as DebtInstitutionInput[], {
+            startMonth: thisMonth,
+            choices: payoffPlan ?? undefined,
+            strategy: payoffPlan?.strategy,
+            extra: payoffPlan?.extra,
+            currency: payoffPlan?.currency,
+          })
+        : null,
+    [onPayoff, institutions, thisMonth, payoffPlan]
+  );
+  const fmtPayoffMonth = (m: string) => {
+    const [y, mo] = m.split('-').map(Number);
+    return new Date(y, mo - 1, 1).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+  };
   // Goals needs no transactions, so it never waits for them.
   const goalsPanel = panel(
     'goals',
@@ -474,6 +495,13 @@ export default function BudgetsTab({
               <button className="list-row" onClick={onPayoff}>
                 <span className="list-row-text">
                   <span className="list-row-title">Payoff plan</span>
+                  {payoffSummary && (
+                    <span className="list-row-sub">
+                      <Masked>
+                        {`${formatMoney(payoffSummary.owedCents / 100, payoffSummary.currency)} across ${payoffSummary.accounts} ${payoffSummary.accounts === 1 ? 'account' : 'accounts'}${payoffSummary.payoffMonth ? ` · paid off ${fmtPayoffMonth(payoffSummary.payoffMonth)}` : ''}`}
+                      </Masked>
+                    </span>
+                  )}
                 </span>
                 {chevron(RIGHT)}
               </button>
@@ -566,6 +594,15 @@ export default function BudgetsTab({
     </>
   ) : undefined;
 
+  const allMonthSpent = shownSpent
+    ? tidy(Object.values(shownSpent).reduce((sum, n) => sum + (n > 0 ? n : 0), 0))
+    : 0;
+  const unbudgetedSpent = hasTotal ? Math.max(0, tidy(allMonthSpent - totalSpent)) : 0;
+  const poolUncertainCovered =
+    !!view?.pool &&
+    view.pool.uncertain.length > 0 &&
+    view.pool.uncertain.every((m) => (m === shownMonth ? ownNotes.length > 0 : carryNotes.length > 0));
+
   return (
     <>
       {bar}
@@ -577,13 +614,21 @@ export default function BudgetsTab({
           {past && drawn && <p className="helper">{monthName} is shown as it was. To change a budget, go to this month.</p>}
           <TotalCaveats items={notice} />
           {onCategories && <TemplateOffer taxonomy={taxonomy} onTaxonomy={onCategories} onKept={focusMonth} />}
-          {drawn && view?.pool && <IncomePoolHeader pool={view.pool} currency={shownCurrency} month={shownMonth} today={thisMonth} />}
+          {drawn && view?.pool && (
+            <IncomePoolHeader
+              pool={view.pool}
+              currency={shownCurrency}
+              month={shownMonth}
+              today={thisMonth}
+              coveredByNotice={poolUncertainCovered}
+            />
+          )}
           {/* Conditional in its own slot, so BudgetsCard below keeps its
               place and is never drawn anew while a sheet closes. */}
           {!empty && (
             <section className="card stack" aria-labelledby="budgets-spent-title">
               <div className="card-header">
-                <h3 id="budgets-spent-title">Spent</h3>
+                <h3 id="budgets-spent-title">Budgeted spending</h3>
                 {hasTotal && drawn && !noSpending && (
                   <span className="meta money">
                     <Masked>
@@ -609,8 +654,13 @@ export default function BudgetsTab({
                   aria-valuemax={100}
                   aria-valuenow={Math.round(Math.min(totalRatio * 100, 100))}
                 >
-                  <div className={`meter-fill${meterState(totalRatio)}`} style={{ width: `${Math.min(totalRatio * 100, 100)}%` }} />
+                  <div className={`meter-fill${meterState(totalRatio)}${totalRatio <= 0 ? ' empty' : ''}`} style={{ width: `${Math.min(totalRatio * 100, 100)}%` }} />
                 </div>
+              )}
+              {drawn && hasTotal && !noSpending && unbudgetedSpent > 0 && (
+                <p className="helper">
+                  Plus <Masked>{formatMoney(unbudgetedSpent, shownCurrency)}</Masked> in unbudgeted categories.
+                </p>
               )}
               {budgetsStatus === 'error' ? (
                 <Notice level="caution">{budgetsError}</Notice>

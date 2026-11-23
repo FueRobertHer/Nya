@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { DemoDataView, shownScenario, type DemoInfo } from '@/components/DemoDataCard';
+import { DemoDataView, DemoResetProgress, demoResetStatus, shownScenario, type DemoInfo } from '@/components/DemoDataCard';
 
 const noop = () => {};
 const INFO: Extract<DemoInfo, { demo: true }> = {
@@ -81,5 +81,16 @@ describe('DemoDataView', () => {
     const html = view(INFO, { busy: true });
     expect(html).toContain('<select disabled="">');
     expect(html).toMatch(/class="btn secondary" disabled="">Reset demo data/);
+  });
+
+  test('reset progress reports elapsed phases and renders a live status bar', () => {
+    expect(demoResetStatus(0)).toBe('Emptying previous demo data…');
+    expect(demoResetStatus(4)).toBe('Emptying previous demo data… (4s)');
+    expect(demoResetStatus(24)).toBe('Connecting sandbox banks and syncing a year of transactions… (24s)');
+    expect(demoResetStatus(52)).toBe('Finishing accounts, history and plan setup… (52s)');
+    const html = renderToStaticMarkup(<DemoResetProgress elapsed={24} />);
+    expect(html).toContain('role="status"');
+    expect(html).toContain('class="demo-progress-bar"');
+    expect(html).toContain('Connecting sandbox banks and syncing a year of transactions… (24s)');
   });
 });

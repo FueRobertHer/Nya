@@ -50,42 +50,78 @@ export function createPlanRunner<J = PlanJob, R = PlanJobResult>(opts: {
   startWorker: () => WorkerLike<R> | null;
   /** Runs a job on the page. */
   runHere: (job: J) => Promise<R>;
+  /** Maximum number of parallel workers to spawn lazily (defaults to 1). */
+  concurrency?: number;
 }): PlanRunner<J, R> {
   type Answer = R | JobFailure;
   type Entry = { job: J; resolve: (r: Answer) => void; forget: () => void };
-  let worker: WorkerLike<R> | null = null;
-  let started = false;
+  type Slot = { worker: WorkerLike<R>; running: { entry: Entry; id: number } | null };
+  let maxWorkers = Math.max(1, Math.floor(opts.concurrency ?? 1));
+  const slots: Slot[] = [];
   let broken = false;
   let disposed = false;
   let nextId = 1;
   const queue: Entry[] = [];
-  /** The job running now: in the worker (with the id its answer carries), or
-   *  on the page (null). */
-  let running: { entry: Entry; id: number | null } | null = null;
+  /** The job running on the page when workers are unavailable or failed. */
+  let pageRunning: Entry | null = null;
 
   const settle = (entry: Entry, result: Answer) => {
     entry.forget();
     entry.resolve(result);
   };
 
-  /** Starts the next job, if none is running. */
+  /** Spawns one worker slot if below the pool cap, or returns null. */
+  function spawnSlot(): Slot | null {
+    if (broken || slots.length >= maxWorkers) return null;
+    let w: WorkerLike<R> | null = null;
+    try {
+      w = opts.startWorker();
+    } catch {
+      w = null;
+    }
+    if (!w) {
+      if (slots.length === 0) broken = true;
+      else maxWorkers = slots.length;
+      return null;
+    }
+    const slot: Slot = { worker: w, running: null };
+    w.onmessage = (e) => {
+      // An answer for anything but this slot's running job is late: ignored.
+      if (!slot.running || e.data?.id !== slot.running.id) return;
+      const { entry } = slot.running;
+      slot.running = null;
+      settle(entry, e.data.result);
+      next();
+    };
+    w.onerror = () => fail();
+    slots.push(slot);
+    return slot;
+  }
+
+  /** Starts the next queued job(s) on idle workers, or one on the page. */
   function next() {
-    if (running || disposed) return;
+    if (disposed || queue.length === 0) return;
+    if (!broken) {
+      while (queue.length > 0 && !broken && !disposed) {
+        const slot = slots.find((s) => s.running === null) ?? spawnSlot();
+        if (!slot) break;
+        const entry = queue.shift()!;
+        const id = nextId++;
+        slot.running = { entry, id };
+        try {
+          slot.worker.postMessage({ id, job: entry.job });
+        } catch {
+          fail(); // the worker died between messages
+          return;
+        }
+      }
+      if (!broken) return;
+    }
+    // On the page, one job per task, so the page can paint between jobs.
+    if (pageRunning || disposed) return;
     const entry = queue.shift();
     if (!entry) return;
-    const w = ensureWorker();
-    if (w) {
-      const id = nextId++;
-      running = { entry, id };
-      try {
-        w.postMessage({ id, job: entry.job });
-      } catch {
-        fail(); // the worker died between messages
-      }
-      return;
-    }
-    // On the page, in a task of its own, so the page can paint between jobs.
-    running = { entry, id: null };
+    pageRunning = entry;
     setTimeout(() => {
       if (disposed) return; // dispose() has answered it
       opts
@@ -93,54 +129,31 @@ export function createPlanRunner<J = PlanJob, R = PlanJobResult>(opts: {
         .catch((err): Answer => ({ ok: false, error: err instanceof Error ? err.message : String(err), unavailable: true }))
         .then((result) => {
           if (disposed) return;
-          running = null;
+          pageRunning = null;
           settle(entry, result);
           next();
         });
     }, 0);
   }
 
-  /** The worker failed: it is never used again, and the job it was running
-   *  runs on the page, ahead of the rest. */
+  /** A worker failed: none are used again, and every in-flight worker job
+   *  runs on the page, in order, ahead of the rest. */
   function fail() {
     if (broken) return;
     broken = true;
-    try {
-      worker?.terminate();
-    } catch {
-      // Already gone.
-    }
-    worker = null;
-    if (running && running.id !== null) {
-      queue.unshift(running.entry);
-      running = null;
-    }
-    next();
-  }
-
-  function ensureWorker(): WorkerLike<R> | null {
-    if (!started) {
-      started = true;
+    const inFlight: { entry: Entry; id: number }[] = [];
+    for (const slot of slots.splice(0)) {
+      if (slot.running) inFlight.push(slot.running);
+      slot.running = null;
       try {
-        worker = opts.startWorker();
+        slot.worker.terminate();
       } catch {
-        worker = null;
-      }
-      if (!worker) {
-        broken = true;
-      } else {
-        worker.onmessage = (e) => {
-          // An answer for anything but the running job is late: ignored.
-          if (!running || running.id === null || e.data?.id !== running.id) return;
-          const { entry } = running;
-          running = null;
-          settle(entry, e.data.result);
-          next();
-        };
-        worker.onerror = () => fail();
+        // Already gone.
       }
     }
-    return broken ? null : worker;
+    inFlight.sort((a, b) => a.id - b.id);
+    if (inFlight.length > 0) queue.unshift(...inFlight.map((x) => x.entry));
+    next();
   }
 
   return {
@@ -168,14 +181,17 @@ export function createPlanRunner<J = PlanJob, R = PlanJobResult>(opts: {
     dispose() {
       if (disposed) return;
       disposed = true;
-      try {
-        worker?.terminate();
-      } catch {
-        // Already gone.
+      for (const slot of slots.splice(0)) {
+        try {
+          slot.worker.terminate();
+        } catch {
+          // Already gone.
+        }
+        if (slot.running) settle(slot.running.entry, STOPPED);
+        slot.running = null;
       }
-      worker = null;
-      if (running) settle(running.entry, STOPPED);
-      running = null;
+      if (pageRunning) settle(pageRunning, STOPPED);
+      pageRunning = null;
       for (const entry of queue.splice(0)) settle(entry, STOPPED);
     },
   };
