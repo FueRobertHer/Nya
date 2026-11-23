@@ -85,7 +85,8 @@ describe('a connection’s status on its card', () => {
     const t = text(html);
     expect(t).toContain('Chase Needs reconnecting');
     expect(t).toContain('Chase needs you to sign in again. Reconnect: it takes a minute.');
-    expect(t).toContain('Last synced Sep 12 · On your side: your sign-in at Chase · Plaid code ITEM_LOGIN_REQUIRED');
+    expect(t).toContain('Last synced Sep 12 · On your side: your sign-in at Chase');
+    expect(t).not.toContain('Plaid code ITEM_LOGIN_REQUIRED');
     expect(t).toContain("Access to Amex was withdrawn, so this connection can't be repaired. Remove it, then connect Amex again: link its new accounts to the old ones and their history carries over.");
     expect(t).toContain("Ally isn't answering. Nothing to do: it usually recovers on its own.");
     expect(t).toContain("On Ally's side");
@@ -201,7 +202,8 @@ describe('a connection’s status on its card', () => {
     const t = text(html);
     expect(t).toContain("Plaid doesn't accept the access Nya keeps for Chase, which usually means Nya's own Plaid settings changed. Nothing for you to do: whoever runs Nya puts them back, and the connection then works as before.");
     expect(t).toContain("Plaid refused Nya's own settings, so it can't reach Amex just now. Nothing for you to do");
-    expect(t).toContain("On Nya's side · Plaid code INVALID_API_KEYS");
+    expect(t).toContain("On Nya's side");
+    expect(t).not.toContain('Plaid code INVALID_API_KEYS');
     expect(t).toContain("Nya can't read the sign-in it keeps for Ally. Nothing for you to do: whoever runs Nya restores its encryption keys");
     expect(t).toContain("On Nya's side");
     expect(t).not.toMatch(/remove|connect (Chase|Amex|Ally) again/i);
@@ -324,12 +326,13 @@ describe('the Home alert a few days before a connection ends', () => {
   const soon = (days: number, over = {}) => ({ item_id: `i${days}`, institution_name: `Bank ${days}`, ends_at: new Date(2026, 9, 8 + days, 12).toISOString(), ...over });
 
   // Every one since rollout phase 4b: each is its own row in Needs attention.
-  test('within three days only, soonest first, every one', () => {
-    expect(reconnectAlerts([soon(7), soon(4)], now)).toEqual([]);
-    expect(reconnectAlerts([soon(3), soon(1), soon(0)], now).map((a) => a.text)).toEqual([
+  test('within seven days only, soonest first, every one', () => {
+    expect(reconnectAlerts([soon(10), soon(8)], now)).toEqual([]);
+    expect(reconnectAlerts([soon(7), soon(5), soon(1), soon(0)], now).map((a) => a.text)).toEqual([
       'Reconnect Bank 0: Plaid says its connection ends today',
       'Reconnect Bank 1: Plaid says its connection ends tomorrow',
-      'Reconnect Bank 3: Plaid says its connection ends in 3 days',
+      'Reconnect Bank 5: Plaid says its connection ends in 5 days',
+      'Reconnect Bank 7: Plaid says its connection ends in 7 days',
     ]);
     expect(reconnectAlerts([soon(2)], now)[0].text).toBe('Reconnect Bank 2: Plaid says its connection ends in 2 days');
     // An estimate is said as one.

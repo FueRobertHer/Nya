@@ -177,13 +177,17 @@ describe('the account sheet', () => {
       institution_name: 'Fidelity',
       accounts: [a, other],
       holdings: [
-        { account_id: 'acc_ind', name: 'Fidelity Government Money Market', quantity: 4200, value: 4200, cost_basis: 4200, is_cash_equivalent: true, security_type: 'cash' },
-        { account_id: 'acc_ind', name: 'Total Market Index', quantity: 50, value: 5800, cost_basis: 5000, security_type: 'mutual fund' },
+        { account_id: 'acc_ind', name: 'Fidelity Government Money Market', ticker: 'CUR:USD', quantity: 4200, value: 4200, cost_basis: 4200, is_cash_equivalent: true, security_type: 'cash' },
+        { account_id: 'acc_ind', name: 'Total Market Index', ticker: 'VTI', quantity: 1250.5, value: 5800, cost_basis: 5000, security_type: 'mutual fund' },
         { account_id: 'acc_roth', name: 'Target Date 2050', quantity: 10, value: 5000, cost_basis: 4000, security_type: 'mutual fund' },
       ],
     });
     const html = renderToStaticMarkup(<AccountSheet {...props(a, inst)} />);
+    expect(html).toContain('<strong>VTI</strong>');
     expect(text(html)).toContain('Total Market Index');
+    expect(text(html)).toContain('1,250.5');
+    expect(text(html)).not.toContain('4200.000');
+    expect(text(html)).not.toContain('CUR:USD');
     expect(text(html)).not.toContain('Target Date 2050');
     expect(text(html)).toContain('+$800.00 · 16.0%');
     expect(text(html)).toMatch(/\$4,200\.00 (uninvested|in cash) · cash is \d+(\.\d)?% of holdings/);

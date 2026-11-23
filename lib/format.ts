@@ -137,6 +137,12 @@ export function hiddenFigure(text: string): string {
   return hidden ? MASK : text;
 }
 
+/** A share quantity with locale grouping and up to three decimal places, or
+ *  MASK while amounts are hidden. */
+export function formatQuantity(quantity: number): string {
+  return hidden ? MASK : quantity.toLocaleString(undefined, { maximumFractionDigits: 3 });
+}
+
 // An amount in text written elsewhere (an answer from the server): a
 // currency's symbol before the figures (with a code's letters, "CA$12.00",
 // or an ISO code and a no-break space, "XAU 12.00"), a symbol after them

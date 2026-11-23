@@ -343,6 +343,8 @@ export default function MonthBreakdown({
   viewMonth,
   onViewMonth,
   onOpenConnections,
+  openTxnRequest = null,
+  onOpenTxnHandled,
 }: {
   txns: Txn[] | null;
   /** What the totals convert with, once a home currency is chosen
@@ -434,6 +436,9 @@ export default function MonthBreakdown({
   onViewMonth?: (m: ViewMonth) => void;
   /** Opens Accounts / Connections when a bank's transactions need reconnecting. */
   onOpenConnections?: () => void;
+  /** Opens a specific transaction's sheet when navigating from Home. */
+  openTxnRequest?: { id: string; at: number } | null;
+  onOpenTxnHandled?: () => void;
 }) {
   const [ownSegment, setOwnSegment] = useState<ActivitySegment>("transactions");
   const segment = segmentShown ?? ownSegment;
@@ -773,6 +778,13 @@ export default function MonthBreakdown({
   useEffect(() => {
     if (loading) setSheet(null);
   }, [loading]);
+  // A Home insight ("Biggest purchase") asked to open a specific transaction.
+  useEffect(() => {
+    if (!openTxnRequest || loading || !byId.has(openTxnRequest.id)) return;
+    openSheet({ kind: "txn", id: openTxnRequest.id });
+    onOpenTxnHandled?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openTxnRequest, loading, byId]);
 
   // The pinned bar: the month (none on Shared, whose balances aren't by
   // month, or before there is one), stepping through and listing the months

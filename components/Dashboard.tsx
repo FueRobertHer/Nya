@@ -79,7 +79,8 @@ import type { ActivitySegment } from './ActivityBar';
 import { useSharedExpenses } from './shared-expenses-state';
 import type { SharedRowHooks } from './SharedRows';
 import { REMOVED_NAME } from '@/lib/shared-expenses/model';
-import Insights, { budgetAlerts, paymentAlerts, spendingNotes, type IdleCashAccount, type PaymentAccount } from './Insights';
+import Insights, { budgetAlerts, paymentAlerts, spendingNotes, type IdleCashAccount, type InsightTarget, type PaymentAccount } from './Insights';
+import { sortInstitutions } from './account-groups';
 import NeedsAttention, { AdminAttention, NEEDS_ATTENTION_TITLE } from './NeedsAttention';
 import { attentionItems, type Go } from './attention';
 import type { FigureNote } from './plan-figure-notes';
@@ -1477,25 +1478,25 @@ export default function Dashboard({
   // linked one that went is listed in Settings > Connections instead, or its
   // Disconnect would be unreachable without unhiding every account first.
   const { sortedInstitutions, allHiddenInstitutions } = useMemo(() => {
-    const shown = [...institutions]
-        .sort((a, b) => a.institution_name.localeCompare(b.institution_name))
-        .map((inst) => {
-          const hiddenIds = new Set(
-            inst.accounts.filter((a) => a.hidden).map((a) => a.account_id)
-          );
-          return {
-            ...inst,
-            accounts: [...inst.accounts]
-              .filter((a) => !a.hidden)
-              .sort((a, b) => a.name.localeCompare(b.name)),
-            // Holdings belong to a parent account, so hiding a brokerage has to
-            // take its positions with it. Holdings from a payload cached before
-            // this existed have no account_id and are kept.
-            holdings: inst.holdings.filter(
-              (h) => !h.account_id || !hiddenIds.has(h.account_id)
-            ),
-          };
-        });
+    const shown = sortInstitutions(
+      institutions.map((inst) => {
+        const hiddenIds = new Set(
+          inst.accounts.filter((a) => a.hidden).map((a) => a.account_id)
+        );
+        return {
+          ...inst,
+          accounts: [...inst.accounts]
+            .filter((a) => !a.hidden)
+            .sort((a, b) => a.name.localeCompare(b.name)),
+          // Holdings belong to a parent account, so hiding a brokerage has to
+          // take its positions with it. Holdings from a payload cached before
+          // this existed have no account_id and are kept.
+          holdings: inst.holdings.filter(
+            (h) => !h.account_id || !hiddenIds.has(h.account_id)
+          ),
+        };
+      })
+    );
     const keep = (inst: (typeof shown)[number]) => inst.accounts.length > 0 || inst.holdings.length > 0 || !!inst.error;
     return {
       sortedInstitutions: shown.filter(keep),
@@ -1616,6 +1617,7 @@ export default function Dashboard({
             subtype: a.subtype,
             balance: a.balance,
             currency: a.currency,
+            hasQuestion: !!a.question,
             liability: a.liability,
           }))
       ),
@@ -1648,6 +1650,7 @@ export default function Dashboard({
           // distinctive ("Individual", "Roth IRA"), and two would otherwise
           // produce a duplicate React key and two identical, unactionable lines.
           account_id: a.account_id,
+          item_id: inst.item_id,
           name: a.name,
           mask: a.mask,
           institution_name: inst.institution_name,
@@ -2198,6 +2201,38 @@ export default function Dashboard({
     [tab, openConnections, openRestore, openPlan, openAccounts, resetViewMonth]
   );
 
+  const [openTxnReq, setOpenTxnReq] = useState<{ id: string; at: number } | null>(null);
+  const clearOpenTxnReq = useCallback(() => setOpenTxnReq(null), []);
+  const setViewMonth = viewMonth.set;
+  const onInsightGo = useCallback(
+    (target: InsightTarget) => {
+      switch (target.kind) {
+        case 'txn':
+          window.scrollTo(0, 0);
+          setViewMonth(target.txn.date.slice(0, 7));
+          setTab('activity');
+          setActivitySegment('transactions');
+          setOpenTxnReq({ id: target.txn.transaction_id, at: Date.now() });
+          return;
+        case 'account':
+          setAccountOpen({ item_id: target.item_id, account_id: target.account_id });
+          return;
+        case 'spending':
+          window.scrollTo(0, 0);
+          resetViewMonth();
+          setTab('activity');
+          setActivitySegment('spending');
+          return;
+        case 'upcoming':
+          window.scrollTo(0, 0);
+          setTab('budgets');
+          setBudgetsSegment('upcoming');
+          return;
+      }
+    },
+    [setViewMonth, resetViewMonth]
+  );
+
   // What qualifies the Home total, under it (components/TotalCaveats.tsx),
   // each in its color: what the total is missing, named
   // (components/total-notes.ts), colored as each institution's card is
@@ -2397,6 +2432,7 @@ export default function Dashboard({
                     incomplete={txnIncomplete}
                     stopped={stoppedTxns}
                     accounts={insightAccounts}
+                    onGo={onInsightGo}
                     // This month's last row: the FI line (the Plan's years to
                     // FI, FI number and savings rate, from the same inputs and
                     // plan as the Plan tab). Last: it appears only once its
@@ -2706,6 +2742,8 @@ export default function Dashboard({
                   onSegment={setActivitySegment}
                   viewMonth={viewMonth.month}
                   onViewMonth={viewMonth.set}
+                  openTxnRequest={openTxnReq}
+                  onOpenTxnHandled={clearOpenTxnReq}
                   onOpenConnections={() => {
                     openAccounts();
                     goToFirstToFix();

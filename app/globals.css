@@ -9245,6 +9245,22 @@ button.receipts-item {
   color: var(--text-2);
 }
 
+.hero-range-readout .chart-readout-value {
+  font-size: var(--fs-2);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+}
+
+@media (max-width: 360px) {
+  .card-header {
+    flex-wrap: wrap;
+    row-gap: var(--sp-1);
+  }
+  .card-header > :is(h2, h3) {
+    flex: 1 1 100%;
+  }
+}
+
 /* --- stack: spacing set by the container, not by each child ---
    Children of a stack carry no block margins of their own; the gap spaces
    them. Use it instead of style={{ marginTop }} on notes, labels and buttons

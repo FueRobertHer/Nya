@@ -480,6 +480,10 @@ describe('the FI line’s title, for every case (rollout phase 4c)', () => {
     expect(part(row(0, 1.2), 'list-row-sub')).toBe('$250,000 invested · 120% of the FI number $1,000,000 · 43% savings rate, last 12 months');
     // Not twice, when the title says it.
     expect(part(row(null, 0.36), 'list-row-sub')).toBe('$250,000 of $1,000,000 invested · 43% savings rate, last 12 months');
+    // Already stopped (age >= targetAge): omits savings rate and payroll note.
+    const retiredHtml = row(0, 1.2, plan({ age: 47, targetAge: 47 }));
+    expect(text(retiredHtml)).not.toContain('savings rate');
+    expect(text(retiredHtml)).not.toContain('pay before it reaches a bank');
   });
 
   test('there already, never reached at this rate, or years not worked out', () => {

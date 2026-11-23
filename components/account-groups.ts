@@ -37,6 +37,27 @@ export function groupOf(type: string): GroupKey {
   return 'other';
 }
 
+/** Everyday priority tier for institution cards on the Accounts tab:
+ *  0: Cash & Credit (checking, savings, credit cards)
+ *  1: Investments (brokerages, IRAs, 401(k)s)
+ *  2: Loans only (mortgages, auto/student loans)
+ *  3: Other linked institutions (including erroring cards with no accounts yet)
+ *  4: Pure manual card last (SimpleFIN/Lunch Flow connector cards sort by accounts). */
+function institutionTier(inst: Pick<Institution, 'accounts' | 'manual' | 'connector'>): number {
+  if (inst.manual && !inst.connector) return 4;
+  if (inst.accounts.some((a) => a.type === 'depository' || a.type === 'credit')) return 0;
+  if (inst.accounts.some((a) => isInvestmentType(a.type))) return 1;
+  if (inst.accounts.some((a) => a.type === 'loan')) return 2;
+  return 3;
+}
+
+/** Sort institutions by everyday priority tier, alphabetical within each tier. */
+export function sortInstitutions<T extends Pick<Institution, 'institution_name' | 'accounts' | 'manual' | 'connector'>>(list: readonly T[]): T[] {
+  return [...list].sort(
+    (a, b) => institutionTier(a) - institutionTier(b) || a.institution_name.localeCompare(b.institution_name)
+  );
+}
+
 export type AccountGroup = {
   key: GroupKey;
   label: string;

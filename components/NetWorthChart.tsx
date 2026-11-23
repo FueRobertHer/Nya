@@ -1012,7 +1012,9 @@ export default function NetWorthChart({
   } else {
     readValue = rangeChange.text;
     // Said once here when the line is solid for being all an estimate.
-    readDate = `${rangeLabel(range, points[0].date, points[last].date)}${uniform ? ' · estimated' : ''}`;
+    const rangeWords = rangeLabel(range, points[0].date, points[last].date);
+    const displayRange = hero && !outside ? `Over ${rangeWords.charAt(0).toLowerCase()}${rangeWords.slice(1)}` : rangeWords;
+    readDate = `${displayRange}${uniform ? ' · estimated' : ''}`;
   }
 
   // The slider's value: the day the plot rested on, said as the figure, its
@@ -1031,11 +1033,12 @@ export default function NetWorthChart({
       <Masked>{n}</Masked>
     </p>
   ));
+  const heroRangeReadout = hero && !outside && !measure && readActive === null && !whole;
 
   return (
     <div>
       {!outside && (
-        <div className="chart-readout chart-readout-stable">
+        <div className={`chart-readout chart-readout-stable${heroRangeReadout ? ' hero-range-readout' : ''}`}>
           <span className="chart-readout-value">
             <Masked>{readValue}</Masked>
           </span>
