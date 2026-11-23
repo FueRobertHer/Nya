@@ -14,6 +14,13 @@ describe('AccountLinksView', () => {
     expect(view({ suggestions: [], unclaimed: [], links: [] })).toBe('');
   });
 
+  test('renders the empty fallback once loaded with nothing to show, never while loading', () => {
+    const fallback = <div className="card"><p>All your bank connections are on the Accounts tab.</p></div>;
+    expect(renderToStaticMarkup(<AccountLinksView data={null} busy={false} error="" preview={null} picked={{}} onPreview={noop} onPick={noop} onAct={noop} empty={fallback} />)).toBe('');
+    const html = renderToStaticMarkup(<AccountLinksView data={{ suggestions: [], unclaimed: [], links: [] }} busy={false} error="" preview={null} picked={{}} onPreview={noop} onPick={noop} onAct={noop} empty={fallback} />);
+    expect(html).toContain('All your bank connections are on the Accounts tab.');
+  });
+
   test('shows a suggestion with its evidence and both choices', () => {
     const html = view({
       suggestions: [

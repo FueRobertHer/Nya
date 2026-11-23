@@ -113,11 +113,33 @@ export function DemoDataView({ info, chosen, busy, error, done, onChoose, onAsk 
   );
 }
 
+/** Live phase and elapsed-time message shown while a demo reset is running. */
+export function demoResetStatus(elapsedSeconds: number): string {
+  const secs = Math.max(0, Math.floor(elapsedSeconds));
+  const suffix = secs > 0 ? ` (${secs}s)` : '';
+  if (secs < 8) return `Emptying previous demo data…${suffix}`;
+  if (secs < 45) return `Connecting sandbox banks and syncing a year of transactions…${suffix}`;
+  return `Finishing accounts, history and plan setup…${suffix}`;
+}
+
+/** Animated, reduced-motion-safe progress bar and live status line during a demo reset. */
+export function DemoResetProgress({ elapsed }: { elapsed: number }) {
+  return (
+    <div className="demo-reset-progress" role="status" aria-live="polite">
+      <div className="demo-progress" aria-hidden="true">
+        <div className="demo-progress-bar" />
+      </div>
+      <p className="helper">{demoResetStatus(elapsed)}</p>
+    </div>
+  );
+}
+
 export default function DemoDataCard({ onChanged }: { onChanged: () => void }) {
   const [info, setInfo] = useState<DemoInfo | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
@@ -130,6 +152,16 @@ export default function DemoDataCard({ onChanged }: { onChanged: () => void }) {
     }
   }, []);
   useEffect(() => void load(), [load]);
+
+  useEffect(() => {
+    if (!busy) {
+      setElapsed(0);
+      return;
+    }
+    const started = Date.now();
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [busy]);
 
   if (!info || !info.demo) return null;
   const scenario = shownScenario(info, chosen);
@@ -183,7 +215,11 @@ export default function DemoDataCard({ onChanged }: { onChanged: () => void }) {
             Replace everything in this demo account with {scenario.title}? Its banks, transactions, budgets, goals, Plan and files are all replaced, for everyone
             using it, and its connections to other people end.
           </p>
-          <p className="helper">{busy ? 'Resetting. This takes about a minute.' : 'It takes about a minute, and it can’t be undone.'}</p>
+          {busy ? (
+            <DemoResetProgress elapsed={elapsed} />
+          ) : (
+            <p className="helper">It takes about a minute, and it can’t be undone.</p>
+          )}
         </div>
       </Sheet>
     </>
