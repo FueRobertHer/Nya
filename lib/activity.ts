@@ -718,6 +718,8 @@ export async function finishActivity(
     review: {
       on: !reviewParts.settingsUnread && !!reviewParts.settings?.on,
       since: reviewParts.settings?.since ?? null,
+      ...(reviewParts.settings?.skip_transfers !== undefined ? { skip_transfers: reviewParts.settings.skip_transfers } : {}),
+      ...(reviewParts.settings?.posted_only !== undefined ? { posted_only: reviewParts.settings.posted_only } : {}),
       unread: reviewParts.settingsUnread,
       unknown: reviewParts.approvalsUnknown.size,
     },

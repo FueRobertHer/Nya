@@ -310,6 +310,7 @@ describe('a row’s line', () => {
 
     // Answered (Looks right, or a category chosen) while it is on: the chip
     // stays, at nothing, and the empty list says why.
+    expect(v.text()).toContain("A dot marks a category Plaid wasn't sure about.");
     v.render({ txns: rows.map((t) => (t.category_confidence === 'HIGH' || t.pending ? t : { ...t, category_confidence: null })) });
     expect(v.chip('Unsure category (0)')!.getAttribute('aria-pressed')).toBe('true');
     expect(v.text()).toContain('No category listed is one Plaid was unsure of.');
@@ -317,6 +318,42 @@ describe('a row’s line', () => {
     expect(v.chip('Unsure category (0)')).toBeNull();
     expect(v.group()).toBeNull();
     expect(v.names().length).toBe(4);
+    v.unmount();
+  });
+
+  test('Account and Category chips show when 2+ options exist and narrow the list', () => {
+    const multi = [
+      row('Whole Foods', 41.3, { account_id: 'a1', account_name: 'Checking', category: 'groceries' }),
+      row('Blue Bottle', 4.5, { account_id: 'a2', account_name: 'Sapphire', category: 'coffee' }),
+      row('Hardware store', 120, { account_id: 'a2', account_name: 'Sapphire', category: 'home improvement' }),
+    ];
+    const v = mount({ txns: multi });
+    expect(v.select('Account')).not.toBeNull();
+    expect(v.select('Category')).not.toBeNull();
+    act(() => type(v.select('Account')!, 'a2'));
+    expect(v.names()).toEqual(['Blue Bottle', 'Hardware store']);
+    act(() => type(v.select('Category')!, 'name:coffee'));
+    expect(v.names()).toEqual(['Blue Bottle']);
+    act(() => type(v.select('Account')!, ''));
+    act(() => type(v.select('Category')!, ''));
+    expect(v.names().length).toBe(3);
+    v.unmount();
+  });
+
+  test('searching across months offers a 1-tap switch when this month has no matches', () => {
+    const olderMonth = month.endsWith('-01') ? `${Number(month.slice(0, 4)) - 1}-10` : `${month.slice(0, 4)}-${String(Math.max(1, Number(month.slice(5, 7)) - 1)).padStart(2, '0')}`;
+    const multiMonth = [
+      row('Whole Foods', 41.3, { date: `${month}-04` }),
+      row('Corner shop', 250, { date: `${olderMonth}-12`, note: 'San Diego trip' }),
+    ];
+    const v = mount({ txns: multiMonth });
+    const search = v.all((e) => e.tagName === 'INPUT' && e.getAttribute('type') === 'search')[0]!;
+    act(() => type(search, 'San Diego'));
+    expect(v.text()).toContain('Show 1 match across all 12 months');
+    const offerBtn = v.all((e) => e.tagName === 'BUTTON' && e.textContent.includes('across all 12 months'))[0]!;
+    act(() => click(offerBtn));
+    expect(v.names()).toEqual(['Corner shop']);
+    expect(v.text()).toContain('across 12 months');
     v.unmount();
   });
 });

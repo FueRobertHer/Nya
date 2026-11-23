@@ -96,14 +96,24 @@ export type Approval = {
   pending?: true;
 };
 
-/** Whether the queue is on, and since when. */
+/** Whether the queue is on, since when, and optional queue filters. */
 export type ReviewSettings = {
   version: 1;
   on: boolean;
   /** The first day whose transactions need review, YYYY-MM-DD, by the day
    *  each is dated (the bank's posting day, a file's day). */
   since: string;
+  /** When true, skip transfers and loan payments from needs_review. */
+  skip_transfers?: boolean;
+  /** When true, wait until pending transactions post before marking needs_review. */
+  posted_only?: boolean;
   updated_at: string;
+};
+
+/** Optional review queue filter preferences. */
+export type ReviewOptions = {
+  skip_transfers?: boolean;
+  posted_only?: boolean;
 };
 
 // ---- Limits ----
@@ -154,11 +164,13 @@ export function isApproval(v: unknown): v is Approval {
 export function isReviewSettings(v: unknown): v is ReviewSettings {
   return (
     isRecord(v) &&
-    only(v, ['version', 'on', 'since', 'updated_at']) &&
+    only(v, ['version', 'on', 'since', 'skip_transfers', 'posted_only', 'updated_at']) &&
     v.version === 1 &&
     typeof v.on === 'boolean' &&
     typeof v.since === 'string' &&
     DAY.test(v.since) &&
+    (v.skip_transfers === undefined || typeof v.skip_transfers === 'boolean') &&
+    (v.posted_only === undefined || typeof v.posted_only === 'boolean') &&
     isInstant(v.updated_at)
   );
 }
@@ -250,9 +262,30 @@ export async function readReviewSettings(ctx: Ctx): Promise<{ settings: ReviewSe
  * over settings that can't be read. Turning it on again starts it again from
  * the new day; the approvals made before are kept.
  */
-export async function startReview(ctx: Ctx, since: string, now: Date = new Date()): Promise<ReviewSettings> {
-  const next: ReviewSettings = { version: 1, on: true, since, updated_at: now.toISOString() };
+export async function startReview(ctx: Ctx, since: string, now: Date = new Date(), opts?: ReviewOptions): Promise<ReviewSettings> {
+  const next: ReviewSettings = {
+    version: 1,
+    on: true,
+    since,
+    ...(opts?.skip_transfers !== undefined ? { skip_transfers: opts.skip_transfers } : {}),
+    ...(opts?.posted_only !== undefined ? { posted_only: opts.posted_only } : {}),
+    updated_at: now.toISOString(),
+  };
   return (await reviewSettingsStore.update(ctx, () => next))!;
+}
+
+/** Updates queue filter preferences while preserving on/since. Null when the
+ *  queue has never been turned on. Refused over settings that can't be read. */
+export async function updateReviewOptions(ctx: Ctx, opts: ReviewOptions, now: Date = new Date()): Promise<ReviewSettings | null> {
+  return reviewSettingsStore.update(ctx, (current) => {
+    if (!current) return current;
+    return {
+      ...current,
+      ...(opts.skip_transfers !== undefined ? { skip_transfers: opts.skip_transfers } : {}),
+      ...(opts.posted_only !== undefined ? { posted_only: opts.posted_only } : {}),
+      updated_at: now.toISOString(),
+    };
+  });
 }
 
 /** Turns the queue off: nothing needs review, every approval is kept. Null

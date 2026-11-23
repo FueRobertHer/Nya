@@ -9261,6 +9261,73 @@ button.receipts-item {
   }
 }
 
+/* --- Activity polish (Phase 3) --- */
+
+.sankey-link.loan {
+  fill: var(--tag-blue);
+}
+
+.sankey-node.loan .sankey-bar {
+  fill: var(--tag-blue);
+}
+
+.trend-wrap {
+  position: relative;
+}
+
+.trend-wrap.fade-left::before,
+.trend-wrap.fade-right::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 24px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.trend-wrap.fade-left::before {
+  left: 0;
+  background: linear-gradient(to right, var(--surface), transparent);
+}
+
+.trend-wrap.fade-right::after {
+  right: 0;
+  background: linear-gradient(to left, var(--surface), transparent);
+}
+
+.txn-logo-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+}
+
+.txn-logo-img {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.txn-logo-img.loaded {
+  opacity: 1;
+}
+
+.txn-search-scope {
+  margin-top: var(--sp-2);
+}
+
+.card-mode-more {
+  flex-wrap: wrap;
+}
+
+.card-mode-annotate {
+  margin-top: var(--sp-3);
+  width: 100%;
+  text-align: left;
+}
+
 /* --- stack: spacing set by the container, not by each child ---
    Children of a stack carry no block margins of their own; the gap spaces
    them. Use it instead of style={{ marginTop }} on notes, labels and buttons

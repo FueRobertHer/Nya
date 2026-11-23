@@ -700,6 +700,21 @@ function TxnSheet({
             {longDay(t.date)} · {t.institution_name} · {t.account_name}
             {t.source ? ` · ${sourceLabel(t.source)}` : ''}
           </p>
+          {t.vendor_key && (
+            <div>
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => {
+                  setDraft(t.name);
+                  setRenameError(null);
+                  setRenaming(true);
+                }}
+              >
+                Rename
+              </button>
+            </div>
+          )}
           {/* Its row's chips, the exclusion in full. */}
           {(t.pending || isLowConfidence(t)) && (
             <p>

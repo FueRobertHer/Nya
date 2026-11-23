@@ -294,6 +294,15 @@ export function compactMoney(amount: number, currency?: string | null): string {
   return hidden ? hiddenMoney(amount, currency) : fullCompact(amount, currency);
 }
 
+/** Compact form with an explicit sign (+$8.9K, −$1.2K), for tight chart bar labels. */
+export function signedCompactMoney(amount: number, currency?: string | null, opts: { always?: boolean } = {}): string {
+  const n = amount === 0 ? 0 : amount;
+  if (hidden) return hiddenMoney(n, currency, opts.always ? 'always' : 'exceptZero');
+  if (n < 0) return fullCompact(n, currency);
+  const body = fullCompact(n, currency);
+  return n > 0 || opts.always ? `+${body}` : body;
+}
+
 /** compactMoney's figures, whatever the switch says: only for what is
  *  measured here, never drawn (amountSamples). */
 function fullCompact(amount: number, currency?: string | null): string {

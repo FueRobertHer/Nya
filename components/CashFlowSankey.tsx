@@ -91,8 +91,8 @@ function labelMoney(n: number, currency: string | null): string {
   return compactMoney(n < 1000 ? Math.round(n) : n, currency);
 }
 
-/** How a node is colored: money in, spending, what is left over, what came
- *  from savings or debt, or the middle. */
+/** How a node is colored: money in, spending, loan payments, what is left over,
+ *  what came from savings or debt, or the middle. */
 function toneOf(n: Pick<FlowNode, 'kind'>): string {
   switch (n.kind) {
     case 'payer':
@@ -102,6 +102,8 @@ function toneOf(n: Pick<FlowNode, 'kind'>): string {
       return 'deficit';
     case 'left-over':
       return 'left';
+    case 'loan-payments':
+      return 'loan';
     case 'total':
       return 'total';
     default:
@@ -116,12 +118,24 @@ function linkTone(source: FlowNode, target: FlowNode): string {
   return toneOf(source);
 }
 
+/** Chart-level left over and deficit after accounting for non-card loan payments. */
+function chartBalance(flow: CashFlow): { leftOver: number; deficit: number } {
+  const totalOut = Math.round((flow.money_out + flow.loan_payments.amount) * 100) / 100;
+  return {
+    leftOver: flow.money_in > totalOut ? Math.round((flow.money_in - totalOut) * 100) / 100 : 0,
+    deficit: totalOut > flow.money_in ? Math.round((totalOut - flow.money_in) * 100) / 100 : 0,
+  };
+}
+
 /** What a node is, in a sentence, for its tooltip: "Food: $640.00, 41
  *  transactions", and what a fold holds. The middle says both sides, since
  *  its transactions are money in and money out alike. */
 function nodeTitle(n: FlowNode, flow: CashFlow): string {
   const c = flow.currency;
-  if (n.kind === 'total') return `${n.label}: ${formatMoney(flow.money_in, c)} in and ${formatMoney(flow.money_out, c)} out, ${plural(n.transactions, 'transaction')}`;
+  if (n.kind === 'total') {
+    const loan = flow.loan_payments.amount > 0 ? ` plus ${formatMoney(flow.loan_payments.amount, c)} to loan payments` : '';
+    return `${n.label}: ${formatMoney(flow.money_in, c)} in and ${formatMoney(flow.money_out, c)} out${loan}, ${plural(n.transactions, 'transaction')}`;
+  }
   const what = `${n.label}: ${formatMoney(n.value, c)}${n.transactions > 0 ? `, ${plural(n.transactions, 'transaction')}` : ''}`;
   return n.members ? `${what} (${n.members.map((m) => m.name).join(', ')})` : what;
 }
@@ -130,11 +144,13 @@ function nodeTitle(n: FlowNode, flow: CashFlow): string {
  *  table has every flow. */
 function summaryText(flow: CashFlow, caption: string): string {
   const c = flow.currency;
+  const { leftOver, deficit: chartDeficit } = chartBalance(flow);
   const into = `${formatMoney(flow.money_in, c)} came in from ${plural(flow.payers.length, 'payer')}`;
-  const deficit = flow.from_savings_or_debt > 0 ? ` and ${formatMoney(flow.from_savings_or_debt, c)} came from savings or debt` : '';
+  const deficit = chartDeficit > 0 ? ` and ${formatMoney(chartDeficit, c)} came from savings or debt` : '';
   const out = `${formatMoney(flow.money_out, c)} went out to ${plural(flow.groups.length, 'category group')}`;
-  const left = flow.left_over > 0 ? `, and ${formatMoney(flow.left_over, c)} was left over` : '';
-  return `Cash flow for ${caption}: ${into}${deficit}; ${out}${left}. The table under the chart lists every flow.`;
+  const loans = flow.loan_payments.amount > 0 ? `, ${formatMoney(flow.loan_payments.amount, c)} went to loan and debt payments` : '';
+  const left = leftOver > 0 ? `, and ${formatMoney(leftOver, c)} was left over` : '';
+  return `Cash flow for ${caption}: ${into}${deficit}; ${out}${loans}${left}. The table under the chart lists every flow.`;
 }
 
 /** How tall a node must be for its label to take two lines. */
@@ -363,22 +379,33 @@ export default function CashFlowSankey({
             })}
           </svg>
 
-          <div className="chart-legend">
-            <span className="chart-legend-item">
-              <span className="chart-legend-dot" style={{ background: 'var(--up)' }} />
-              In{flow.left_over > 0 ? ', left over' : ''}
-            </span>
-            <span className="chart-legend-item">
-              <span className="chart-legend-dot" style={{ background: 'var(--data)' }} />
-              Spending
-            </span>
-            {flow.from_savings_or_debt > 0 && (
-              <span className="chart-legend-item">
-                <span className="chart-legend-dot" style={{ background: 'var(--down)' }} />
-                From savings or debt
-              </span>
-            )}
-          </div>
+          {(() => {
+            const { leftOver, deficit } = chartBalance(flow);
+            return (
+              <div className="chart-legend">
+                <span className="chart-legend-item">
+                  <span className="chart-legend-dot" style={{ background: 'var(--up)' }} />
+                  In{leftOver > 0 ? ', left over' : ''}
+                </span>
+                <span className="chart-legend-item">
+                  <span className="chart-legend-dot" style={{ background: 'var(--data)' }} />
+                  Spending
+                </span>
+                {flow.loan_payments.amount > 0 && (
+                  <span className="chart-legend-item">
+                    <span className="chart-legend-dot" style={{ background: 'var(--tag-blue)' }} />
+                    Loan &amp; debt payments
+                  </span>
+                )}
+                {deficit > 0 && (
+                  <span className="chart-legend-item">
+                    <span className="chart-legend-dot" style={{ background: 'var(--down)' }} />
+                    From savings or debt
+                  </span>
+                )}
+              </div>
+            );
+          })()}
           {onPick && (
             <p className="chart-note">
               {categories ? 'Tap a payer, a group or a category to list its transactions.' : "Tap a payer or a group to list its transactions, or a category in the table."}
@@ -404,6 +431,7 @@ export default function CashFlowSankey({
  *  chart drawn without them (`categories` false). */
 function FlowTable({ flow, caption, categories, onShow }: { flow: CashFlow; caption: string; categories: boolean; onShow?: (node: string, label: string) => void }) {
   const c = flow.currency;
+  const { leftOver, deficit } = chartBalance(flow);
   /** A flow's name: a button that lists its transactions, where it can. */
   const name = (node: string, label: string) =>
     onShow ? (
@@ -451,10 +479,10 @@ function FlowTable({ flow, caption, categories, onShow }: { flow: CashFlow; capt
             <td className="num"><Masked>{formatMoney(flow.money_in, c)}</Masked></td>
             <td className="num">{flow.money_in_transactions}</td>
           </tr>
-          {flow.from_savings_or_debt > 0 && (
+          {deficit > 0 && (
             <tr>
               <td>From savings or debt, beyond what came in</td>
-              <td className="num"><Masked>{formatMoney(flow.from_savings_or_debt, c)}</Masked></td>
+              <td className="num"><Masked>{formatMoney(deficit, c)}</Masked></td>
               <td className="num" />
             </tr>
           )}
@@ -489,10 +517,17 @@ function FlowTable({ flow, caption, categories, onShow }: { flow: CashFlow; capt
             <td className="num"><Masked>{formatMoney(flow.money_out, c)}</Masked></td>
             <td className="num">{flow.money_out_transactions}</td>
           </tr>
-          {flow.left_over > 0 && (
+          {flow.loan_payments.amount > 0 && (
+            <tr>
+              <td>{name('loan-payments', 'Loan & debt payments')}</td>
+              <td className="num"><Masked>{formatMoney(flow.loan_payments.amount, c)}</Masked></td>
+              <td className="num">{flow.loan_payments.transactions}</td>
+            </tr>
+          )}
+          {leftOver > 0 && (
             <tr>
               <td>Left over, of what came in</td>
-              <td className="num"><Masked>{formatMoney(flow.left_over, c)}</Masked></td>
+              <td className="num"><Masked>{formatMoney(leftOver, c)}</Masked></td>
               <td className="num" />
             </tr>
           )}

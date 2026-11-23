@@ -26,7 +26,7 @@ import ReportsEntry from "./ReportsEntry";
 import { ActivityListSkeleton } from "./LoadingSkeletons";
 import MonthFlowChart from "./MonthFlowChart";
 import MonthFigures from "./MonthFigures";
-import { formatDay, formatInstantDay, formatMoney, signedMoney, spoken } from "@/lib/format";
+import { formatDay, formatInstantDay, formatMoney, signedCompactMoney, signedMoney, spoken } from "@/lib/format";
 import { textWidth } from "@/lib/sankey";
 import { Masked } from "./HideAmounts";
 import { countsInTotals, countTransactions, currencyOf, historyCount, isExcluded, isTransfer, leftOutByCurrency, leftOutText, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
@@ -45,7 +45,7 @@ import TagFilter from "./TagFilter";
 import ChipSelect from "./ChipSelect";
 import SpendByTag from "./SpendByTag";
 import type { TagChange } from "./TxnTagsNote";
-import { searchEntries } from "./txn-search";
+import { accountFilterKey, categoryFilterKey, searchEntries } from "./txn-search";
 import CashFlowSankey, { FlowShown } from "./CashFlowSankey";
 import { inPeriod, periodCaption, periodEnding, periodGapNotes, pickedRows, SPANS, type FlowPick, type PeriodKey } from "@/lib/cash-flow";
 import { bankRows, type GroupAway, type GroupOutside, type SplitParent } from "@/lib/split-rows";
@@ -197,8 +197,8 @@ export function findTxnRow(id: string): HTMLElement | null {
   return document.querySelectorAll<HTMLElement>(`button[data-txn-row="${id}"]`)[0] ?? null;
 }
 
-export function emptyListWords(on: { query: boolean; tag: boolean; review: boolean; unsure?: boolean; receipt: ReceiptChoice; pick: boolean; unloaded?: boolean }): string {
-  const count = [on.query, on.tag, on.review, !!on.unsure, on.receipt !== ""].filter(Boolean).length;
+export function emptyListWords(on: { query: boolean; tag: boolean; account?: boolean; category?: boolean; review: boolean; unsure?: boolean; receipt: ReceiptChoice; pick: boolean; unloaded?: boolean }): string {
+  const count = [on.query, on.tag, !!on.account, !!on.category, on.review, !!on.unsure, on.receipt !== ""].filter(Boolean).length;
   if (count === 0) return on.pick ? "Nothing to list." : on.unloaded ? "No transactions loaded." : "No transactions this month.";
   if (count > 1) return on.query ? "No transactions match your search and filters." : "No transactions match these filters.";
   if (on.review) return "Nothing listed needs review.";
@@ -206,16 +206,17 @@ export function emptyListWords(on: { query: boolean; tag: boolean; review: boole
   if (on.receipt === "with") return "No transaction listed has a receipt or document.";
   if (on.receipt === "without") return "Nothing listed over that amount is missing a receipt.";
   if (on.tag) return "No transaction listed has that tag.";
+  if (on.account) return "No transaction listed is on that account.";
+  if (on.category) return "No transaction listed is in that category.";
   return "No transactions match your search.";
 }
 
 // Amounts in their currency (lib/format.ts), never assumed to be dollars.
 
-// Signed and in full, for the net-bar value labels: +$1,240.50 / −$340.00,
-// never abbreviated (design-system.md, numbers). Zero has its plus, as a
-// bar's label always had a sign.
+// Signed and compact (+$8.9K / −$1.2K), for the narrow Net by month bar labels;
+// aria-label carries the full cent-accurate amount.
 function fmtNetSigned(n: number, currency: string | null): string {
-  return signedMoney(n, currency, { always: true });
+  return signedCompactMoney(n, currency, { always: true });
 }
 
 // How wide Net by month's columns are, in px: the widest label drawn at its
@@ -234,9 +235,10 @@ function fmtTxnAmount(amount: number, currency: string | null): string {
 }
 
 // The per-day net, in display terms (positive = net money in), one figure per
-// currency the day's rows are in, the totals' first: never added across
-// currencies. Zero renders without a sign.
+// currency the day's counted rows are in, the totals' first: never added across
+// currencies. Zero renders without a sign; empty (transfers/excluded only) is "--".
 function fmtDayNet(nets: Map<string | null, number>, currency: string | null): string {
+  if (nets.size === 0) return "--";
   return [...nets.keys()]
     .sort((a, b) => (a === currency ? -1 : b === currency ? 1 : String(a) < String(b) ? -1 : 1))
     .map((c) => {
@@ -249,6 +251,11 @@ function fmtDayNet(nets: Map<string | null, number>, currency: string | null): s
 // A day's heading: "Today", "Yesterday", "Aug 7", "Aug 7, 2025" (lib/format.ts formatDay).
 function fmtTxnDate(iso: string): string {
   return formatDay(iso);
+}
+
+// Full date with month and year for cross-month search results ("Apr 3, 2026").
+function fmtAllMonthsDate(iso: string): string {
+  return new Date(`${iso}T12:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
 /** The bar's month, in full: "October 2026". */
@@ -458,6 +465,9 @@ export default function MonthBreakdown({
   const [sheet, setSheet] = useState<{ target: SheetTarget; open: boolean; seen: (string | null)[]; n: number } | null>(null);
   const listHeading = useRef<HTMLHeadingElement>(null);
   const [tagFilter, setTagFilter] = useState(""); // a tag's id; "" for every transaction
+  const [accountFilter, setAccountFilter] = useState(""); // accountFilterKey; "" for every account
+  const [categoryFilter, setCategoryFilter] = useState(""); // categoryFilterKey; "" for every category
+  const [searchAllMonths, setSearchAllMonths] = useState(false);
   // A node of the cash flow tapped (#41): the list shows its transactions,
   // from every month of its period, until it is cleared or a month is chosen.
   // The chart's period is kept here beside it: a reload shows a spinner in
@@ -639,9 +649,19 @@ export default function MonthBreakdown({
   // Keep the newest month in view when the row overflows (older months scroll
   // off to the left), and again each time Spending is opened, which draws it.
   const trendRef = useRef<HTMLDivElement>(null);
+  const [trendFade, setTrendFade] = useState({ left: false, right: false });
+  const syncTrendFade = () => {
+    const el = trendRef.current;
+    if (!el) return;
+    const left = el.scrollLeft > 4;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 4;
+    setTrendFade((prev) => (prev.left === left && prev.right === right ? prev : { left, right }));
+  };
   useEffect(() => {
     const el = trendRef.current;
-    if (el) el.scrollLeft = el.scrollWidth;
+    if (!el) return;
+    el.scrollLeft = el.scrollWidth;
+    syncTrendFade();
   }, [trend.length, segment]);
 
   // A segment chosen from the bar while the bar is pinned opens at its top,
@@ -662,9 +682,34 @@ export default function MonthBreakdown({
     chooseSegment(s);
   };
 
+  // Each account's name on a row: its institution only where two share a
+  // name (txn-words.ts rowAccountNames), from every row loaded.
+  const accountName = useMemo(() => rowAccountNames(txns ?? []), [txns]);
+  // Unique accounts and categories for the Transaction filter chips (each chip
+  // shows only when 2+ options exist, or while a selection is active).
+  const accountOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of txns ?? []) {
+      if (t.shared_iou) continue;
+      const key = accountFilterKey(t);
+      if (!map.has(key)) map.set(key, accountName(t));
+    }
+    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [txns, accountName]);
+  const categoryFilterOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const t of txns ?? []) {
+      const key = categoryFilterKey(t);
+      if (!map.has(key)) map.set(key, categoryLabel(t) ?? "Other");
+    }
+    return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [txns]);
+
   // The search reads a row's tags and note too (#40), and the tag filter
   // keeps the rows carrying one tag. A tag deleted meanwhile filters nothing.
   const filterTag = tags.some((t) => t.id === tagFilter) ? tagFilter : "";
+  const filterAccount = accountOptions.some(([k]) => k === accountFilter) ? accountFilter : "";
+  const filterCategory = categoryFilterOptions.some(([k]) => k === categoryFilter) ? categoryFilter : "";
   // A tapped node's rows, worked out again as the rows change, in place of
   // the month's; the search and the tag filter narrow them the same way.
   // Picked from the counted rows, as the chart counts them, and listed as
@@ -674,15 +719,27 @@ export default function MonthBreakdown({
     const original = new Map((txns ?? []).map((t) => [t.transaction_id, t]));
     return pickedRows(counted.rows, flowPick, { ix: indexTaxonomy(taxonomy), currency, today: localDate() }).map((t) => original.get(t.transaction_id) ?? t);
   }, [flowPick, txns, counted, taxonomy, currency]);
-  const listed = picked ?? monthTxns;
+  const filtering = !!(query || filterTag || filterAccount || filterCategory || reviewing || byReceipt || unsureOnly);
+  const acrossAll = !flowPick && filtering && searchAllMonths && months.length > 1;
+  const listed = picked ?? (acrossAll ? (txns ?? []) : monthTxns);
+  const searchOpts = useMemo(
+    () => ({ query, tag: filterTag, account: filterAccount, category: filterCategory, review: reviewing, unsure: unsureOnly }),
+    [query, filterTag, filterAccount, filterCategory, reviewing, unsureOnly]
+  );
   // A split transaction is kept whole, every part of it, when any part is
   // (#39): its parts are listed under it, and its split edited from all.
-  const searched = useMemo(() => searchEntries(listed, { query, tag: filterTag, review: reviewing, unsure: unsureOnly }, tags), [listed, query, filterTag, reviewing, unsureOnly, tags]);
+  const searched = useMemo(() => searchEntries(listed, searchOpts, tags), [listed, searchOpts, tags]);
   // Then the filter by receipt (#47): every part of a split transaction has
   // its transaction's mark and amount, so it keeps them all or none.
   const receipted = useMemo(() => receiptRows(searched, byReceipt, receiptOver), [searched, byReceipt, receiptOver]);
   const visible = receipted.rows;
-  const filtering = !!(query || filterTag || reviewing || byReceipt || unsureOnly);
+  // When searching or filtering in one month yields 0 matches, count matches
+  // across all 12 loaded months so we can offer a 1-tap switch.
+  const allMonthsMatches = useMemo(() => {
+    if (flowPick || !filtering || acrossAll || visible.length > 0 || months.length <= 1) return 0;
+    const allSearched = searchEntries(txns ?? [], searchOpts, tags);
+    return countTransactions(receiptRows(allSearched, byReceipt, receiptOver).rows);
+  }, [flowPick, filtering, acrossAll, visible.length, months.length, txns, searchOpts, tags, byReceipt, receiptOver]);
   // How many rows listed (the month, or a pick) Plaid wasn't sure of, as
   // the list shows them: its chip is there while there are any, or while it
   // is on, so answering the last one under an open sheet doesn't snap the
@@ -699,9 +756,9 @@ export default function MonthBreakdown({
   }, [flowPick]);
 
   // Group the visible rows into day sections, each carrying the day's net in
-  // display terms (positive = money in) for each currency its rows are in, so
-  // the header adds up the rows shown under it. A row the person excluded is
-  // left out of it, as of every total.
+  // display terms (positive = money in) for each currency its counted rows are
+  // in, matching In / Out / Net (excluding transfers, loan payments, and
+  // excluded rows). Days with only transfers/excluded rows show "--".
   const days = useMemo(() => {
     const groups: { date: string; nets: Map<string | null, number>; hasTransfer: boolean; txns: Txn[] }[] = [];
     for (const t of visible) {
@@ -711,9 +768,10 @@ export default function MonthBreakdown({
         groups.push(g);
       }
       g.txns.push(t);
-      // Not counted: excluded, or counted in a group dated before this year (#39).
-      if (isExcluded(t) || t.group_outside) continue;
       if (isTransfer(t)) g.hasTransfer = true;
+      // Same exclusion rule as In / Out / Net: excluded, transfers, loan payments,
+      // or counted in a group dated before this year (#39).
+      if (isExcluded(t) || isTransfer(t) || t.group_outside) continue;
       const c = currencyOf(t) ?? currency;
       g.nets.set(c, (g.nets.get(c) ?? 0) - t.amount);
     }
@@ -729,9 +787,6 @@ export default function MonthBreakdown({
   // from all of them, never from those the list happens to show.
   const splitsWhole = useMemo(() => wholeSplits(txns ?? []), [txns]);
   const whole = (t: Txn): Txn => (t.split_parts ? (splitsWhole.get(t.transaction_id) ?? t) : t);
-  // Each account's name on a row: its institution only where two share a
-  // name (txn-words.ts rowAccountNames), from every row loaded.
-  const accountName = useMemo(() => rowAccountNames(txns ?? []), [txns]);
 
   // What an open sheet shows, found again in every row loaded, put back
   // whole as the list puts them (a split one with all its parts, a group's
@@ -799,6 +854,7 @@ export default function MonthBreakdown({
     writeViewMonth(m === null ? null : writeMonth(m, opensOn));
     setPin(null);
     setFlowPick(null);
+    setSearchAllMonths(false);
   };
   const shownMonth: ActivityMonth | null =
     segment !== "shared" && (selected || (!loading && (notes.length > 0 || asideNotes.length > 0)))
@@ -1044,32 +1100,39 @@ export default function MonthBreakdown({
               <div className="card">
                 <div className="inst-header">
                   <div className="inst-name">Net by month</div>
-                  <div className="inst-total">tap a month to end on it</div>
+                  <div className="inst-total">{trendFade.left ? "scroll for earlier months · tap to end on it" : "tap a month to end on it"}</div>
                 </div>
-                <div className="trend-row" ref={trendRef} style={{ "--trend-col": `${trendColumn(trend.map((t) => t.net), currency)}px` } as CSSProperties}>
-                  {(() => {
-                    const max = Math.max(...trend.map((t) => Math.abs(t.net)), 1);
-                    return trend.map(({ month: m, net }) => (
-                      <button
-                        key={m}
-                        className={`trend-col${m === selected ? " active" : period?.months.includes(m) ? " in-period" : ""}`}
-                        onClick={() => goMonth(m)}
-                        aria-pressed={m === selected}
-                        aria-label={spoken(`${monthLabel(m)}: net ${formatMoney(net, currency)}${m !== selected && period?.months.includes(m) ? ", in the period" : ""}`)}
-                      >
-                        <span className="trend-val">
-                          <Masked>{fmtNetSigned(net, currency)}</Masked>
-                        </span>
-                        <span
-                          className={`trend-bar${net >= 0 ? " up" : " down"}`}
-                          style={{
-                            height: `${Math.max((Math.abs(net) / max) * 72, 2)}px`,
-                          }}
-                        />
-                        <span className="trend-label">{monthLabel(m)}</span>
-                      </button>
-                    ));
-                  })()}
+                <div className={`trend-wrap${trendFade.left ? " fade-left" : ""}${trendFade.right ? " fade-right" : ""}`}>
+                  <div
+                    className="trend-row"
+                    ref={trendRef}
+                    onScroll={syncTrendFade}
+                    style={{ "--trend-col": `${trendColumn(trend.map((t) => t.net), currency)}px` } as CSSProperties}
+                  >
+                    {(() => {
+                      const max = Math.max(...trend.map((t) => Math.abs(t.net)), 1);
+                      return trend.map(({ month: m, net }) => (
+                        <button
+                          key={m}
+                          className={`trend-col${m === selected ? " active" : period?.months.includes(m) ? " in-period" : ""}`}
+                          onClick={() => goMonth(m)}
+                          aria-pressed={m === selected}
+                          aria-label={spoken(`${monthLabel(m)}: net ${formatMoney(net, currency)}${m !== selected && period?.months.includes(m) ? ", in the period" : ""}`)}
+                        >
+                          <span className="trend-val">
+                            <Masked>{fmtNetSigned(net, currency)}</Masked>
+                          </span>
+                          <span
+                            className={`trend-bar${net >= 0 ? " up" : " down"}`}
+                            style={{
+                              height: `${Math.max((Math.abs(net) / max) * 72, 2)}px`,
+                            }}
+                          />
+                          <span className="trend-label">{monthLabel(m)}</span>
+                        </button>
+                      ));
+                    })()}
+                  </div>
                 </div>
               </div>
             )}
@@ -1196,6 +1259,7 @@ export default function MonthBreakdown({
                   {/* Transactions, not rows: a split one is one, a group as many as it holds. */}
                   {countTransactions(visible)}
                   {filtering ? ` of ${countTransactions(listed)}` : ""}
+                  {acrossAll ? " across 12 months" : ""}
                 </span>
                 {/* Adding to the list or importing into it, on a manual
                     account: the list's own rare actions (with nothing to
@@ -1220,10 +1284,23 @@ export default function MonthBreakdown({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
+              {filtering && !flowPick && months.length > 1 && (
+                <Segmented
+                  className="txn-search-scope"
+                  label="Search scope"
+                  value={acrossAll ? "all" : "month"}
+                  onChange={(v) => setSearchAllMonths(v === "all")}
+                  options={[
+                    ["month", selected ? monthLabel(selected) : "This month", selected ? `This month (${monthName(selected)})` : "This month"],
+                    ["all", "All 12 months", "All 12 months"],
+                  ]}
+                />
+              )}
               {/* The filters, as chips: categories Plaid was unsure of (while
                   any are listed), what needs review (while the queue is on),
-                  a tag, and a receipt (with a file store). */}
-              {(review?.view?.on || tags.length > 0 || onAttachmentsChanged || unsureCount > 0 || unsureOnly) && (
+                  account (when 2+ exist), category (when 2+ exist), a tag, and
+                  a receipt (with a file store). */}
+              {(review?.view?.on || tags.length > 0 || accountOptions.length >= 2 || filterAccount !== "" || categoryFilterOptions.length >= 2 || filterCategory !== "" || onAttachmentsChanged || unsureCount > 0 || unsureOnly) && (
                 <div className="chip-row" role="group" aria-label="Filter the list">
                   {/* Plaid's doubt, counted: Information, so not "N to check"
                       (the Accounts pill's caution words) nor "To review" (the
@@ -1238,6 +1315,38 @@ export default function MonthBreakdown({
                     <button type="button" className="chip" aria-pressed={reviewing} onClick={() => setReviewOnly(!reviewing)}>
                       To review
                     </button>
+                  )}
+                  {(accountOptions.length >= 2 || filterAccount !== "") && (
+                    <ChipSelect
+                      label="Account"
+                      shown={filterAccount ? `Account: ${accountOptions.find(([k]) => k === filterAccount)?.[1] ?? "selected"}` : "Account"}
+                      on={filterAccount !== ""}
+                      value={filterAccount}
+                      onChange={setAccountFilter}
+                    >
+                      <option value="">All accounts</option>
+                      {accountOptions.map(([key, name]) => (
+                        <option key={key} value={key}>
+                          {name}
+                        </option>
+                      ))}
+                    </ChipSelect>
+                  )}
+                  {(categoryFilterOptions.length >= 2 || filterCategory !== "") && (
+                    <ChipSelect
+                      label="Category"
+                      shown={filterCategory ? `Category: ${categoryFilterOptions.find(([k]) => k === filterCategory)?.[1] ?? "selected"}` : "Category"}
+                      on={filterCategory !== ""}
+                      value={filterCategory}
+                      onChange={setCategoryFilter}
+                    >
+                      <option value="">All categories</option>
+                      {categoryFilterOptions.map(([key, name]) => (
+                        <option key={key} value={key}>
+                          {name}
+                        </option>
+                      ))}
+                    </ChipSelect>
                   )}
                   <TagFilter tags={tags} value={filterTag} onChange={setTagFilter} />
                   {onAttachmentsChanged && (
@@ -1266,6 +1375,9 @@ export default function MonthBreakdown({
                   )}
                 </div>
               )}
+              {unsureOnly && (
+                <p className="helper">A dot marks a category Plaid wasn&apos;t sure about. Open a transaction to confirm or change it.</p>
+              )}
               {unknownNote(receipted.unknown) && <div className="stale-note">{unknownNote(receipted.unknown)}</div>}
               {/* The review queue, while it is on: its count, Card Mode and approving what's listed (its filter is the To review chip, and the N key). */}
               {review && <ReviewBar review={review} all={txns} listed={visible} filtering={reviewing} onFilter={setReviewOnly} onReview={() => setCardsOpen(true)} />}
@@ -1281,15 +1393,36 @@ export default function MonthBreakdown({
                 </Notice>
               )}
               {visible.length === 0 ? (
-                <p className="empty-note">{emptyListWords({ query: !!query, tag: !!filterTag, review: reviewing, unsure: unsureOnly, receipt: byReceipt, pick: !!flowPick, unloaded: !selected && notes.length > 0 })}</p>
+                allMonthsMatches > 0 ? (
+                  <div className="empty-note">
+                    <p>No matches in {selected ? monthName(selected) : "this month"}.</p>
+                    <button type="button" className="btn ghost" onClick={() => setSearchAllMonths(true)}>
+                      Show {allMonthsMatches} {allMonthsMatches === 1 ? "match" : "matches"} across all 12 months
+                    </button>
+                  </div>
+                ) : (
+                  <p className="empty-note">
+                    {emptyListWords({
+                      query: !!query,
+                      tag: !!filterTag,
+                      account: !!filterAccount,
+                      category: !!filterCategory,
+                      review: reviewing,
+                      unsure: unsureOnly,
+                      receipt: byReceipt,
+                      pick: !!flowPick,
+                      unloaded: !selected && notes.length > 0,
+                    })}
+                  </p>
+                )
               ) : (
                 <ul className="list-rows txn-list">
                   {days.map((g) => (
                     <Fragment key={g.date}>
                       <li className="txn-day">
-                        <span>{fmtTxnDate(g.date)}</span>
-                        <span className="money" title={g.hasTransfer ? "Day net includes transfers and loan payments listed below" : undefined}>
-                          <Masked>{fmtDayNet(g.nets, currency)}</Masked>
+                        <span>{acrossAll ? fmtAllMonthsDate(g.date) : fmtTxnDate(g.date)}</span>
+                        <span className="money" title={g.hasTransfer ? "Day net excludes transfers and loan payments listed below" : undefined}>
+                          {g.nets.size === 0 ? "--" : <Masked>{fmtDayNet(g.nets, currency)}</Masked>}
                         </span>
                       </li>
                       {g.entries.map((t) => {
@@ -1307,14 +1440,7 @@ export default function MonthBreakdown({
                         const unsure = unsureCategory(t);
                         const body = (
                           <>
-                            {t.logo_url || t.category_icon_url ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img className="txn-logo" src={(t.logo_url || t.category_icon_url) ?? undefined} alt="" loading="lazy" />
-                            ) : (
-                              <span className="txn-logo txn-logo-fallback" aria-hidden="true">
-                                {t.name.slice(0, 1).toUpperCase()}
-                              </span>
-                            )}
+                            <TxnLogo src={t.logo_url || t.category_icon_url} name={t.name} />
                             <span className="list-row-text">
                               <span className="list-row-title">
                                 {shownName(t)}
@@ -1449,6 +1575,9 @@ export default function MonthBreakdown({
           }}
           onSplit={(x) => (onSplitsChanged ? setSplitting(whole(x)) : undefined)}
           onGroup={(x) => (onSplitsChanged ? setGrouping(x.group_members ? { start: null, group: x } : { start: x, group: null }) : undefined)}
+          onChangeTags={onChangeTags}
+          onSaveNote={onSaveNote}
+          onToggleExcluded={onToggleExcluded}
         />
       )}
 
@@ -1466,6 +1595,35 @@ export default function MonthBreakdown({
         </>
       )}
     </>
+  );
+}
+
+/** Merchant logo with a clean neutral monogram visible while lazy-loading or if loading fails. */
+function TxnLogo({ src, name }: { src: string | null; name: string }) {
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const initial = name.slice(0, 1).toUpperCase();
+  if (!src || failed) {
+    return (
+      <span className="txn-logo txn-logo-fallback" aria-hidden="true">
+        {initial}
+      </span>
+    );
+  }
+  return (
+    <span className="txn-logo-wrap" aria-hidden="true">
+      <span className="txn-logo txn-logo-fallback">{initial}</span>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        className={`txn-logo txn-logo-img${loaded ? " loaded" : ""}`}
+        src={src}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        onLoad={() => setLoaded(true)}
+        onError={() => setFailed(true)}
+      />
+    </span>
   );
 }
 

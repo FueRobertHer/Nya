@@ -1161,16 +1161,19 @@ describe('a transaction’s sheet', () => {
   describe('Rename or delete tags', () => {
     const editing = { onChangeTags: async () => true, onSaveNote: async () => true };
 
-    test('under the tag field, a ghost button: it closes the sheet, then the tags open, for the row it was on', async () => {
+    test('below the note field, a ghost button: it closes the sheet, then the tags open, for the row it was on', async () => {
       const opened: string[] = [];
       const v = mount({ ...editing, onManageTags: (t) => opened.push(t.transaction_id) });
       await v.open('Whole Foods');
       const link = v.button('Rename or delete tags', v.dialog()!)!;
       expect(link.getAttribute('class')).toBe('btn ghost');
       expect(link.getAttribute('aria-haspopup')).toBe('dialog');
-      // After the tag field and its suggestions, before the note.
+      // After the tag field and note field so it does not interrupt editing between them.
       const order = v.dialog()!.findAll((e) => e === link || e.getAttribute('aria-label') === 'Add a tag to Whole Foods' || e.tagName === 'TEXTAREA');
-      expect(order.map((e) => e.tagName)).toEqual(['INPUT', 'BUTTON', 'TEXTAREA']);
+      expect(order.map((e) => e.tagName)).toEqual(['INPUT', 'TEXTAREA', 'BUTTON']);
+      // Quiet Rename ghost button is also directly accessible in the hero.
+      const renameBtn = v.button('Rename', v.dialog()!)!;
+      expect(renameBtn.getAttribute('class')).toBe('btn ghost');
       act(() => click(link));
       await settle(400);
       expect(v.dialog()).toBeNull();
@@ -1218,10 +1221,13 @@ describe('a transaction’s sheet', () => {
       const v = mount({}, { wired: true });
       await v.open('Whole Foods');
       expect(status(v)).toBe('');
+      // Save note stays hidden until the draft differs from the saved note.
+      expect(v.button('Save note', v.dialog()!)).toBeNull();
       act(() => type(note(v), 'Team lunch'));
       press(v.button('Save note', v.dialog()!)!);
       await settle();
       expect(status(v)).toBe('Done: Note saved.');
+      expect(v.button('Save note', v.dialog()!)).toBeNull();
       expect(v.dialog()!.findAll((e) => e.getAttribute('class') === 'notice done').length).toBe(1);
       // The editor started again on the saved note, the button pressed gone with it.
       expect(doneLine(v)!.getAttribute('tabindex')).toBe('-1');

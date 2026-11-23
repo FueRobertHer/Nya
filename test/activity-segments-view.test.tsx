@@ -461,16 +461,21 @@ describe('Activity: the bar and its segments', () => {
     v.unmount();
   });
 
-  test('daily headers explain when transfers or loan payments are included in the day net', () => {
+  test('daily headers exclude transfers and loan payments from day net and show -- on transfer-only days', () => {
     const v = mount({
       txns: [
         row(`${month}-05`, 'Whole Foods', 50, 'groceries'),
         row(`${month}-05`, 'Credit Card Payment', 500, 'loan payments'),
+        row(`${month}-04`, 'Savings Transfer', 1500, 'transfer out'),
       ],
     });
-    const [dayHeader] = v.all((e) => e.getAttribute('class') === 'txn-day');
-    const netSpan = dayHeader.findAll((e) => e.getAttribute('class') === 'money')[0];
-    expect(netSpan.getAttribute('title')).toContain('transfers and loan payments');
+    const [day5, day4] = v.all((e) => e.getAttribute('class') === 'txn-day');
+    const net5 = day5.findAll((e) => e.getAttribute('class') === 'money')[0];
+    expect(net5.textContent).toBe('−$50.00');
+    expect(net5.getAttribute('title')).toContain('excludes transfers and loan payments');
+    const net4 = day4.findAll((e) => e.getAttribute('class') === 'money')[0];
+    expect(net4.textContent).toBe('--');
+    expect(net4.getAttribute('title')).toContain('excludes transfers and loan payments');
     v.unmount();
   });
 
