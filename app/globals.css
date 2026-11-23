@@ -3422,6 +3422,9 @@ span.meter-fill {
     transform: translateX(100%);
     padding-top: env(safe-area-inset-top);
   }
+  .sheet.sheet-wide {
+    width: min(680px, 92vw);
+  }
   .sheet[data-open="true"] {
     transform: translateX(0);
   }

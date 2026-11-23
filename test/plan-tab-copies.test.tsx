@@ -291,13 +291,13 @@ describe('the Timeline’s Try it in a copy', () => {
     expect((dom.document.activeElement as FakeElement).textContent).toBe('Copy: A career break at 45');
     const { main, byName } = await stored();
     expect(main).toBe('main');
-    expect(Object.keys(byName)).toEqual(['First plan', 'A career break at 45']);
+    expect(Object.keys(byName)).toEqual(['Main plan', 'A career break at 45']);
     const copy = byName['A career break at 45'].plan;
     expect(eventsOf(copy).map(({ id: _, ...e }) => e)).toEqual([{ kind: 'sabbatical', label: 'A career break', fromAge: 45, years: 2, savingsLost: 30_000 }]);
     // Everything else is your plan's.
     expect({ ...copy, items: [] }).toEqual({ ...PLAN, items: [] });
-    expect(byName['First plan'].plan).toEqual(PLAN);
-    expect(byName['First plan'].updated_at).toBe(stamp);
+    expect(byName['Main plan'].plan).toEqual(PLAN);
+    expect(byName['Main plan'].updated_at).toBe(stamp);
     await tab.unmount();
   });
 });
@@ -319,9 +319,9 @@ describe('New copy, from the Plans sheet', () => {
     expect(tab.title()).toBe('Copy: Sabbatical');
     expect((dom.document.activeElement as FakeElement).textContent).toBe('Copy: Sabbatical');
     const { byName } = await stored();
-    expect(Object.keys(byName)).toEqual(['First plan', 'Retire at 50', 'Sabbatical']);
-    expect(byName.Sabbatical.plan).toEqual(byName['First plan'].plan);
-    expect(byName['First plan'].updated_at).toBe(stamp);
+    expect(Object.keys(byName)).toEqual(['Main plan', 'Retire at 50', 'Sabbatical']);
+    expect(byName.Sabbatical.plan).toEqual(byName['Main plan'].plan);
+    expect(byName['Main plan'].updated_at).toBe(stamp);
     await tab.unmount();
   });
 });
@@ -346,8 +346,8 @@ describe('a form saves only to the plan it was opened for', () => {
     expect(tab.dialog()).toBeNull();
     const { byName } = await stored();
     expect(byName['Retire at 50'].plan.targetAge).toBe(48);
-    expect(byName['First plan'].plan).toEqual(PLAN);
-    expect(byName['First plan'].updated_at).toBe(stamp);
+    expect(byName['Main plan'].plan).toEqual(PLAN);
+    expect(byName['Main plan'].updated_at).toBe(stamp);
     expect(tab.title()).toBe('Copy: Retire at 50');
     await tab.unmount();
   });
@@ -366,7 +366,7 @@ describe('a form saves only to the plan it was opened for', () => {
     await settle(400);
     expect(writes()).toEqual(['PUT /api/fire-plan']);
     const { byName } = await stored();
-    expect(byName['First plan'].plan.targetAge).toBe(58);
+    expect(byName['Main plan'].plan.targetAge).toBe(58);
     expect(byName['Retire at 50'].plan.targetAge).toBe(50);
     await tab.unmount();
   });
@@ -396,7 +396,7 @@ describe('a form saves only to the plan it was opened for', () => {
     expect(answer).toBeUndefined();
     expect(writes()).toEqual([]);
     const { byName } = await stored();
-    expect([byName['First plan'].plan.targetAge, byName['Retire at 50'].plan.targetAge]).toEqual([55, 50]);
+    expect([byName['Main plan'].plan.targetAge, byName['Retire at 50'].plan.targetAge]).toEqual([55, 50]);
     await tab.unmount();
   });
 });
@@ -425,7 +425,7 @@ describe('Also change it in', () => {
     expect(calls.slice(sent).map((c) => `${c.method} ${c.path}`)).toContain('GET /api/plan-inputs');
     expect(tab.dialog()).toBeNull();
     const { byName } = await stored();
-    expect([byName['First plan'].plan.spending, byName['First plan'].plan.targetAge]).toEqual([45_000, 55]);
+    expect([byName['Main plan'].plan.spending, byName['Main plan'].plan.targetAge]).toEqual([45_000, 55]);
     expect([byName['Retire at 50'].plan.spending, byName['Retire at 50'].plan.targetAge]).toEqual([45_000, 50]);
     expect(byName['Spend more'].plan.spending).toBe(55_000);
     await tab.unmount();
@@ -456,7 +456,7 @@ describe('Also change it in', () => {
     expect(tab.dialog()).toBe(sheet);
     expect(sheet.textContent).toContain('Changed on another device, so nothing was saved: save again to make your change in what is there now.');
     const { byName } = await stored();
-    expect([byName['First plan'].plan.spending, byName['First plan'].updated_at]).toEqual([40_000, stamp]);
+    expect([byName['Main plan'].plan.spending, byName['Main plan'].updated_at]).toEqual([40_000, stamp]);
     expect(byName['Retire at 50'].plan.spending).toBe(40_000);
     expect([byName['Spend more'].plan.spending, byName['Spend more'].plan.savings]).toEqual([55_000, 20_000]);
     await tab.unmount();
@@ -472,16 +472,16 @@ describe('Also change it in', () => {
     const sheet = tab.dialog()!;
     expect(sheet.textContent).toContain('Saved to this copy, not your plan.');
     const offered = alsoRows(sheet);
-    expect(offered.map(([name]) => name)).toEqual(['First plan (your plan)']);
+    expect(offered.map(([name]) => name)).toEqual(['Main plan (your plan)']);
     expect(offered[0][1]).toContain('$24,000');
     await fill(sheet, 'A year', '30000');
-    await checkAlso(sheet, 'First plan (your plan)');
+    await checkAlso(sheet, 'Main plan (your plan)');
     await press(button(sheet, 'Save'));
     await settle(400);
     expect(writes()).toEqual(['PUT /api/plans']);
     const { byName } = await stored();
-    for (const name of ['First plan', 'Retire at 50']) expect([name, incomeOf(byName[name].plan)]).toEqual([name, [{ id: 'ss', label: 'Social Security', amount: 30_000, fromAge: 67, inflationAdjusted: true }]]);
-    expect(byName['First plan'].plan.targetAge).toBe(55);
+    for (const name of ['Main plan', 'Retire at 50']) expect([name, incomeOf(byName[name].plan)]).toEqual([name, [{ id: 'ss', label: 'Social Security', amount: 30_000, fromAge: 67, inflationAdjusted: true }]]);
+    expect(byName['Main plan'].plan.targetAge).toBe(55);
     // The copy is still the one shown.
     expect(tab.title()).toBe('Copy: Retire at 50');
     await tab.unmount();
@@ -562,7 +562,7 @@ describe('a save refused for what is stored now', () => {
     expect(calls.slice(sent).map((c) => `${c.method} ${c.path}`)).toContain('GET /api/plan-inputs');
     expect(tab.text()).toContain(CHANGED);
     const { byName } = await stored();
-    expect([byName['First plan'].plan.targetAge, byName['First plan'].plan.savings]).toEqual([55, 20_000]);
+    expect([byName['Main plan'].plan.targetAge, byName['Main plan'].plan.savings]).toEqual([55, 20_000]);
     await tab.unmount();
   });
 });
@@ -594,7 +594,7 @@ describe('your plan read again after a write', () => {
     await press(tab.row('Annual spending'));
     const sheet = tab.dialog()!;
     await fill(sheet, 'Spending a year', '45000');
-    await checkAlso(sheet, 'First plan (your plan)');
+    await checkAlso(sheet, 'Main plan (your plan)');
     before = async (call) => {
       if (call.method !== 'PUT' || call.path !== '/api/plans') return;
       before = null;
@@ -606,7 +606,7 @@ describe('your plan read again after a write', () => {
     expect(sheet.textContent).toContain('It wasn’t saved: check your connection, and try again.');
     expect(tab.title()).toBe('Copy: Retire at 50');
     const { byName } = await stored();
-    expect([byName['First plan'].plan.spending, byName['Retire at 50'].plan.spending]).toEqual([40_000, 40_000]);
+    expect([byName['Main plan'].plan.spending, byName['Retire at 50'].plan.spending]).toEqual([40_000, 40_000]);
     await tab.unmount();
   });
 
@@ -615,7 +615,7 @@ describe('your plan read again after a write', () => {
     await seedCopy('Retire at 50', { targetAge: 50 });
     const tab = await render();
     await press(tab.plans());
-    await press(tab.sheetRow('First plan'));
+    await press(tab.sheetRow('Main plan'));
     await press(tab.sheetRow('Rename'));
     const level = tab.dialog()!;
     await fill(level, 'Name', 'Base plan');
@@ -631,7 +631,7 @@ describe('your plan read again after a write', () => {
     expect(tab.dialog()?.getAttribute('aria-label')).toBe('Rename');
     expect(tab.dialog()!.textContent).toContain(CHANGED);
     expect(field(tab.dialog()!, 'Name')!.value).toBe('Base plan');
-    expect(Object.keys((await stored()).byName)).toEqual(['First plan', 'Retire at 50']);
+    expect(Object.keys((await stored()).byName)).toEqual(['Main plan', 'Retire at 50']);
     await tab.unmount();
   });
 
@@ -642,7 +642,7 @@ describe('your plan read again after a write', () => {
     await openCopy(tab, 'Retire at 50');
     const said = tab.said().join(' ');
     await press(tab.plans());
-    await press(tab.sheetRow('First plan'));
+    await press(tab.sheetRow('Main plan'));
     await press(tab.sheetRow('Rename'));
     await fill(tab.dialog()!, 'Name', 'Base plan');
     const release = holdRead();
@@ -679,25 +679,25 @@ describe('your plan read again after a write', () => {
     await press(tab.row('Annual spending'));
     const sheet = tab.dialog()!;
     await fill(sheet, 'Spending a year', '45000');
-    await checkAlso(sheet, 'First plan (your plan)');
+    await checkAlso(sheet, 'Main plan (your plan)');
     const release = holdRead();
     await press(button(sheet, 'Save'));
     await settle(400);
     await press(tab.plans());
-    await press(tab.sheetRow('First plan'));
+    await press(tab.sheetRow('Main plan'));
     await press(tab.sheetRow('Duplicate'));
     const level = tab.dialog()!;
     expect(level.getAttribute('aria-label')).toBe('Duplicate');
     await press(button(level, 'Make it'));
     await settle(200);
     expect(level.textContent).toContain('Still loading your plan after the last change. Try again in a moment.');
-    expect(Object.keys((await stored()).byName)).toEqual(['First plan', 'Retire at 50']);
+    expect(Object.keys((await stored()).byName)).toEqual(['Main plan', 'Retire at 50']);
     await release();
     await press(button(tab.dialog(), 'Make it'));
     await settle(400);
     const { byName } = await stored();
-    expect(Object.keys(byName)).toEqual(['First plan', 'Retire at 50', 'First plan (copy)']);
-    expect(byName['First plan (copy)'].plan.spending).toBe(45_000);
+    expect(Object.keys(byName)).toEqual(['Main plan', 'Retire at 50', 'Main plan (copy)']);
+    expect(byName['Main plan (copy)'].plan.spending).toBe(45_000);
     await tab.unmount();
   });
 });
@@ -723,7 +723,7 @@ describe('Make this your plan', () => {
     expect(tab.row('Annual spending')?.textContent).toContain('$30,000');
     const { main, byName } = await stored();
     expect(main).toBe(id);
-    expect(byName['First plan'].plan).toEqual(PLAN);
+    expect(byName['Main plan'].plan).toEqual(PLAN);
     expect(tab.home()).not.toBe(home);
     const fresh = await render();
     expect(tab.home()).toBe(fresh.home());
@@ -736,9 +736,9 @@ describe('Make this your plan', () => {
     await seedCopy('Retire at 50', { targetAge: 50 });
     const tab = await render();
     await press(tab.plans());
-    await press(tab.sheetRow('First plan'));
+    await press(tab.sheetRow('Main plan'));
     const level = tab.dialog()!;
-    expect(level.getAttribute('aria-label')).toBe('First plan');
+    expect(level.getAttribute('aria-label')).toBe('Main plan');
     expect(tab.sheetRow('Make this your plan')).toBeNull();
     expect(tab.sheetRow('Delete')).toBeNull();
     expect(level.textContent).toContain('Your plan can’t be deleted: make another your plan first.');
@@ -751,7 +751,7 @@ describe('Make this your plan', () => {
     const rows = tab.dialog()!.findAll((e) => e.tagName === 'BUTTON' && classOf(e).includes('list-row'));
     expect(rows.map((r) => [r.findAll((t) => classOf(t).includes('list-row-title'))[0]?.textContent ?? '', r.findAll((t) => classOf(t).includes('badge'))[0]?.textContent ?? ''])).toEqual([
       ['Retire at 50', 'Your plan'],
-      ['First plan', ''],
+      ['Main plan', ''],
     ]);
     expect(tab.row('Household')?.textContent).toContain('stop at 50');
     await tab.unmount();
@@ -764,7 +764,7 @@ describe('your plan renamed', () => {
     await seedCopy('Retire at 50', { targetAge: 50 });
     const tab = await render();
     await press(tab.plans());
-    await press(tab.sheetRow('First plan'));
+    await press(tab.sheetRow('Main plan'));
     await press(tab.sheetRow('Rename'));
     await fill(tab.dialog()!, 'Name', 'Base plan');
     await press(button(tab.dialog(), 'Save'));
@@ -782,7 +782,7 @@ describe('your plan renamed', () => {
     expect(tab.dialog()).toBeNull();
     const { byName } = await stored();
     expect(byName['Base plan'].plan.targetAge).toBe(58);
-    expect(byName['First plan']).toBeUndefined();
+    expect(byName['Main plan']).toBeUndefined();
     await tab.unmount();
   });
 });
@@ -870,7 +870,7 @@ describe('the Timeline in a copy', () => {
     expect(writes()).toEqual(['PUT /api/plans']);
     const { byName } = await stored();
     expect(eventsOf(byName['Retire at 50'].plan).map((e) => [e.kind, e.label])).toEqual([['sabbatical', 'A career break']]);
-    expect(eventsOf(byName['First plan'].plan)).toEqual([]);
+    expect(eventsOf(byName['Main plan'].plan)).toEqual([]);
     expect(tab.said()).toContain('Added to Copy: Retire at 50');
     expect(tab.text()).toContain(EVENT_PART_TEXT.retired);
     await tab.unmount();
@@ -901,8 +901,8 @@ describe('Delete, from a plan’s level', () => {
     await settle(400);
     expect(writes()).toEqual(['DELETE /api/plans']);
     const { byName } = await stored();
-    expect(Object.keys(byName)).toEqual(['First plan']);
-    expect(byName['First plan'].updated_at).toBe(stamp);
+    expect(Object.keys(byName)).toEqual(['Main plan']);
+    expect(byName['Main plan'].updated_at).toBe(stamp);
     // Back on the list, with your plan alone; the bar's button says no number.
     expect(tab.dialog()?.getAttribute('aria-label')).toBe('Plans');
     expect(tab.sheetRow('Retire at 50')).toBeNull();

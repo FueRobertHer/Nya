@@ -21,7 +21,7 @@ const save = async (tab: Tab) => {
   await press(button(tab.dialog(), 'Save'));
   await settle(400);
 };
-const mine = async () => (await stored()).byName['First plan'].plan;
+const mine = async () => (await stored()).byName['Main plan'].plan;
 const subOf = (tab: Tab, title: string) => tab.row(title)?.findAll((e) => classOf(e).includes('list-row-sub'))[0]?.textContent;
 const partners: PlanItem = {
   id: 'pss',
@@ -131,7 +131,7 @@ describe('the stop', () => {
     await save(tab);
     const { byName } = await stored();
     expect(byName['Stop at 52'].plan.stopAtFi).toBe(true);
-    expect(byName['First plan'].plan.stopAtFi).toBe(false);
+    expect(byName['Main plan'].plan.stopAtFi).toBe(false);
     await tab.unmount();
   }, 20_000);
 });
@@ -146,7 +146,7 @@ describe('your partner’s age', () => {
     await save(tab);
     expect(subOf(tab, 'Household')).toBe('40 and 38 now, stop at 55');
     const { byName } = await stored();
-    expect(byName['First plan'].plan.partnerAge).toBe(38);
+    expect(byName['Main plan'].plan.partnerAge).toBe(38);
     expect(byName['Stop at 52'].plan.partnerAge).toBe(38);
     await tab.unmount();
   }, 20_000);

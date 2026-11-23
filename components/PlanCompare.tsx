@@ -76,7 +76,13 @@ export default function PlanCompare({
                     )}
                   </td>
                   <td className="plan-compare-diff">
-                    <Masked>{c.diff}</Masked>
+                    {c.diff === 'starts with a different balance' ? (
+                      <span className="plan-muted" aria-label={c.diff} title={c.diff}>
+                        --
+                      </span>
+                    ) : (
+                      <Masked>{c.diff}</Masked>
+                    )}
                   </td>
                 </tr>
               ))}

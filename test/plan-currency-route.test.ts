@@ -174,7 +174,7 @@ describe('the download and a restore', () => {
     const saved = await first(TYPED, 'EUR');
     const text = await downloadText(EXPORTED);
     const doc = JSON.parse(text);
-    expect(doc['fire-plans']).toEqual([{ id: MAIN_ID, value: { name: 'First plan', plan: TYPED, tax: null, currency: 'EUR', createdAt: expect.any(String), updatedAt: saved.updated_at } }]);
+    expect(doc['fire-plans']).toEqual([{ id: MAIN_ID, value: { name: 'Main plan', plan: TYPED, tax: null, currency: 'EUR', createdAt: expect.any(String), updatedAt: saved.updated_at } }]);
     expect(doc).not.toHaveProperty('fire-plan-currency');
     fake.reset();
     await registerTestContainer(fake);

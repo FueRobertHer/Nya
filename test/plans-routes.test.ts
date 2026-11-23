@@ -144,17 +144,17 @@ describe('your plan’s first entry', () => {
     expect((await list()).body).toEqual({
       main: MAIN_ID,
       missing: false,
-      plans: [{ id: MAIN_ID, name: 'First plan', plan: null, currency: null, created_at: null, updated_at: null, tax: null }],
+      plans: [{ id: MAIN_ID, name: 'Main plan', plan: null, currency: null, created_at: null, updated_at: null, tax: null }],
       unreadable_ids: [],
       unrecognised_ids: [],
     });
   });
 
-  test('a save makes it, "First plan", then the facts', async () => {
+  test('a save makes it, "Main plan", then the facts', async () => {
     const r = await save({ ...TYPED, age: 41 }, null, { facts_were: DEFAULTS });
     expect(r.status).toBe(200);
     const entry = await stored(MAIN_ID);
-    expect(entry).toEqual({ name: 'First plan', plan: { ...TYPED, age: 41 }, tax: null, currency: 'USD', createdAt: entry.createdAt, updatedAt: entry.updatedAt });
+    expect(entry).toEqual({ name: 'Main plan', plan: { ...TYPED, age: 41 }, tax: null, currency: 'USD', createdAt: entry.createdAt, updatedAt: entry.updatedAt });
     expect(r.body).toEqual({ id: MAIN_ID, plan: { ...TYPED, age: 41 }, currency: 'USD', updated_at: entry.updatedAt, tax: null, tax_facts: null });
     expect(await planFactsStore.get(ctx)).toEqual({ version: 1, main: MAIN_ID, ...factsOf({ ...TYPED, age: 41 }) });
     expect(order).toEqual(['entries', 'facts']);
@@ -166,7 +166,7 @@ describe('your plan’s first entry', () => {
     expect(order).toEqual(['entries', 'facts']);
     expect((await firePlansStore.ids(ctx)).sort()).toEqual([MAIN_ID, made.id].sort());
     const main = await stored(MAIN_ID);
-    expect(main).toEqual({ name: 'First plan', plan: { ...DEFAULT_PLAN_V2, start: NEW_PLAN_START }, tax: null, currency: null, createdAt: main.createdAt, updatedAt: main.updatedAt });
+    expect(main).toEqual({ name: 'Main plan', plan: { ...DEFAULT_PLAN_V2, start: NEW_PLAN_START }, tax: null, currency: null, createdAt: main.createdAt, updatedAt: main.updatedAt });
     expect(await stored(made.id)).toEqual({ name: 'Stop at 52', plan: { ...DEFAULT_PLAN_V2, targetAge: 52 }, tax: null, currency: null, createdAt: made.created_at, updatedAt: made.updated_at });
     expect(main.updatedAt).not.toBe(made.updated_at);
     expect(await planFactsStore.get(ctx)).toEqual({ version: 1, main: MAIN_ID, ...DEFAULTS });
@@ -612,7 +612,7 @@ describe('a copy’s changes, each at the stamp the page loaded', () => {
   test('rename: names unique in any case, a stale stamp refused, the stamp moved on', async () => {
     const main = await yours();
     const x = await copy('Stop at 52', { ...TYPED, targetAge: 52 }, 'USD');
-    expect(await plans('PATCH', { id: x.id, name: 'first PLAN', based_on: x.updated_at })).toEqual({ status: 409, body: { error: NAME_TAKEN } });
+    expect(await plans('PATCH', { id: x.id, name: 'main PLAN', based_on: x.updated_at })).toEqual({ status: 409, body: { error: NAME_TAKEN } });
     expect(await plans('PATCH', { id: x.id, name: 'Later', based_on: main })).toEqual({ status: 409, body: { error: CHANGED, stale: true } });
     const r = await plans('PATCH', { id: x.id, name: '  Stop at 53 ', based_on: x.updated_at });
     expect(r.status).toBe(200);
@@ -716,7 +716,7 @@ describe('a copy’s changes, each at the stamp the page loaded', () => {
 describe('the limit and the names', () => {
   test(`${MAX_FIRE_PLANS} plans at most, damaged and newer ones counted; no new one with a name another has, in any case`, async () => {
     await yours();
-    expect(await plans('POST', { from: MAIN_ID, name: 'FIRST plan', plan: TYPED, currency: 'USD' })).toEqual({ status: 409, body: { error: NAME_TAKEN } });
+    expect(await plans('POST', { from: MAIN_ID, name: 'MAIN plan', plan: TYPED, currency: 'USD' })).toEqual({ status: 409, body: { error: NAME_TAKEN } });
     for (let i = 1; i <= MAX_FIRE_PLANS - 3; i++) await copy(`Copy ${i}`, TYPED, 'USD');
     await damageEntry('broken');
     await newerEntry('later', { name: 'Later', plan: TYPED, tax: null, currency: 'USD', createdAt: '2030-01-01T00:00:00.000Z', updatedAt: '2030-01-01T00:00:00.000Z' });

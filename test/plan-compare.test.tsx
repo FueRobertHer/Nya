@@ -347,6 +347,14 @@ describe('what the cells say (review: retiring before the FI date)', () => {
     expect(t).toContain('The differences include the starts one plan has that another doesn’t.');
     expect(t).toContain('monthly returns from Jan 1871 to May 2023');
     expect(t).toContain('It starts with money it wouldn’t have then, so this is too high.');
+    // Different starting balances render a compact accessible '--' rather than
+    // repeating "starts with a different balance" in every metric cell.
+    const diffStart: CompareColumn[] = [
+      columns[0],
+      { id: 'a', name: 'From today', isPlan: false, outcome: { kind: 'figures', figures: figs(plan({ age: 40, targetAge: 55, start: 'assets' })), result: run(figs(plan({ age: 40, targetAge: 55, start: 'assets' }))) } },
+    ];
+    const diffHtml = renderToStaticMarkup(<PlanCompare columns={diffStart} method="historical" money={money} today={TODAY} details={{}} />);
+    expect(diffHtml).toContain('<span class="plan-muted" aria-label="starts with a different balance" title="starts with a different balance">--</span>');
   });
 
   test('with amounts hidden, no figure shows, and percentages, years and ages stay', () => {

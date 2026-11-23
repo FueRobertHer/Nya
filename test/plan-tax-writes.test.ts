@@ -118,7 +118,7 @@ describe('the opt-in', () => {
     const r = await give({ kind: 'opt-in' });
     expect(r.status).toBe(200);
     const main = (await firePlansStore.get(ctx, MAIN_ID))!;
-    expect(main).toMatchObject({ name: 'First plan', tax: DEFAULT_TAX_CHOICES, currency: null, plan: { ...DEFAULT_PLAN_V2, start: NEW_PLAN_START } });
+    expect(main).toMatchObject({ name: 'Main plan', tax: DEFAULT_TAX_CHOICES, currency: null, plan: { ...DEFAULT_PLAN_V2, start: NEW_PLAN_START } });
     expect((await taxNow()).model).toBe('detailed');
     expect(r.body).toMatchObject({ plan: { start: NEW_PLAN_START }, updated_at: main.updatedAt, tax: DEFAULT_TAX_CHOICES });
     // The default every older reader's plan rests on stays its own.

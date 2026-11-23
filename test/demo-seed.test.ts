@@ -572,7 +572,7 @@ describe('seeding', () => {
     // Seeded as your plan's entry, version 2 as this release saves, in USD
     // (the sandbox's currency) since it types an income; then the facts.
     const mine = await firePlansStore.get(ctx, MAIN_ID);
-    expect(mine).toMatchObject({ name: 'First plan', currency: 'USD' });
+    expect(mine).toMatchObject({ name: 'Main plan', currency: 'USD' });
     const plan = mine!.plan;
     if (plan.version !== 2) throw new Error('expected a version 2 plan');
     expect([plan.age, plan.targetAge]).toEqual([38, 52]);
@@ -609,7 +609,7 @@ describe('seeding', () => {
       await seedDemoAccount(TEST_CTX, `user_${name.toLowerCase()}`, profile, TODAY, quick);
       const entries = await firePlansStore.getAll(TEST_CTX);
       expect([name, entries.has(MAIN_ID), entries.size]).toEqual([name, true, 1 + (profile.extras?.plan?.copies?.length ?? 0)]);
-      expect([...entries.values()].map((e) => e.name).sort()).toEqual(['First plan', ...(profile.extras?.plan?.copies ?? []).map((c) => c.name)].sort());
+      expect([...entries.values()].map((e) => e.name).sort()).toEqual(['Main plan', ...(profile.extras?.plan?.copies ?? []).map((c) => c.name)].sort());
       for (const [id, e] of entries) {
         if (holdsAmounts(e.plan)) expect([name, id, e.currency]).toEqual([name, id, 'USD']);
         else expect([name, id, e.currency]).toEqual([name, id, null]);
@@ -631,7 +631,7 @@ describe('seeding', () => {
 
   test('seeds your plan over what was there: the plans and their facts go with the rest, so the plan seeded is the one read', async () => {
     const at = '2026-10-01T00:00:00.000Z';
-    await firePlansStore.set(TEST_CTX, MAIN_ID, { name: 'First plan', plan: DEFAULT_PLAN, tax: null, currency: null, createdAt: at, updatedAt: at });
+    await firePlansStore.set(TEST_CTX, MAIN_ID, { name: 'Main plan', plan: DEFAULT_PLAN, tax: null, currency: null, createdAt: at, updatedAt: at });
     await firePlansStore.set(TEST_CTX, 'x', { name: 'A visitor’s copy', plan: { ...DEFAULT_PLAN, age: 60 }, tax: null, currency: null, createdAt: at, updatedAt: at });
     await planFactsStore.set(TEST_CTX, { version: 1, main: 'x', ...factsOf({ ...DEFAULT_PLAN, age: 60 }) });
     await seedDemoAccount(TEST_CTX, 'user_alex', demoProfile('Alex', TODAY), TODAY, quick);
@@ -831,7 +831,7 @@ describe('what a seed sets up', () => {
     expect(mine.items.map((i) => i.id)).toEqual(['japan-trip']);
     expect(mine.planFunding).toEqual([{ account_id: idOf('3314'), paidFrom: 'payroll' }]);
     expect(mine.partTimeIncome).toBe(18_000);
-    const copies = [...(await firePlansStore.getAll(TEST_CTX)).values()].filter((e) => e.name !== 'First plan');
+    const copies = [...(await firePlansStore.getAll(TEST_CTX)).values()].filter((e) => e.name !== 'Main plan');
     const coast = copies.find((c) => c.name === 'Coast from 40')!.plan;
     if (coast.version !== 2) throw new Error('expected version 2');
     expect([coast.targetAge, coast.rule, coast.items.map((i) => i.id)]).toEqual([40, 'guardrails', ['japan-trip', 'freelance']]);
@@ -876,7 +876,7 @@ describe('what a seed sets up', () => {
     expect((await lifecycleStore.get(TEST_CTX, idOf('4402')))!.lifecycle).toEqual({ state: 'closed', on: x.ended![0].on, note: 'Closed once the family card came' });
     expect(await moneyInOutStore.get(TEST_CTX, idOf('9013'))).toMatchObject({ in: 104_000, out: 8_500 });
     const copies = [...(await firePlansStore.getAll(TEST_CTX)).values()].map((e) => e.name).sort();
-    expect(copies).toEqual(['A bigger home', 'First plan', 'Jordan part-time at 48', 'Travel more at Travel fund']);
+    expect(copies).toEqual(['A bigger home', 'Jordan part-time at 48', 'Main plan', 'Travel more at Travel fund']);
   });
 
   test('a row whose bank’s history hasn’t all come is passed over, and the report says so', async () => {

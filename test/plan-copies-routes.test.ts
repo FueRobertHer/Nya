@@ -50,7 +50,7 @@ const TYPED: FirePlan = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_
 /** And as this release saves it: version 2. */
 const TYPED2 = planOf(TYPED);
 const BLANK2 = planOf(DEFAULT_PLAN);
-const entry = (over: Partial<PlanEntry> = {}): PlanEntry => ({ name: 'First plan', plan: TYPED, tax: null, currency: 'USD', createdAt: AT, updatedAt: AT, ...over });
+const entry = (over: Partial<PlanEntry> = {}): PlanEntry => ({ name: 'Main plan', plan: TYPED, tax: null, currency: 'USD', createdAt: AT, updatedAt: AT, ...over });
 const facts = (over: Partial<PlanFacts> = {}): PlanFacts => ({ version: 1, main: MAIN_ID, ...factsOf(TYPED), ...over }) as PlanFacts;
 const pension = { ...itemFromIncome(income({ id: 'pen', label: 'Pension' })), kind: 'pension' as const };
 
@@ -107,7 +107,7 @@ describe('the plan read, before any entry', () => {
     await planFactsStore.set(ctx, facts({ age: 60 }));
     expect(await get()).toEqual({ status: 200, body: NO_PLAN });
     expect((await inputs()).body).toEqual({ ...NO_PLAN, plans: [] });
-    expect(await listed()).toEqual({ main: MAIN_ID, missing: false, ids: [MAIN_ID], names: ['First plan'] });
+    expect(await listed()).toEqual({ main: MAIN_ID, missing: false, ids: [MAIN_ID], names: ['Main plan'] });
   });
 
   test('damaged facts beside no entry are never read into the answer', async () => {
@@ -125,7 +125,7 @@ describe('the plan read, once there are entries', () => {
     const want = { id: MAIN_ID, plan: { ...TYPED, age: 50, includeCash: true }, currency: 'USD', updated_at: 'stamp-1', tax: null, tax_facts: null };
     expect(await get()).toEqual({ status: 200, body: want });
     expect((await inputs()).body).toEqual({ ...want, plans: [] });
-    expect((await list()).body.plans).toEqual([{ id: MAIN_ID, name: 'First plan', plan: want.plan, currency: 'USD', created_at: AT, updated_at: 'stamp-1', tax: null }]);
+    expect((await list()).body.plans).toEqual([{ id: MAIN_ID, name: 'Main plan', plan: want.plan, currency: 'USD', created_at: AT, updated_at: 'stamp-1', tax: null }]);
   });
 
   test('without the facts, your entry’s own fields are them, every copy’s too', async () => {
@@ -157,7 +157,7 @@ describe('the plan read, once there are entries', () => {
     await firePlansStore.set(ctx, 'x', entry({ name: 'Stop at 52', plan: { ...TYPED, targetAge: 52 }, createdAt: '2026-11-02T10:00:00.000Z' }));
     await planFactsStore.set(ctx, facts({ main: 'gone' }));
     expect((await get()).body).toMatchObject({ id: MAIN_ID, plan: { targetAge: 55 } });
-    expect(await listed()).toEqual({ main: MAIN_ID, missing: true, ids: [MAIN_ID, 'x'], names: ['First plan', 'Stop at 52'] });
+    expect(await listed()).toEqual({ main: MAIN_ID, missing: true, ids: [MAIN_ID, 'x'], names: ['Main plan', 'Stop at 52'] });
     await firePlansStore.remove(ctx, MAIN_ID);
     expect((await get()).body).toMatchObject({ id: 'x', plan: { targetAge: 52 } });
     expect(await listed()).toEqual({ main: 'x', missing: true, ids: ['x'], names: ['Stop at 52'] });
@@ -223,7 +223,7 @@ describe('the plan the facts name, with main there too', () => {
 
   test('is read, and the list names it yours, main among the copies', async () => {
     expect((await get()).body).toEqual({ id: 'x', plan: X.plan, currency: 'USD', updated_at: 'x-1', tax: null, tax_facts: null });
-    expect(await listed()).toEqual({ main: 'x', missing: false, ids: ['x', MAIN_ID], names: ['Stop at 52', 'First plan'] });
+    expect(await listed()).toEqual({ main: 'x', missing: false, ids: ['x', MAIN_ID], names: ['Stop at 52', 'Main plan'] });
   });
 
   test('is the one PUT and POST write, at its own stamp, main left byte for byte', async () => {

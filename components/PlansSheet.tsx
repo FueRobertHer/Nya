@@ -593,6 +593,7 @@ export function PlansSheet({
       onBack={level ? back : undefined}
       level={level ? `${level.kind}:${'id' in level ? level.id : ''}` : 'list'}
       footer={footer}
+      wide={level?.kind === 'compare'}
     >
       {!level && listBody}
       {planLevel}

@@ -326,7 +326,7 @@ export function FiProgressView({
   // As the Plan's FI card warns (components/PlanTab.tsx FiCard), by the same
   // rule: transactions that couldn't be read, or that a connection doesn't
   // bring in. The savings rate is measured from the same transactions.
-  const alreadyStopped = plan.age !== null && plan.targetAge !== null && plan.age >= plan.targetAge;
+  const alreadyStopped = plan.age !== null && view.stopAge !== null && plan.age >= view.stopAge;
   const missing = transactionsMissing(inputs.unread, inputs.coverage);
   const spendingShort = view.spending.source === 'measured' && missing !== null;
   const rateShort = !alreadyStopped && savingsRate !== null && missing !== null;

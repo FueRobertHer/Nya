@@ -71,7 +71,7 @@ describe('its sheet', () => {
     await press(button(tab.dialog(), 'Save'));
     await settle(400);
     expect(writes()).toEqual(['PUT /api/fire-plan']);
-    expect((await stored()).byName['First plan'].plan.fiNumber).toBe(1_500_000);
+    expect((await stored()).byName['Main plan'].plan.fiNumber).toBe(1_500_000);
     expect(tab.text()).toContain('Your own FI number $1,500,000 · worked out $1,000,000');
     await press(tab.row('FI number'));
     const form = tab.dialog()!;
@@ -79,7 +79,7 @@ describe('its sheet', () => {
     expect(field(form, 'Use your own number')?.value).toBe('1500000');
     await press(button(form, 'Use the worked-out number'));
     await settle(400);
-    expect((await stored()).byName['First plan'].plan.fiNumber).toBeNull();
+    expect((await stored()).byName['Main plan'].plan.fiNumber).toBeNull();
     expect(valueOf(tab, 'FI number')).toBe('$1,000,000');
     await tab.unmount();
   }, 30_000);
