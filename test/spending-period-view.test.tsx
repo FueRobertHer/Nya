@@ -255,4 +255,13 @@ describe('Spending’s period', () => {
     expect(v.text().split('Your rules couldn’t be read').length - 1).toBe(1);
     v.unmount();
   });
+
+  test('top of Spending shows a compact Reports quick link beside the period selector', () => {
+    const v = mount();
+    const [topRow] = v.all((e) => e.getAttribute('class') === 'spending-top-row');
+    expect(topRow).toBeTruthy();
+    const [link] = topRow.findAll((e) => e.tagName === 'A' && e.getAttribute('href') === '/reports');
+    expect(link?.textContent).toBe('Reports');
+    v.unmount();
+  });
 });

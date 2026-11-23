@@ -22,7 +22,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, typ
 import ActivityBar, { ACTIVITY_PANEL, segmentTabId, type ActivityMonth, type ActivitySegment } from "./ActivityBar";
 import { Menu } from "./Menu";
 import { Segmented } from "./Segmented";
-import ReportsEntry from "./ReportsEntry";
+import ReportsEntry, { ReportsQuickLink } from "./ReportsEntry";
 import { ActivityListSkeleton } from "./LoadingSkeletons";
 import MonthFlowChart from "./MonthFlowChart";
 import MonthFigures from "./MonthFigures";
@@ -1062,13 +1062,16 @@ export default function MonthBreakdown({
                 switch and wrapped at 375px), across the width as every
                 switch is. */}
             {selected && (
-              <Segmented
-                className="spending-period"
-                label={`Period ending ${monthName(selected)}`}
-                value={span}
-                onChange={chooseSpan}
-                options={SPANS.map((s) => [s.key, s.short, s.label] as const)}
-              />
+              <div className="spending-top-row">
+                <Segmented
+                  className="spending-period"
+                  label={`Period ending ${monthName(selected)}`}
+                  value={span}
+                  onChange={chooseSpan}
+                  options={SPANS.map((s) => [s.key, s.short, s.label] as const)}
+                />
+                <ReportsQuickLink />
+              </div>
             )}
             {figures}
             {/* Where the money came from and went (#41), over the period;

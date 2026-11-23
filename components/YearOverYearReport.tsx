@@ -102,9 +102,16 @@ function Compare({ title, compare, currency }: { title: string; compare: YoyComp
 /** One measure month by month. */
 function MonthTable({ r, measure, label }: { r: Yoy; measure: 'money_in' | 'money_out' | 'net'; label: string }) {
   const money = (n: number) => formatMoney(n, r.currency);
+  const rows = r.months.map((m) => ({
+    m,
+    note: [shortWords(m.this) && `This year ${shortWords(m.this)}`, shortWords(m.last) && `Last year ${shortWords(m.last)}`].filter(Boolean).join('. '),
+  }));
+  const firstNote = rows[0]?.note ?? '';
+  const sameNote = rows.length > 0 && rows.every((row) => row.note === firstNote);
   return (
     <>
       <h3>{label}</h3>
+      {sameNote && firstNote && <p className="report-note">All months shown: {firstNote}.</p>}
       <div className="report-scroll">
         <table className="report-table">
           <caption className="visually-hidden">{label}</caption>
@@ -114,13 +121,12 @@ function MonthTable({ r, measure, label }: { r: Yoy; measure: 'money_in' | 'mone
               <th scope="col" className="num">This year</th>
               <th scope="col" className="num">Last year</th>
               <th scope="col" className="num">Change</th>
-              <th scope="col">Notes</th>
+              {!sameNote && <th scope="col">Notes</th>}
             </tr>
           </thead>
           <tbody>
-            {r.months.map((m) => {
+            {rows.map(({ m, note }) => {
               const c = m[measure];
-              const notes = [shortWords(m.this) && `This year ${shortWords(m.this)}`, shortWords(m.last) && `Last year ${shortWords(m.last)}`].filter(Boolean);
               return (
                 <tr key={m.month}>
                   <td className="report-nowrap">
@@ -136,7 +142,7 @@ function MonthTable({ r, measure, label }: { r: Yoy; measure: 'money_in' | 'mone
                   <td className="num">
                     <Masked>{changeCell(c, r.currency, true)}</Masked>
                   </td>
-                  <td>{notes.join('. ')}</td>
+                  {!sameNote && <td>{note}</td>}
                 </tr>
               );
             })}

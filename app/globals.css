@@ -9328,6 +9328,46 @@ button.receipts-item {
   text-align: left;
 }
 
+/* Phase 4: PageHeader back affordance and Activity > Spending Reports link */
+.page-back-chevron {
+  width: 18px;
+  height: 18px;
+  color: var(--text-2);
+  flex: 0 0 auto;
+}
+
+.page-back-label {
+  font-size: var(--fs-2);
+  font-weight: var(--fw-medium);
+  color: var(--text-2);
+  margin-left: var(--sp-1);
+}
+
+@media (max-width: 360px) {
+  .page-back-label {
+    display: none;
+  }
+}
+
+.spending-top-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0 var(--sp-3);
+}
+
+.spending-top-row > .spending-period {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+
+.spending-reports-link {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
 /* --- stack: spacing set by the container, not by each child ---
    Children of a stack carry no block margins of their own; the gap spaces
    them. Use it instead of style={{ marginTop }} on notes, labels and buttons
