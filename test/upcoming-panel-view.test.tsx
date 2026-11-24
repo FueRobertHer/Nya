@@ -561,6 +561,27 @@ describe('the notes follow the range', () => {
     expect(top()).toEqual([]);
     v.unmount();
   });
+
+  test('a credit card with a balance and no reported due date surfaces a caution at the top', () => {
+    const noDue: UpcomingScene = {
+      ...SCENES['as it usually is'],
+      institutions: [
+        chase({
+          accounts: [
+            { account_id: 'chk', name: 'Checking', type: 'depository', subtype: 'checking', balance: 900, currency: 'USD' },
+            { account_id: 'card', name: 'Cash Rewards Visa', type: 'credit', balance: 540.03, currency: 'USD' },
+          ],
+        }),
+      ],
+    };
+    const v = mountPanel(noDue);
+    const card = v.all((e) => e.getAttribute('aria-labelledby') === 'forecast-title')[0];
+    const notices = v.all((e) => (e.getAttribute('class') ?? '').startsWith('notice ') && !card.contains(e)).map((e) => e.textContent);
+    expect(notices).toEqual([
+      "Caution: Cash Rewards Visa carries a $540.03 balance that isn't in this forecast: card charges stay out, and its payment changes each month. Add what you expect to pay as a planned expense.",
+    ]);
+    v.unmount();
+  });
 });
 
 describe('the planned items, only once they are drawn', () => {

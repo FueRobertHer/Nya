@@ -693,6 +693,7 @@ export type ForecastNoteKind =
   | 'refused'
   | 'no_consent'
   | 'card'
+  | 'card_balance'
   | 'lapsed'
   | 'varies'
   | 'typed'
@@ -844,7 +845,7 @@ export function forecastNoteItems(opts: ForecastNoteInput): ForecastNote[] {
   // of it, and nothing they come to ever quiets the note. Near is within a
   // quarter, in whole minor units, so the edges are exact.
   const paid = opts.series?.cardsPaid;
-  if (opts.until)
+  if (opts.until) {
     for (const i of institutions)
       for (const a of i.accounts) {
         const l = a.liability;
@@ -893,6 +894,37 @@ export function forecastNoteItems(opts: ForecastNoteInput): ForecastNote[] {
           );
         else items('card', `${a.name}'s payment${amount} is due ${days.day(due)} and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.`);
       }
+
+    // Credit cards carrying a balance with no reported next due date (Plaid
+    // without liabilities, manual cards, or SimpleFIN): card charges stay out
+    // of the cash forecast and varying monthly payoffs aren't auto-detected.
+    // Strictly gated on !a.liability?.next_due_date so cards with a due date
+    // (including paid statements or due dates past opts.until) stay governed
+    // solely by the loop above.
+    const until = opts.until;
+    for (const i of institutions)
+      for (const a of i.accounts) {
+        if (a.type !== 'credit' || a.hidden || a.liability?.next_due_date) continue;
+        if (a.balance === null || !(a.balance > 0)) continue;
+        if (a.currency && position.currency && a.currency !== position.currency) continue;
+        if (paid?.known.has(`${i.institution_name}|${a.name}`)) continue;
+        const scale = minorScale(a.currency ?? position.currency);
+        const close = (x: number, y: number) => {
+          const [mx, my] = [toMinor(x, scale), toMinor(y, scale)];
+          return Math.abs(mx - my) <= my * CARD_NEAR;
+        };
+        if (paid?.unknown.some((x) => close(x, a.balance!))) continue;
+        const inRange = (opts.planned ?? []).filter(
+          (p) => p.kind === 'expense' && inCurrency({ iso_currency_code: p.currency }, position.currency) && plannedDates(p, today, until, 1).length > 0
+        );
+        if (inRange.some((p) => namesCard(p.name, { name: a.name, mask: a.mask, institution: i.institution_name }) || close(p.amount, a.balance!))) continue;
+        const money = formatMoney(a.balance, a.currency ?? position.currency);
+        items(
+          'card_balance',
+          `${a.name} carries a ${money} balance that isn't in this forecast: card charges stay out, and its payment changes each month. Add what you expect to pay as a planned expense.`
+        );
+      }
+  }
 
   // Pay left out, named.
   for (const s of opts.series?.lapsed ?? [])
