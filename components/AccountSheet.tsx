@@ -11,7 +11,9 @@
 // dashboard does, so no sheet opens on top of another. Hide is the one that
 // acts here (docs/design/guidelines.md#after-save): the account leaves the
 // list behind, and Unhide is far away under Hidden, so the sheet stays open
-// on a done notice that says what moved, with an Undo. Undo unhides it,
+// on a done notice that says what moved, with an Undo. Transactions, under
+// the chart of a bank account, card, loan or typed account, goes to Activity
+// with its list filtered to this account (onSeeTransactions). Undo unhides it,
 // which puts back exactly what the person had: hiding adds the account to
 // the hidden set (app/api/hidden-accounts), and an account on the list has
 // no entry there, under any of its ids. What hiding clears beside it is
@@ -24,6 +26,7 @@
 
 import { useEffect, useId, useRef, useState, type Ref } from 'react';
 import AccountSparkline from './AccountSparkline';
+import ActionRows from './ActionRows';
 import HoldingsRecorded from './HoldingsRecorded';
 import InvestmentActivity from './InvestmentActivity';
 import type { MoneyInOutTarget } from './MoneyInOutFigures';
@@ -192,6 +195,9 @@ export type AccountSheetProps = {
   /** Opens the money in and out form (components/MoneyInOutSheet.tsx). */
   onMoneyInOut: (target: MoneyInOutTarget) => void;
   onDelete: (account: ManualAccount) => void;
+  /** Activity's list, filtered to this account (its key as the list's
+   *  Account filter reads it, components/txn-search.ts accountFilterKey). */
+  onSeeTransactions?: (filterKey: string) => void;
 };
 
 export default function AccountSheet({
@@ -212,6 +218,7 @@ export default function AccountSheet({
   onImportHistory,
   onMoneyInOut,
   onDelete,
+  onSeeTransactions,
 }: AccountSheetProps) {
   // Hidden from here: kept open on what was said (the account has left the
   // list behind, so the screen closes its sheet), until Done. `closed` keeps
@@ -484,6 +491,22 @@ export default function AccountSheet({
               : undefined
           }
         />
+        {/* Its transactions are in Activity, filtered to it: an investment
+            account's activity is below instead, and a hidden account's rows
+            aren't listed there. A typed row carries its account's id; a
+            bank's is told by its institution and name. */}
+        {onSeeTransactions && !isInvestmentType(a.type) && !a.hidden && (
+          <ActionRows
+            rows={[
+              {
+                key: 'transactions',
+                title: 'Transactions',
+                sub: 'In Activity, this account’s only',
+                onSelect: act(() => onSeeTransactions(inst.manual ? a.account_id : `${inst.institution_name}\0${a.name}`)),
+              },
+            ]}
+          />
+        )}
         {/* Since when its positions have been kept (lib/holdings-history.ts).
             A manual account has none to keep. */}
         {isInvestmentType(a.type) && !inst.manual && <HoldingsRecorded accountId={a.account_id} />}

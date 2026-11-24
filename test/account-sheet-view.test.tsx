@@ -234,6 +234,35 @@ describe('the account sheet', () => {
     act(() => root.unmount());
   });
 
+  test('Transactions goes to Activity filtered to the account, by the key its list reads', () => {
+    const seen: string[] = [];
+    const press = (a: Account, inst: Institution) => {
+      const events: string[] = [];
+      const host = dom.document.createElement('div');
+      dom.document.body.appendChild(host);
+      const root = createRoot(host as unknown as HTMLElement);
+      act(() => root.render(<AccountSheet {...props(a, inst, { onDismiss: () => events.push('dismiss'), onSeeTransactions: (key) => events.push(`see ${key}`) })} />));
+      const body = dom.document.body as unknown as FakeElement;
+      const [row] = body.findAll((e) => e.tagName === 'BUTTON' && e.textContent.startsWith('Transactions'));
+      if (row) act(() => click(row));
+      act(() => root.unmount());
+      host.parentNode?.removeChild(host);
+      seen.push(events.join(', ') || 'no row');
+    };
+    // A bank's rows are told by institution and name; a typed account's by its id.
+    press(account(), plaid(account()));
+    const cash = account({ account_id: 'acc_cash', name: 'Cash', mask: null });
+    press(cash, typed(cash));
+    // An investment account's activity is in its own sheet; a hidden one's rows aren't listed.
+    const ira = account({ account_id: 'acc_ira', name: 'IRA', type: 'investment', subtype: 'ira' });
+    press(ira, plaid(ira));
+    const hidden = account({ hidden: true });
+    press(hidden, plaid(hidden));
+    expect(seen).toEqual(['dismiss, see Chase\0Total Checking', 'dismiss, see acc_cash', 'no row', 'no row']);
+    // Without a handler, no row.
+    expect(text(renderToStaticMarkup(<AccountSheet {...props(account(), plaid(account()))} />))).not.toContain('In Activity');
+  });
+
   test('nothing while the account is gone', () => {
     expect(renderToStaticMarkup(<AccountSheet {...props(account(), plaid(account()), { account: null })} />)).toBe('');
   });

@@ -24,11 +24,15 @@
 // taken into it only while it holds the note the row had, so what is typed
 // while a save is out stays.
 //
+// A note is saved when the field loses focus, and when the sheet closes with
+// it changed, as the category saves as it is chosen: closing the sheet never
+// drops what was typed. Save note stays for saving it in place.
+//
 // Under the tag field and its suggestions, Rename or delete tags goes to
 // the tags themselves (Settings > Transactions, the Tags sheet), where a
 // tag is renamed or deleted everywhere at once.
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
 import { TAG_NAME_MAX, cleanTagName, tagNameKey, type Tag } from '@/lib/tags';
 import TagChips from './TagChips';
@@ -91,6 +95,29 @@ export default function TxnTagsNote({
   const tagField = useRef<HTMLInputElement>(null);
   const noteField = useRef<HTMLTextAreaElement>(null);
   const noteOut = useRef(false);
+  /** Saves the note typed when it differs from the row's, once at a time:
+   *  refused, focus goes back to the field when `pressed` still has it. */
+  const saveNote = (typedNote: string, pressed: Element | null) => {
+    if (typedNote.trim() === (t.note ?? '').trim() || noteOut.current) return;
+    noteOut.current = true;
+    setRefused(null);
+    void onSaveNote(typedNote.trim()).then((saved) => {
+      noteOut.current = false;
+      if (saved) return;
+      setRefused('note');
+      focusBack(noteField.current, pressed);
+    });
+  };
+  // What closing the sheet saves: the note as typed last, against the row's.
+  const unsaved = useRef<{ typed: string; row: string; save: (note: string) => Promise<boolean> }>({ typed: note, row: t.note ?? '', save: onSaveNote });
+  unsaved.current = { typed: note, row: t.note ?? '', save: onSaveNote };
+  useEffect(
+    () => () => {
+      const { typed, row, save } = unsaved.current;
+      if (typed.trim() !== row.trim() && !noteOut.current) void save(typed.trim());
+    },
+    []
+  );
   /** A tag change, and, refused, the name typed back and focus on the field. */
   const changeTags = (change: TagChange, typedName = '') => {
     setRefused(null);
@@ -166,6 +193,7 @@ export default function TxnTagsNote({
         maxLength={MAX_NOTE_CHARS}
         rows={2}
         onChange={(e) => setNote(e.target.value)}
+        onBlur={(e) => saveNote(e.currentTarget.value, e.currentTarget)}
         placeholder="Note"
         aria-label={`Note on ${shownName(t)}`}
       />
@@ -173,19 +201,8 @@ export default function TxnTagsNote({
         <div className="rename-row">
           <button
             className="secondary"
-            onClick={() => {
-              // Pressed again while it saves: sent once.
-              if (noteOut.current) return;
-              noteOut.current = true;
-              setRefused(null);
-              const pressed = document.activeElement;
-              void onSaveNote(note.trim()).then((saved) => {
-                noteOut.current = false;
-                if (saved) return;
-                setRefused('note');
-                focusBack(noteField.current, pressed);
-              });
-            }}
+            // Pressed again while it saves: sent once.
+            onClick={() => saveNote(note, document.activeElement)}
           >
             {note.trim() || !t.note ? 'Save note' : 'Clear note'}
           </button>

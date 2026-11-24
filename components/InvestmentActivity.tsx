@@ -9,7 +9,7 @@
 import { useEffect, useState } from 'react';
 import { amountsHidden, formatDay, formatInstantDay, formatMoney, hiddenFigure, hiddenMoney, trueMinus } from '@/lib/format';
 import { Masked } from './HideAmounts';
-import { readableName } from '@/lib/merchant-name';
+import { readableName, readableWithTicker } from '@/lib/merchant-name';
 import { displayName } from '@/lib/categories';
 import { InvestmentActivitySkeleton } from './LoadingSkeletons';
 import { Notice } from './TotalCaveats';
@@ -27,6 +27,8 @@ type InvestmentTxn = {
   amount: number;
   currency: string | null;
   security: string | null;
+  /** Its security's ticker, when the broker gives one (lib/investments.ts). */
+  ticker?: string;
 };
 
 export type InvestmentActivityPayload = {
@@ -250,7 +252,7 @@ export default function InvestmentActivity({
               <tr key={t.investment_transaction_id}>
                 <td>
                   <div className="txn-text">
-                    {readableName(t.name)}
+                    {readableWithTicker(t.name, t.ticker)}
                     <div className="type-tag">
                       {fmtDay(t.date)} · {t.subtype === 'unlabeled' ? 'Kind not given' : displayName(t.subtype)}
                       {t.security ? ` · ${readableName(t.security)}` : ''}

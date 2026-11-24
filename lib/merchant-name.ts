@@ -72,6 +72,15 @@ export function readableName(name: string): string {
   return tokens.map((t, i) => token(t, i === 0, i === tokens.length - 1)).join(' ');
 }
 
+/** A name made readable with a ticker it holds kept as the ticker is written:
+ *  "BUY VTI" reads "Buy VTI", not "Buy Vti". */
+export function readableWithTicker(name: string, ticker: string | null | undefined): string {
+  const shown = readableName(name);
+  if (!ticker || shown === name) return shown;
+  const escaped = ticker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return shown.replace(new RegExp(`(?<![\\p{L}0-9])${escaped}(?![\\p{L}0-9])`, 'giu'), ticker);
+}
+
 /** What a transaction's name shows as: the bank's text made readable when
  *  it is the bank's (no merchant name, no rename, no rule's name), else the
  *  name as given. */

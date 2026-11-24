@@ -67,6 +67,8 @@ Link also "will only display account types that are compatible with all products
 
 Bank connections through Plaid work for US institutions only: both link-token routes ask Plaid for `CountryCode.Us`. Beside the Plaid buttons, **Connect with SimpleFIN** connects your own SimpleFIN account instead, which may reach banks Plaid doesn't; Redbark, a separate paid service that speaks the same protocol, covers Australia and New Zealand. Where the deployment turns it on, **Connect with Lunch Flow** connects your own Lunch Flow account by its API key, which reaches banks in many countries through the providers Lunch Flow uses ([Bring your own sync](#bring-your-own-sync)). The app says so beside the ways to connect and on the login and sign-in pages, and points anything else to a [manual account](#manual-accounts), saying that its balance is entered in its own currency.
 
+If Plaid's window can't open (a content blocker or a network that refuses Plaid stops its script, or Link loads and says nothing), the page says so after 30 seconds where the button was, and the buttons come back, so it never looks as though nothing happened.
+
 ### More accounts at an institution you already have
 
 To add (or remove) accounts at an institution that's already connected, choose **Add or remove accounts** in the ⋯ on its card on the Accounts tab. This opens Plaid's account picker on the connection you already have, so it stays one connection: no duplicate accounts, and no second connection for Plaid to bill.

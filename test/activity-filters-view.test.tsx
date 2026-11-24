@@ -357,3 +357,24 @@ describe('a row’s line', () => {
     v.unmount();
   });
 });
+
+describe('an account sheet’s Transactions, on the list', () => {
+  test('filters to the account asked for, clearing the other filters, once for each request', () => {
+    const rows = [...ROWS, row('Corner shop', 9, { account_name: 'Savings' })];
+    const v = mount({ txns: rows, tags: TAGS, review: controls() });
+    act(() => click(v.chip('To review')!));
+    expect(v.names()).toEqual(['Whole Foods']);
+    v.render({ txns: rows, tags: TAGS, review: controls(), accountRequest: { key: 'Chase\0Savings', at: 1 } });
+    expect(v.shown('Account')).toEqual({ text: 'Account: Savings', on: true });
+    expect(v.chip('To review')!.getAttribute('aria-pressed')).toBe('false');
+    expect(v.names()).toEqual(['Corner shop']);
+    // The same request again changes nothing: the person can widen it.
+    act(() => type(v.select('Account')!, ''));
+    v.render({ txns: rows, tags: TAGS, review: controls(), accountRequest: { key: 'Chase\0Savings', at: 1 } });
+    expect(v.names().length).toBe(4);
+    // A key no row has filters nothing.
+    v.render({ txns: rows, tags: TAGS, review: controls(), accountRequest: { key: 'Nowhere\0Gone', at: 2 } });
+    expect(v.names().length).toBe(4);
+    v.unmount();
+  });
+});

@@ -25,6 +25,9 @@ export type InvestmentTxn = {
   fees: number | null;
   currency: string | null;
   security: string | null;
+  /** The security's ticker, when its broker gives one, so a name read from
+   *  capitals ("BUY VTI") keeps it as written. Absent otherwise. */
+  ticker?: string;
 };
 
 // Unsettled rows. Investment transactions have no `pending` boolean, so these
@@ -445,6 +448,7 @@ export function toInvestmentTxn(
     fees: t.fees ?? null,
     currency: t.iso_currency_code ?? null,
     security: security?.name || security?.ticker_symbol || null,
+    ...(security?.ticker_symbol ? { ticker: security.ticker_symbol } : {}),
   };
 }
 

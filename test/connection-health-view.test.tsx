@@ -295,7 +295,7 @@ describe('the notes under the Home total name what is missing', () => {
 
   test('the wording for one recovered institution and for vanished accounts keeps its style, with the names', () => {
     expect(totalNotes([{ institution_name: 'Chase', ...base, stale_as_of: '2026-09-12' }], day)).toEqual([
-      "Chase couldn't refresh; its balances are from snap 2026-09-12",
+      "Chase couldn't refresh; showing its last known balances, from snap 2026-09-12",
     ]);
     expect(totalNotes([{ institution_name: 'Ally', error: null, needs_reauth: false, unconfirmed_missing: 1 }], day)).toEqual([
       '1 account at Ally stopped reporting, so this total is short by it · history is paused until you answer',
@@ -317,7 +317,7 @@ describe('the notes under the Home total name what is missing', () => {
 
   test('a bank SimpleFIN feeds, held for a card or loan reported as money held, says it waits for the person, not that it failed', () => {
     const held = { institution_name: 'My Bank', ...base, stale_as_of: '2026-09-12', health: { last_ok_at: null, detail: { issue: 'sign' } } };
-    expect(totalNotes([held], day)).toEqual(['My Bank has a card or loan waiting for your answer; its balances are from snap 2026-09-12']);
+    expect(totalNotes([held], day)).toEqual(['My Bank has a card or loan waiting for your answer; showing its last known balances, from snap 2026-09-12']);
   });
 });
 

@@ -43,7 +43,7 @@ describe('each note’s color, from its institutions’ cards', () => {
   test('a connection that must be connected again says only "couldn’t refresh", but is red, as its card', () => {
     const relink = inst('Chase', { error: 'Gone', stale_as_of: '2026-09-12', health: plaid('revoked') });
     const paying = inst('Bank', { manual: true, connector: 'simplefin', error: 'Pay SimpleFIN', stale_as_of: '2026-09-12', health: connector('payment') });
-    expect(totalCaveats([relink], day, null, severityOf)[0]).toMatchObject({ text: "Chase couldn't refresh; its balances are from snap 2026-09-12", severity: 'critical' });
+    expect(totalCaveats([relink], day, null, severityOf)[0]).toMatchObject({ text: "Chase couldn't refresh; showing its last known balances, from snap 2026-09-12", severity: 'critical' });
     expect(caveats([paying])).toEqual([['critical', 'last known balances at Bank']]);
   });
 

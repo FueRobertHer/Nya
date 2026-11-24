@@ -617,3 +617,16 @@ describe('gone with its transaction, carried across a re-link', () => {
     expect((await rowOf('n_a')).tags).toBeUndefined();
   });
 });
+
+describe('a new tag’s color, when none is chosen', () => {
+  test('turns through the palette without red or orange, which mean wrong and needs you', () => {
+    const at = (n: number) =>
+      tags.nextColor({ version: 1, tags: Array.from({ length: n }, (_, i) => ({ id: `t${i}`, name: `T${i}`, color: 'gray' as const, created_at: '2026-10-01T00:00:00.000Z' })) });
+    const given = Array.from({ length: 12 }, (_, n) => at(n));
+    expect(given.slice(0, 6)).toEqual(['blue', 'teal', 'purple', 'green', 'pink', 'yellow']);
+    expect(given.slice(6)).toEqual(given.slice(0, 6));
+    expect(given).not.toContain('red');
+    expect(given).not.toContain('orange');
+    expect(tags.nextColor(null)).toBe('blue');
+  });
+});

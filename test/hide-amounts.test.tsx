@@ -1744,7 +1744,7 @@ describe('the main screens with amounts hidden', () => {
     const { hidden } = both(() => (
       <HomeAttention txns={[txn({ transaction_id: 'g', amount: 285, category: 'groceries' })]} budgets={{ categories: { [groceries]: { amount: 300 } }, groups: {} }} taxonomy={taxonomy} />
     ));
-    expect(exposed(hidden)).toContain('Approaching your groceries budget (95%)');
+    expect(exposed(hidden)).toContain('Approaching your Groceries budget, in Food (95%)');
     const chart = both(SCREENS['Home: the net worth chart']).hidden;
     expect(exposed(chart)).toMatch(/[+\-\u2212]\d+\.\d%/);
   });

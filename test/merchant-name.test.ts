@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readableName, shownName } from '@/lib/merchant-name';
+import { readableName, readableWithTicker, shownName } from '@/lib/merchant-name';
 import { bankRowDisplay, bankRowOlder, type StoredTxn } from '@/lib/transactions';
 import { txn } from './api-fixture';
 
@@ -98,5 +98,19 @@ describe("the rows say when their name is the bank's text", () => {
     const t = txn('t_ikea', 'acc_chk', 3, 80, { name: 'IKEA 0042 BROOKLYN', merchant_name: 'IKEA' }) as unknown as StoredTxn;
     expect(bankRowDisplay(t, ctx).name).toBe('IKEA');
     expect('name_from_bank' in bankRowDisplay(t, ctx)).toBe(false);
+  });
+});
+
+describe('readableWithTicker: a trade named in capitals keeps its ticker', () => {
+  test('the ticker stays as written, the rest reads as words', () => {
+    expect(readableWithTicker('BUY VTI', 'VTI')).toBe('Buy VTI');
+    expect(readableWithTicker('SELL VXUS', 'VXUS')).toBe('Sell VXUS');
+    expect(readableWithTicker('DIVIDEND BRK.B', 'BRK.B')).toBe('Dividend BRK.B');
+  });
+
+  test('only a whole word is the ticker, and a name already readable is left alone', () => {
+    expect(readableWithTicker('VTIX VTI', 'VTI')).toBe('Vtix VTI');
+    expect(readableWithTicker('Buy Vanguard fund', 'VTI')).toBe('Buy Vanguard fund');
+    expect(readableWithTicker('BUY VTI', undefined)).toBe('Buy Vti');
   });
 });
