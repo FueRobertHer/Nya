@@ -568,6 +568,9 @@ export type PlanMix = {
   leftOutPct: number | null;
   /** With a home currency: what is in `otherCurrencies` has no rate. */
   converting?: boolean;
+  /** Visible investment accounts excluded from the Plan's mix (e.g. a child's
+   *  529 education account); omitted when none are excluded. */
+  leftOutAccounts?: readonly string[];
 } & (
   | { ok: true; stocksPct: number; bondsPct: number; cashPct: number }
   /** "nothing": no stocks, bonds or cash to take a mix from. "negative": one
@@ -584,7 +587,12 @@ export type PlanMix = {
  * with real estate, crypto and anything else the simulation has no history
  * for, and each is named. Whole percents that add up to 100.
  */
-export function planMix(alloc: Allocation, bank = 0, bankOtherCurrencies: { currency: string; amount: number }[] = []): PlanMix {
+export function planMix(
+  alloc: Allocation,
+  bank = 0,
+  bankOtherCurrencies: { currency: string; amount: number }[] = [],
+  leftOutAccounts?: readonly string[]
+): PlanMix {
   const stocks = STOCK_CLASSES.reduce((s, c) => s + alloc.classes[c], 0);
   const bonds = alloc.classes.bonds;
   const cash = alloc.classes.cash + bank;
@@ -600,7 +608,18 @@ export function planMix(alloc: Allocation, bank = 0, bankOtherCurrencies: { curr
   const leftOutPct = rows.some((r) => r.pct === null)
     ? null
     : rows.filter((r) => LEFT_OUT_OF_MIX.includes(r.slot)).reduce((s, r) => s + (r.pct as number), 0);
-  const base = { stocks, bonds, cash, bank, leftOut, otherCurrencies, whole, leftOutPct: rows.length ? leftOutPct : null, ...(alloc.converting ? { converting: true } : {}) };
+  const base = {
+    stocks,
+    bonds,
+    cash,
+    bank,
+    leftOut,
+    otherCurrencies,
+    whole,
+    leftOutPct: rows.length ? leftOutPct : null,
+    ...(alloc.converting ? { converting: true } : {}),
+    ...(leftOutAccounts && leftOutAccounts.length > 0 ? { leftOutAccounts } : {}),
+  };
   const below = (['stocks', 'bonds', 'cash'] as const).filter((k) => ({ stocks, bonds, cash })[k] < 0 && isMoney(({ stocks, bonds, cash })[k]));
   if (below.length > 0) return { ...base, ok: false, why: 'negative', below };
   const pcts = wholePercents([stocks, bonds, cash]);

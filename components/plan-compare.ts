@@ -78,13 +78,27 @@ export function sameWay(a: SimResult, b: SimResult): boolean {
 }
 
 /** Why two plans' amounts can't be set against each other, or null when
- *  they can: they start with different balances, or one starts with money
- *  it wouldn't have then (a higher ending balance would read as safer). */
+ *  they can: they start with different balances (unless both are at-stop
+ *  projections from the same invested portfolio today with no shortfall), or
+ *  one starts with money it wouldn't have then (a higher ending balance would
+ *  read as safer). */
 function apart(a: PlanFigures, b: PlanFigures): string | null {
   if (a.startsWith?.more || b.startsWith?.more) return 'not compared: one starts with money it wouldn’t have';
   const x = 'sim' in a.engine ? a.engine.sim.startBalance : null;
   const y = 'sim' in b.engine ? b.engine.sim.startBalance : null;
-  return x !== null && y !== null && Math.abs(x - y) < 0.5 ? null : 'starts with a different balance';
+  if (x !== null && y !== null && Math.abs(x - y) < 0.5) return null;
+  if (
+    a.plan.start === 'at-stop' &&
+    b.plan.start === 'at-stop' &&
+    !a.startsWith?.short &&
+    !b.startsWith?.short &&
+    a.view.assets.value !== null &&
+    b.view.assets.value !== null &&
+    Math.abs(a.view.assets.value - b.view.assets.value) < 0.5
+  ) {
+    return null;
+  }
+  return 'starts with a different balance';
 }
 
 /** "8.2 points lower", "the same". */

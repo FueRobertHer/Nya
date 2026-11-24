@@ -323,14 +323,35 @@ describe('the plan’s mix, with a child’s accounts out (D7)', () => {
     expect(stateWith(null).mix.whole).toBe(100_000);
   });
 
-  test('on: the mix is of what the plan counts, and Portfolio’s own view still shows them all', () => {
+  test('on: the mix is of what the plan counts, names excluded visible accounts, and Portfolio’s own view still shows them all', () => {
     const { mix, alloc: all } = stateWith(leftOutOf([]));
     expect(mix.whole).toBe(75_000);
+    expect(mix.leftOutAccounts).toEqual(['College']);
     expect(all.total).toBe(100_000);
+    const t = text(renderToStaticMarkup(<MixSection mix={mix} plan={plan()} ready currency="USD" onUse={noop} />));
+    expect(t).toContain('All $75,000 counted in your plan (leaving out College) is classified as stocks, bonds or cash');
   });
 
-  test('on, with one counted anyway: back in the mix', () => {
-    expect(stateWith(leftOutOf(['college'])).mix.whole).toBe(100_000);
+  test('on, with one counted anyway: back in the mix without leftOutAccounts', () => {
+    const { mix } = stateWith(leftOutOf(['college']));
+    expect(mix.whole).toBe(100_000);
+    expect(mix.leftOutAccounts).toBeUndefined();
+  });
+
+  test('a hidden excluded account is never named in leftOutAccounts', () => {
+    const withHidden = [
+      inst('Vanguard', [
+        acct('brk', { name: 'Brokerage', balance: 75_000 }),
+        acct('hidden529', { name: 'Old 529', subtype: '529', balance: 10_000, hidden: true }),
+      ]),
+    ];
+    let got: AllocationState | null = null;
+    function Probe() {
+      got = useAllocation({ institutions: withHidden, holdings: [hold('brk', 'VTI', 75_000)], currency: 'USD', includeCash: false, leaveOut: leftOutOf([]) });
+      return null;
+    }
+    renderToStaticMarkup(<Probe />);
+    expect((got as unknown as AllocationState).mix.leftOutAccounts).toBeUndefined();
   });
 });
 

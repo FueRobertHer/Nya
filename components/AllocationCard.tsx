@@ -188,7 +188,8 @@ export function useAllocation({
       settings: value,
       currency,
     });
-    return planMix(counted, bank.amount, bank.otherCurrencies);
+    const leftOutNames = alloc.accounts.filter((a) => out.has(a.account_id)).map((a) => a.name);
+    return planMix(counted, bank.amount, bank.otherCurrencies, leftOutNames);
   }, [alloc, includeCash, inputs, currency, leaveOut, value]);
   return { settings, load: store.load, save: (next) => store.save(next), withSettings, alloc, mix };
 }
