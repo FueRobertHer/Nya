@@ -1319,7 +1319,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
       <ul class="changes">
         <li>The sign-in page is laid out from the top: Clerk's form arriving, or changing step, no longer moves the name and the demo card above it.</li>
         <li>Until the form loads, a placeholder of its size holds its place; the form fades in over it.</li>
-        <li>Under the name, one line on what Nya is. Clerk's Continue is the one filled button: the demo accounts are tonal buttons with their names only (anyone may reset either to any scenario, so a line on what one holds could be wrong), side by side, above the form; which banks connect is folded under it, behind Which banks work?</li>
+        <li>Under the name, one line on what Nya is. Clerk's Continue is the one filled button: the demo accounts are tonal buttons with their names, side by side, above the form, each with the scenario it was last reset to under it, read on the server (anyone may reset either to any scenario, so the line names what was loaded); which banks connect is folded under it, behind Which banks work?</li>
         <li>A demo button signs in on the page, with no page loaded again. From its press, and on Home from the moment a sign-in moves there, the app loading: the dashboard's header and the Net worth card in placeholders, which the dashboard then draws itself while its first load is on its way.</li>
       </ul>
     </div>
@@ -1332,9 +1332,9 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
             <div class="card">
               <div class="card-header"><h2>Try the demo</h2></div>
               <span class="small muted">Sign in as a demo account, with pretend banks from Plaid's sandbox. Everyone who tries it shares these accounts, so anything you add is visible to others.</span>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
-                <span class="btn secondary">Alex</span>
-                <span class="btn secondary">Sam</span>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px;align-items:start">
+                <div style="display:grid;gap:8px"><span class="btn secondary">Alex</span><span class="small muted" style="text-align:center">Single renter</span></div>
+                <div style="display:grid;gap:8px"><span class="btn secondary">Sam</span><span class="small muted" style="text-align:center">Two-income household</span></div>
               </div>
             </div>
             <div class="signin-sk" aria-label="The sign-in form loading">
@@ -1347,7 +1347,7 @@ footer.doc-foot { color: var(--pg-muted); font-size: 13px; border-top: 1px solid
             <span class="small" style="align-self:stretch;color:var(--accent);font-weight:600">Which banks work?</span>
           </div>
         </div></div>
-        <figcaption><b>SIGN-IN, FORM LOADING</b>The name, what Nya is, and the demo card sit where they will stay; the placeholder is the form's width and about its height. The demo's buttons are tonal: the form's Continue is the one filled button.</figcaption>
+        <figcaption><b>SIGN-IN, FORM LOADING</b>The name, what Nya is, and the demo card sit where they will stay; the placeholder is the form's width and about its height. The demo's buttons are tonal: the form's Continue is the one filled button. Under each, the scenario that account was last reset to.</figcaption>
       </figure>
 
       <figure class="shot">

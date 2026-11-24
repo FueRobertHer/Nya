@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { DemoDataView, DemoResetProgress, demoResetStatus, shownScenario, type DemoInfo } from '@/components/DemoDataCard';
+import { DemoDataView, DemoResetProgress, demoResetStatus, loadedText, shownScenario, type DemoInfo } from '@/components/DemoDataCard';
 
 const noop = () => {};
 const INFO: Extract<DemoInfo, { demo: true }> = {
@@ -31,6 +31,39 @@ describe('DemoDataView', () => {
     expect(html).toContain('Two incomes and a child.');
     expect(html).toMatch(/<button type="button" class="btn secondary">Reset demo data<\/button>/);
     expect(html).not.toContain('notice');
+  });
+
+  test('says what is loaded above the picker: the last reset’s scenario and its day', () => {
+    const html = view({ ...INFO, last: { scenario: 'single-renter', at: new Date().toISOString(), phase: 'finished' } });
+    expect(html).toContain('<p class="helper">Loaded: Single renter, reset today</p><label class="field">Scenario');
+    expect(html).not.toContain('notice');
+  });
+
+  test('the day of the reset, as the app says a day, and no ticking time', () => {
+    const now = new Date(2026, 10, 24, 12).getTime();
+    const at = (iso: string) => loadedText({ ...INFO, last: { scenario: 'household', at: iso, phase: 'finished' } }, false, now);
+    expect(at(new Date(2026, 10, 24, 9).toISOString())).toBe('Loaded: Two-income household, reset today');
+    expect(at(new Date(2026, 10, 23, 18).toISOString())).toBe('Loaded: Two-income household, reset yesterday');
+    expect(at(new Date(2026, 10, 2, 18).toISOString())).toMatch(/^Loaded: Two-income household, reset on Nov 2$/);
+    expect(at('not a time')).toBe('Loaded: Two-income household');
+  });
+
+  test('“Resetting now” while a reset runs, here or anywhere', () => {
+    const running = { ...INFO, last: { scenario: 'household', at: 'x', phase: 'running' as const } };
+    expect(view(running)).toContain('<p class="helper">Resetting now</p><label class="field">Scenario');
+    const finished = { ...INFO, last: { scenario: 'household', at: new Date().toISOString(), phase: 'finished' as const } };
+    expect(view(finished, { busy: true })).toContain('<p class="helper">Resetting now</p>');
+    expect(view(finished, { busy: true })).not.toContain('Loaded:');
+  });
+
+  test('nothing more on what is loaded for a reset that stopped part way, nor before any reset', () => {
+    const stopped = view({ ...INFO, last: { scenario: 'household', at: 'x', phase: 'stopped' } });
+    expect(stopped).not.toContain('Loaded:');
+    expect(stopped).not.toContain('Resetting now');
+    expect(stopped).toContain('<h2>Demo data</h2>');
+    expect(view(INFO)).not.toContain('Loaded:');
+    expect(view(INFO)).not.toContain('Resetting now');
+    expect(view({ ...INFO, last: { scenario: 'gone', at: new Date().toISOString(), phase: 'finished' } })).not.toContain('Loaded:');
   });
 
   test('shows the scenario picked, else the last reset’s', () => {
