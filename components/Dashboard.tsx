@@ -8,8 +8,9 @@ import { GEAR, HeaderIcon, REFRESH } from './HeaderIcon';
 import { SETTINGS_TITLES, SettingsScreen, type SettingsSection, type SettingsView } from './Settings';
 import { watchSignOut } from './sign-out-watch';
 import { LOCAL_CACHE_KEY, cacheKeyFor, reloadKeyAfter } from './device-cache';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
-import { usePlaidLink, type PlaidLinkOnEvent, type PlaidLinkOnExit, type PlaidLinkOnSuccess, type PlaidLinkOnSuccessMetadata, type PlaidLinkOnEventMetadata } from 'react-plaid-link';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { type PlaidLinkOnExit, type PlaidLinkOnSuccess, type PlaidLinkOnSuccessMetadata, type PlaidLinkOnEventMetadata } from 'react-plaid-link';
+import PlaidLinkHandler from './PlaidLinkHandler';
 import { existingItemsAt } from '@/lib/existing-items';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import DownloadMyData from './DownloadMyData';
@@ -169,38 +170,6 @@ function useLast<T>(value: T | null): T | null {
   const last = useRef<T | null>(value);
   if (value !== null) last.current = value;
   return last.current;
-}
-
-/** Plaid Link, opened as soon as a fresh token is ready. usePlaidLink loads
- *  Plaid's script from its CDN as it mounts, token or not, so the dashboard
- *  mounts this only once a connection is first started (plaidWanted). `exit`
- *  goes out through a ref: see onEvent in Dashboard. */
-function PlaidLinkHandler({
-  token,
-  onSuccess,
-  onEvent,
-  onExit,
-  exitRef,
-  openRef,
-}: {
-  token: string | null;
-  onSuccess: PlaidLinkOnSuccess;
-  onEvent: PlaidLinkOnEvent;
-  onExit: PlaidLinkOnExit;
-  exitRef: MutableRefObject<(opts?: { force?: boolean }) => void>;
-  openRef: MutableRefObject<boolean>;
-}) {
-  const { open, ready, exit } = usePlaidLink({ token, onSuccess, onEvent, onExit });
-  useLayoutEffect(() => {
-    exitRef.current = exit as (opts?: { force?: boolean }) => void;
-  }, [exit, exitRef]);
-  useEffect(() => {
-    if (token && ready) {
-      openRef.current = true;
-      open();
-    }
-  }, [token, ready, open, openRef]);
-  return null;
 }
 
 /** The account menu's button, the avatar, once Clerk has drawn it. */
@@ -1386,6 +1355,12 @@ export default function Dashboard({
     }
     setLinkToken(null);
   };
+  // Plaid's window never opened (PlaidLinkHandler): said where the button was,
+  // and the buttons come back so it can be tried again.
+  const onLinkUnavailable = useCallback(() => {
+    setError("Plaid's window couldn't open. Check your connection, or allow Plaid in a content blocker for this site, then try again.");
+    setLinkToken(null);
+  }, []);
   // Plaid's script loads only once a connection is first started, beside the
   // fetch of its token, rather than on every open of the app; Link then stays
   // mounted as it always was.
@@ -2224,6 +2199,14 @@ export default function Dashboard({
 
   const [openTxnReq, setOpenTxnReq] = useState<{ id: string; at: number } | null>(null);
   const clearOpenTxnReq = useCallback(() => setOpenTxnReq(null), []);
+  // An account sheet's Transactions: Activity's list, filtered to it.
+  const [accountTxnsReq, setAccountTxnsReq] = useState<{ key: string; at: number } | null>(null);
+  const seeAccountTransactions = useCallback((key: string) => {
+    window.scrollTo(0, 0);
+    setTab('activity');
+    setActivitySegment('transactions');
+    setAccountTxnsReq({ key, at: Date.now() });
+  }, []);
   const setViewMonth = viewMonth.set;
   const onInsightGo = useCallback(
     (target: InsightTarget) => {
@@ -2298,7 +2281,9 @@ export default function Dashboard({
 
   return (
     <>
-      {plaidWanted && <PlaidLinkHandler token={linkToken} onSuccess={onSuccess} onEvent={onEvent} onExit={onLinkExit} exitRef={exitLinkRef} openRef={linkOpenRef} />}
+      {plaidWanted && (
+        <PlaidLinkHandler token={linkToken} onSuccess={onSuccess} onEvent={onEvent} onExit={onLinkExit} onUnavailable={onLinkUnavailable} exitRef={exitLinkRef} openRef={linkOpenRef} />
+      )}
       <main className="wrap app-page">
         {/* Everything above the links, taking the room the page has left, so
             the links sit at its foot on a short tab (.app-page). */}
@@ -2764,6 +2749,7 @@ export default function Dashboard({
                   viewMonth={viewMonth.month}
                   onViewMonth={viewMonth.set}
                   openTxnRequest={openTxnReq}
+                  accountRequest={accountTxnsReq}
                   onOpenTxnHandled={clearOpenTxnReq}
                   onOpenConnections={() => {
                     openAccounts();
@@ -3003,6 +2989,7 @@ export default function Dashboard({
           setMoneyTarget(target);
         }}
         onDelete={manualAccounts.startDelete}
+        onSeeTransactions={seeAccountTransactions}
       />
       <AddAccountSheet
         open={addAccountOpen}

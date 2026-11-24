@@ -201,6 +201,9 @@ export type BankSource = {
   coverage: TxnCoverage;
   synced_at: string | null;
   first_date: string | null;
+  /** The same over its bank accounts and cards alone (lib/transactions.ts):
+   *  where its spending begins. Absent where it isn't known. */
+  first_spending_date?: string | null;
   no_transactions: NoTransactionsReason | null;
   never_synced: boolean;
 };
@@ -347,6 +350,7 @@ export async function assembleBankRows(
             ...(await syncItemTransactions(ctx, item, inputs.hiddenAccountIds, inputs.carriedIn, inputs.carriedExclusionsIn, { ...inputs, withStored: true })),
             synced_at: null,
             first_date: null,
+            first_spending_date: undefined,
             never_synced: false,
           }
         : storedItemTransactions(ctx, item, inputs, { withStored: true })
@@ -455,6 +459,7 @@ export async function assembleBankRows(
       coverage: results[i].coverage,
       synced_at: results[i].synced_at,
       first_date: results[i].first_date,
+      ...(results[i].first_spending_date !== undefined ? { first_spending_date: results[i].first_spending_date } : {}),
       no_transactions: results[i].noTransactions ?? null,
       never_synced: results[i].never_synced === true,
     })),

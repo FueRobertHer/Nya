@@ -308,9 +308,12 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
     facts: {
       incomplete: [...linkedIncomplete, ...others],
       stopped,
-      first: bank.sources.flatMap((s) =>
-        s.first_date && !s.no_transactions && s.coverage !== 'missing' ? [{ institution: s.institution_name, day: s.first_date, ...filesOf(s.item_id) }] : []
-      ),
+      // Where each bank's spending begins: its bank accounts' and cards' first
+      // row, not a loan's first payment (lib/transactions.ts first_spending_date).
+      first: bank.sources.flatMap((s) => {
+        const day = s.first_spending_date === undefined ? s.first_date : s.first_spending_date;
+        return day && !s.no_transactions && s.coverage !== 'missing' ? [{ institution: s.institution_name, day, ...filesOf(s.item_id) }] : [];
+      }),
       without: bank.sources.flatMap((s) =>
         s.no_transactions === 'refused' || s.no_transactions === 'no_consent'
           ? [{ institution: s.institution_name, reason: s.no_transactions, until: itemEndedBy(s.item_id), ...filesOf(s.item_id) }]

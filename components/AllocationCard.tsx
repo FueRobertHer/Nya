@@ -826,7 +826,11 @@ export function DriftSection({
   const d = drift(alloc, target);
   return (
     <>
-      <div className="plan-subhead">Against your target: {splitText(target)}</div>
+      {/* With money unclassified, the shares below are of what is classified,
+          not of everything as By asset class has them: said before they are. */}
+      <div className="plan-subhead">
+        Against your target{d && isMoney(d.unclassified) ? ', of what is classified' : ''}: {splitText(target)}
+      </div>
       {!d ? (
         <p className="empty-note">
           {splitProblem(target) ? "Your saved target doesn't add up to 100%, so it can't be compared: change it." : 'Nothing is classified yet, so there is nothing to compare.'}

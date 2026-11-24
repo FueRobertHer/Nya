@@ -1585,7 +1585,12 @@ async function storedNoTransactions(ctx: Ctx, item: StoredItem, state: ItemState
  * accounts' and the replaced pending ones left out, whatever the window: how
  * far back this institution's history in Nya reaches, as far as its rows
  * show, so a report on an earlier period can say when it doesn't reach back
- * that far (lib/report/build.ts). Null with no rows.
+ * that far (lib/report/build.ts). Null with no rows. `first_spending_date`
+ * is the same over the rows of its bank accounts and cards alone (an account
+ * of no known type counts as one): where its spending in Nya begins, for a
+ * budget's month (lib/budget-month.ts). A loan's first row is its first
+ * payment, weeks after its history begins, and nothing in a loan or an
+ * investment account counts in a budget, so neither says a month is short.
  *
  * `never_synced` marks a `missing` that is known to hold nothing: the store
  * was read and no transactions were ever stored in it. Never on a store that
@@ -1603,6 +1608,7 @@ export async function storedItemTransactions(
   coverage: TxnCoverage;
   synced_at: string | null;
   first_date: string | null;
+  first_spending_date?: string | null;
   noTransactions?: NoTransactionsReason;
   never_synced?: true;
   stored?: Record<string, StoredTxn> | null;
@@ -1634,6 +1640,7 @@ export async function storedItemTransactions(
   }
   const [txns, older] = await Promise.all([displayRows(state, inputs), olderRows(state, inputs)]);
   const first_date = firstStoredDate(state, inputs.hiddenAccountIds);
+  const first_spending_date = firstStoredDate(state, inputs.hiddenAccountIds, (id) => !NOT_SPENDING.has(state.accounts[id]?.type ?? ''));
   if (state.importing) {
     return {
       txns,
@@ -1642,21 +1649,26 @@ export async function storedItemTransactions(
       coverage: 'importing',
       synced_at: state.synced_at,
       first_date,
+      first_spending_date,
       ...loadingOf(state),
       ...stored(state.txns),
     };
   }
-  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at, first_date, ...loadingOf(state), ...stored(state.txns) };
+  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at, first_date, first_spending_date, ...loadingOf(state), ...stored(state.txns) };
 }
 
+/** The kinds of account whose rows never count in a budget. */
+const NOT_SPENDING = new Set(['loan', 'investment']);
+
 /** The oldest day among an Item's stored rows that would be shown in some
- *  window: not a pending row its posted row replaced, nor a hidden account's.
- *  Null with none. */
-function firstStoredDate(state: ItemState, hiddenAccountIds?: Set<string>): string | null {
+ *  window: not a pending row its posted row replaced, nor a hidden account's,
+ *  and only on the accounts `counted` keeps when given. Null with none. */
+function firstStoredDate(state: ItemState, hiddenAccountIds?: Set<string>, counted?: (accountId: string) => boolean): string | null {
   const superseded = supersededPendingIds(state.txns);
   let first: string | null = null;
   for (const t of Object.values(state.txns)) {
     if (superseded.has(t.transaction_id) || hiddenAccountIds?.has(t.account_id)) continue;
+    if (counted && !counted(t.account_id)) continue;
     if (first === null || t.date < first) first = t.date;
   }
   return first;

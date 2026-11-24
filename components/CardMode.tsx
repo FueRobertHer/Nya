@@ -470,6 +470,7 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
             {annotating && canAnnotate ? (
               <div className="card-mode-annotate">
                 <TxnTagsNote
+                  key={t.transaction_id}
                   t={t}
                   tags={tags}
                   onChangeTags={async (change) => {

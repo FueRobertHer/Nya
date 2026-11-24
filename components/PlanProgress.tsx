@@ -255,7 +255,9 @@ function SavedBody({
   const stop = savedStop(saved, spending);
   const saving = saved.savings < 0 ? `spending ${money(-saved.savings)} a year more than comes in` : `saving ${money(saved.savings)} a year`;
   const flow = stop ? `${saving} until ${stop.age}, then ${stop.draw > 0 ? `taking out ${money(stop.draw)} a year` : 'taking nothing out (no spending to go by)'}` : saving;
-  const assumed = `Growing a steady ${pct(savedGrowth(saved))} a year after inflation, ${flow}, with prices rising ${pct(saved.inflation)} a year.`;
+  // Its figures as they were the day it was saved, said so: what it saves a
+  // year may differ from Your figures' savings now, measured since.
+  const assumed = `As saved ${onDay(dayName(saved.day))}: growing a steady ${pct(savedGrowth(saved))} a year after inflation, ${flow}, with prices rising ${pct(saved.inflation)} a year.`;
   return (
     <>
       <p>Your plan from {dayName(saved.day)}.</p>

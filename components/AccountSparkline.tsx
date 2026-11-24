@@ -221,6 +221,7 @@ export default function AccountSparkline({
         // A preview is for checking the joined history, all of it.
         initialRange={previewWith ? 'ALL' : undefined}
         owed={owed}
+        percent={false}
         // An investment account keeps the line's row from the start and whatever
         // its transactions turn out to say (they may fail, or have no split for the
         // range): a row that came and went would shift the page, and one blank line

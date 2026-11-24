@@ -213,7 +213,7 @@ describe('every total leaves an excluded transaction out, and still lists it', (
     expect(text(renderToStaticMarkup(createElement(Insights, { txns, accounts: [] })))).toContain('Biggest purchase this month: Corner shop, $30.00');
     // Without the exclusion the same two would be over budget.
     expect(budgetTexts({ txns: [COUNTED, { ...EXCLUDED, category: 'food and drink', excluded: undefined }], ...categoriesFor({ 'food and drink': 100 }) })).toContain(
-      'Over your food and drink budget'
+      'Over your Food and drink budget, in Food'
     );
   });
 

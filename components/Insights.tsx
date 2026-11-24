@@ -27,7 +27,7 @@ import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-covera
 import { spendingByCategory, tidy } from '@/lib/totals';
 import { budgetMeters, placeBudgets, EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
 import { withCarry, type Carries } from '@/lib/rollover';
-import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
+import { displayName, filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { bankRows } from '@/lib/split-rows';
 import type { Severity } from '@/lib/accounts-status';
 import { distinctAccountNames } from '@/lib/account-names';
@@ -190,8 +190,19 @@ export function budgetAlerts({ txns, fx = null, budgets = EMPTY_BUDGETS, taxonom
   const spendByCat = spendingByCategory(budgeted.rows, (date) => date.slice(0, 7) === thisMonthKey, displayCurrency, (t) => filedId(ix, t));
   const meters = budgetMeters(ix, withCarry(placeBudgets(budgets, ix), budgetCarries), new Map(Object.entries(spendByCat)));
   const candidates = [
-    ...meters.groups.filter((m) => m.limit !== null && m.own !== null).map((m) => ({ key: `group-${m.group.id}`, name: m.group.name, budget: m.limit!, spent: m.spent })),
-    ...meters.groups.flatMap((m) => m.categories.filter((c) => c.budget !== null).map((c) => ({ key: `category-${c.category.id}`, name: c.category.name, budget: c.budget!, spent: c.spent }))),
+    ...meters.groups.filter((m) => m.limit !== null && m.own !== null).map((m) => ({ key: `group-${m.group.id}`, name: `${m.group.name} budget`, budget: m.limit!, spent: m.spent })),
+    // A category's budget is listed under its group on the Budgets tab, so
+    // its name is said as there, with the group's when that is another one
+    // ("General merchandise, in Shopping").
+    ...meters.groups.flatMap((m) =>
+      m.categories
+        .filter((c) => c.budget !== null)
+        .map((c) => {
+          const shown = displayName(c.category.name);
+          const name = shown.toLowerCase() === m.group.name.toLowerCase() ? `${shown} budget` : `${shown} budget, in ${m.group.name}`;
+          return { key: `category-${c.category.id}`, name, budget: c.budget!, spent: c.spent };
+        })
+    ),
   ];
   // With rollover, what is available can be nothing or less (an overspent
   // carry): over at once, first among the over.
@@ -200,7 +211,7 @@ export function budgetAlerts({ txns, fx = null, budgets = EMPTY_BUDGETS, taxonom
     .filter(({ spent, budget }) => (budget > 0 ? spent / budget >= 0.9 : budget < 0 || spent > 0))
     .sort((a, b) => (ratio(a) === ratio(b) ? 0 : ratio(b) > ratio(a) ? 1 : -1));
   for (const { key, name, budget, spent } of flagged.slice(0, 2)) {
-    const over = `Over your ${name} budget`;
+    const over = `Over your ${name}`;
     alerts.push({
       key: `budget-${key}`,
       ...(budget <= 0
@@ -213,8 +224,8 @@ export function budgetAlerts({ txns, fx = null, budgets = EMPTY_BUDGETS, taxonom
           tidy(spent) > tidy(budget)
           ? line(over, `${formatMoney(spent, displayCurrency)} of ${formatMoney(budget, displayCurrency)}`)
           : tidy(spent) === tidy(budget)
-            ? line(`Your ${name} budget is used up`, `${formatMoney(spent, displayCurrency)} of ${formatMoney(budget, displayCurrency)}`)
-            : line(`Approaching your ${name} budget (${Math.round((spent / budget) * 100)}%)`)),
+            ? line(`Your ${name}${name.includes(', in ') ? ',' : ''} is used up`, `${formatMoney(spent, displayCurrency)} of ${formatMoney(budget, displayCurrency)}`)
+            : line(`Approaching your ${name} (${Math.round((spent / budget) * 100)}%)`)),
     });
   }
   return { alerts, more: Math.max(0, flagged.length - 2) };

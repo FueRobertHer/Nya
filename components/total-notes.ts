@@ -127,7 +127,7 @@ function institutionNotes<T extends TotalNoteInstitution>(institutions: T[], day
   if (stale.length === 1) {
     const [i] = stale;
     notes.push({
-      text: `${i.institution_name} ${holdUp(i)}; its balances are from ${day.snapshot(i.stale_as_of!, i.stale_as_of_at)}`,
+      text: `${i.institution_name} ${holdUp(i)}; showing its last known balances, from ${day.snapshot(i.stale_as_of!, i.stale_as_of_at)}`,
       severity: worst(stale),
       summary: `last known balances at ${i.institution_name}`,
     });

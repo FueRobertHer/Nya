@@ -257,10 +257,10 @@ describe('what else the dashboard counts from the same rows', () => {
   test('Home’s budget alerts meter the parts: the groceries in a Costco run, not the whole charge as general merchandise', () => {
     const budgets = { categories: { [cat('groceries')]: { amount: 100 }, [cat('general merchandise')]: { amount: 100 } }, groups: {} };
     const home = (rows: Txn[]) => budgetTexts({ txns: rows, budgets, taxonomy });
-    expect(home(raw())).toContain('Over your general merchandise budget');
+    expect(home(raw())).toContain('Over your General merchandise budget, in Shopping');
     const split = home(served());
-    expect(split).toContain('Over your groceries budget: $100.01 of $100.00');
-    expect(split).not.toContain('general merchandise budget');
+    expect(split).toContain('Over your Groceries budget, in Other: $100.01 of $100.00');
+    expect(split).not.toContain('General merchandise budget');
     // The biggest purchase is the whole charge, as the bank made it, never its largest part.
     expect(text(renderToStaticMarkup(<Insights txns={served()} accounts={[]} />))).toContain('Biggest purchase this month: Costco, $150.00');
   });

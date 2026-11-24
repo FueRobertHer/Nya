@@ -108,7 +108,7 @@ describe('saved, set against what was recorded', () => {
     expect(t).toContain('Started from $100,000, recorded on Jan 1, 2024.');
     expect(t).toContain('Invested on Jan 1, 2028 $190,000 Where your plan has you $185,317');
     expect(t).toContain('$4,683 ahead of it.');
-    expect(t).toContain('Growing a steady 5% a year after inflation, saving $10,000 a year until 55, then taking nothing out (no spending to go by), with prices rising 3% a year.');
+    expect(t).toContain('As saved on Jan 1, 2024: growing a steady 5% a year after inflation, saving $10,000 a year until 55, then taking nothing out (no spending to go by), with prices rising 3% a year.');
     expect(t).toContain('Hypothetical: a steady return and steady prices, not a prediction, and not advice.');
     expect(view()).toContain('Progress options');
   });
