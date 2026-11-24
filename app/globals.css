@@ -8850,6 +8850,7 @@ tbody .th-sort {
 
 .shared-person-name {
   align-self: flex-start;
+  justify-content: flex-start;
   min-height: 44px;
   font-weight: 600;
   font-size: var(--fs-3);

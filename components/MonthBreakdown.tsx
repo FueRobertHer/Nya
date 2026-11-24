@@ -29,7 +29,7 @@ import MonthFigures from "./MonthFigures";
 import { formatDay, formatInstantDay, formatMoney, signedCompactMoney, signedMoney, spoken } from "@/lib/format";
 import { textWidth } from "@/lib/sankey";
 import { Masked } from "./HideAmounts";
-import { countsInTotals, countTransactions, currencyOf, historyCount, isExcluded, isTransfer, leftOutByCurrency, leftOutText, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
+import { countsInTotals, countTransactions, currencyOf, historyCount, isExcluded, isTransfer, leftOutByCurrency, leftOutText, pairedPlaidLoanIds, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
 import { conversionIn, convertedText, leftOutWhy, totalsIn } from "@/lib/fx/totals";
 import type { FxTable } from "@/lib/fx/rates";
 import { localDate, localMonth } from "@/lib/local-date";
@@ -47,7 +47,7 @@ import SpendByTag from "./SpendByTag";
 import type { TagChange } from "./TxnTagsNote";
 import { accountFilterKey, categoryFilterKey, searchEntries } from "./txn-search";
 import CashFlowSankey, { FlowShown } from "./CashFlowSankey";
-import { inPeriod, periodCaption, periodEnding, periodGapNotes, pickedRows, SPANS, type FlowPick, type PeriodKey } from "@/lib/cash-flow";
+import { inPeriod, isLoanPaymentOut, periodCaption, periodEnding, periodGapNotes, pickedRows, SPANS, type FlowPick, type PeriodKey } from "@/lib/cash-flow";
 import { bankRows, type GroupAway, type GroupOutside, type SplitParent } from "@/lib/split-rows";
 import type { SettlesMark, SettlesUnapplied, SharedIou, SharedMark, SharedPart, SharedUnapplied } from "@/lib/shared-expenses/rows";
 import SplitSheet from "./SplitSheet";
@@ -587,16 +587,22 @@ export default function MonthBreakdown({
     return { excludedCount: excluded.size, hiddenCount: hidden.size, unknownCount: unknown.size, sharedCount: shared.size };
   }, [scopeTxns]);
 
-  const { moneyIn, moneyOut, categories, byCategoryId } = useMemo(() => {
+  const pairedLoans = useMemo(() => pairedPlaidLoanIds(counted.rows), [counted.rows]);
+
+  const { moneyIn, moneyOut, loanPaymentsTotal, categories, byCategoryId } = useMemo(() => {
     let inflow = 0;
     let outflow = 0;
+    let loanOut = 0;
     // By the words a row carries (no categories loaded), and by the id of
     // the category it is filed under, for the rollup to groups.
     const byCategory: Record<string, number> = {};
     const byCategoryId = new Map<string, number>();
     const ix = taxonomy ? indexTaxonomy(taxonomy) : null;
     for (const t of scopeCounted) {
-      if (!countsInTotals(t, currency)) continue;
+      if (!countsInTotals(t, currency)) {
+        if (isLoanPaymentOut(t, currency, pairedLoans)) loanOut += t.amount;
+        continue;
+      }
       if (t.amount < 0) {
         inflow += -t.amount;
       } else {
@@ -612,8 +618,8 @@ export default function MonthBreakdown({
     const categories = Object.entries(byCategory)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
-    return { moneyIn: inflow, moneyOut: outflow, categories, byCategoryId };
-  }, [scopeCounted, currency, taxonomy]);
+    return { moneyIn: inflow, moneyOut: outflow, loanPaymentsTotal: loanOut, categories, byCategoryId };
+  }, [scopeCounted, currency, taxonomy, pairedLoans]);
 
   // Online vs in-store spending, from Plaid's payment_channel. Only rows that
   // carry a channel count toward the split (unknown ones are left out rather
@@ -735,7 +741,19 @@ export default function MonthBreakdown({
     const original = new Map((txns ?? []).map((t) => [t.transaction_id, t]));
     return pickedRows(counted.rows, flowPick, { ix: indexTaxonomy(taxonomy), currency, today: localDate() }).map((t) => original.get(t.transaction_id) ?? t);
   }, [flowPick, txns, counted, taxonomy, currency]);
-  const filtering = !!(query || filterTag || filterAccount || filterCategory || reviewing || byReceipt || unsureOnly);
+  const hasChipFilter = !!(filterTag || filterAccount || filterCategory || reviewing || byReceipt || unsureOnly);
+  const filtering = !!(query || hasChipFilter);
+  const clearAllFilters = () => {
+    setQuery("");
+    setSearchAllMonths(false);
+    setAccountFilter("");
+    setCategoryFilter("");
+    setTagFilter("");
+    setReviewOnly(false);
+    setUnsureOnly(false);
+    setReceiptChoice("");
+    setReceiptOver("");
+  };
   const acrossAll = !flowPick && filtering && searchAllMonths && months.length > 1;
   const listed = picked ?? (acrossAll ? (txns ?? []) : monthTxns);
   const searchOpts = useMemo(
@@ -1043,6 +1061,14 @@ export default function MonthBreakdown({
         {leftOut && ` ${leftOut}`}
         {namedWithout && ` ${namedWithout}`}
         {importedNote && ` ${importedNote}`}
+        {loanPaymentsTotal > 0 && (
+          <>
+            {" "}
+            <Masked>
+              {`Loan payments: ${formatMoney(loanPaymentsTotal, currency)}${onSpending && taxonomy ? ", shown in Cash flow below" : ""}.`}
+            </Masked>
+          </>
+        )}
       </div>
       {/* On Transactions, what may be missing from the month, then the load's
           notes; on Spending, the period's (spendingGaps), only where the cash
@@ -1392,6 +1418,11 @@ export default function MonthBreakdown({
                       aria-label="Money out over, in each transaction’s own currency"
                     />
                   )}
+                  {hasChipFilter && (
+                    <button type="button" className="btn ghost" onClick={clearAllFilters}>
+                      Clear filters
+                    </button>
+                  )}
                 </div>
               )}
               {unsureOnly && (
@@ -1415,24 +1446,36 @@ export default function MonthBreakdown({
                 allMonthsMatches > 0 ? (
                   <div className="empty-note">
                     <p>No matches in {selected ? monthName(selected) : "this month"}.</p>
-                    <button type="button" className="btn ghost" onClick={() => setSearchAllMonths(true)}>
-                      Show {allMonthsMatches} {allMonthsMatches === 1 ? "match" : "matches"} across all 12 months
-                    </button>
+                    <div className="btn-row">
+                      <button type="button" className="btn ghost" onClick={() => setSearchAllMonths(true)}>
+                        Show {allMonthsMatches} {allMonthsMatches === 1 ? "match" : "matches"} across all 12 months
+                      </button>
+                      <button type="button" className="btn ghost" onClick={clearAllFilters}>
+                        Clear filters
+                      </button>
+                    </div>
                   </div>
                 ) : (
-                  <p className="empty-note">
-                    {emptyListWords({
-                      query: !!query,
-                      tag: !!filterTag,
-                      account: !!filterAccount,
-                      category: !!filterCategory,
-                      review: reviewing,
-                      unsure: unsureOnly,
-                      receipt: byReceipt,
-                      pick: !!flowPick,
-                      unloaded: !selected && notes.length > 0,
-                    })}
-                  </p>
+                  <div className="empty-note">
+                    <p>
+                      {emptyListWords({
+                        query: !!query,
+                        tag: !!filterTag,
+                        account: !!filterAccount,
+                        category: !!filterCategory,
+                        review: reviewing,
+                        unsure: unsureOnly,
+                        receipt: byReceipt,
+                        pick: !!flowPick,
+                        unloaded: !selected && notes.length > 0,
+                      })}
+                    </p>
+                    {filtering && (
+                      <button type="button" className="btn ghost" onClick={clearAllFilters}>
+                        Clear filters
+                      </button>
+                    )}
+                  </div>
                 )
               ) : (
                 <ul className="list-rows txn-list">

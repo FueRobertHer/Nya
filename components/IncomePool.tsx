@@ -30,6 +30,7 @@ export function IncomePoolHeader({
   month,
   today,
   coveredByNotice = false,
+  open: openAtFirst = false,
 }: {
   pool: IncomePool;
   currency: string | null;
@@ -38,8 +39,9 @@ export function IncomePoolHeader({
   /** When the segment's top notice already explains every incomplete month in
    *  pool.uncertain, show a compact badge instead of repeating the caution box. */
   coveredByNotice?: boolean;
+  open?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(openAtFirst);
   const money = (n: number) => formatMoney(n, currency);
   const name = (m: string) => monthName(m, today);
   if (month < pool.from) {
@@ -121,6 +123,9 @@ export function IncomePoolHeader({
         </div>
       )}
       {open && pool.months.some((m) => m.uncertain) && <div className="chart-note">* Its transactions may be incomplete.</div>}
+      {open && (pool.income === 0 || pool.months.some((m) => m.income === 0)) && (
+        <p className="helper">Transfers from savings or investment accounts aren’t counted as income here.</p>
+      )}
     </section>
   );
 }

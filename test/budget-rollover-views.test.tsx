@@ -361,6 +361,21 @@ describe('income carryover', () => {
     expect(text(renderToStaticMarkup(<IncomePoolHeader pool={later} currency="USD" month={addMonths(NOW, -1)} today={NOW} />))).toMatch(/Income carryover counts from \w+/);
   });
 
+  test('when expanded with any $0 income month, notes that transfers from savings or investment accounts aren’t counted as income', () => {
+    const withIncome = text(renderToStaticMarkup(<IncomePoolHeader pool={pool} currency="USD" month={NOW} today={NOW} open />));
+    expect(withIncome).not.toContain('Transfers from savings or investment accounts');
+
+    const retiree = {
+      ...pool,
+      income: 0,
+      months: pool.months.map((m, i) => (i === pool.months.length - 1 ? { ...m, income: 0 } : m)),
+    };
+    const closed = text(renderToStaticMarkup(<IncomePoolHeader pool={retiree} currency="USD" month={NOW} today={NOW} />));
+    expect(closed).not.toContain('Transfers from savings or investment accounts');
+    const expanded = text(renderToStaticMarkup(<IncomePoolHeader pool={retiree} currency="USD" month={NOW} today={NOW} open />));
+    expect(expanded).toContain('Transfers from savings or investment accounts aren’t counted as income here.');
+  });
+
   test('the setting is off until turned on, and says budgets work as before either way', () => {
     // A row, with its sheet closed until it is opened.
     const row = text(renderToStaticMarkup(<IncomeSetting setting={null} today={NOW} earliest={null} disabled={false} onChange={async () => null} />));

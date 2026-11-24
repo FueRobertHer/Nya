@@ -441,7 +441,7 @@ export async function fillSettings(run: SeedRun): Promise<void> {
   }
   for (const r of x.runway ?? []) await runwayScenariosStore.set(ctx, crypto.randomUUID(), runwayOf(r));
   if (x.allocation) await allocationSettingsStore.set(ctx, allocationOf(x.allocation.target));
-  if (x.review) await startReview(ctx, startDay(daysBefore(today, x.review.daysBack), today));
+  if (x.review) await startReview(ctx, startDay(daysBefore(today, x.review.daysBack), today), undefined, { skip_transfers: true, posted_only: true });
 
   // Rows on manual accounts, as entered in the app (the balance already says
   // where they leave it).
