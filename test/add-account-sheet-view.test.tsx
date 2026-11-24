@@ -71,7 +71,7 @@ describe('the Add account sheet', () => {
 
   test('a Plaid row says Starting… and keeps the sheet open until Link has opened, then closes it', async () => {
     const events: string[] = [];
-    let opened: () => void = noop;
+    let tokenIn: () => void = noop;
     const host = dom.document.createElement('div');
     dom.document.body.appendChild(host);
     const root = createRoot(host as unknown as HTMLElement);
@@ -84,7 +84,7 @@ describe('the Add account sheet', () => {
               onClose: () => events.push('close'),
               onConnect: (kind) => {
                 events.push(`connect ${kind}`);
-                return new Promise<void>((resolve) => (opened = resolve));
+                return new Promise<void>((resolve) => (tokenIn = resolve));
               },
             })}
           />
@@ -97,10 +97,17 @@ describe('the Add account sheet', () => {
     expect(events).toEqual(['connect investments']);
     expect(row('Starting…')).toBeDefined();
     expect(row('Connect a bank or card').getAttribute('disabled')).not.toBeNull();
+    // The token is back, but Plaid's window is still loading: the dashboard
+    // holds `connecting` (PlaidLinkHandler useLinkStarting), and so does the row.
     await act(async () => {
-      opened();
+      tokenIn();
     });
+    expect(events).toEqual(['connect investments']);
+    expect(row('Starting…')).toBeDefined();
+    // Link has opened over the sheet: it closes.
+    render(false);
     expect(events).toEqual(['connect investments', 'close']);
+    expect(row('Starting…')).toBeUndefined();
     act(() => root.unmount());
   });
 

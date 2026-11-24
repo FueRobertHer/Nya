@@ -14,19 +14,26 @@ const EYE_OFF =
   'M9.9 4.24A9.1 9.1 0 0 1 12 4c6.5 0 10 8 10 8a18.5 18.5 0 0 1-2.16 3.19M6.6 6.6A18.4 18.4 0 0 0 2 12s3.5 8 10 8a9.7 9.7 0 0 0 5.4-1.6M14.12 14.12a3 3 0 1 1-4.24-4.24M2 2l20 20';
 
 /**
- * The switch. Its name says what it does and stays the same; whether it is on
- * is its pressed state (and the eye, crossed out while amounts are hidden).
+ * The switch. Its name says what it does and stays the same, as a toggle
+ * button's does; whether it is on is its pressed state (and the eye, crossed
+ * out while amounts are hidden). Its tooltip, seen without that state, says
+ * what a press does now: Show amounts while they are hidden.
  */
 export function HideAmountsToggle() {
   const hidden = useAmountsHidden();
+  return <HideAmountsButton hidden={hidden} onPress={() => setHideAmounts(!hidden)} />;
+}
+
+/** The switch as drawn, in either state. */
+export function HideAmountsButton({ hidden, onPress }: { hidden: boolean; onPress: () => void }) {
   return (
     <button
       type="button"
       className="icon-btn hide-amounts-btn"
-      onClick={() => setHideAmounts(!hidden)}
+      onClick={onPress}
       aria-pressed={hidden}
       aria-label="Hide amounts"
-      title="Hide amounts"
+      title={hidden ? 'Show amounts' : 'Hide amounts'}
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d={hidden ? EYE_OFF : EYE} />

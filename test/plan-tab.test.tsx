@@ -126,7 +126,7 @@ describe('figures', () => {
   });
 
   test('the measured window, and a shorter one scaled up', () => {
-    expect(windowText(flows)).toBe('your last 12 months of transactions (Oct 7, 2025 to Oct 6)');
+    expect(windowText(flows)).toBe('your last 12 months of transactions (Oct 7, 2025 to Oct 6, 2026)');
     expect(windowText({ ...flows, scaled: true, days: 152, from: '2026-05-08' })).toBe(
       '5 months of transactions (May 8 to Oct 6), scaled up to a year'
     );

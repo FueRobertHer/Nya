@@ -7,7 +7,7 @@
 // expand/collapse loop.
 
 import { useEffect, useState } from 'react';
-import { amountsHidden, formatDay, formatInstantDay, formatMoney, hiddenFigure, hiddenMoney, trueMinus } from '@/lib/format';
+import { amountsHidden, formatDay, formatDaySpan, formatInstantDay, formatMoney, hiddenFigure, hiddenMoney, trueMinus } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { readableName, readableWithTicker } from '@/lib/merchant-name';
 import { displayName } from '@/lib/categories';
@@ -290,13 +290,12 @@ function shares(quantity: number): string {
 }
 
 /** Which days come from which imported file, in order, and where to undo
- *  them: "Jun 1, 2025 to Nov 10 come from OfxDownload.csv, imported Nov 12.
- *  To undo it: ⋯, Import history from a file." */
+ *  them: "Jun 1, 2025 to Nov 10, 2026 come from OfxDownload.csv, imported
+ *  Nov 12. To undo it: ⋯, Import history from a file." */
 export function importedText(days: NonNullable<Payload['imported_days']>): string {
-  const day = (d: string) => formatDay(d, { sentence: true });
   const parts = days.map((d) => {
     const when = formatInstantDay(d.imported_at, { sentence: true });
-    const span = d.from === d.to ? `${day(d.from)} comes` : `${day(d.from)} to ${day(d.to)} come`;
+    const span = `${formatDaySpan(d.from, d.to, { sentence: true })} ${d.from === d.to ? 'comes' : 'come'}`;
     return `${span} from ${d.file_name ?? 'Vanguard’s transactions download'}${when ? `, imported ${when}` : ''}`;
   });
   const said = parts.join('; ');

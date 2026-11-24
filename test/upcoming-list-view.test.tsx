@@ -127,8 +127,11 @@ describe("Upcoming's list", () => {
     const t = text(html);
     // Today: pay that varies and a card's own charge, both listed, neither in the day's figure.
     expect(t).toContain(
-      "Today Gig pay Income · Every 2 weeks · Its amount varies, not in the day's figure +$1,768.18 Spotify Bill · Monthly · On the Sapphire card, not in the day's figure: the card's payment is what leaves cash −$10.99"
+      "Today Gig pay Income · Every 2 weeks · Its amount varies, not in the day's figure +$1,768.18 Spotify Bill · Monthly · On the Sapphire card, not in the day's figure −$10.99"
     );
+    // Why a card's charge isn't in it is said once, over the list, not on its row.
+    expect(t).toContain("A card's charges aren't in a day's figure: the card's payment is what leaves cash. Today Gig pay");
+    expect(t.split("the card's payment is what leaves cash")).toHaveLength(2);
     expect(t).toContain("Mon, Oct 12 Gym Bill · Monthly · On an account of unknown type, not in the day's figure −$45.00");
     expect(t).toContain('Thu, Oct 15 −$1,500.00 Rent Bill · Monthly −$1,500.00');
     expect(t).toContain('Tue, Oct 20 −$212.50 Car registration Planned · Once −$212.50');
@@ -235,8 +238,11 @@ describe('the calendar, redrawn', () => {
     expect(notices(calendar({ txns: null, failed: true }))).toEqual([['critical', "Transactions couldn't be loaded, so what posted isn't shown."]]);
     expect(notices(calendar({ txns: null }))).toEqual([['caution', 'Transactions are still loading.']]);
     expect(notices(calendar())).toEqual([]);
-    // Its closing note is helper text now, its words unchanged.
+    // Its closing note is helper text now, its words unchanged. Today's list
+    // holds a card's charge (Spotify, on the Sapphire card), so why it isn't
+    // in the day's figure is said once over it, as helper text too.
     expect(notesIn(calendar()).filter((n) => n.level === 'helper')).toEqual([
+      { text: "A card's charges aren't in a day's figure: the card's payment is what leaves cash.", level: 'helper' },
       {
         text: "Days gone by show what posted. From today, what is expected to leave or reach your checking and savings, an estimate, as the forecast counts it; a card's own charges and the payments due on cards and loans are listed, not added.",
         level: 'helper',

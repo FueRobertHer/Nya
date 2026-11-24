@@ -36,7 +36,7 @@ import CheckRows, { type CheckRow } from './CheckRows';
 import { Masked } from './HideAmounts';
 import { Notice } from './TotalCaveats';
 import { Why } from './Why';
-import { formatDay, formatInstantDay, formatMoney, plainNumber, signedMoney } from '@/lib/format';
+import { formatDay, formatDaySpan, formatInstantDay, formatMoney, plainNumber, signedMoney } from '@/lib/format';
 import { withMask } from '@/lib/account-names';
 import { displayName } from '@/lib/categories';
 import { monthText } from '@/lib/investment-months';
@@ -51,7 +51,7 @@ const CURRENCY = 'USD';
 
 const plural = (n: number, one: string, many = `${one}s`) => `${plainNumber(n)} ${n === 1 ? one : many}`;
 const day = (d: string) => formatDay(d, { sentence: true });
-const spanText = (from: string, to: string) => (from === to ? day(from) : `${day(from)} to ${day(to)}`);
+const spanText = (from: string, to: string) => formatDaySpan(from, to, { sentence: true });
 const capital = (s: string) => `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
 const importedDay = (i: { imported_at: string }) => formatInstantDay(i.imported_at, { sentence: true }) ?? i.imported_at.slice(0, 10);
 const listed = (words: readonly string[]) => (words.length <= 1 ? (words[0] ?? '') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`);
