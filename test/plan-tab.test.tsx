@@ -453,7 +453,11 @@ const cardOf = (p: FirePlan) => {
 
 describe('the simulation card', () => {
   const us = usMarket();
-  const render = (p: FirePlan, m = measured, opts: { pending?: boolean; noOutcome?: boolean; outcome?: Outcome; badge?: string; history?: HistoryMove; setupHeld?: boolean } = {}) => {
+  const render = (
+    p: FirePlan,
+    m = measured,
+    opts: { pending?: boolean; noOutcome?: boolean; outcome?: Outcome; badge?: string; history?: HistoryMove; setupHeld?: boolean; detail?: { t: number; lawYear: number } } = {}
+  ) => {
     const f = figuresOf(p, m) as PlanFigures;
     const { view, engine } = f;
     const outcome = opts.outcome ?? ('sim' in engine && !opts.noOutcome ? { result: simulate(p.method, engine.sim, us) } : null);
@@ -472,10 +476,11 @@ describe('the simulation card', () => {
         onRetry={noop}
         history={opts.history ?? null}
         setupHeld={opts.setupHeld ?? false}
+        detail={opts.detail ?? null}
       />
     );
   };
-  const read = (p: FirePlan, m = measured, opts: { pending?: boolean; noOutcome?: boolean; outcome?: Outcome; badge?: string } = {}) => text(render(p, m, opts));
+  const read = (p: FirePlan, m = measured, opts: { pending?: boolean; noOutcome?: boolean; outcome?: Outcome; badge?: string; detail?: { t: number; lawYear: number } } = {}) => text(render(p, m, opts));
 
   // With an account at its own rate (lib/fire/account-growth.ts historyMove).
   test('says how its history treats your accounts’ own growth, under what counts as lasting; a caution from a point a year higher', () => {
@@ -564,6 +569,56 @@ describe('the simulation card', () => {
     // And the success rate is for that spending: a 10% rate rarely lasts 30 years.
     expect(t).toMatch(/\b\d{1,2}(\.\d)?% of 1,470 historical starts/);
     expect(t).not.toMatch(/\b9\d(\.\d)?% of 1,470/);
+  });
+
+  // Your path asks someone who has already stopped working to set their stop
+  // age to their age (docs/features.md): there is no working to stop then.
+  test('a stop age at your age runs from now, never says to stop working, and keeps its figures', () => {
+    const retired = { age: 67, targetAge: 67, horizon: 30 } as const;
+    const fi = read(plan(retired));
+    expect(fi).toContain('From now, at 67, with $1,000,000 (your FI number), withdrawing 4% of it, $40,000 a year after tax, your spending now, for 30 years (to age 97).');
+    // From your invested assets, said once: not "From now, today, at 47".
+    const assets = read(plan({ age: 47, targetAge: 47, start: 'assets', horizon: 30 }), { spending: 60_000, savings: 0, assets: 600_000 });
+    expect(assets).toContain('From now, at 47, with $600,000 (your invested assets), spending what you spend now, $60,000 a year after tax, for 30 years (to age 77). That is a 10% withdrawal rate');
+    const vpw = read(plan({ ...retired, rule: 'vpw' }));
+    expect(vpw).toContain('From now, at 67, with $1,000,000 (your FI number), for 30 years (to age 97). VPW sets');
+    const detailed = read(plan(retired), measured, { detail: { t: 0.1, lawYear: 2026 } });
+    expect(detailed).toContain('From now, at 67, with your FI number, $1,000,000, for 30 years, to age 97. Your spending, health coverage and tax come to about 4% of it a year.');
+    for (const t of [fi, assets, vpw, detailed]) {
+      expect(t).not.toContain('Stop working');
+      expect(t).not.toContain('today, at');
+    }
+    // A stop still to come is one to stop working at, as before.
+    expect(read(plan({ age: 66, targetAge: 67, horizon: 30 }))).toContain('Stop working at 67 with $1,000,000 (your FI number)');
+    expect(read(plan({ age: 46, targetAge: 47, start: 'assets', horizon: 30 }), { spending: 60_000, savings: 0, assets: 600_000 })).toContain(
+      'Stop working today, at 46, with $600,000 (your invested assets)'
+    );
+  });
+
+  // The setup says a rate worked out from your spending to a tenth
+  // (saidRate), and the grid's row for the plan reads the same, never "2.37%"
+  // beside "2.4%"; a rate the plan sets is said as set, in both.
+  test('the grid’s row for your plan reads its rate as the setup says it', () => {
+    const row = (html: string) => [...html.matchAll(/<th scope="row" class="plan-grid-rate">([^<]*)<\/th>/g)].map((m) => m[1]);
+    const both = (p: FirePlan, m: Measured) => {
+      const f = figuresOf(p, m) as PlanFigures;
+      const e = f.engine as { rate: number; sim: { startBalance: number; years: number } };
+      const rates = withOwnRate([0.03, 0.035, 0.04, 0.045, 0.05], e.rate);
+      const grid = renderToStaticMarkup(
+        <GridCard plan={f.plan} cells={null} rates={rates} years={[30]} current={{ rate: e.rate, years: e.sim.years }} startBalance={e.sim.startBalance} money={money} />
+      );
+      return { rate: e.rate, setup: read(p, m), rows: row(grid), grid };
+    };
+    const spent = both(plan({ age: 45, start: 'assets', horizon: 30 }), { spending: 40_000, savings: 10_000, assets: 1_687_000 });
+    expect(spent.rate).toBeCloseTo(0.02371, 5);
+    expect(spent.setup).toContain('That is a 2.4% withdrawal rate.');
+    expect(spent.rows).toEqual(['2.4%', '3%', '3.5%', '4%', '4.5%', '5%']);
+    expect(spent.grid).toContain('title="2.4% for 30 years: working it out"');
+    expect(spent.grid).not.toContain('2.37%');
+    // The rate set, two digits and all, in the last branch's words.
+    const set = both(plan({ targetAge: 65, horizon: 30, withdrawalRate: 0.0425 }), measured);
+    expect(set.setup).toContain('withdrawing 4.25% of it,');
+    expect(set.rows).toEqual(['3%', '3.5%', '4%', '4.25%', '4.5%', '5%']);
   });
 
   test('Monte Carlo says how it was made, in the line under the rate', () => {
@@ -816,6 +871,26 @@ describe('the grid', () => {
     expect(html.match(/>3\.5%</g)).toHaveLength(1);
     expect(html.match(/plan-grid-cell own/g)).toHaveLength(1);
     expect(html).toContain('title="3.5% for 30 years: 90%');
+  });
+
+  test('with the rate the plan sets, its own row is said to a tenth as the setup says it; the others keep theirs', () => {
+    const grid = [0.03, 0.035, 0.04, 0.045, 0.05];
+    const rows = (own: number, setRate: number) => {
+      const rates = withOwnRate(grid, own);
+      const html = renderToStaticMarkup(
+        <PlanGrid cells={rates.map((r) => cell(r, 30, 0.9))} rates={rates} horizons={[30]} current={{ rate: own, years: 30 }} setRate={setRate} flexible={false} pathsNoun="starts" />
+      );
+      return { rows: [...html.matchAll(/<th scope="row" class="plan-grid-rate">([^<]*)<\/th>/g)].map((m) => m[1]), html };
+    };
+    const spent = rows(0.023711, 0.04);
+    expect(spent.rows).toEqual(['2.4%', '3%', '3.5%', '4%', '4.5%', '5%']);
+    expect(spent.html).toContain('title="2.4% for 30 years: 90%');
+    // Merged on its exact value: 3.46% takes the 3.5% row, said once.
+    expect(rows(0.0346, 0.04).rows).toEqual(['3%', '3.5%', '4%', '4.5%', '5%']);
+    // 3.44% is its own row, beside 3.5%, never a second 3.5%.
+    expect(rows(0.0344, 0.04).rows).toEqual(['3%', '3.4%', '3.5%', '4%', '4.5%', '5%']);
+    // At the rate set, as set.
+    expect(rows(0.0425, 0.0425).rows).toEqual(['3%', '3.5%', '4%', '4.25%', '4.5%', '5%']);
   });
 
   test("a flexible rule's cells carry how far spending fell", () => {

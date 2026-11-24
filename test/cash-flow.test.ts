@@ -10,6 +10,7 @@ import {
   inPeriod,
   lastDayOf,
   payerKey,
+  payerLabel,
   periodCaption,
   periodOf,
   pickedRows,
@@ -159,6 +160,31 @@ describe('money in, by who paid it', () => {
     ]);
     expect(payerKey(' Acme\tCorp ')).toBe('acme corp');
     expect(flow.payers[0].ids).toEqual(['t1', 't2']);
+  });
+
+  test('a payer named by the bank’s own text is called as the list shows it, readably; its key, its sums and the API’s name stay as written', () => {
+    const rows = [
+      row('2026-09-01', 'GUSTO PAY ACME', -2500, { category: 'income', name_from_bank: true }),
+      row('2026-09-15', 'Gusto  Pay Acme', -2500, { category: 'income', name_from_bank: true }),
+      // A name the person gave (or a merchant's) keeps its capitals.
+      row('2026-09-20', 'IKEA', -400, { category: 'general merchandise' }),
+      ...Array.from({ length: 8 }, (_, i) => row('2026-09-21', `SMALL PAYER ${i + 1}`, -1, { category: 'income', name_from_bank: true })),
+    ];
+    const f = cashFlow(rows, inSep, 'USD', ix);
+    expect(f.payers.slice(0, 2).map((p) => [p.key, p.name, p.name_from_bank, p.amount, p.transactions])).toEqual([
+      ['gusto pay acme', 'GUSTO PAY ACME', true, 5000, 2],
+      ['ikea', 'IKEA', undefined, 400, 1],
+    ]);
+    expect(f.payers.map(payerLabel).slice(0, 3)).toEqual(['Gusto Pay Acme', 'IKEA', 'Small Payer 1']);
+    // On the chart: the node, and the fold's list of whom it holds.
+    const g = flowGraph(f);
+    const sources = g.nodes.filter((x) => x.column === 0);
+    expect(sources.map((x) => [x.id, x.label])).toEqual([
+      ['payer:gusto pay acme', 'Gusto Pay Acme'],
+      ['payer:ikea', 'IKEA'],
+      ['other-income', 'Other income'],
+    ]);
+    expect(sources[2].members!.map((m) => m.name)).toEqual(Array.from({ length: 8 }, (_, i) => `Small Payer ${i + 1}`));
   });
 
   test('a refund is money in, never less spending, and marked only when its row names a spending category', () => {

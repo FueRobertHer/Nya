@@ -3498,32 +3498,39 @@ export function SimulationCard({
   });
   const startLabel = plan.start === 'fi-number' ? (plan.fiNumber != null ? 'your own FI number' : 'your FI number') : plan.start === 'assets' ? 'your invested assets' : plan.start === 'at-stop' ? 'what you’d have' : 'the balance you typed';
   const when = plan.start === 'assets' ? `today${startAge !== null ? `, at ${startAge},` : ''}` : startAge !== null ? `at ${startAge}` : 'at your stop age';
+  // Stopped already (a stop age at your age or before, as Your path asks of
+  // someone retired): there is no working to stop, so it runs from now, at
+  // the age it starts at, with the same figures.
+  const stopped = view.stopAge !== null && plan.age !== null && view.stopAge <= plan.age && startAge !== null;
+  const lead = stopped ? `From now, at ${startAge},` : `Stop working ${when}`;
   const spendingNow = view.spending.value;
   const vpw = plan.rule === 'vpw';
+  // The rate as every sentence says it, and as the grid's own row reads.
+  const shownRate = pct(saidRate(rate, plan.withdrawalRate));
 
   // The setup, and what the starting choice means for it.
   let setup: React.ReactNode;
   if (vpw) {
-    setup = `Stop working ${when} with ${money(sim.startBalance)} (${startLabel}), for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. VPW sets each year's spending from the balance and the years left.${detail ? ` ${WITH_EACH_YEARS_TAX}` : ''}`;
+    setup = `${lead} with ${money(sim.startBalance)} (${startLabel}), for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. VPW sets each year's spending from the balance and the years left.${detail ? ` ${WITH_EACH_YEARS_TAX}` : ''}`;
   } else if (detail) {
     const balance = <Masked>{money(sim.startBalance)}</Masked>;
     const startsWithIt = plan.start === 'fi-number' ? <>{startLabel}, {balance}</> : plan.start === 'assets' ? <>your invested assets, {balance}</> : plan.start === 'at-stop' ? <>the {balance} you’d have then</> : <>the {balance} you typed</>;
     setup = (
       <>
-        Stop working {when} with {startsWithIt}, for {sim.years} years{startAge !== null ? `, to age ${startAge + sim.years}` : ''}. Your spending, health coverage and tax come to {plan.rule === 'constant' ? 'about ' : ''}
-        <strong>{pct(saidRate(rate, plan.withdrawalRate))}</strong> of it {plan.rule === 'constant' ? 'a year' : 'in the first year'}.{saidAbove(rate, plan.withdrawalRate) ? ` That’s above the ${pct(plan.withdrawalRate)} your FI number assumes.` : ''} {WITH_EACH_YEARS_TAX}
+        {lead} with {startsWithIt}, for {sim.years} years{startAge !== null ? `, to age ${startAge + sim.years}` : ''}. Your spending, health coverage and tax come to {plan.rule === 'constant' ? 'about ' : ''}
+        <strong>{shownRate}</strong> of it {plan.rule === 'constant' ? 'a year' : 'in the first year'}.{saidAbove(rate, plan.withdrawalRate) ? ` That’s above the ${pct(plan.withdrawalRate)} your FI number assumes.` : ''} {WITH_EACH_YEARS_TAX}
       </>
     );
   } else if (rateFrom === 'spending') {
     setup = (
       <>
-        Stop working {when} with <Masked>{money(sim.startBalance)}</Masked> ({startLabel}), spending what you spend now,{' '}
+        {lead} with <Masked>{money(sim.startBalance)}</Masked> ({startLabel}), spending what you spend now,{' '}
         <Masked>{money(spendingNow ?? 0)}</Masked> a year after tax, for {sim.years} years{startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. That is a{' '}
-        <strong>{pct(saidRate(rate, plan.withdrawalRate))}</strong> withdrawal rate{saidAbove(rate, plan.withdrawalRate) ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}.
+        <strong>{shownRate}</strong> withdrawal rate{saidAbove(rate, plan.withdrawalRate) ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}.
       </>
     );
   } else {
-    setup = `Stop working ${when} with ${money(sim.startBalance)} (${startLabel}), withdrawing ${pct(rate)} of it, ${money(spendingNow ?? 0)} a year after tax, your spending now, for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}.`;
+    setup = `${lead} with ${money(sim.startBalance)} (${startLabel}), withdrawing ${shownRate} of it, ${money(spendingNow ?? 0)} a year after tax, your spending now, for ${sim.years} years${startAge !== null ? ` (to age ${startAge + sim.years})` : ''}.`;
   }
   // Held with the setup: it says what the run being worked out will move by.
   const said = setupHeld ? null : history;
@@ -3763,7 +3770,7 @@ export function GridCard({
         {flexible ? " This rule lasts by cutting spending, so each cell's second line is the lowest year's spending, as a share of the first year's, in the worst one that lasted." : ''}{' '}
         Your plan is outlined.{sampled ? ` ${gridSampleLine(plan.method)}` : ''}
       </p>
-      <PlanGrid cells={cells} failed={failed} rates={rates} horizons={years} current={current} ownCell={ownCell} flexible={flexible} pathsNoun={noun} />
+      <PlanGrid cells={cells} failed={failed} rates={rates} horizons={years} current={current} ownCell={ownCell} setRate={plan.withdrawalRate} flexible={flexible} pathsNoun={noun} />
       {failed.length > 0 && (
         <>
           <p className="empty-note">

@@ -22,10 +22,15 @@
 // own cell shows the answer above the grid once it has one (`ownCell`), and doesn't
 // read 83 under a hero of 81.4. Column heads keep reading the sampled cells, so a
 // head doesn't change as the answers arrive.
+//
+// The plan's own row is labeled as the stress test's sentence says its rate
+// (saidRate, to a tenth, or the rate set): a rate worked out from your
+// spending reads "2.4%" in both, never "2.37%" in the grid. The other rows
+// are the grid's own rates.
 
 import type { CSSProperties } from 'react';
 import type { GridCell } from '@/lib/fire/simulate';
-import { pct, successText } from './plan-text';
+import { pct, saidRate, successText } from './plan-text';
 import { plainNumber } from '@/lib/format';
 
 /** A cell that couldn't be worked out. */
@@ -36,9 +41,11 @@ export type FailedCell = { rate: number | null; years: number };
 const OWN_RATE_MERGE = 0.0005 + 1e-9;
 
 /** The grid's rates with the plan's own among them: in place of the row its
- *  label would repeat (pct, as each row is labeled) or any standard row within
- *  OWN_RATE_MERGE (0.05%, so 2.99% replaces 3% instead of adding a near-duplicate
- *  row), still marked as the plan's own; else added in order. */
+ *  exact value would repeat (pct, as a standard row is labeled) or any
+ *  standard row within OWN_RATE_MERGE (0.05%, so 2.99% replaces 3% instead of
+ *  adding a near-duplicate row), still marked as the plan's own; else added in
+ *  order. Matched on the exact value: the own row's label, said to a tenth
+ *  (saidRate), only rounds to a standard row's within OWN_RATE_MERGE of it. */
 export function withOwnRate(rates: readonly number[], own: number): number[] {
   const label = pct(own);
   const exact = rates.findIndex((v) => pct(v) === label);
@@ -63,6 +70,7 @@ export default function PlanGrid({
   horizons,
   current,
   ownCell = null,
+  setRate = null,
   flexible,
   pathsNoun,
 }: {
@@ -77,6 +85,9 @@ export default function PlanGrid({
   current: { rate: number | null; years: number };
   /** What that cell says, when it isn't one of `cells`: the answer above the grid. */
   ownCell?: GridCell | null;
+  /** The withdrawal rate the plan sets, by which its own row's rate is said as
+   *  the stress test says it (saidRate); null labels it as the others are. */
+  setRate?: number | null;
   /** Show the lowest year's spending under each success rate. */
   flexible: boolean;
   /** "starts" or "runs", for the cell titles. */
@@ -87,7 +98,8 @@ export default function PlanGrid({
   const column = (years: number) => cells?.find((c) => c.years === years) ?? null;
   const sameRate = (a: number | null, b: number | null) => (a === null ? b === null : b !== null && Math.abs(a - b) < 1e-9);
   const didFail = (rate: number | null, years: number) => failed.some((f) => f.years === years && sameRate(f.rate, rate));
-  const rateLabel = (rate: number | null) => (rate === null ? 'VPW' : pct(rate));
+  const isOwnRate = (rate: number | null) => sameRate(rate, current.rate);
+  const rateLabel = (rate: number | null) => (rate === null ? 'VPW' : setRate !== null && isOwnRate(rate) ? pct(saidRate(rate, setRate)) : pct(rate));
   const one = pathsNoun.replace(/s$/, '');
 
   function cell(rate: number | null, years: number) {
