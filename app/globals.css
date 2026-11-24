@@ -3738,6 +3738,11 @@ button.danger-outline {
 .auth-wrap > .why {
   width: 100%;
   max-width: 400px;
+  text-align: center;
+}
+
+.auth-wrap > .why .why-body {
+  text-align: left;
 }
 
 /* An invite link's page (app/connect/[token], components/AcceptInvite.tsx):
@@ -4661,6 +4666,16 @@ button.danger-outline {
   margin: 4px 0 0;
   font-size: var(--fs-3);
   line-height: 1.55;
+}
+
+.info-status dd p,
+.info-table td p {
+  margin: 0;
+}
+
+.info-status dd p + p,
+.info-table td p + p {
+  margin-top: var(--sp-2);
 }
 
 .trust-links {

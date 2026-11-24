@@ -52,14 +52,10 @@ const POLICY: Record<CspMode, string> = {
   off: `Pages can also carry a Content-Security-Policy, under which ${LIMITS}. This copy of Nya has it switched off.`,
 };
 
-/** What programs with an API token can reach. */
-const PROGRAMS =
-  'What the API and the MCP server serve (the Developers page lists it): your accounts and balances, net worth and its history, the last year of transactions, budgets, recurring bills and holdings, and your shared expenses, the one answer that names the people you split costs with, until you revoke the token. Never your sign-in or your bank logins, and no token changes your shared expenses. A token made to read changes nothing. Where whoever runs this copy of Nya lets tokens make changes, one made to update balances sees only your accounts and their balances and changes only a manual account’s balance, and one made to make changes can add, change and delete the transactions entered on your manual accounts, add and change your manual accounts, categories and tags, and undo its own changes (an undo deletes what the change made, and an account it made goes with its transactions and its past balances), but never delete any other account, category or tag, and never change a bank’s transaction itself (though moving or renaming a category changes how every transaction in it is filed and counted). An AI assistant you connect to the MCP server reads the same, and its provider keeps what it reads under its own terms.';
-
 /** Said of those who never see receipts and documents, where they are kept. */
 const NOT_FILES = ' Never your receipts or documents.';
 
-const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean, files: AttachmentsMode): [string, string][] => [
+const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean, files: AttachmentsMode): [string, ReactNode][] => [
   [
     'The operator, who runs this copy of Nya',
     `Everything, in practice. The ${envelope ? 'master key' : 'key'} and the database password are kept in the same hosting environment, so the encryption does not protect against whoever controls it. A managed key service that records every use of the key is planned.`,
@@ -91,14 +87,35 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean, 
     ? ([
         [
           'Resend, the email service',
-          `Your email address and the emails Nya sends you about your bank connections, each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made (saying what it can do), and, if you turn it on, the weekly summary: which bank needs you and what to do, when and in which format your data was downloaded, or, in the summary, whether you spent more or less than in a usual week, and the names of your budgets and categories over or close to their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days with their days, and the banks that need you or whose transactions may be missing. Never a balance, an amount or an account number.`,
+          <>
+            <p>
+              Your email address and the emails Nya sends you about your bank connections, each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made (saying what it can do), and, if you turn it on, the weekly summary: which bank needs you and what to do, when and in which format your data was downloaded, or, in the summary, whether you spent more or less than in a usual week, and the names of your budgets and categories over or close to their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days with their days, and the banks that need you or whose transactions may be missing.
+            </p>
+            <p>Never a balance, an amount or an account number.</p>
+          </>,
         ],
-      ] as [string, string][])
+      ] as [string, ReactNode][])
     : []),
-  ['Programs you give an API token to', `${PROGRAMS}${files.connected ? NOT_FILES : ''}`],
+  [
+    'Programs you give an API token to',
+    <>
+      <p>
+        What the API and the MCP server serve (the Developers page lists it): your accounts and balances, net worth and its history, the last year of transactions, budgets, recurring bills and holdings, and your shared expenses, the one answer that names the people you split costs with, until you revoke the token. Never your sign-in or your bank logins, and no token changes your shared expenses. A token made to read changes nothing.
+      </p>
+      <p>
+        Where whoever runs this copy of Nya lets tokens make changes, one made to update balances sees only your accounts and their balances and changes only a manual account’s balance, and one made to make changes can add, change and delete the transactions entered on your manual accounts, add and change your manual accounts, categories and tags, and undo its own changes (an undo deletes what the change made, and an account it made goes with its transactions and its past balances), but never delete any other account, category or tag, and never change a bank’s transaction itself (though moving or renaming a category changes how every transaction in it is filed and counted).
+      </p>
+      <p>{`An AI assistant you connect to the MCP server reads the same, and its provider keeps what it reads under its own terms.${files.connected ? NOT_FILES : ''}`}</p>
+    </>,
+  ],
   [
     'People you share with',
-    `Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions; and, if you choose them, your net worth, as an amount, with only the accounts in it whose balances you share, and your spending by category, holdings, budgets or goals you pick, each as percentages or amounts, worked out from your data each time it is shown to them, never the transactions behind them; until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. Never the people you split costs with, what anyone owes, or a payment. They can never change anything.${files.connected ? NOT_FILES : ''}`,
+    <>
+      <p>
+        Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions; and, if you choose them, your net worth, as an amount, with only the accounts in it whose balances you share, and your spending by category, holdings, budgets or goals you pick, each as percentages or amounts, worked out from your data each time it is shown to them, never the transactions behind them; until the end date you set, if you set one.
+      </p>
+      <p>{`And your record of each time it was shown to them, the same one you see. Never the people you split costs with, what anyone owes, or a payment. They can never change anything.${files.connected ? NOT_FILES : ''}`}</p>
+    </>,
   ],
   [
     'Your device',
@@ -110,16 +127,21 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean, 
 function Files({ files }: { files: AttachmentsMode }): ReactNode {
   if (!files.connected) return null;
   return (
-    <p>
-      Receipts and documents you attach to transactions are encrypted on Nya’s server before they are stored, each with a
-      key of its own, and kept in a private Vercel Blob store. The store never holds those keys: each is kept only in the
-      database and its backups, locked with your account’s own data key. So the file store, or a copy of it, holds nothing
-      readable on its own. A photo is made smaller and re-encoded in your browser before it is sent, which drops what the
-      camera saved with it, such as where it was taken, and the server refuses a photo that still carries a location; a
-      PDF is kept as you chose it, with what it carries, such as its author. They are shown only through the app itself,
-      to you signed in: no link to a file works without signing in, and none is ever public. Whoever runs this copy of Nya
-      can read them, as they can read the rest of your data.{files.uploads ? '' : ' Adding new ones is off on this copy of Nya.'}
-    </p>
+    <>
+      <p>
+        Receipts and documents you attach to transactions are encrypted on Nya’s server before they are stored, each with a
+        key of its own, and kept in a private Vercel Blob store. The store never holds those keys: each is kept only in the
+        database and its backups, locked with your account’s own data key. So the file store, or a copy of it, holds nothing
+        readable on its own.
+      </p>
+      <p>
+        A photo is made smaller and re-encoded in your browser before it is sent, which drops what the
+        camera saved with it, such as where it was taken, and the server refuses a photo that still carries a location; a
+        PDF is kept as you chose it, with what it carries, such as its author. They are shown only through the app itself,
+        to you signed in: no link to a file works without signing in, and none is ever public. Whoever runs this copy of Nya
+        can read them, as they can read the rest of your data.{files.uploads ? '' : ' Adding new ones is off on this copy of Nya.'}
+      </p>
+    </>
   );
 }
 
@@ -334,7 +356,10 @@ export function SecurityBody({ csp }: { csp: CspMode }) {
             The database also holds the IP address of a device that typed a wrong password, for up to 15 minutes; of a
             device that sent API tokens, or links to turn off a weekly summary, that didn’t work, for up to{' '}
             {API_AUTH_WINDOW_SECONDS / 60} minutes; and on the demo, that of a device that used a demo account, for up to 10
-            minutes. These never go into backups. And for each API token, how many requests it made in the current minute,
+            minutes. These never go into backups.
+          </p>
+          <p>
+            And for each API token, how many requests it made in the current minute,
             deleted when the token is revoked, or {(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with
             any of your tokens;{' '}
             where tokens may make changes, for a token that can update balances or make changes, its writes in the
@@ -469,7 +494,10 @@ export function SecurityBody({ csp }: { csp: CspMode }) {
             tokens make changes and you choose when you make it, change some of it, through Nya’s API and its MCP server
             (see the <a href="/developers">Developers page</a>). Nya shows it once and never stores it: it keeps a SHA-256
             hash of the token’s secret, inside your own data and encrypted with it, and checks a token by comparing hashes
-            in constant time. A token that doesn’t work gets the same answer whatever the reason (unknown, revoked, a wrong
+            in constant time.
+          </p>
+          <p>
+            A token that doesn’t work gets the same answer whatever the reason (unknown, revoked, a wrong
             secret, or another person’s data), and one whose secret doesn’t match costs the same work whoever’s data it
             names, so a token can’t be used to find out whose data exists. Only a token whose secret checks out is told
             more: that its data is being restored, say, and to try again later. Requests with
@@ -483,7 +511,10 @@ export function SecurityBody({ csp }: { csp: CspMode }) {
             be widened, and a token never gains kinds of changes added to Nya after it was made. A token makes at most{' '}
             {REQUESTS_PER_MINUTE} requests a minute; one that can update balances or make changes at most{' '}
             {WRITES_PER_MINUTE} writes a minute and {CHANGES_PER_DAY} changes a day, with{' '}
-            {PERSON_CHANGES_PER_DAY.toLocaleString('en-US')} changes a day for all your tokens. Every change to something
+            {PERSON_CHANGES_PER_DAY.toLocaleString('en-US')} changes a day for all your tokens.
+          </p>
+          <p>
+            Every change to something
             that already exists, but a balance, names the version it was made from, so a program working from an old read
             can’t write over what you just did. Every change is recorded for {CHANGES_KEEP_DAYS} days under API tokens,
             with what it changed, where most can be undone or forgotten. A token works until you revoke it, even after Sign
@@ -571,13 +602,19 @@ export function SecurityBody({ csp }: { csp: CspMode }) {
             balance, an amount, a percentage or an account number. It does name your budgets and categories over or close to
             their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days, and
             the banks that need you or whose transactions may be missing, which the email service and your own email provider
-            can read, as they can any email. A name of yours with a digit, a currency or percent sign, a number or a currency
+            can read, as they can any email.
+          </p>
+          <p>
+            A name of yours with a digit, a currency or percent sign, a number or a currency
             written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese,
             French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept,
             seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead
             of named, as is one that looks like a link or an address (with ://, www., an @, or a word, a dot and two or more
             letters, as in example.com); a bank’s name, which comes from Plaid, SimpleFIN or Lunch Flow, only when it has a digit or a currency or percent
-            sign. Before it goes, the whole email is checked again, and it isn’t sent if, outside its links, its own wording,
+            sign.
+          </p>
+          <p>
+            Before it goes, the whole email is checked again, and it isn’t sent if, outside its links, its own wording,
             the banks’ names and the currency codes it names, it holds a number other than one of its days or counts, a
             currency or percent sign, a number or a currency written as a word, or a letter outside the Latin alphabet.
           </p>

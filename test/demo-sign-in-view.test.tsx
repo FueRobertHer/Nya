@@ -44,10 +44,11 @@ describe('the demo card', () => {
     expect(buttons.map((b) => b[2])).toEqual(['Alex', 'Sam']);
   });
 
-  test('keeps its warning that the accounts are shared, word for word', () => {
+  test('keeps its warning that the accounts are shared, word for word, and notes how to switch scenarios', () => {
     expect(html()).toContain(
       'Sign in as a demo account, with pretend banks from Plaid&#x27;s sandbox. Everyone who tries it shares these\n          accounts, so anything you add is visible to others.'.replace(/\s+/g, ' ')
     );
+    expect(html()).toContain('You can switch among sample scenarios anytime in Settings, Your data and privacy.');
   });
 
   test('a demo that couldn’t sign in says so, as an alert that can take focus (test/demo-sign-in-flow-view.test.tsx)', () => {
