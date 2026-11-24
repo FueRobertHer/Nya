@@ -84,7 +84,7 @@
 // unless the person counts one (lib/fire/child-accounts.ts).
 
 import { type Txn } from '@/components/MonthBreakdown';
-import { categoryKey, currencyOf, inCurrency, isExcluded, isHistoryRow, isTransfer, totalsCurrency, transactionCounter, type LeftOut } from '@/lib/spending';
+import { categoryKey, currencyOf, inCurrency, isExcluded, isHistoryRow, isTransfer, pairedPlaidLoanIds, totalsCurrency, transactionCounter, type LeftOut } from '@/lib/spending';
 import type { PlanFunding } from './plan';
 import { isBankCash, isCashOnHand, isDepositoryHsa, isInvestmentType } from '@/lib/balance';
 import { dominantCurrency } from '@/lib/format';
@@ -151,7 +151,7 @@ const SPENDING_CATEGORIES = new Set([
 ]);
 
 /** How one transaction counts for planning (see the top of this file). */
-export function planFlow(t: Txn): PlanFlow {
+export function planFlow(t: Txn, pairedLoans?: ReadonlySet<string>): PlanFlow {
   // The category words the row carries, never its name (lib/spending.ts
   // categoryKey): renaming a category moves nothing here.
   const category = categoryKey(t);
@@ -161,9 +161,11 @@ export function planFlow(t: Txn): PlanFlow {
   if (sub === CARD_PAYMENT) return t.amount > 0 ? 'card-payment' : 'transfer';
   if (category === 'loan payments') {
     if (t.amount <= 0) return 'transfer'; // the loan's side of a payment
+    if (t.paired === 'card') return 'card-payment';
     // A payment Nya paired from cash into an account the person called a
-    // loan (lib/manual-txns.ts connectorTransfers): a loan's, never a card's.
-    if (t.paired === 'loan') return 'loan';
+    // loan (lib/manual-txns.ts connectorTransfers) or a linked loan account
+    // (lib/spending.ts pairedPlaidLoanIds): a loan's, never a card's.
+    if (t.paired === 'loan' || pairedLoans?.has(t.transaction_id)) return 'loan';
     return LOAN_DETAILS.has(sub) ? 'loan' : 'unclear-loan';
   }
   if (t.amount > 0) {
@@ -314,13 +316,14 @@ export function trailingFlows(
     paid?: { kind: 'category' | 'tag'; name: string } | null;
   } = {}
 ): TrailingFlows | null {
+  const pairedLoans = pairedPlaidLoanIds(txns);
   const end = dayNumber(today);
   const start = end - (TRAILING_DAYS - 1);
   const inWindow = txns.filter((t) => {
     const d = dayNumber(t.date);
     return d >= start && d <= end; // also skips a malformed date
   });
-  const over = inWindow.filter((t) => !isExcluded(t) && !t.group_outside && counts(planFlow(t)));
+  const over = inWindow.filter((t) => !isExcluded(t) && !t.group_outside && counts(planFlow(t, pairedLoans)));
   const into = opts.currency ?? opts.into;
   const counting = totalsIn(inWindow, opts.fx, { into: into ? { currency: into } : 'most', over });
   // Without a home currency totalsIn converts nothing and answers the one
@@ -381,7 +384,7 @@ export function trailingFlows(
     }
     // Counted in a group on a day before what was read (lib/split-rows.ts).
     if (t.group_outside) continue;
-    const flow = planFlow(t);
+    const flow = planFlow(t, pairedLoans);
     if (!inCurrency(t, currency)) {
       if (flow !== 'transfer' && flow !== 'card-payment') {
         const c = currencyOf(t)!;

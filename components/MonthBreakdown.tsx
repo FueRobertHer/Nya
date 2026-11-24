@@ -213,10 +213,10 @@ export function emptyListWords(on: { query: boolean; tag: boolean; account?: boo
 
 // Amounts in their currency (lib/format.ts), never assumed to be dollars.
 
-// Signed and compact (+$8.9K / −$1.2K), for the narrow Net by month bar labels;
-// aria-label carries the full cent-accurate amount.
+// Signed and compact (+$8.9K / −$1.2K / +$609 / $0), for the narrow Net by
+// month bar labels; aria-label carries the full cent-accurate amount.
 function fmtNetSigned(n: number, currency: string | null): string {
-  return signedCompactMoney(n, currency, { always: true });
+  return signedCompactMoney(n, currency, { always: true, wholeUnderThousand: true });
 }
 
 // How wide Net by month's columns are, in px: the widest label drawn at its

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { asciiMinus, compactMoney, formatDay, formatMoney, hiddenMoney, MASK, MINUS, signedMoney, signedPercent, spoken, trueMinus } from '@/lib/format';
+import { asciiMinus, compactMoney, formatDay, formatMoney, hiddenMoney, MASK, MINUS, signedCompactMoney, signedMoney, signedPercent, spoken, trueMinus } from '@/lib/format';
 import { wholeMoney } from '@/components/plan-text';
 
 // Numbers, money and dates as the design system writes them on the screen
@@ -19,6 +19,21 @@ describe('the minus sign', () => {
     expect(compactMoney(-1234, 'USD')).toBe('−$1.2K');
     expect(wholeMoney(-1240.6, 'USD')).toBe('−$1,241');
     for (const s of [formatMoney(-1, 'EUR'), signedMoney(-1, 'GBP'), compactMoney(-5_000_000), wholeMoney(-3, null)]) expect(s).not.toContain('-');
+  });
+
+  test('signedCompactMoney with wholeUnderThousand rounds sub-1000 nets to whole units without trailing .0 or + on zero', () => {
+    const opts = { always: true, wholeUnderThousand: true } as const;
+    expect(signedCompactMoney(608.69, 'USD', opts)).toBe('+$609');
+    expect(signedCompactMoney(-608.69, 'USD', opts)).toBe('−$609');
+    expect(signedCompactMoney(609, 'USD', opts)).toBe('+$609');
+    expect(signedCompactMoney(999.6, 'USD', opts)).toBe('+$1K');
+    expect(signedCompactMoney(1234, 'USD', opts)).toBe('+$1.2K');
+    expect(signedCompactMoney(-0.3, 'USD', opts)).toBe('$0');
+    expect(signedCompactMoney(0.2, 'USD', opts)).toBe('$0');
+    expect(signedCompactMoney(0, 'USD', opts)).toBe('$0');
+    expect(signedCompactMoney(608.69, 'JPY', opts)).toBe('+¥609');
+    expect(signedCompactMoney(608.69, 'KWD', opts)).not.toMatch(/\.0\b/);
+    expect(signedCompactMoney(608.69, 'KWD', opts)).toContain('609');
   });
 
   test('a share is signed the same way, with none once it rounds to nothing', () => {

@@ -1524,21 +1524,44 @@ export function AllocationHistoryChart({
   const plotW = W - PAD_LEFT - PAD_RIGHT;
   const plotH = H - PAD_TOP - PAD_BOTTOM;
   const slot = plotW / span;
-  // Adaptive column width: readable stacked bars for sparse monthly snapshots
-  // (4px to 20px), bounded by the tightest gap between consecutive recorded
-  // days so dense daily records still touch cleanly as an area without overlap.
-  let minGap = Infinity;
-  for (let k = 1; k < days.length; k++) {
-    const gap = (dayNum(days[k].date) - dayNum(days[k - 1].date)) * slot;
-    if (gap < minGap) minGap = gap;
-  }
-  const target = Math.max(4, Math.min(20, Math.floor(plotW / Math.max(days.length * 2, 1))));
-  const width = Number.isFinite(minGap) ? (minGap >= 4 ? Math.min(target, Math.max(2, minGap - 2)) : Math.max(slot, minGap)) : target;
-  const maxX = PAD_LEFT + Math.max(0, plotW - width);
-  const xs = days.map((d) => {
-    const ideal = PAD_LEFT + (dayNum(d.date) - first) * slot + (slot - width) / 2;
-    return Math.max(PAD_LEFT, Math.min(maxX, ideal));
+  // Per-bar adaptive widths: sparse monthly snapshots stay readable (up to 20px,
+  // sized to their local neighbor gap) even when dense trailing daily snapshots
+  // exist, with post-clamp non-overlap enforcement across all bars.
+  const cxs = days.map((d) => PAD_LEFT + (dayNum(d.date) - first) * slot + slot / 2);
+  const ws = days.map((_, k) => {
+    if (days.length === 1) return Math.min(20, Math.max(4, plotW));
+    const leftGap = k > 0 ? cxs[k] - cxs[k - 1] : Infinity;
+    const rightGap = k < days.length - 1 ? cxs[k + 1] - cxs[k] : Infinity;
+    const localGap = Math.min(leftGap, rightGap);
+    if (localGap >= 6) {
+      return Math.min(20, Math.max(4, Math.min(Math.floor(localGap * 0.55), localGap - 2)));
+    }
+    return Math.max(slot, localGap);
   });
+  const xs = days.map((_, k) => {
+    const maxX = PAD_LEFT + Math.max(0, plotW - ws[k]);
+    return Math.max(PAD_LEFT, Math.min(maxX, cxs[k] - ws[k] / 2));
+  });
+  // Enforce non-overlap after edge clamping bar 0 and bar n - 1.
+  if (days.length > 1) {
+    const firstPad = cxs[1] - cxs[0] >= 6 ? 2 : 0;
+    if (xs[0] + ws[0] > xs[1] - firstPad) {
+      ws[0] = Math.max(0.6, xs[1] - xs[0] - firstPad);
+    }
+    const last = days.length - 1;
+    const lastPad = cxs[last] - cxs[last - 1] >= 6 ? 2 : 0;
+    const minLastX = xs[last - 1] + ws[last - 1] + lastPad;
+    if (xs[last] < minLastX) {
+      const rightEdge = PAD_LEFT + plotW;
+      ws[last] = Math.max(0.6, rightEdge - minLastX);
+      xs[last] = rightEdge - ws[last];
+    }
+    for (let k = 0; k < last; k++) {
+      if (xs[k] + ws[k] > xs[k + 1]) {
+        ws[k] = Math.max(0.6, xs[k + 1] - xs[k]);
+      }
+    }
+  }
   const i = active ?? days.length - 1;
   const day = days[i];
   const negative = days.some((d) => Object.values(d.classes).some((v) => (v ?? 0) < 0 && isMoney(v ?? 0)));
@@ -1549,7 +1572,7 @@ export function AllocationHistoryChart({
     const rect = e.currentTarget.getBoundingClientRect();
     const px = ((e.clientX - rect.left) / rect.width) * W;
     let best = 0;
-    for (let k = 1; k < xs.length; k++) if (Math.abs(xs[k] + width / 2 - px) < Math.abs(xs[best] + width / 2 - px)) best = k;
+    for (let k = 1; k < xs.length; k++) if (Math.abs(xs[k] + ws[k] / 2 - px) < Math.abs(xs[best] + ws[best] / 2 - px)) best = k;
     setActive(best);
   }
 
@@ -1597,13 +1620,13 @@ export function AllocationHistoryChart({
                 // A 2px surface gap between segments, where one is tall
                 // enough to keep a mark after it.
                 const gap = h > 4 ? 2 : 0;
-                return <rect key={s} x={xs[k]} y={y + gap / 2} width={Math.max(width, 0.6)} height={Math.max(h - gap, 0.5)} fill={CLASS_COLORS[s]} />;
+                return <rect key={s} x={xs[k]} y={y + gap / 2} width={Math.max(ws[k], 0.6)} height={Math.max(h - gap, 0.5)} fill={CLASS_COLORS[s]} />;
               })}
-              {faint && <circle cx={xs[k] + width / 2} cy={PAD_TOP + plotH + 6} r={2.5} fill="var(--warn)" />}
+              {faint && <circle cx={xs[k] + ws[k] / 2} cy={PAD_TOP + plotH + 6} r={2.5} fill="var(--warn)" />}
             </g>
           );
         })}
-        {active !== null && <rect x={xs[i] - 1} y={PAD_TOP - 2} width={width + 2} height={plotH + 4} fill="none" stroke="var(--text-3)" strokeWidth={1} />}
+        {active !== null && <rect x={xs[i] - 1} y={PAD_TOP - 2} width={ws[i] + 2} height={plotH + 4} fill="none" stroke="var(--text-3)" strokeWidth={1} />}
         <text className="chart-xlabel" x={PAD_LEFT} y={H - 4} textAnchor="start">
           {axisDay(days[0].date)}
         </text>

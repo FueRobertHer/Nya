@@ -639,6 +639,44 @@ describe('the mix over time', () => {
     for (const w of widths) expect(w).toBeGreaterThanOrEqual(8);
   });
 
+  test('mixed sparse monthly snapshots plus trailing consecutive daily snapshots keep monthly bars wide with zero overlap', () => {
+    const parseColumns = (dates: string[]) => {
+      const html = renderToStaticMarkup(
+        <AllocationHistoryChart days={dates.map((m) => day(m, { 'us-stocks': 100_000 }))} currency="USD" answer={{ accounts: [] }} nameOf={(id) => id} />
+      );
+      return [...html.matchAll(/<rect[^>]*x="([^"]+)"[^>]*width="([^"]+)"/g)].map((m) => ({ x: Number(m[1]), w: Number(m[2]) }));
+    };
+
+    // Single day and two adjacent days draw cleanly without overlap.
+    const one = parseColumns(['2026-10-01']);
+    expect(one).toHaveLength(1);
+    expect(one[0].w).toBeGreaterThanOrEqual(8);
+    const two = parseColumns(['2026-10-01', '2026-10-02']);
+    expect(two).toHaveLength(2);
+    expect(two[0].x + two[0].w).toBeLessThanOrEqual(two[1].x + 1e-6);
+
+    // 11 monthly snapshots followed by 3 consecutive trailing daily snapshots (demo seed pattern).
+    const mixed = [
+      '2025-11-01', '2025-12-01', '2026-01-01', '2026-02-01', '2026-03-01', '2026-04-01',
+      '2026-05-01', '2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01',
+      '2026-10-22', '2026-10-23', '2026-10-24',
+    ];
+    const cols = parseColumns(mixed);
+    expect(cols).toHaveLength(mixed.length);
+    for (let k = 0; k < 11; k++) expect(cols[k].w).toBeGreaterThanOrEqual(8);
+    for (let k = 0; k < cols.length - 1; k++) {
+      expect(cols[k].x + cols[k].w).toBeLessThanOrEqual(cols[k + 1].x + 1e-6);
+    }
+
+    // 3-to-5-day gap at the right edge must not overlap after clamping the last bar.
+    const edgeGap = ['2025-11-01', '2026-03-01', '2026-07-01', '2026-10-20', '2026-10-24'];
+    const edgeCols = parseColumns(edgeGap);
+    expect(edgeCols).toHaveLength(edgeGap.length);
+    for (let k = 0; k < edgeCols.length - 1; k++) {
+      expect(edgeCols[k].x + edgeCols[k].w).toBeLessThanOrEqual(edgeCols[k + 1].x + 1e-6);
+    }
+  });
+
   test('asks for the accounts the allocation above shows, with each one’s currency and whether it is kept by hand', () => {
     expect(seriesAccountsOf(institutions)).toEqual([
       { account_id: 'brk', currency: 'USD', manual: false, shown: true },
