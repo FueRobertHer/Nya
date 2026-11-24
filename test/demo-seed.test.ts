@@ -137,7 +137,9 @@ const { demoTarget } = await import('@/lib/demo-seed/guard');
 const { SCENARIOS, scenarioById, DEFAULT_SCENARIO } = await import('@/lib/demo-seed/scenarios');
 const { resetDemoAccount, resetState, ResetLimited, SEED_VERSION } = await import('@/lib/demo-seed/reset');
 const { seedRecordStore } = await import('@/lib/demo-seed/store');
-const { createInvite, acceptInvite, myConnections } = await import('@/lib/sharing');
+const { createInvite, acceptInvite, myConnections, shareableAccounts, sharedWithMe } = await import('@/lib/sharing');
+const { shareableGoals } = await import('@/lib/share-views');
+const { HOUSEHOLD_LEVEL, householdViews, restoreHousehold } = await import('@/lib/demo-seed/household');
 const { keptWhenEmptied, classOfKey } = await import('@/lib/user-restore/classes');
 const { checkProfile, categoryKeys, plansOf } = await import('@/lib/demo-seed/fill');
 const { planFigures } = await import('@/lib/fire/plan-figures');
@@ -641,6 +643,34 @@ describe('seeding', () => {
     expect(ids).toHaveLength(1 + demoProfile('Alex', TODAY).extras!.plan!.copies!.length);
     expect((await planFactsStore.get(TEST_CTX))!.main).toBe(MAIN_ID);
     expect((await readPlanAnswer(TEST_CTX)).plan).toMatchObject({ age: 31, targetAge: 45 });
+  });
+
+  test('run again and again, it stores no more than once: what the last one held is deleted, not kept beside', async () => {
+    const profile = demoProfile('Alex', TODAY);
+    const prefix = `test:c:${TEST_CTX.container}:`;
+    // Every key in the container, and every field of its hashes, with how
+    // many characters each holds: what the account takes up in the database.
+    const footprint = () => {
+      const keys = [...fake.strings.keys(), ...fake.hashes.keys()].filter((k) => k.startsWith(prefix));
+      const fields = [...fake.hashes].filter(([k]) => k.startsWith(prefix)).reduce((n, [, h]) => n + h.size, 0);
+      const chars = [...fake.strings].filter(([k]) => k.startsWith(prefix)).reduce((n, [, v]) => n + v.length, 0)
+        + [...fake.hashes].filter(([k]) => k.startsWith(prefix)).reduce((n, [, h]) => n + [...h.values()].reduce((m, v) => m + v.length, 0), 0);
+      return { keys: keys.length, fields, chars };
+    };
+    const runs = [];
+    for (let i = 0; i < 4; i++) {
+      await seedDemoAccount(TEST_CTX, 'user_alex', profile, TODAY, quick);
+      runs.push(footprint());
+    }
+    for (const run of runs) {
+      expect(run.keys).toBe(runs[0].keys);
+      expect(run.fields).toBe(runs[0].fields);
+    }
+    // The same data under new ids: the fake sandbox numbers its Items 1 to 6,
+    // then 7 to 12 and so on, so the first runs' ids grow a digit. Once they
+    // have as many digits, a run takes what the one before did, to within a
+    // few characters (times), never a second copy.
+    expect(Math.abs(runs[3].chars - runs[2].chars)).toBeLessThan(runs[0].keys * 16);
   });
 
   test('run again, it resets to the same account rather than adding to it', async () => {
@@ -1221,6 +1251,68 @@ describe('resetting a demo account', () => {
     await resetDemoAccount(t, scenarioById('single-renter')!, TODAY, quick);
     expect((await myConnections('user_alex')).connections).toHaveLength(0);
     expect((await myConnections('user_owner')).connections).toHaveLength(0);
+  });
+
+  test('says why when the other demo account hasn’t signed in, and leaves the reset whole', async () => {
+    const t = await alexTarget();
+    const report = await resetDemoAccount(t, scenarioById('single-renter')!, TODAY, quick);
+    expect(report.skipped).toContain('the share with Sam, who hasn’t signed in here yet');
+    expect((await myConnections('user_alex')).connections).toHaveLength(0);
+    expect((await seedRecordStore.get(t.ctx))?.finished_at).not.toBeNull();
+  });
+
+  test('restores the household: Alex and Sam connected, each sharing every account and the rest', async () => {
+    const t = await alexTarget();
+    await ownerContainer('user_sam');
+    const sam = (await demoTarget('user_sam'))!;
+    // Someone else Alex was connected to: ended, as before.
+    const { token } = await createInvite('user_alex', {});
+    await acceptInvite('user_owner', token, 'Alex');
+    const report = await resetDemoAccount(t, scenarioById('single-renter')!, TODAY, quick);
+    expect(report.skipped.filter((s) => s.includes('share with'))).toEqual([]);
+    expect((await myConnections('user_owner')).connections).toHaveLength(0);
+
+    const alexSide = (await myConnections('user_alex')).connections;
+    expect(alexSide.map((c) => c.label)).toEqual(['Sam']);
+    const alexAccounts = await shareableAccounts(t.ctx);
+    expect(alexAccounts.length).toBeGreaterThan(0);
+    expect(alexSide[0].sharing).toEqual(Object.fromEntries(alexAccounts.map((a) => [a.id, HOUSEHOLD_LEVEL])));
+    expect(alexSide[0].views).toEqual(householdViews((await shareableGoals(t.ctx)).map((g) => g.id)));
+    expect(alexSide[0].expires_at).toBeNull();
+    // Hidden accounts stay unshared.
+    const hidden = [...(await getHiddenAccounts(t.ctx)).keys()];
+    expect(hidden.length).toBeGreaterThan(0);
+    for (const id of hidden) expect(alexSide[0].sharing[id]).toBeUndefined();
+
+    const samSide = (await myConnections('user_sam')).connections;
+    expect(samSide.map((c) => [c.id, c.label])).toEqual([[alexSide[0].id, 'Alex']]);
+    expect(samSide[0].views).toEqual(householdViews((await shareableGoals(sam.ctx)).map((g) => g.id)));
+    // What Sam is shown of Alex: every account Alex shares, with its transactions.
+    const seen = await sharedWithMe('user_sam');
+    expect(seen.map((s) => s.label)).toEqual(['Alex']);
+    expect(seen[0].accounts.map((a) => a.id).sort()).toEqual(alexAccounts.map((a) => a.id).sort());
+    expect(new Set(seen[0].accounts.map((a) => a.level))).toEqual(new Set([HOUSEHOLD_LEVEL]));
+  });
+
+  test('either order ends with one connection, each side sharing its own accounts as they are now', async () => {
+    await ownerContainer('user_owner');
+    await ownerContainer('user_alex');
+    await ownerContainer('user_sam');
+    const alex = (await demoTarget('user_alex'))!;
+    const sam = (await demoTarget('user_sam'))!;
+    await resetDemoAccount(sam, scenarioById('household')!, TODAY, quick);
+    const samAccounts = (await shareableAccounts(sam.ctx)).map((a) => a.id).sort();
+    // Alex's reset ends the connection Sam's made, then makes it again with Alex's new accounts.
+    await resetDemoAccount(alex, scenarioById('single-renter')!, TODAY, quick);
+    const alexSide = (await myConnections('user_alex')).connections;
+    const samSide = (await myConnections('user_sam')).connections;
+    expect(alexSide).toHaveLength(1);
+    expect(samSide.map((c) => c.id)).toEqual([alexSide[0].id]);
+    expect(Object.keys(alexSide[0].sharing).sort()).toEqual((await shareableAccounts(alex.ctx)).map((a) => a.id).sort());
+    expect(Object.keys(samSide[0].sharing).sort()).toEqual(samAccounts);
+    // Already connected (the other's reset got there first): kept, shares saved again.
+    expect(await restoreHousehold(sam)).toBeNull();
+    expect((await myConnections('user_sam')).connections.map((c) => c.id)).toEqual([alexSide[0].id]);
   });
 
   test('takes the last visitor’s files with the rest', async () => {

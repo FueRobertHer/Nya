@@ -21,11 +21,15 @@
 //
 // SHARING ENDS. The account's connections to other people go before the
 // reset, so nobody it shared with goes on seeing whatever the next scenario
-// is (lib/sharing.ts dropConnectionsOf, as deleting an account does).
+// is (lib/sharing.ts dropConnectionsOf, as deleting an account does). The
+// one between Alex and Sam, the demo's household, comes back once the
+// scenario is in (lib/demo-seed/household.ts), before the reset is recorded
+// as finished; when it can't, the report says why.
 
 import { dropConnectionsOf } from '../sharing';
 import type { Ctx } from '../containers';
 import { checkEmptiable, seedDemoAccount, type SeedOptions, type SeedReport } from './seed';
+import { restoreHousehold } from './household';
 import { SeedRefused } from './guard';
 import type { Scenario } from './scenarios';
 import { minutesText } from './words';
@@ -82,6 +86,13 @@ export async function resetDemoAccount(
   await seedRecordStore.set(ctx, { version: SEED_VERSION, scenario: scenario.id, started_at: new Date().toISOString(), finished_at: null });
   await dropConnectionsOf(userId);
   const report = await seedDemoAccount(ctx, userId, scenario.build(today), today, opts);
+  // Best effort: a share that can't be saved just now doesn't leave the
+  // scenario recorded as partly reset.
+  const household = await restoreHousehold(target).catch((err: unknown) => {
+    console.error('Demo household share not restored', err instanceof Error ? err.name : typeof err);
+    return 'the share with the other demo account, which couldn’t be saved just now';
+  });
+  if (household) report.skipped.push(household);
   await seedRecordStore.update(ctx, (cur) => (cur ? { ...cur, finished_at: new Date().toISOString() } : cur));
   return report;
 }
