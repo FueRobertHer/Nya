@@ -141,7 +141,10 @@ const { createInvite, acceptInvite, myConnections, shareableAccounts, sharedWith
 const { shareableGoals } = await import('@/lib/share-views');
 const { HOUSEHOLD_LEVEL, householdViews, restoreHousehold } = await import('@/lib/demo-seed/household');
 const { keptWhenEmptied, classOfKey } = await import('@/lib/user-restore/classes');
-const { checkProfile, categoryKeys, plansOf } = await import('@/lib/demo-seed/fill');
+const { checkProfile, categoryKeys, plansOf, payoffInputsOf } = await import('@/lib/demo-seed/fill');
+const { debtPayoffStore } = await import('@/lib/debt-payoff-store');
+const { debtAccounts, debtPayoffSummary, planRows } = await import('@/lib/payoff');
+const { computeNetWorth } = await import('@/lib/networth');
 const { planFigures } = await import('@/lib/fire/plan-figures');
 const { planPath } = await import('@/lib/fire/path');
 const { RECORDED_DAYS, holdingsDays, recordedYear, yearlySavings } = await import('@/lib/demo-seed/recorded');
@@ -305,12 +308,25 @@ describe('the profiles', () => {
     }
   });
 
-  test('a card is paid in full each month from checking, the same amount on both sides', () => {
-    for (const name of NAMES) {
-      const accounts = demoProfile(name, TODAY).institutions.flatMap((i) => i.accounts);
+  test('a card is paid in full each month from checking, the same amount on both sides, in every scenario', () => {
+    for (const profile of everyProfile()) {
+      const accounts = profile.institutions.flatMap((i) => i.accounts);
       const paid = accounts.filter((a) => a.type === 'depository').flatMap((a) => a.transactions).filter((t) => t.description === 'TARTAN BANK CARD PAYMENT');
       const received = accounts.filter((a) => a.type === 'credit').flatMap((a) => a.transactions).filter((t) => t.description === 'AUTOPAY PAYMENT THANK YOU');
+      if (accounts.some((a) => a.type === 'credit' && a.balance > 0)) expect(received.length).toBeGreaterThan(0);
       expect(received.map((t) => [t.date, -t.amount])).toEqual(paid.map((t) => [t.date, t.amount]));
+    }
+  });
+
+  test('every loan has its statement’s terms and every card that owes is left out, so no payoff plan waits on terms', () => {
+    for (const profile of everyProfile()) {
+      const accounts = profile.institutions.flatMap((i) => i.accounts);
+      for (const a of accounts.filter((a) => a.type === 'loan')) expect({ mask: a.mask, terms: a.terms !== undefined }).toEqual({ mask: a.mask, terms: true });
+      for (const a of accounts.filter((a) => a.type !== 'loan')) expect(a.terms).toBeUndefined();
+      const inputs = payoffInputsOf(profile, (mask) => mask) as { leftOut: Record<string, boolean>; typed: Record<string, unknown> } | null;
+      const cards = accounts.filter((a) => a.type === 'credit' && a.balance > 0).map((a) => a.mask).sort();
+      expect(Object.keys(inputs?.leftOut ?? {}).sort()).toEqual(cards);
+      expect(Object.keys(inputs?.typed ?? {}).sort()).toEqual(accounts.filter((a) => a.type === 'loan').map((a) => a.mask).sort());
     }
   });
 
@@ -877,6 +893,21 @@ describe('what a seed sets up', () => {
     expect(savedPlan.day.slice(0, 7)).toBe(`${historyMonths(TODAY)[8].year}-${String(historyMonths(TODAY)[8].month).padStart(2, '0')}`);
     expect(savedPlan.savings).toBeGreaterThan(50_000);
     expect('error' in parseSavedDraft({ plan: savedPlan.plan, savings: savedPlan.savings, currency: savedPlan.currency, inflation: savedPlan.inflation })).toBe(false);
+  });
+
+  test('the payoff plan as someone who pays cards in full sets it: the card left out, the loans’ terms typed, so it reaches an end', async () => {
+    const profile = demoProfile('Sam', TODAY);
+    await seedDemoAccount(TEST_CTX, 'user_sam', profile, TODAY, quick);
+    const saved = (await debtPayoffStore.get(TEST_CTX))!;
+    expect(saved.leftOut).toEqual({ [idOf('4410')]: true });
+    expect(saved.typed).toEqual({ [idOf('8871')]: { apr: '3.125', minimum: '1958.80' }, [idOf('2290')]: { apr: '2.99', minimum: '465.00' } });
+
+    const { institutions } = await computeNetWorth(TEST_CTX);
+    const { rows, waiting } = planRows(debtAccounts(institutions), saved);
+    expect(Object.fromEntries(rows.map((r) => [r.account.mask, r.status]))).toEqual({ '4410': 'left-out', '4402': 'nothing-owed', '8871': 'ready', '2290': 'ready' });
+    expect(waiting).toBe(0);
+    const summary = debtPayoffSummary(institutions, { startMonth: TODAY.slice(0, 7), choices: saved, strategy: saved.strategy });
+    expect(summary?.payoffMonth).not.toBeNull();
   });
 
   test('Sam: a split, a group, a group budget, report marks, a runway scenario and a closed card', async () => {

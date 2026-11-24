@@ -16,7 +16,8 @@
 // - fillPlan: your plan, its tax, its copies and the tax facts.
 // - fillAccounts, after one healthy load has remembered every account (the
 //   writes look an account up among those): deposits and withdrawals, hidden
-//   and ended accounts, timeline notes.
+//   and ended accounts, timeline notes, and the payoff plan's choices (each
+//   card the profile pays in full left out, each loan's terms typed in).
 // - fillTransactions, once the history is in: each row a profile names,
 //   found among the stored transactions, then tagged, noted, excluded,
 //   recategorized, split, grouped or shared.
@@ -79,6 +80,8 @@ import { parseSavedDraft } from '../fire/saved-plan';
 import { createCopy, optIn, saveMain, saveTaxFacts } from '../plan-writes';
 import type { RowRef, SeedExtras, SeedRule } from './extras';
 import { checkPastMonths } from './past-months';
+import { debtPayoffStore, parseStoredPayoffInputs } from '../debt-payoff-store';
+import { parseApr, parseCents } from '../payoff';
 import { checkTransactionImports } from './imports';
 import { historyMonths, type DemoProfile, type SeedAccount, type SeedInstitution, type SeedManual } from './profiles';
 
@@ -361,6 +364,38 @@ export function checkProfile(profile: DemoProfile, today: string): void {
     routeCheck('Your plan’s household', () => parseHousehold(detail.household.to));
   }
   for (const op of taxFactOps(profile, (mask) => `seed-${mask}`)) routeCheck(`The tax fact ${op.kind}`, () => parseTaxFactOp(op));
+  for (const a of accounts.values()) {
+    if (!a.terms) continue;
+    if (a.type !== 'loan') throw new Error(`Only a loan has terms to type: ${a.mask} is a ${a.type} account`);
+    const apr = parseApr(String(a.terms.apr));
+    const payment = parseCents(String(a.terms.payment));
+    if (apr === null || apr === 'invalid' || payment === null || payment === 'invalid' || payment <= 0) throw new Error(`The terms on ${a.mask} are refused: a rate from 0 to the plan's limit and a payment above 0`);
+  }
+  const payoff = payoffInputsOf(profile, (mask) => `seed-${mask}`);
+  if (payoff) routeCheck('The payoff plan', () => parseStoredPayoffInputs(payoff));
+}
+
+/**
+ * The payoff plan's choices as a person who pays their cards in full, and has
+ * their loans' statements, would make them in its sheet (components/
+ * DebtPayoff.tsx): each card that owes something left out, since every card a
+ * profile has is paid in full each month (Plaid's sandbox gives no payment or
+ * statement dates, so the plan can't see that on its own, lib/payoff.ts
+ * paidInFull), and each loan's rate and payment typed from its statement
+ * (SeedAccount.terms). Null when there is nothing to choose. The same shape
+ * the payoff route takes (app/api/debt-payoff).
+ */
+export function payoffInputsOf(profile: DemoProfile, idOf: (mask: string) => string): Record<string, unknown> | null {
+  const leftOut: Record<string, boolean> = {};
+  const typed: Record<string, { apr: string; minimum: string }> = {};
+  for (const inst of profile.institutions) {
+    for (const a of inst.accounts) {
+      if (a.type === 'credit' && a.balance > 0) leftOut[idOf(a.mask)] = true;
+      if (a.terms) typed[idOf(a.mask)] = { apr: String(a.terms.apr), minimum: a.terms.payment.toFixed(2) };
+    }
+  }
+  if (Object.keys(leftOut).length === 0 && Object.keys(typed).length === 0) return null;
+  return { strategy: 'avalanche', currency: null, extra: {}, leftOut, withoutAccrued: {}, sharedSplit: {}, typed };
 }
 
 // ---------------------------------------------------------------- settings
@@ -504,6 +539,12 @@ export async function fillAccounts(run: SeedRun): Promise<void> {
     );
   }
   for (const n of x.notes ?? []) await addUserNote(ctx, { date: n.date, text: n.text, ...(n.mask ? { account_id: id(n.mask) } : {}) });
+  const payoff = payoffInputsOf(profile, id);
+  if (payoff) {
+    const parsed = parseStoredPayoffInputs(payoff);
+    if ('error' in parsed) throw new Error(`The payoff plan is refused: ${parsed.error}`);
+    await debtPayoffStore.set(ctx, parsed.plan);
+  }
 }
 
 // ---------------------------------------------------------------- transactions
