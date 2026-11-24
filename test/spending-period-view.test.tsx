@@ -210,14 +210,32 @@ describe('Spending’s period', () => {
     // Compact signed labels (+$1.2K, −$450) fit inside their column width.
     expect(usd.labels.length).toBeGreaterThan(0);
     for (const s of usd.labels) {
-      expect(s).toMatch(/^[+\u2212]\$\d+(?:\.\d+)?[KMB]?$/);
+      expect(s).toMatch(/^(?:[+\u2212])?\$\d+(?:\.\d+)?[KMB]?$/);
       expect(parseInt(usd.px, 10)).toBeGreaterThanOrEqual(textWidth(s, 12));
     }
+    // Sub-$1,000 fractional nets round to whole currency units, and a tiny
+    // negative net rounding to zero omits the leading +.
+    const fractional = column([
+      row(`${back(0)}-02`, 'Pay', -608.69, 'income'),
+      row(`${back(1)}-02`, 'Pay', -100, 'income'),
+      row(`${back(1)}-03`, 'Shop', 100.3, 'food and drink'),
+    ]);
+    expect(fractional.labels).toContain('+$609');
+    expect(fractional.labels).toContain('$0');
+    expect(fractional.labels).not.toContain('+$608.7');
+    expect(fractional.labels).not.toContain('+$0');
     // While amounts are hidden every label is the same mask, so the
     // columns say nothing of a figure's size.
     setAmountsHidden(true);
     try {
       expect(column(ROWS.map((t) => ({ ...t, amount: t.amount * 100 }))).px).toBe(column(ROWS).px);
+      const hiddenZero = column([
+        row(`${back(0)}-02`, 'Pay', -608.69, 'income'),
+        row(`${back(1)}-02`, 'Pay', -100, 'income'),
+        row(`${back(1)}-03`, 'Shop', 100.3, 'food and drink'),
+      ]);
+      expect(hiddenZero.px).toBe(column(ROWS).px);
+      expect(hiddenZero.labels).toEqual(['−$••••hidden', '+$••••hidden']);
     } finally {
       setAmountsHidden(false);
     }

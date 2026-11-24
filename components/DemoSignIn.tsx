@@ -59,7 +59,8 @@ export default function DemoSignIn({ demos, unavailable }: { demos: DemoUser[]; 
       <div className="stack">
         <p className="helper">
           Sign in as a demo account, with pretend banks from Plaid&apos;s sandbox. Everyone who tries it shares these
-          accounts, so anything you add is visible to others.
+          accounts, so anything you add is visible to others. You can switch among sample scenarios anytime in Settings,
+          Your data and privacy.
         </p>
         {/* Side by side, each half the row: a name is all a button says. */}
         <div className="btn-row demo-accounts">

@@ -14,9 +14,13 @@ describe('AccountLinksView', () => {
     expect(view({ suggestions: [], unclaimed: [], links: [] })).toBe('');
   });
 
-  test('renders the empty fallback once loaded with nothing to show, never while loading', () => {
+  test('shows a skeleton while loading when an empty fallback is provided, then renders the fallback once loaded', () => {
     const fallback = <div className="card"><p>All your bank connections are on the Accounts tab.</p></div>;
-    expect(renderToStaticMarkup(<AccountLinksView data={null} busy={false} error="" preview={null} picked={{}} onPreview={noop} onPick={noop} onAct={noop} empty={fallback} />)).toBe('');
+    const loadingHtml = renderToStaticMarkup(<AccountLinksView data={null} busy={false} error="" preview={null} picked={{}} onPreview={noop} onPick={noop} onAct={noop} empty={fallback} />);
+    expect(loadingHtml).toContain('Loading connections');
+    expect(loadingHtml).not.toContain('All your bank connections are on the Accounts tab.');
+    const failedHtml = renderToStaticMarkup(<AccountLinksView data={null} loading={false} busy={false} error="" preview={null} picked={{}} onPreview={noop} onPick={noop} onAct={noop} empty={fallback} />);
+    expect(failedHtml).toContain('All your bank connections are on the Accounts tab.');
     const html = renderToStaticMarkup(<AccountLinksView data={{ suggestions: [], unclaimed: [], links: [] }} busy={false} error="" preview={null} picked={{}} onPreview={noop} onPick={noop} onAct={noop} empty={fallback} />);
     expect(html).toContain('All your bank connections are on the Accounts tab.');
   });

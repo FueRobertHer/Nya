@@ -248,8 +248,15 @@ describe('the Budgets tab and Settings cards before their code is in', () => {
     expect(html).toContain('class="card stack"');
   });
 
-  test('a card that often draws nothing draws nothing until its code is in', () => {
+  test('a card that often draws nothing draws nothing until its code is in, unless an empty fallback is given', () => {
     expect(renderToStaticMarkup(<RestoreCard clerk={false} />)).toBe('');
+    type Cards = typeof import('@/components/settings-cards');
+    const c = controlled<Cards>();
+    const Links = settingsCard('AccountLinks', { quiet: true }, c.part);
+    expect(renderToStaticMarkup(<Links onChanged={noop} />)).toBe('');
+    const withFallback = renderToStaticMarkup(<Links onChanged={noop} empty={<div className="card">fallback</div>} />);
+    expect(withFallback).toContain('role="status"');
+    expect(withFallback).toContain('Loading');
   });
 
   test("when the code can't be loaded, a quiet card says so, and one most people never see stays away", async () => {

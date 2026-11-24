@@ -323,14 +323,35 @@ describe('the plan’s mix, with a child’s accounts out (D7)', () => {
     expect(stateWith(null).mix.whole).toBe(100_000);
   });
 
-  test('on: the mix is of what the plan counts, and Portfolio’s own view still shows them all', () => {
+  test('on: the mix is of what the plan counts, names excluded visible accounts, and Portfolio’s own view still shows them all', () => {
     const { mix, alloc: all } = stateWith(leftOutOf([]));
     expect(mix.whole).toBe(75_000);
+    expect(mix.leftOutAccounts).toEqual(['College']);
     expect(all.total).toBe(100_000);
+    const t = text(renderToStaticMarkup(<MixSection mix={mix} plan={plan()} ready currency="USD" onUse={noop} />));
+    expect(t).toContain('All $75,000 counted in your plan (leaving out College) is classified as stocks, bonds or cash');
   });
 
-  test('on, with one counted anyway: back in the mix', () => {
-    expect(stateWith(leftOutOf(['college'])).mix.whole).toBe(100_000);
+  test('on, with one counted anyway: back in the mix without leftOutAccounts', () => {
+    const { mix } = stateWith(leftOutOf(['college']));
+    expect(mix.whole).toBe(100_000);
+    expect(mix.leftOutAccounts).toBeUndefined();
+  });
+
+  test('a hidden excluded account is never named in leftOutAccounts', () => {
+    const withHidden = [
+      inst('Vanguard', [
+        acct('brk', { name: 'Brokerage', balance: 75_000 }),
+        acct('hidden529', { name: 'Old 529', subtype: '529', balance: 10_000, hidden: true }),
+      ]),
+    ];
+    let got: AllocationState | null = null;
+    function Probe() {
+      got = useAllocation({ institutions: withHidden, holdings: [hold('brk', 'VTI', 75_000)], currency: 'USD', includeCash: false, leaveOut: leftOutOf([]) });
+      return null;
+    }
+    renderToStaticMarkup(<Probe />);
+    expect((got as unknown as AllocationState).mix.leftOutAccounts).toBeUndefined();
   });
 });
 
@@ -637,6 +658,44 @@ describe('the mix over time', () => {
     expect(widths.length).toBe(26);
     // At fallback 340px width (plotW = 300), 13 monthly bars should be ~11px wide (well above 4px).
     for (const w of widths) expect(w).toBeGreaterThanOrEqual(8);
+  });
+
+  test('mixed sparse monthly snapshots plus trailing consecutive daily snapshots keep monthly bars wide with zero overlap', () => {
+    const parseColumns = (dates: string[]) => {
+      const html = renderToStaticMarkup(
+        <AllocationHistoryChart days={dates.map((m) => day(m, { 'us-stocks': 100_000 }))} currency="USD" answer={{ accounts: [] }} nameOf={(id) => id} />
+      );
+      return [...html.matchAll(/<rect[^>]*x="([^"]+)"[^>]*width="([^"]+)"/g)].map((m) => ({ x: Number(m[1]), w: Number(m[2]) }));
+    };
+
+    // Single day and two adjacent days draw cleanly without overlap.
+    const one = parseColumns(['2026-10-01']);
+    expect(one).toHaveLength(1);
+    expect(one[0].w).toBeGreaterThanOrEqual(8);
+    const two = parseColumns(['2026-10-01', '2026-10-02']);
+    expect(two).toHaveLength(2);
+    expect(two[0].x + two[0].w).toBeLessThanOrEqual(two[1].x + 1e-6);
+
+    // 11 monthly snapshots followed by 3 consecutive trailing daily snapshots (demo seed pattern).
+    const mixed = [
+      '2025-11-01', '2025-12-01', '2026-01-01', '2026-02-01', '2026-03-01', '2026-04-01',
+      '2026-05-01', '2026-06-01', '2026-07-01', '2026-08-01', '2026-09-01',
+      '2026-10-22', '2026-10-23', '2026-10-24',
+    ];
+    const cols = parseColumns(mixed);
+    expect(cols).toHaveLength(mixed.length);
+    for (let k = 0; k < 11; k++) expect(cols[k].w).toBeGreaterThanOrEqual(8);
+    for (let k = 0; k < cols.length - 1; k++) {
+      expect(cols[k].x + cols[k].w).toBeLessThanOrEqual(cols[k + 1].x + 1e-6);
+    }
+
+    // 3-to-5-day gap at the right edge must not overlap after clamping the last bar.
+    const edgeGap = ['2025-11-01', '2026-03-01', '2026-07-01', '2026-10-20', '2026-10-24'];
+    const edgeCols = parseColumns(edgeGap);
+    expect(edgeCols).toHaveLength(edgeGap.length);
+    for (let k = 0; k < edgeCols.length - 1; k++) {
+      expect(edgeCols[k].x + edgeCols[k].w).toBeLessThanOrEqual(edgeCols[k + 1].x + 1e-6);
+    }
   });
 
   test('asks for the accounts the allocation above shows, with each one’s currency and whether it is kept by hand', () => {

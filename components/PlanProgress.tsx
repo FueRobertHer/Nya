@@ -317,22 +317,22 @@ function Compared({
         </p>
       )}
       {l.compared && (
-        <div className="txn-detail">
+        <dl className="txn-detail txn-detail-wide">
           <div className="txn-detail-row">
-            <span>
+            <dt>
               <Masked>{`Invested ${onDay(l.compared.day)}`}</Masked>
-            </span>
-            <span className="money">
+            </dt>
+            <dd className="money">
               <Masked>{l.compared.actual}</Masked>
-            </span>
+            </dd>
           </div>
           <div className="txn-detail-row">
-            <span>Where your plan has you</span>
-            <span className="money">
+            <dt>Where your plan has you</dt>
+            <dd className="money">
               <Masked>{l.compared.planned}</Masked>
-            </span>
+            </dd>
           </div>
-        </div>
+        </dl>
       )}
       {l.compared && (
         <p>

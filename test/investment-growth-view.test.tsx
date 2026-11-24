@@ -1334,4 +1334,30 @@ describe('the chart’s lines and its info', () => {
     act(() => root.unmount());
     expect(lines()).toEqual([]);
   });
+
+  test('when a multi-account chart starts later than the range, says so below the range switcher, never for a 1-day stagger or single account', async () => {
+    // All 3 accounts: Individual starts Jan 1, 401(k) starts Jul 12 -> chart clips to Jul 12 (> 7 days).
+    const all3 = setup();
+    try {
+      await pass(50);
+      expect(hero(all3.host)).toContain('Chart starts Jul 12, when every chosen account has balances. Filter Accounts to one account to chart its full history.');
+      // Filter down to Individual alone: single-account chart shows full history without the note.
+      await all3.press(all3.chooser()!);
+      await all3.tick('Roth IRA ••3302', false);
+      await all3.tick('401(k) ••8810', false);
+      await all3.press(all3.sheet()!.findAll((e) => e.tagName === 'BUTTON' && words(e) === 'Show')[0]);
+      expect(hero(all3.host)).not.toContain('Chart starts');
+    } finally {
+      act(() => all3.root.unmount());
+    }
+
+    // Individual (Jan 1) + Roth IRA (Jan 2): only a 1-day sync stagger -> no clipped-start note.
+    const stagger = setup({ only: ['ind', 'roth'] });
+    try {
+      await pass(50);
+      expect(hero(stagger.host)).not.toContain('Chart starts');
+    } finally {
+      act(() => stagger.root.unmount());
+    }
+  });
 });

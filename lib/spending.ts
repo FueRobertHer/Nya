@@ -293,3 +293,91 @@ export function leftOutText(
   const which = currency ? `, which ${plural ? 'are' : 'is'} in ${currency}` : '';
   return `${list} ${total === 1 ? "isn't" : "aren't"} in ${where}${which}.`;
 }
+
+const LOAN_PAIR_DAYS = 3;
+const LOAN_PAIR_DAY_MS = 86_400_000;
+const CARD_PAYMENT_DETAIL = 'credit card payment';
+
+/** What pairedPlaidLoanIds reads of a transaction. */
+export type PlaidLoanPairRow = Countable & {
+  transaction_id: string;
+  date: string;
+  amount: number;
+  subcategory?: string | null;
+  account_type?: string | null;
+  paired?: 'card' | 'loan' | 'transfer';
+  /** Original amount and currency before FX conversion, when converted. */
+  converted?: { amount: number; currency: string };
+};
+
+/**
+ * Outflow transaction IDs under `loan payments` on non-loan, non-credit
+ * accounts that match a same-amount, same-currency inflow on a linked
+ * `account_type === 'loan'` account within 3 days (1-to-1, deterministic).
+ * Runs over all rows before period filtering and compares unconverted amounts
+ * at micro-unit precision so cross-month boundaries, FX rates, and 3-decimal
+ * currencies pair reliably without ever mutating `t.paired`.
+ */
+export function pairedPlaidLoanIds(rows: readonly PlaidLoanPairRow[]): Set<string> {
+  type Leg = { id: string; date: string; day: number; currency: string | null };
+  const outsByAmount = new Map<number, Leg[]>();
+  const insByAmount = new Map<number, Leg[]>();
+  for (const t of rows) {
+    if (isExcluded(t) || t.group_outside || !isHistoryRow(t)) continue;
+    if (t.paired === 'card') continue;
+    if ((t.subcategory ?? '').toLowerCase() === CARD_PAYMENT_DETAIL) continue;
+    const rawAmount = t.converted?.amount ?? t.amount;
+    if (rawAmount === 0) continue;
+    const day = Date.parse(`${t.date}T00:00:00Z`) / LOAN_PAIR_DAY_MS;
+    if (!Number.isFinite(day)) continue;
+    const currency = t.converted?.currency ?? currencyOf(t);
+    const micro = Math.round(Math.abs(rawAmount) * 1e6);
+    if (micro === 0) continue;
+    if (rawAmount > 0) {
+      if (categoryKey(t) !== LOAN_PAYMENTS) continue;
+      if (t.account_type === 'loan' || t.account_type === 'credit') continue;
+      const list = outsByAmount.get(micro) ?? [];
+      list.push({ id: t.transaction_id, date: t.date, day, currency });
+      outsByAmount.set(micro, list);
+    } else {
+      if (t.account_type !== 'loan') continue;
+      const list = insByAmount.get(micro) ?? [];
+      list.push({ id: t.transaction_id, date: t.date, day, currency });
+      insByAmount.set(micro, list);
+    }
+  }
+  const matched = new Set<string>();
+  for (const [micro, outs] of outsByAmount) {
+    const ins = insByAmount.get(micro);
+    if (!ins || ins.length === 0) continue;
+    type Pair = { out: Leg; loanIn: Leg; diff: number };
+    const pairs: Pair[] = [];
+    for (const out of outs) {
+      for (const loanIn of ins) {
+        if (out.id === loanIn.id) continue;
+        if (out.currency !== null && loanIn.currency !== null && out.currency !== loanIn.currency) continue;
+        const diff = Math.abs(out.day - loanIn.day);
+        if (diff <= LOAN_PAIR_DAYS) pairs.push({ out, loanIn, diff });
+      }
+    }
+    if (pairs.length === 0) continue;
+    pairs.sort(
+      (a, b) =>
+        a.diff - b.diff ||
+        (a.out.date < b.out.date ? -1 : a.out.date > b.out.date ? 1 : 0) ||
+        (a.out.id < b.out.id ? -1 : a.out.id > b.out.id ? 1 : 0) ||
+        (a.loanIn.date < b.loanIn.date ? -1 : a.loanIn.date > b.loanIn.date ? 1 : 0) ||
+        (a.loanIn.id < b.loanIn.id ? -1 : a.loanIn.id > b.loanIn.id ? 1 : 0)
+    );
+    const usedOut = new Set<string>();
+    const usedIn = new Set<string>();
+    for (const p of pairs) {
+      if (usedOut.has(p.out.id) || usedIn.has(p.loanIn.id)) continue;
+      usedOut.add(p.out.id);
+      usedIn.add(p.loanIn.id);
+      matched.add(p.out.id);
+    }
+  }
+  return matched;
+}
+

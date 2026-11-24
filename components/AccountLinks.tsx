@@ -29,6 +29,7 @@ import { formatDay, formatMoney, onDay, plainNumber } from '@/lib/format';
 import { earlierNames } from '@/lib/earlier-names';
 import { Masked } from './HideAmounts';
 import { ACCOUNT_LINKS_TITLE } from './attention';
+import { LinesSkeleton } from './LoadingSkeletons';
 import { Notice } from './TotalCaveats';
 
 type Suggestion = {
@@ -148,6 +149,7 @@ export default function AccountLinks({
   empty?: ReactNode;
 }) {
   const [data, setData] = useState<Payload | null>(null);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -166,8 +168,10 @@ export default function AccountLinks({
       setData(next);
       onLoaded?.(next.suggestions.map((s) => s.to_label));
     } catch {
-      // Optional feature: a failed load just shows nothing.
+      // Optional feature: a failed load just shows nothing (or the empty fallback).
       setData(null);
+    } finally {
+      setLoading(false);
     }
   }, [checkEarlier]);
 
@@ -224,6 +228,7 @@ export default function AccountLinks({
   return (
     <AccountLinksView
       data={data}
+      loading={loading}
       busy={busy}
       error={error}
       notice={notice}
@@ -245,6 +250,7 @@ export default function AccountLinks({
  *  directly by tests and previews. */
 export function AccountLinksView({
   data,
+  loading = data === null,
   busy,
   error,
   notice,
@@ -263,6 +269,7 @@ export function AccountLinksView({
    *  open, ask which can be forgotten. */
   onEarlierOpen?: (open: boolean) => void;
   data: Payload | null;
+  loading?: boolean;
   busy: boolean;
   error: string;
   /** Something the user should know after a change that worked. */
@@ -283,7 +290,16 @@ export function AccountLinksView({
   const [byHandOpen, setByHandOpen] = useState(open?.byHand ?? false);
   const [byHandOld, setByHandOld] = useState('');
   const [byHandTo, setByHandTo] = useState('');
-  if (!data) return null;
+  if (!data) {
+    if (!empty) return null;
+    return loading ? (
+      <div className="card">
+        <LinesSkeleton status="Loading connections" lines={2} />
+      </div>
+    ) : (
+      <>{empty}</>
+    );
+  }
   if (
     data.suggestions.length === 0 &&
     data.unclaimed.length === 0 &&

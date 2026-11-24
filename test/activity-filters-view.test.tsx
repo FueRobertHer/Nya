@@ -356,6 +356,39 @@ describe('a row’s line', () => {
     expect(v.text()).toContain('across 12 months');
     v.unmount();
   });
+
+  test('Clear filters resets active chip filters and query in one tap from both the filter bar and empty states', () => {
+    const olderMonth = month.endsWith('-01') ? `${Number(month.slice(0, 4)) - 1}-10` : `${month.slice(0, 4)}-${String(Math.max(1, Number(month.slice(5, 7)) - 1)).padStart(2, '0')}`;
+    const multi = [
+      row('Whole Foods', 41.3, { date: `${month}-04`, account_id: 'a1', account_name: 'Checking', category: 'groceries' }),
+      row('Blue Bottle', 4.5, { date: `${month}-05`, account_id: 'a2', account_name: 'Sapphire', category: 'coffee' }),
+      row('Corner shop', 250, { date: `${olderMonth}-12`, account_id: 'a1', account_name: 'Checking', note: 'San Diego trip' }),
+    ];
+    const v = mount({ txns: multi });
+    const clearBtns = () => v.all((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Clear filters');
+    const search = () => v.all((e) => e.tagName === 'INPUT' && e.getAttribute('type') === 'search')[0]!;
+
+    // No chip filter active: no Clear filters button in the bar.
+    expect(clearBtns()).toHaveLength(0);
+
+    // Activate Account filter + search with 0 matches in any month -> emptyListWords branch shows Clear filters too.
+    act(() => type(v.select('Account')!, 'a2'));
+    expect(clearBtns()).toHaveLength(1);
+    act(() => type(search(), 'nonexistent-merchant'));
+    expect(clearBtns()).toHaveLength(2);
+    act(() => click(clearBtns()[1]));
+    expect(v.names()).toEqual(['Whole Foods', 'Blue Bottle']);
+    expect(clearBtns()).toHaveLength(0);
+
+    // Search matching only an older month -> allMonthsMatches > 0 branch offers both all-12-months and Clear filters.
+    act(() => type(search(), 'San Diego'));
+    expect(v.text()).toContain('Show 1 match across all 12 months');
+    expect(clearBtns()).toHaveLength(1);
+    act(() => click(clearBtns()[0]));
+    expect(v.names()).toEqual(['Whole Foods', 'Blue Bottle']);
+    expect(clearBtns()).toHaveLength(0);
+    v.unmount();
+  });
 });
 
 describe('an account sheet’s Transactions, on the list', () => {

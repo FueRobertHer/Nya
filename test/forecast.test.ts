@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildForecast, cashPosition, countsInForecast, forecastEvents, forecastNotes, namesCard, withPurchase, type ForecastEvent, type ForecastInstitution, type PendingRow } from '@/lib/forecast';
+import { buildForecast, cashPosition, countsInForecast, forecastEvents, forecastNoteItems, forecastNotes, namesCard, withPurchase, type ForecastEvent, type ForecastInstitution, type PendingRow } from '@/lib/forecast';
 import { addDays, detectRecurring, scheduleDates, type RecurringRow } from '@/lib/recurring';
 import type { PlannedItem } from '@/lib/planned';
 import { localDate } from '@/lib/local-date';
@@ -621,6 +621,43 @@ describe('what it says it may be missing', () => {
     ).toEqual([
       "Sapphire's payment, statement balance $400.00, is due on 2026-10-22 and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.",
     ]);
+  });
+
+  test('a credit card carrying a balance without a reported due date is named unless already covered by a recurring or planned payment', () => {
+    const visa = { account_id: 'card', name: 'Cash Rewards Visa', mask: '4412', type: 'credit', balance: 540.03, currency: 'USD' };
+    const withVisa = [inst({ institution_name: 'Tartan Bank', accounts: [acct(), visa] })];
+    const none = { known: new Set<string>(), unknown: [] as number[] };
+    const notesFor = (institutions: ForecastInstitution[], over: Partial<Parameters<typeof forecastNoteItems>[0]> = {}) =>
+      forecastNoteItems({
+        institutions,
+        position: cashPosition(institutions),
+        eventsLeftOut: [],
+        series: { cardsPaid: none },
+        until: '2026-11-08',
+        today: '2026-10-09',
+        days,
+        ...over,
+      });
+
+    const expected =
+      "Cash Rewards Visa carries a $540.03 balance that isn't in this forecast: card charges stay out, and its payment changes each month. Add what you expect to pay as a planned expense.";
+    expect(notesFor(withVisa)).toEqual([{ kind: 'card_balance', of: 'items', text: expected }]);
+
+    // Suppressed when hidden, $0 balance, another currency, or without opts.until.
+    expect(notesFor([inst({ institution_name: 'Tartan Bank', accounts: [acct(), { ...visa, hidden: true }] })])).toEqual([]);
+    expect(notesFor([inst({ institution_name: 'Tartan Bank', accounts: [acct(), { ...visa, balance: 0 }] })])).toEqual([]);
+    expect(notesFor([inst({ institution_name: 'Tartan Bank', accounts: [acct(), { ...visa, currency: 'EUR' }] })])).toEqual([]);
+    expect(notesFor(withVisa, { until: undefined })).toEqual([]);
+
+    // Suppressed when covered by cardsPaid.known, cardsPaid.unknown near balance, or a planned expense in range matching the card or balance.
+    expect(notesFor(withVisa, { series: { cardsPaid: { known: new Set(['Tartan Bank|Cash Rewards Visa']), unknown: [] } } })).toEqual([]);
+    expect(notesFor(withVisa, { series: { cardsPaid: { known: new Set(), unknown: [520] } } })).toEqual([]);
+    expect(notesFor(withVisa, { series: { cardsPaid: { known: new Set(), unknown: [150] } } })).toHaveLength(1);
+    expect(notesFor(withVisa, { planned: [plannedItem({ name: 'Tartan Bank Visa payment', amount: 200, date: '2026-10-20' })] })).toEqual([]);
+    expect(notesFor(withVisa, { planned: [plannedItem({ name: 'Card 4412', amount: 200, date: '2026-10-20' })] })).toEqual([]);
+    expect(notesFor(withVisa, { planned: [plannedItem({ name: 'Monthly card bill', amount: 540, date: '2026-10-20' })] })).toEqual([]);
+    // Unrelated planned expense far from the balance does not silence it.
+    expect(notesFor(withVisa, { planned: [plannedItem({ name: 'Internet', amount: 65, date: '2026-10-20' })] })).toHaveLength(1);
   });
 
   // Review: a co-branded or plain-word card's own word is often a merchant's

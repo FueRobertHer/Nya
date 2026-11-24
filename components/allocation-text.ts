@@ -175,7 +175,14 @@ export function mixBasisText(m: PlanMix, currency: string | null): string {
   const money = (n: number) => wholeMoney(n, currency);
   const counted = m.stocks + m.bonds + m.cash;
   const bank = m.bank > 0 ? ` (with ${money(m.bank)} of checking and savings as cash, as your plan counts them)` : '';
-  const where = m.otherCurrencies.length && currency ? `your accounts hold in ${currency}` : 'in your accounts';
+  const leftOut = m.leftOutAccounts?.length ? ` (leaving out ${names([...m.leftOutAccounts])})` : '';
+  const where = m.leftOutAccounts?.length
+    ? m.otherCurrencies.length && currency
+      ? `counted in your plan in ${currency}${leftOut}`
+      : `counted in your plan${leftOut}`
+    : m.otherCurrencies.length && currency
+      ? `your accounts hold in ${currency}`
+      : 'in your accounts';
   return isMoney(m.whole - counted)
     ? `Of the ${money(m.whole)} ${where}, ${money(counted)} is classified as stocks, bonds or cash${bank}`
     : `All ${money(counted)} ${where} is classified as stocks, bonds or cash${bank}`;

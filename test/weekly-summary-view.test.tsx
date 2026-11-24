@@ -157,13 +157,30 @@ describe('the sheet', () => {
     expect(sheet({ draft: { enabled: true, weekday: 1, time_zone: 'Europe/Berlin' }, device: 'Europe/Paris' })).not.toContain('Use this device’s time zone');
     const demoCard = card(ready({ demo: true, canSend: false, whyNot: 'Demo accounts can’t get the weekly summary.' }));
     expect(demoCard).toContain('Preview this week’s summary');
-    const demo = sheet({ demo: true, canSend: false, draft: { enabled: false, weekday: 1, time_zone: 'UTC' }, saved: null });
+    const demo = sheet({ demo: true, canSend: false, whyNot: 'Demo accounts can’t get the weekly summary.', draft: { enabled: false, weekday: 1, time_zone: 'UTC' }, saved: null });
     expect(demo).toContain('Demo accounts can’t get the weekly summary');
     expect(demo).toContain('You can still preview what this week’s summary would say below.');
     expect(demo).toContain('Your week in Nya: a quiet week');
-    expect(demo).toMatch(/<input type="checkbox" disabled=""/);
-    expect(demo).toMatch(/<button type="button" class="btn" disabled="">Save<\/button>/);
-    expect(demo).toMatch(/<button class="secondary" disabled="">Send me one now<\/button>/);
+    expect(demo).toContain('What the summary would say if it went now, with the summary on.');
+    expect(demo).not.toContain('for the day and time zone above');
+    expect(demo).toMatch(/<button type="button" class="btn secondary">Close<\/button>/);
+    expect(demo).not.toContain('<input type="checkbox"');
+    expect(demo).not.toContain('<select');
+    expect(demo).not.toContain('Save</button>');
+    expect(demo).not.toContain('Send me one now');
+    expect(demo).not.toContain('Up to 3 a day.');
+    // A demo account that somehow already had the summary enabled still keeps
+    // its form controls so the person can turn it off and save.
+    const demoEnabled = sheet({
+      demo: true,
+      canSend: false,
+      whyNot: 'Demo accounts can’t get the weekly summary.',
+      draft: { enabled: true, weekday: 1, time_zone: 'America/New_York' },
+      saved: ON,
+    });
+    expect(demoEnabled).toContain('<input type="checkbox" checked=""');
+    expect(demoEnabled).toMatch(/<button type="button" class="btn" disabled="">Save<\/button>/);
+    expect(demoEnabled).toContain('for the day and time zone above');
   });
 });
 

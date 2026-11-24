@@ -772,3 +772,67 @@ describe('split and grouped transactions (#39), as the read layer gives them', (
     );
   });
 });
+
+describe('automatic Plaid checking-to-loan pairing', () => {
+  test('pairs checking loan outflows with linked loan inflows on the same day or within 3 days, including across a period boundary', () => {
+    const rows: FlowRow[] = [
+      row('2026-09-01', 'EMPLOYER', -5000, { transaction_id: 'pay', category: 'income', account_type: 'depository' }),
+      // Same day, no Plaid subcategory (e.g. Alex's student loan).
+      row('2026-09-18', 'FIRST GINGHAM CU LOAN PMT', 420, { transaction_id: 'loan-out-1', category: 'loan payments', subcategory: null, account_type: 'depository' }),
+      row('2026-09-18', 'PAYMENT RECEIVED THANK YOU', -420, { transaction_id: 'loan-in-1', category: 'loan payments', subcategory: null, account_type: 'loan' }),
+      // Cross-month boundary: debit Sep 30, loan credit Oct 2 (2 days later, outside inSep).
+      row('2026-09-30', 'AUTO LOAN PAYMENT', 350, { transaction_id: 'loan-out-2', category: 'loan payments', subcategory: 'other payment', account_type: 'depository' }),
+      row('2026-10-02', 'PAYMENT RECEIVED', -350, { transaction_id: 'loan-in-2', category: 'loan payments', subcategory: null, account_type: 'loan' }),
+      // 4 days apart: does not pair.
+      row('2026-09-10', 'FAR LOAN PMT', 210, { transaction_id: 'loan-out-far', category: 'loan payments', subcategory: null, account_type: 'depository' }),
+      row('2026-09-14', 'PAYMENT RECEIVED', -210, { transaction_id: 'loan-in-far', category: 'loan payments', subcategory: null, account_type: 'loan' }),
+    ];
+    const f = cashFlow(rows, inSep, 'USD', ix);
+    expect(f.loan_payments.amount).toBe(770);
+    expect(f.loan_payments.ids).toEqual(['loan-out-1', 'loan-out-2']);
+    // Never mutates t.paired on the input rows.
+    expect(rows.every((r) => r.paired === undefined)).toBe(true);
+  });
+
+  test('pairs on unconverted FX amounts and 3-decimal currencies (KWD), and rejects credit cards, exclusions, and 1-to-2 double matches', () => {
+    const rows: FlowRow[] = [
+      row('2026-09-01', 'PAY', -5000, { transaction_id: 'pay', category: 'income', account_type: 'depository' }),
+      // FX-converted across two days with different USD rates, same original EUR amount.
+      row('2026-09-10', 'EU LOAN PMT', 540.12, {
+        transaction_id: 'fx-out',
+        category: 'loan payments',
+        subcategory: null,
+        account_type: 'depository',
+        converted: { amount: 500, currency: 'EUR' },
+      }),
+      row('2026-09-12', 'EU LOAN CREDIT', -544.8, {
+        transaction_id: 'fx-in',
+        category: 'loan payments',
+        subcategory: null,
+        account_type: 'loan',
+        converted: { amount: -500, currency: 'EUR' },
+      }),
+      // KWD 3-decimal precision: 100.125 vs 100.126 must NOT match; 100.125 vs -100.125 MUST match.
+      row('2026-09-15', 'KWD LOAN', 100.125, { transaction_id: 'kwd-out', category: 'loan payments', iso_currency_code: 'KWD', account_type: 'depository' }),
+      row('2026-09-15', 'KWD LOAN IN', -100.125, { transaction_id: 'kwd-in', category: 'loan payments', iso_currency_code: 'KWD', account_type: 'loan' }),
+      row('2026-09-15', 'KWD MISS', 100.126, { transaction_id: 'kwd-miss', category: 'loan payments', iso_currency_code: 'KWD', account_type: 'depository' }),
+      // Credit card payment or credit account inflow must never pair as a loan.
+      row('2026-09-20', 'CARD PMT', 300, { transaction_id: 'cc-out', category: 'loan payments', subcategory: 'credit card payment', account_type: 'depository' }),
+      row('2026-09-20', 'CARD IN', -300, { transaction_id: 'cc-in', category: 'loan payments', account_type: 'loan' }),
+      row('2026-09-21', 'CARD PMT 2', 310, { transaction_id: 'cc-out-2', category: 'loan payments', subcategory: null, account_type: 'depository' }),
+      row('2026-09-21', 'CARD IN 2', -310, { transaction_id: 'cc-in-2', category: 'loan payments', account_type: 'credit' }),
+      // 1-to-1 deterministic tie-breaking: nearest date wins (Sep 25 exact match beats Sep 23).
+      row('2026-09-23', 'DUP OUT EARLY', 125, { transaction_id: 'dup-early', category: 'loan payments', subcategory: null, account_type: 'depository' }),
+      row('2026-09-25', 'DUP OUT EXACT', 125, { transaction_id: 'dup-exact', category: 'loan payments', subcategory: null, account_type: 'depository' }),
+      row('2026-09-25', 'DUP IN', -125, { transaction_id: 'dup-in', category: 'loan payments', subcategory: null, account_type: 'loan' }),
+      // Excluded loan inflow cannot confirm an outflow.
+      row('2026-09-26', 'EXCL OUT', 180, { transaction_id: 'excl-out', category: 'loan payments', subcategory: null, account_type: 'depository' }),
+      row('2026-09-26', 'EXCL IN', -180, { transaction_id: 'excl-in', category: 'loan payments', account_type: 'loan', excluded: true }),
+    ];
+    const usd = cashFlow(rows, inSep, 'USD', ix);
+    expect(usd.loan_payments.ids).toEqual(['fx-out', 'dup-exact']);
+    const kwd = cashFlow(rows, inSep, 'KWD', ix);
+    expect(kwd.loan_payments.ids).toEqual(['kwd-out']);
+  });
+});
+

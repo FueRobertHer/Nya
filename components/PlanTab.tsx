@@ -2960,9 +2960,11 @@ export function FiCard({
         </div>
       )}
       {view.fiNumber !== null && onFiNumber && (
-        <button type="button" className="btn ghost" aria-haspopup="dialog" ref={fiNumberRef} onClick={onFiNumber}>
-          How it&apos;s worked out
-        </button>
+        <div className="hero-ask">
+          <button type="button" className="btn ghost" aria-haspopup="dialog" ref={fiNumberRef} onClick={onFiNumber}>
+            How it&apos;s worked out
+          </button>
+        </div>
       )}
       {/* A worked-out number's arithmetic is in its sheet; your own number
           against it, and why there is none, stay here. */}

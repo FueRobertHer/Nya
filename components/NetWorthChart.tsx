@@ -95,7 +95,7 @@
 // (lib/returns-rate.ts totalReturn): the totals don't say when the money went
 // in, so it is never a year's. Every other range counts from its start.
 
-import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { formatDay, formatMoney, MINUS, onDay, roundsToNothing, signedPercent, spoken } from '@/lib/format';
 import { totalReturn } from '@/lib/returns-rate';
@@ -294,6 +294,7 @@ export default function NetWorthChart({
   onRange,
   allTime = false,
   months = null,
+  rangeNote = null,
 }: {
   points: HistoryPoint[];
   label?: string;
@@ -349,6 +350,9 @@ export default function NetWorthChart({
   allTime?: boolean;
   /** Where the entered points come from (see the header), for the info. */
   months?: MonthsInfo | null;
+  /** Optional short caption shown directly below the range switcher (e.g.
+   *  when a multi-account chart starts later than the chosen range). */
+  rangeNote?: ReactNode;
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   // Home's line draws in, never Investments'.
@@ -1197,6 +1201,7 @@ export default function NetWorthChart({
       {ranges.length > 1 && (
         <Segmented compact className="chart-range-switch" label="Time range" value={range} onChange={pickRange} options={ranges.map((key) => [key, RANGE_TEXT[key]] as const)} />
       )}
+      {rangeNote}
 
       {/* The notes in the range, for a keyboard and a screen reader: each
           selects its day, as scrubbing to it does. */}
