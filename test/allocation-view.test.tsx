@@ -263,7 +263,7 @@ describe('drift', () => {
 
   test('against a target: each class’s target, where it is now, the drift and the money it takes; unclassified left out and said', () => {
     const t = text(renderToStaticMarkup(<DriftSection alloc={alloc()} target={{ 'us-stocks': 50, 'intl-stocks': 30, bonds: 20 }} money={money} editable onSet={noop} />));
-    expect(t).toContain('Against your target: 50% US stocks, 30% international stocks, 20% bonds');
+    expect(t).toContain('Against your target, of what is classified: 50% US stocks, 30% international stocks, 20% bonds');
     // Of the $100,000 classified: US stocks are at 50%.
     expect(t).toContain('US stocks 50% 50% on target');
     expect(t).toContain('International stocks $8,000 under 30% 22% -8 points');

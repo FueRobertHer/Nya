@@ -596,16 +596,16 @@ describe('Home’s budget alerts weigh what is available', () => {
   const alerts = (c: Carries | null) => budgetTexts({ txns: [row(320)], budgets, taxonomy, budgetCarries: c });
 
   test('over the budget, but within what rolled over: no alert; deeper in a hole: over', () => {
-    expect(alerts(null)).toContain('Over your groceries budget: $320.00 of $300.00');
+    expect(alerts(null)).toContain('Over your Groceries budget, in Food: $320.00 of $300.00');
     expect(alerts(carries({ [GROCERIES]: { carry: 150 } }))).not.toContain('groceries budget');
-    expect(alerts(carries({ [GROCERIES]: { carry: -50 } }))).toContain('Over your groceries budget: $320.00 of $250.00');
+    expect(alerts(carries({ [GROCERIES]: { carry: -50 } }))).toContain('Over your Groceries budget, in Food: $320.00 of $250.00');
   });
 
   test('exactly at the limit: used up, not over', () => {
     const exact = budgetTexts({ txns: [row(300)], budgets, taxonomy, budgetCarries: null });
-    expect(exact).toContain('Your groceries budget is used up: $300.00 of $300.00');
-    expect(exact).not.toContain('Over your groceries budget');
-    expect(alerts(carries({ [GROCERIES]: { carry: 20 } }))).toContain('Your groceries budget is used up: $320.00 of $320.00');
+    expect(exact).toContain('Your Groceries budget, in Food, is used up: $300.00 of $300.00');
+    expect(exact).not.toContain('Over your Groceries budget, in Food');
+    expect(alerts(carries({ [GROCERIES]: { carry: 20 } }))).toContain('Your Groceries budget, in Food, is used up: $320.00 of $320.00');
   });
 
   test('cents that add up to the limit are used up, whichever side the float sum lands', () => {
@@ -616,18 +616,18 @@ describe('Home’s budget alerts weigh what is available', () => {
       [8.51, 8.79, 2.2, 10.1, 20.4],
     ]) {
       const t = budgetTexts({ txns: amounts.map(row), budgets: fifty, taxonomy, budgetCarries: null });
-      expect(t).toContain('Your groceries budget is used up: $50.00 of $50.00');
-      expect(t).not.toContain('Over your groceries budget');
+      expect(t).toContain('Your Groceries budget, in Food, is used up: $50.00 of $50.00');
+      expect(t).not.toContain('Over your Groceries budget, in Food');
     }
   });
 
   test('nothing available after what was overspent: its own sentence, never "of" a limit of zero or less', () => {
     expect(alerts(carries({ [GROCERIES]: { carry: -350 } }))).toContain(
-      'Over your groceries budget: overspending carried over left it $50.00 over before this month, and $320.00 is spent'
+      'Over your Groceries budget, in Food: overspending carried over left it $50.00 over before this month, and $320.00 is spent'
     );
-    expect(alerts(carries({ [GROCERIES]: { carry: -300 } }))).toContain('Over your groceries budget: overspending carried over left nothing of it this month, and $320.00 is spent');
+    expect(alerts(carries({ [GROCERIES]: { carry: -300 } }))).toContain('Over your Groceries budget, in Food: overspending carried over left nothing of it this month, and $320.00 is spent');
     const none = budgetTexts({ txns: [], budgets, taxonomy, budgetCarries: carries({ [GROCERIES]: { carry: -350 } }) });
-    expect(none).toContain('Over your groceries budget: overspending carried over left it $50.00 over before this month');
+    expect(none).toContain('Over your Groceries budget, in Food: overspending carried over left it $50.00 over before this month');
     expect(none).not.toContain('is spent');
     for (const t of [alerts(carries({ [GROCERIES]: { carry: -350 } })), none]) expect(t).not.toContain('of −$');
   });

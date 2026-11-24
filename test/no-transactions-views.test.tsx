@@ -621,7 +621,7 @@ describe("Home's insights", () => {
 
   test('a budget alert or the pace beside a bank account or card whose transactions are missing says so', () => {
     const t = insights(refusedBeside, [row()]);
-    expect(t).toContain('Approaching your groceries budget');
+    expect(t).toContain('Approaching your Groceries budget, in Other');
     expect(t).toContain("Doesn't include the bank or card accounts at Acme CU: Plaid doesn't provide their transactions, so this month may be incomplete.");
     expect(insights(unallowedBeside, [row()])).toContain(`you didn't allow Nya to see their transactions, so this month may be incomplete. ${ALLOW}`);
   });

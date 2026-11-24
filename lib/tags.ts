@@ -182,11 +182,17 @@ function findTag(set: TagSet, id: unknown): Tag {
   return t;
 }
 
-/** The color a new tag gets when none is chosen: the next in the palette, so
+/** The colors a new tag is given in turn when none is chosen: the palette
+ *  without gray (the fallback), red and orange, which the app keeps for a
+ *  number that is wrong and something that needs you (docs/design/
+ *  guidelines.md, Color), so a tag never reads as a warning unless the
+ *  person picks one of those. */
+const AUTO_COLORS: readonly TagColor[] = ['blue', 'teal', 'purple', 'green', 'pink', 'yellow'];
+
+/** The color a new tag gets when none is chosen: the next in AUTO_COLORS, so
  *  tags made one after another are told apart. */
 export function nextColor(set: TagSet | null): TagColor {
-  const used = (set?.tags.length ?? 0) % (TAG_COLORS.length - 1);
-  return TAG_COLORS[used + 1];
+  return AUTO_COLORS[(set?.tags.length ?? 0) % AUTO_COLORS.length];
 }
 
 /** A new tag, last. */

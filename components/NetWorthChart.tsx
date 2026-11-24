@@ -283,6 +283,7 @@ export default function NetWorthChart({
   rangeSet = 'balance',
   initialRange: forcedRange,
   owed = false,
+  percent = true,
   reserveSplit = false,
   notes,
   hero = false,
@@ -315,6 +316,10 @@ export default function NetWorthChart({
    *  Nor does an investment's: its change includes money added, and the
    *  added and growth line says how much of it is growth. */
   owed?: boolean;
+  /** Give the change a percentage (net worth's). An account's balance chart
+   *  says none: a checking account's balance swings with each paycheck and
+   *  bill, so "+142%" says nothing about how it is doing. */
+  percent?: boolean;
   /** Keep the added-and-growth line's space even while it has nothing to say
    *  (the account's transactions are still loading): it appears in the same
    *  place instead of pushing the chart down when they arrive. */
@@ -642,11 +647,11 @@ export default function NetWorthChart({
     ];
   }
   /** "+$2,340.00 (+4.1%)", marked approximate when it starts or ends on an
-   *  estimate. No percentage for a debt or an investment (see `owed`), or
-   *  from a zero or negative start. */
+   *  estimate. No percentage for a debt or an investment (see `owed`), for
+   *  one account (`percent`), or from a zero or negative start. */
   function change(i: number, j: number): { text: string; approx: boolean } {
     const d = vals[j] - vals[i];
-    const pct = !owed && rangeSet !== 'investment' && vals[i] > 0 ? ` (${d < 0 ? MINUS : '+'}${Math.abs((d / vals[i]) * 100).toFixed(1)}%)` : '';
+    const pct = percent && !owed && rangeSet !== 'investment' && vals[i] > 0 ? ` (${d < 0 ? MINUS : '+'}${Math.abs((d / vals[i]) * 100).toFixed(1)}%)` : '';
     const approx = !!(points[i].estimated || points[j].estimated);
     return { text: `${approx ? '≈ ' : ''}${signed(d, currency)}${pct}`, approx };
   }

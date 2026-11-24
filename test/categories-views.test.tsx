@@ -198,11 +198,11 @@ describe('Home’s budget alerts', () => {
       { transaction_id: 'a', date: today, name: 'Shop', amount: 95, pending: false, account_name: 'C', institution_name: 'B', category: 'groceries', iso_currency_code: 'USD', vendor_key: 'v', logo_url: null, category_icon_url: null, subcategory: null, category_confidence: null, transaction_code: null, payment_channel: null, datetime: null, website: null, check_number: null, account_owner: null, city: null, region: null, counterparty: null, payment_processor: null, payment_reference: null },
     ] as Txn[];
     const s = budgetTexts({ txns: rows, taxonomy: t, budgets });
-    expect(s).toContain('Approaching your groceries budget (95%)');
+    expect(s).toContain('Approaching your Groceries budget, in Food (95%)');
     // A group without a budget of its own only adds its categories' up: no alert of its own.
     const tight = { ...budgets, categories: { ...budgets.categories, [t.categories.find((c) => c.name === 'restaurants')!.id]: { amount: 5 } } };
     const sum = budgetTexts({ txns: rows, taxonomy: t, budgets: tight });
-    expect(sum).toContain('Approaching your groceries budget (95%)');
+    expect(sum).toContain('Approaching your Groceries budget, in Food (95%)');
     expect(sum).not.toContain('your Food budget');
     const capped = { ...budgets, groups: { [group(t, 'Food')]: { amount: 100 } } };
     const g = budgetTexts({ txns: rows, taxonomy: t, budgets: capped });

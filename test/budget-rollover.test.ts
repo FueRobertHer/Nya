@@ -91,11 +91,11 @@ beforeEach(async () => {
 afterEach(() => expect(plaidTouched).toEqual([]));
 
 /** A bank's stored rows, as a sync leaves them. */
-async function seedBank(rows: ReturnType<typeof txn>[], opts: { item?: string; name?: string; for?: typeof ctx } = {}) {
+async function seedBank(rows: ReturnType<typeof txn>[], opts: { item?: string; name?: string; for?: typeof ctx; type?: string } = {}) {
   const item = opts.item ?? 'item_bank';
   const who = opts.for ?? ctx;
   await saveItem(who, { item_id: item, institution_name: opts.name ?? 'Bank', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-x') });
-  const accounts = { acc_chk: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null } };
+  const accounts = { acc_chk: { name: 'Checking', official_name: null, type: opts.type ?? 'depository', subtype: opts.type === 'loan' ? 'student' : 'checking', mask: '1111', balances: null } };
   await fake.set(
     ctxKey(`txns:${item}`, who),
     await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
@@ -364,6 +364,17 @@ describe('a month of budgets, from the stored history', () => {
     const { body } = await month();
     expect(body.carries.categories[named(t, 'food and drink').id].uncertain).toEqual([M(-2)]);
     expect(body.gaps).toEqual([{ month: M(-2), gaps: [{ kind: 'begins', institution: 'Bank', first: on(-2, 14) }] }]);
+  });
+
+  test('a bank whose rows are all in loan accounts leaves no month uncertain by where they begin', async () => {
+    const t = await budgetBefore({ 'food and drink': 100 });
+    await seedBank([row('m3', on(-3, 1), 30), row('m2', on(-2), 30), row('m1', on(-1), 30)]);
+    // A loan's first stored row is its first payment, mid-month.
+    await seedBank([row('l2', on(-2, 18), 420, 'loan payments'), row('l1', on(-1, 18), 420, 'loan payments')], { item: 'item_loan', name: 'Credit Union', type: 'loan' });
+    await rollover(t, 'food and drink', M(-3));
+    const { body } = await month();
+    expect(body.carries.categories[named(t, 'food and drink').id].uncertain).toEqual([]);
+    expect(body.gaps).toEqual([]);
   });
 
   test('a start before any transactions counts from the first month with one, and names it', async () => {

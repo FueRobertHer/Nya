@@ -352,6 +352,7 @@ export default function MonthBreakdown({
   onOpenConnections,
   openTxnRequest = null,
   onOpenTxnHandled,
+  accountRequest = null,
 }: {
   txns: Txn[] | null;
   /** What the totals convert with, once a home currency is chosen
@@ -446,6 +447,10 @@ export default function MonthBreakdown({
   /** Opens a specific transaction's sheet when navigating from Home. */
   openTxnRequest?: { id: string; at: number } | null;
   onOpenTxnHandled?: () => void;
+  /** The list filtered to one account (its accountFilterKey), from its
+   *  sheet's Transactions: each request (`at`) once, with the other filters
+   *  and the search cleared so its rows all show. */
+  accountRequest?: { key: string; at: number } | null;
 }) {
   const [ownSegment, setOwnSegment] = useState<ActivitySegment>("transactions");
   const segment = segmentShown ?? ownSegment;
@@ -466,6 +471,7 @@ export default function MonthBreakdown({
   const listHeading = useRef<HTMLHeadingElement>(null);
   const [tagFilter, setTagFilter] = useState(""); // a tag's id; "" for every transaction
   const [accountFilter, setAccountFilter] = useState(""); // accountFilterKey; "" for every account
+  const [accountAsked, setAccountAsked] = useState<number | null>(null);
   const [categoryFilter, setCategoryFilter] = useState(""); // categoryFilterKey; "" for every category
   const [searchAllMonths, setSearchAllMonths] = useState(false);
   // A node of the cash flow tapped (#41): the list shows its transactions,
@@ -490,6 +496,16 @@ export default function MonthBreakdown({
   // The filter to the rows whose category Plaid wasn't sure of
   // (txn-words.ts unsureCategory), from the chip that counts them.
   const [unsureOnly, setUnsureOnly] = useState(false);
+  if (accountRequest && accountRequest.at !== accountAsked) {
+    setAccountAsked(accountRequest.at);
+    setAccountFilter(accountRequest.key);
+    setQuery("");
+    setTagFilter("");
+    setCategoryFilter("");
+    setReviewOnly(false);
+    setUnsureOnly(false);
+    setFlowPick(null);
+  }
   // The filter by receipt (#47, components/receipt-filter.ts), and the amount
   // a transaction without one is over.
   const [receiptChoice, setReceiptChoice] = useState<ReceiptChoice>("");
