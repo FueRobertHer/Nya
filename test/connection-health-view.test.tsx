@@ -153,7 +153,7 @@ describe('a connection’s status on its card', () => {
         { name: 'Old card', mask: null, type: 'credit', balance: null, currency: 'USD', stale: true, held: { as_of: null, too_old: '2026-08-01' }, question: { kind: 'missing' } },
       ],
     });
-    expect(affectedText(held, (n) => `$${n}`)).toEqual(['Shown at last known balances from Oct 5, not measured now: Checking ••4821, together $5000 of net worth.', 'Not counted in net worth: Old card.']);
+    expect(affectedText(held, (n) => `$${n}`)).toEqual(['Shown at last known balances from Oct 5, not measured now: Checking ••4821, $5000 of net worth.', 'Not counted in net worth: Old card.']);
     // Answered Still open: what that holds, and for how long, not "if nobody answers".
     const answered = inst('E', health('vanished'), {
       unconfirmed_missing: 1,

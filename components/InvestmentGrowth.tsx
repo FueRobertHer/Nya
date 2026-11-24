@@ -329,6 +329,22 @@ export default function InvestmentGrowth({
   const basis = g?.basis ?? null;
   const lineNames = useMemo(() => (basis ? { balance: 'Balance', grey: basis === 'all' ? 'Deposits & withdrawals' : 'Without returns' } : null), [basis]);
   const drawn = !!chart && !historyFailed && chart.points.length >= 2;
+  const chartStart = drawn && chart ? chart.points[0].date : null;
+  const multiChart = accounts.length > 1 && !!g && g.rows.filter((r) => r.figures).length > 1;
+  const clippedStart =
+    !!chartStart &&
+    !!g?.span &&
+    multiChart &&
+    Math.round((Date.parse(`${chartStart}T00:00:00Z`) - Date.parse(`${g.span.from}T00:00:00Z`)) / 86_400_000) > 7;
+  const chartRangeNote = useMemo(
+    () =>
+      clippedStart && chartStart ? (
+        <p className="helper">
+          {`Chart starts ${formatDay(chartStart)}, when every chosen account has balances. Filter Accounts to one account to chart its full history.`}
+        </p>
+      ) : null,
+    [clippedStart, chartStart]
+  );
   // The chart writes amounts (its label, its value, its table): drawn again
   // when they are hidden or shown.
   const hidden = useAmountsHidden();
@@ -347,9 +363,10 @@ export default function InvestmentGrowth({
           ranges={s.ranges}
           range={s.range}
           onRange={setPicked}
+          rangeNote={chartRangeNote}
         />
       ) : null,
-    [drawn, chart, g, baselineFor, outside, lineNames, s.ranges, s.range, hidden]
+    [drawn, chart, g, baselineFor, outside, lineNames, s.ranges, s.range, chartRangeNote, hidden]
   );
 
   if (accounts.length === 0) {

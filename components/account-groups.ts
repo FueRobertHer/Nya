@@ -13,7 +13,7 @@
 // institution is named instead, since the missing account could be a debt in
 // any group. Pure, client-safe.
 
-import { missingMoney, needsYou } from '@/lib/accounts-status';
+import { missingMoney, needsYou, type StatusInstitution } from '@/lib/accounts-status';
 import { isInvestmentType } from '@/lib/balance';
 import { balancesNow, type PageFx } from '@/lib/fx/view';
 import { signedBalance, type Account, type Institution } from './accounts-format';
@@ -37,14 +37,38 @@ export function groupOf(type: string): GroupKey {
   return 'other';
 }
 
+type SortableInstitution = Pick<Institution, 'institution_name' | 'accounts' | 'manual' | 'connector'> &
+  Partial<Pick<Institution, 'item_id' | 'error' | 'needs_reauth' | 'stale_as_of' | 'stale_missing' | 'stale_too_old' | 'unconfirmed_missing' | 'ended_reported' | 'health'>>;
+
+function isCriticalConnection(inst: SortableInstitution): boolean {
+  if (inst.manual && !inst.connector) return false;
+  const status: StatusInstitution = {
+    item_id: inst.item_id ?? '',
+    manual: inst.manual,
+    connector: inst.connector,
+    error: inst.error ?? null,
+    needs_reauth: inst.needs_reauth,
+    stale_as_of: inst.stale_as_of,
+    stale_missing: inst.stale_missing,
+    stale_too_old: inst.stale_too_old,
+    unconfirmed_missing: inst.unconfirmed_missing,
+    accounts: inst.accounts,
+    ended_reported: inst.ended_reported,
+    health: inst.health,
+  };
+  return needsYou(status) || missingMoney(status);
+}
+
 /** Everyday priority tier for institution cards on the Accounts tab:
- *  0: Cash & Credit (checking, savings, credit cards)
- *  1: Investments (brokerages, IRAs, 401(k)s)
- *  2: Loans only (mortgages, auto/student loans)
- *  3: Other linked institutions (including erroring cards with no accounts yet)
- *  4: Pure manual card last (SimpleFIN/Lunch Flow connector cards sort by accounts). */
-function institutionTier(inst: Pick<Institution, 'accounts' | 'manual' | 'connector'>): number {
+ *  -1: Critical broken connections that need action or are missing money
+ *   0: Cash & Credit (checking, savings, credit cards)
+ *   1: Investments (brokerages, IRAs, 401(k)s)
+ *   2: Loans only (mortgages, auto/student loans)
+ *   3: Other linked institutions (including erroring cards with no accounts yet)
+ *   4: Pure manual card last (SimpleFIN/Lunch Flow connector cards sort by accounts). */
+function institutionTier(inst: SortableInstitution): number {
   if (inst.manual && !inst.connector) return 4;
+  if (isCriticalConnection(inst)) return -1;
   if (inst.accounts.some((a) => a.type === 'depository' || a.type === 'credit')) return 0;
   if (inst.accounts.some((a) => isInvestmentType(a.type))) return 1;
   if (inst.accounts.some((a) => a.type === 'loan')) return 2;
@@ -52,7 +76,7 @@ function institutionTier(inst: Pick<Institution, 'accounts' | 'manual' | 'connec
 }
 
 /** Sort institutions by everyday priority tier, alphabetical within each tier. */
-export function sortInstitutions<T extends Pick<Institution, 'institution_name' | 'accounts' | 'manual' | 'connector'>>(list: readonly T[]): T[] {
+export function sortInstitutions<T extends SortableInstitution>(list: readonly T[]): T[] {
   return [...list].sort(
     (a, b) => institutionTier(a) - institutionTier(b) || a.institution_name.localeCompare(b.institution_name)
   );

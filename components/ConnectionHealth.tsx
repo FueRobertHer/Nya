@@ -172,19 +172,20 @@ const label = (a: { name: string; mask: string | null }) => (a.mask ? `${a.name}
 
 type Row = HealthInstitution['accounts'][number];
 
-/** ", together $3,800 of net worth", unless several currencies would be
- *  added unconverted. With a home currency chosen (`fx`), in it, converted
- *  at the newest rates as the hero is (lib/fx/view.ts), unless a currency
- *  among them has no rate. */
+/** ", together $3,800 of net worth" (or ", $3,800 of net worth" for one
+ *  account), unless several currencies would be added unconverted. With a home
+ *  currency chosen (`fx`), in it, converted at the newest rates as the hero is
+ *  (lib/fx/view.ts), unless a currency among them has no rate. */
 function together(rows: Row[], money: (n: number, currency: string | null) => string, fx: PageFx | null = null): string {
   const main = dominantCurrency(rows.map((a) => ({ iso_currency_code: a.currency })));
   const signed = rows.map((a) => ({ amount: signedContribution(a.type, a.balance ?? 0), currency: a.currency }));
+  const prefix = rows.length === 1 ? ', ' : ', together ';
   if (needsConverting(signed, fx, main)) {
     const b = balancesNow(signed, fx, main);
-    return b.left_out.length > 0 ? '' : `, together ${money(b.total, b.currency)} of net worth`;
+    return b.left_out.length > 0 ? '' : `${prefix}${money(b.total, b.currency)} of net worth`;
   }
   if (new Set(rows.map((a) => a.currency).filter(Boolean)).size > 1) return '';
-  return `, together ${money(signed.reduce((n, r) => n + r.amount, 0), main)} of net worth`;
+  return `${prefix}${money(signed.reduce((n, r) => n + r.amount, 0), main)} of net worth`;
 }
 
 /**
