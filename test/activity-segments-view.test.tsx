@@ -492,6 +492,41 @@ describe('Activity: the bar and its segments', () => {
     expect(v.selected()).toEqual(['Shared']);
     v.unmount();
   });
+
+  test('KPI strip keeps Transfers and loan payments excluded verbatim and bridges loan payments to Cash flow on Spending', async () => {
+    const { setAmountsHidden } = await import('@/lib/format');
+    const loanTxns: Txn[] = [
+      row(`${month}-01`, 'Employer', -5000, 'income'),
+      row(`${month}-05`, 'Groceries', 200, 'food and drink'),
+      { ...row(`${month}-18`, 'FIRST GINGHAM CU LOAN PMT', 420, 'loan payments'), account_type: 'depository', subcategory: null },
+      { ...row(`${month}-18`, 'PAYMENT RECEIVED', -420, 'loan payments'), account_type: 'loan', subcategory: null },
+    ];
+    const v = mount({ txns: loanTxns });
+    expect(v.text()).toContain('Transfers and loan payments excluded.');
+    expect(v.text()).toContain('Loan payments: $420.00.');
+    expect(v.text()).not.toContain('shown in Cash flow below');
+
+    // On Spending with taxonomy: mentions Cash flow below.
+    act(() => click(v.tab('Spending')));
+    expect(v.text()).toContain('Transfers and loan payments excluded.');
+    expect(v.text()).toContain('Loan payments: $420.00, shown in Cash flow below.');
+
+    // On Spending without taxonomy (no Cash flow chart): omits Cash flow reference.
+    v.render({ txns: loanTxns, taxonomy: null });
+    expect(v.text()).toContain('Loan payments: $420.00.');
+    expect(v.text()).not.toContain('shown in Cash flow below');
+
+    // Amounts hidden masks the loan payments figure too.
+    setAmountsHidden(true);
+    try {
+      v.render({ txns: loanTxns, taxonomy });
+      expect(v.text()).toContain('Loan payments: $••••, shown in Cash flow below.');
+      expect(v.text()).not.toContain('420.00');
+    } finally {
+      setAmountsHidden(false);
+    }
+    v.unmount();
+  });
 });
 
 describe('Activity in the dashboard', () => {

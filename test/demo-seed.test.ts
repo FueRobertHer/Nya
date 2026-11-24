@@ -790,8 +790,8 @@ describe('what a seed sets up', () => {
     const [iou] = [...(await expenseIousStore.getAll(TEST_CTX)).values()];
     expect(iou).toMatchObject({ direction: 'to_you', amount: 40, what: 'Concert tickets' });
 
-    // The queue from a week back; travel rolling over from the history's first month.
-    expect(await reviewSettingsStore.get(TEST_CTX)).toMatchObject({ on: true, since: addDays(TODAY, -7) });
+    // The queue from a week back with real-user filter defaults; travel rolling over from the history's first month.
+    expect(await reviewSettingsStore.get(TEST_CTX)).toMatchObject({ on: true, since: addDays(TODAY, -7), skip_transfers: true, posted_only: true });
     const first = historyMonths(TODAY)[0];
     const travel = await category('TRAVEL');
     expect((await budgetMonthsStore.get(TEST_CTX))!.categories[travel.id].rollover).toEqual([{ from: `${first.year}-${String(first.month).padStart(2, '0')}` }]);

@@ -274,49 +274,54 @@ export function WeeklySummarySheetBody(props: {
   now?: number;
 }) {
   const { draft, onDraft, saved, preview } = props;
+  const demoPreviewOnly = props.demo && !saved?.enabled;
   const unchanged = saved ? saved.enabled === draft.enabled && saved.weekday === draft.weekday && saved.time_zone === draft.time_zone : !draft.enabled;
   const set = (d: Partial<Draft>) => onDraft({ ...draft, ...d });
   const errorId = useId();
   return (
     <div className="sheet-form weekly-summary-sheet">
-      <label className="quick-add-check">
-        <input
-          type="checkbox"
-          checked={draft.enabled}
-          disabled={props.saving || (props.demo && !draft.enabled)}
-          // Turned on with none saved: this device's zone.
-          onChange={(e) => set(e.target.checked && !saved ? { enabled: true, time_zone: props.device } : { enabled: e.target.checked })}
-        />
-        <span>Email me a summary every week</span>
-      </label>
-      <label className="field">
-        Day
-        <select value={draft.weekday} onChange={(e) => set({ weekday: Number(e.target.value) as Weekday })} disabled={props.saving}>
-          {WEEKDAY_NAMES.map((name, i) => (
-            <option key={name} value={i}>
-              {name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="field">
-        Time zone
-        <select value={draft.time_zone} onChange={(e) => set({ time_zone: e.target.value })} disabled={props.saving}>
-          {props.zones.map((z) => (
-            <option key={z} value={z}>
-              {zoneName(z)}
-            </option>
-          ))}
-        </select>
-      </label>
-      {!sameClock(draft.time_zone, props.device, props.now) && (
-        <button className="link-btn" onClick={() => set({ time_zone: props.device })} disabled={props.saving}>
-          Use this device’s time zone ({zoneName(props.device)})
-        </button>
+      {!demoPreviewOnly && (
+        <>
+          <label className="quick-add-check">
+            <input
+              type="checkbox"
+              checked={draft.enabled}
+              disabled={props.saving || (props.demo && !draft.enabled)}
+              // Turned on with none saved: this device's zone.
+              onChange={(e) => set(e.target.checked && !saved ? { enabled: true, time_zone: props.device } : { enabled: e.target.checked })}
+            />
+            <span>Email me a summary every week</span>
+          </label>
+          <label className="field">
+            Day
+            <select value={draft.weekday} onChange={(e) => set({ weekday: Number(e.target.value) as Weekday })} disabled={props.saving}>
+              {WEEKDAY_NAMES.map((name, i) => (
+                <option key={name} value={i}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            Time zone
+            <select value={draft.time_zone} onChange={(e) => set({ time_zone: e.target.value })} disabled={props.saving}>
+              {props.zones.map((z) => (
+                <option key={z} value={z}>
+                  {zoneName(z)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {!sameClock(draft.time_zone, props.device, props.now) && (
+            <button className="link-btn" onClick={() => set({ time_zone: props.device })} disabled={props.saving}>
+              Use this device’s time zone ({zoneName(props.device)})
+            </button>
+          )}
+          <p className="panel-note">
+            Each summary covers the seven days before its day, on this time zone’s calendar. {comesText(draft.weekday, draft.time_zone, props.now)}
+          </p>
+        </>
       )}
-      <p className="panel-note">
-        Each summary covers the seven days before its day, on this time zone’s calendar. {comesText(draft.weekday, draft.time_zone, props.now)}
-      </p>
       {props.demo && (
         <p className="stale-note">
           Demo accounts can’t get the weekly summary: everyone who tries the demo shares its data. You can still preview what this week’s summary would say below.
@@ -331,12 +336,20 @@ export function WeeklySummarySheetBody(props: {
             </Notice>
           </div>
         )}
-        <button type="button" className="btn secondary" onClick={props.onCancel} disabled={props.saving}>
-          Cancel
-        </button>
-        <button type="button" className="btn" onClick={props.onSave} disabled={props.saving || unchanged || (props.demo && !saved?.enabled)} aria-describedby={props.saveError ? errorId : undefined}>
-          {props.saving ? 'Saving…' : 'Save'}
-        </button>
+        {demoPreviewOnly ? (
+          <button type="button" className="btn secondary" onClick={props.onCancel}>
+            Close
+          </button>
+        ) : (
+          <>
+            <button type="button" className="btn secondary" onClick={props.onCancel} disabled={props.saving}>
+              Cancel
+            </button>
+            <button type="button" className="btn" onClick={props.onSave} disabled={props.saving || unchanged || (props.demo && !saved?.enabled)} aria-describedby={props.saveError ? errorId : undefined}>
+              {props.saving ? 'Saving…' : 'Save'}
+            </button>
+          </>
+        )}
       </SheetFooter>
 
       <h3 className="section-label weekly-preview-title">This week’s summary</h3>
@@ -351,7 +364,7 @@ export function WeeklySummarySheetBody(props: {
           <p className="weekly-preview-subject">{preview.subject}</p>
           <pre className="weekly-preview">{preview.text}</pre>
           <p className="panel-note">
-            What the summary would say if it went now, for the day and time zone above, with the summary on. The one that goes is worked out when it
+            What the summary would say if it went now{demoPreviewOnly ? '' : ', for the day and time zone above'}, with the summary on. The one that goes is worked out when it
             goes, after your transactions are brought up to date, so it can say more, and its link to turn the summary off is made for each email. Your
             email provider can read it, as it can any email: it names your budgets, goals, bills, planned expenses and banks. A name of yours with a
             digit, a currency or percent sign, a number or a currency written as an English word, a number written as a Spanish, Portuguese, French,
@@ -360,19 +373,23 @@ export function WeeklySummarySheetBody(props: {
           </p>
         </>
       )}
-      <button className="secondary" onClick={props.onSendNow} disabled={!props.canSend || props.demo || props.sending}>
-        {props.sending ? 'Sending…' : 'Send me one now'}
-      </button>
-      {!props.canSend && props.whyNot && <p className="panel-note">{props.whyNot}</p>}
-      {props.sendNote &&
-        (props.sendNote.ok ? (
-          <p className="status-note">{props.sendNote.text}</p>
-        ) : (
-          <Notice level="critical" role="alert">
-            {props.sendNote.text}
-          </Notice>
-        ))}
-      <p className="panel-note">Up to {SENDS_NOW_PER_DAY} a day.</p>
+      {!demoPreviewOnly && (
+        <>
+          <button className="secondary" onClick={props.onSendNow} disabled={!props.canSend || props.demo || props.sending}>
+            {props.sending ? 'Sending…' : 'Send me one now'}
+          </button>
+          {!props.canSend && props.whyNot && <p className="panel-note">{props.whyNot}</p>}
+          {props.sendNote &&
+            (props.sendNote.ok ? (
+              <p className="status-note">{props.sendNote.text}</p>
+            ) : (
+              <Notice level="critical" role="alert">
+                {props.sendNote.text}
+              </Notice>
+            ))}
+          <p className="panel-note">Up to {SENDS_NOW_PER_DAY} a day.</p>
+        </>
+      )}
     </div>
   );
 }

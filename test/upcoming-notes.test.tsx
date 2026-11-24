@@ -270,6 +270,38 @@ describe('the notice at the top of the segment', () => {
       setAmountsHidden(false);
     }
   });
+
+  test('a card’s balance without a due date uses card_balance summary and masks its amount when amounts are hidden', () => {
+    const noDue: UpcomingScene = {
+      ...SCENES['as it usually is'],
+      institutions: [
+        {
+          institution_name: 'Tartan Bank',
+          item_id: 'item_tartan',
+          accounts: [
+            { account_id: 'chk', name: 'Checking', type: 'depository', subtype: 'checking', balance: 900, currency: 'USD' },
+            { account_id: 'card', name: 'Cash Rewards Visa', type: 'credit', balance: 540.03, currency: 'USD' },
+          ],
+        },
+      ],
+    };
+    const g = globalThis as Record<string, unknown>;
+    const none = g.window === undefined;
+    if (none) g.window = {};
+    setAmountsHidden(true);
+    if (none) delete g.window;
+    try {
+      const { said } = probe(noDue);
+      const card = said.notice.find((c) => c.summary === KIND_WORDS.card_balance)!;
+      expect(card).toBeDefined();
+      const html = renderToStaticMarkup(<TotalCaveats items={[card]} />);
+      expect(html).toContain(`<span aria-hidden="true">Cash Rewards Visa carries a ${formatMoney(540.03, 'USD')} balance`);
+      expect(html).toContain('<span class="visually-hidden">Cash Rewards Visa carries a hidden balance');
+      expect(html).not.toContain('540.03');
+    } finally {
+      setAmountsHidden(false);
+    }
+  });
 });
 
 describe('the forecast’s start notes, on its card', () => {

@@ -678,6 +678,27 @@ describe('spending and savings from the trailing year', () => {
     expect(r.unclearLoans).toBe(1_000);
   });
 
+  test('a Plaid loan payment with no subcategory pairs with a linked loan account inflow within 3 days, including across the window boundary', () => {
+    const r = trailingFlows(
+      [
+        txn({ transaction_id: 'inc', date: yearAgo, amount: -5_000, category: 'income', account_type: 'depository' }),
+        // Same-day student loan pair with null subcategory.
+        txn({ transaction_id: 'sl-out', date: '2026-05-18', amount: 420, category: 'loan payments', subcategory: null, account_type: 'depository' }),
+        txn({ transaction_id: 'sl-in', date: '2026-05-18', amount: -420, category: 'loan payments', subcategory: null, account_type: 'loan' }),
+        // Outflow on today, loan inflow 2 days later (outside trailing window).
+        txn({ transaction_id: 'sl-edge-out', date: today, amount: 300, category: 'loan payments', subcategory: 'other payment', account_type: 'depository' }),
+        txn({ transaction_id: 'sl-edge-in', date: '2026-10-08', amount: -300, category: 'loan payments', subcategory: null, account_type: 'loan' }),
+        // Credit card payoff matching a credit-account inflow must stay out of loanPayments.
+        txn({ transaction_id: 'cc-out', date: '2026-06-22', amount: 800, category: 'loan payments', subcategory: null, account_type: 'depository' }),
+        txn({ transaction_id: 'cc-in', date: '2026-06-22', amount: -800, category: 'loan payments', subcategory: null, account_type: 'credit' }),
+      ],
+      today
+    )!;
+    expect(r.loanPayments).toBe(720);
+    expect(r.unclearLoans).toBe(800);
+    expect(r.spending).toBe(720);
+  });
+
   test('leaves out what is older than a year, or dated after today', () => {
     const r = trailingFlows(
       [

@@ -294,13 +294,19 @@ export function compactMoney(amount: number, currency?: string | null): string {
   return hidden ? hiddenMoney(amount, currency) : fullCompact(amount, currency);
 }
 
-/** Compact form with an explicit sign (+$8.9K, −$1.2K), for tight chart bar labels. */
-export function signedCompactMoney(amount: number, currency?: string | null, opts: { always?: boolean } = {}): string {
+/** Compact form with an explicit sign (+$8.9K, −$1.2K, +$609, $0), for tight chart bar labels. */
+export function signedCompactMoney(
+  amount: number,
+  currency?: string | null,
+  opts: { always?: boolean; wholeUnderThousand?: boolean } = {}
+): string {
   const n = amount === 0 ? 0 : amount;
   if (hidden) return hiddenMoney(n, currency, opts.always ? 'always' : 'exceptZero');
-  if (n < 0) return fullCompact(n, currency);
-  const body = fullCompact(n, currency);
-  return n > 0 || opts.always ? `+${body}` : body;
+  const rounded = opts.wholeUnderThousand && Math.abs(n) < 1000 ? Math.round(n) : n;
+  const clean = rounded === 0 ? 0 : rounded;
+  if (clean < 0) return fullCompact(clean, currency);
+  const body = fullCompact(clean, currency);
+  return clean > 0 || (opts.always && !opts.wholeUnderThousand) ? `+${body}` : body;
 }
 
 /** compactMoney's figures, whatever the switch says: only for what is
@@ -313,12 +319,17 @@ function fullCompact(amount: number, currency?: string | null): string {
           style: 'currency',
           currency,
           notation: 'compact',
+          minimumFractionDigits: 0,
           maximumFractionDigits: 1,
         }).formatToParts(amount)
       );
     } catch {
       // A code Intl refuses: the compact number, the code after it.
-      const compact = new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(Math.abs(amount));
+      const compact = new Intl.NumberFormat(undefined, {
+        notation: 'compact',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 1,
+      }).format(Math.abs(amount));
       return `${amount < 0 ? MINUS : ''}${compact} ${currency}`;
     }
   }

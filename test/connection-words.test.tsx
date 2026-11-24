@@ -19,7 +19,9 @@ import before from './connection-words-before-3b.json';
 // Close), so the record names it as the button now reads. And the dates
 // follow the design system's (lib/format.ts formatDay): a day of this year
 // without its year, one of another year with it, so the record says them so,
-// on a today held still.
+// on a today held still. And for a single affected account, "together " is
+// omitted (", $1,200.00 of net worth" rather than ", together $1,200.00 of
+// net worth"), reserving "together" for two or more accounts.
 
 beforeAll(() => setSystemTime(new Date('2026-10-29T12:00:00')));
 afterAll(() => setSystemTime());

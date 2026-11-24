@@ -50,7 +50,8 @@ export function settingsCard<K extends keyof Cards>(name: K, { quiet = false, ra
       );
     }
     if (failed) return rare ? null : <CardUnavailable reason="load" onRetry={retry} />;
-    return quiet || rare ? null : <CardSkeleton label="Loading" />;
+    const hasEmpty = Boolean((props as { empty?: unknown }).empty);
+    return (quiet && !hasEmpty) || rare ? null : <CardSkeleton label="Loading" />;
   }
   Card.displayName = name;
   return Card;

@@ -77,7 +77,7 @@ const NO_NOTES: readonly string[] = [];
 /** A label's text size: the chart is drawn at its width, so it is in CSS px. */
 const LABEL_SIZE = 12;
 /** A label's line: two labels' middles are never closer than this. */
-const LABEL_LINE = 14;
+const LABEL_LINE = 16;
 /** The room a name must have beside the widest amount for the chart to draw
  *  a fourth column, of categories: about seven letters. */
 const MIN_NAME = 48;
@@ -177,12 +177,14 @@ function fitsCategories(width: number, room: number): boolean {
 
 /** The layout's options at `width`: today's shape, scaled with the width,
  *  but never less room a label than a phone's. */
-function layoutAt(width: number) {
+function layoutAt(width: number, middleGroups: number) {
   const grow = Math.max(1, width / FALLBACK_WIDTH);
+  const dense = middleGroups >= 5;
   return {
     width,
     labelHeight: LABEL_LINE,
-    rowHeight: Math.round(SANKEY_DEFAULTS.rowHeight * grow),
+    ...(dense ? { gap: Math.round(SANKEY_DEFAULTS.gap * 1.2) } : {}),
+    rowHeight: Math.round((dense ? SANKEY_DEFAULTS.rowHeight + 4 : SANKEY_DEFAULTS.rowHeight) * grow),
     minPlotHeight: Math.round(SANKEY_DEFAULTS.minPlotHeight * grow),
   };
 }
@@ -299,7 +301,8 @@ export default function CashFlowSankey({
   const room = amountRoom(flow.currency);
   const categories = fitsCategories(width, room);
   const graph = useMemo(() => flowGraph(flow, { categories }), [flow, categories]);
-  const layout = useMemo(() => layoutSankey(graph.nodes, graph.links, layoutAt(width)), [graph, width]);
+  const middleGroups = useMemo(() => graph.nodes.filter((n) => n.column === 2).length, [graph]);
+  const layout = useMemo(() => layoutSankey(graph.nodes, graph.links, layoutAt(width, middleGroups)), [graph, width, middleGroups]);
   const said = useMemo(
     () => cashFlowNotes({ flow, period, rows: txns, read: notes, incomplete, stopped, view: withoutTransactions, today, day: (at) => formatInstantDay(at, { sentence: true }) ?? at.slice(0, 10) }),
     [flow, period, txns, notes, incomplete, stopped, withoutTransactions, today]

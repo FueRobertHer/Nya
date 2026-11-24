@@ -326,6 +326,27 @@ describe('what the cells say (review: retiring before the FI date)', () => {
     expect(r.cells[3].diff).toBe('starts with a different balance');
   });
 
+  test('at-stop plans from the same today portfolio without shortfall show dollar differences; different today assets or shortfall suppress them', () => {
+    const baseAtStop = figs(plan({ age: 40, targetAge: 55, start: 'at-stop' }));
+    const lessSaving = figs(plan({ age: 40, targetAge: 55, start: 'at-stop', savings: 15_000 }));
+    const diffAssets = figs(plan({ age: 40, targetAge: 55, start: 'at-stop', assets: 200_000 }));
+    const withShortfall = figs(plan({ age: 40, targetAge: 55, start: 'at-stop' }), [
+      { id: 'big', kind: 'house', label: 'Big house', atAge: 42, cost: 2_000_000, yearly: 0, years: null },
+    ]);
+    const c: CompareColumn[] = [
+      { id: 'base', name: 'Your plan', isPlan: true, outcome: { kind: 'figures', figures: baseAtStop, result: run(baseAtStop) } },
+      { id: 'less', name: 'Less saving', isPlan: false, outcome: { kind: 'figures', figures: lessSaving, result: run(lessSaving) } },
+      { id: 'assets', name: 'Less today', isPlan: false, outcome: { kind: 'figures', figures: diffAssets, result: run(diffAssets) } },
+      ...(withShortfall.startsWith?.short && 'sim' in withShortfall.engine
+        ? [{ id: 'short', name: 'Shortfall', isPlan: false, outcome: { kind: 'figures' as const, figures: withShortfall, result: run(withShortfall) } }]
+        : []),
+    ];
+    const median = compareRows(c, money, TODAY).rows.find((x) => x.key === 'median')!;
+    expect(median.cells[1].diff).toMatch(/ less$/);
+    expect(median.cells[2].diff).toBe('starts with a different balance');
+    if (median.cells[3]) expect(median.cells[3].diff).toBe('starts with a different balance');
+  });
+
   test('points and lengths in words', () => {
     expect(pointsText(-0.0823)).toBe('8.2 points lower');
     expect(pointsText(0.01)).toBe('1 point higher');

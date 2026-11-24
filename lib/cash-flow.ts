@@ -85,6 +85,7 @@ import {
   isHistoryRow,
   isTransfer,
   LOAN_PAYMENTS,
+  pairedPlaidLoanIds,
   transactionCounter,
   uncategorizedFrom,
   uncategorizedFromConnector,
@@ -112,6 +113,10 @@ export type FlowRow = TotalsRow & {
   name: string;
   /** Plaid's finer category detail, when present (for non-card loan payments). */
   subcategory?: string | null;
+  /** The account's type (depository, credit, loan, investment), when present. */
+  account_type?: string | null;
+  /** Original amount and currency before FX conversion, when converted. */
+  converted?: { amount: number; currency: string };
   /** Paired SimpleFIN/connector transfer kind, when present. */
   paired?: 'card' | 'loan' | 'transfer';
   /** A rule hides it (lib/rules.ts): left out as an exclusion is, and
@@ -126,11 +131,13 @@ export type FlowRow = TotalsRow & {
 
 /** Whether a transaction is a non-card loan outflow (mortgage, auto, student,
  *  or personal loan payment) left out of totals as a transfer. */
-export function isLoanPaymentOut(t: FlowRow, currency: string | null): boolean {
+export function isLoanPaymentOut(t: FlowRow, currency: string | null, pairedLoans?: ReadonlySet<string>): boolean {
   if (!(t.amount > 0) || isExcluded(t) || t.group_outside || !inCurrency(t, currency)) return false;
   if (!isTransfer(t) || categoryKey(t) !== LOAN_PAYMENTS) return false;
-  if (t.paired === 'loan') return true;
-  return LOAN_PAYMENT_DETAILS.has((t.subcategory ?? '').toLowerCase());
+  const sub = (t.subcategory ?? '').toLowerCase();
+  if (sub === 'credit card payment' || t.paired === 'card') return false;
+  if (t.paired === 'loan' || pairedLoans?.has(t.transaction_id)) return true;
+  return LOAN_PAYMENT_DETAILS.has(sub);
 }
 
 /** One payer's counted money in. `key` is its name as compared. `rows` are
@@ -206,12 +213,13 @@ export function cashFlow(rows: readonly FlowRow[], inRange: (date: string) => bo
   const cameIn = transactionCounter();
   const wentOut = transactionCounter();
   const uncategorized = uncategorizedOf(ix);
+  const pairedLoans = pairedPlaidLoanIds(rows);
   for (const t of rows) {
     if (!inRange(t.date)) continue;
     if (t.excluded === true && t.excluded_by_rule) hidden.add(t);
     if (t.amount === 0) continue;
     if (!countsInTotals(t, currency)) {
-      if (isLoanPaymentOut(t, currency)) {
+      if (isLoanPaymentOut(t, currency, pairedLoans)) {
         loanPayments.amount += t.amount;
         loanPayments.tally.add(t);
         loanPayments.ids.push(t.transaction_id);

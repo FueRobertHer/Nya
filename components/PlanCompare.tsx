@@ -45,8 +45,7 @@ export default function PlanCompare({
       {against ? (
         <p className="panel-note">
           Differences are against <Masked>{against.name}</Masked>
-          {against.id !== columns[0]?.id ? ', the first that could be worked out' : ''}. A plan that starts with a different balance shows no difference in amounts: they
-          depend on what it starts with.
+          {against.id !== columns[0]?.id ? ', the first that could be worked out' : ''}. A plan that starts with a different balance shows no difference in amounts unless both start from the same invested portfolio today and project to your stop age.
         </p>
       ) : (
         !pending && <p className="panel-note">None of these could be worked out, so there is nothing to compare yet.</p>

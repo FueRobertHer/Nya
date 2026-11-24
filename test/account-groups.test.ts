@@ -427,4 +427,53 @@ describe('sortInstitutions', () => {
       'Manual',
     ]);
   });
+
+  test('floats critical broken connections above healthy accounts while keeping caution-only and manual cards in place', async () => {
+    const { sortInstitutions } = await import('@/components/account-groups');
+    const brokenLoan = institution({
+      institution_name: 'First Gingham CU',
+      needs_reauth: true,
+      error: 'Login required',
+      stale_as_of: '2026-10-20',
+      health: { state: 'needs_reauth', cause: 'login', side: 'you', action: 'reconnect', last_ok_at: '2026-10-20T12:00:00Z' },
+      accounts: [account({ type: 'loan', balance: 13_560 })],
+    });
+    const closedInv = institution({
+      institution_name: 'Closed Brokerage',
+      health: { state: 'closed', cause: 'no_accounts', side: 'bank', action: 'remove', last_ok_at: null },
+      accounts: [account({ type: 'investment', balance: 40_000 })],
+    });
+    const unrecovered = institution({
+      institution_name: 'Unreachable CU',
+      error: 'Cannot reach institution',
+      accounts: [],
+    });
+    const criticalConnector = institution({
+      institution_name: 'Broken SimpleFIN',
+      manual: true,
+      connector: 'simplefin',
+      health: connector('credentials'),
+      accounts: [account({ type: 'investment', balance: 5_000 })],
+    });
+    const cautionOnly = institution({
+      institution_name: 'Expiring Loan Co',
+      needs_reauth: true,
+      error: null,
+      health: { state: 'reconnect_soon', cause: 'consent_ending', side: 'you', action: 'reconnect', last_ok_at: '2026-10-22T12:00:00Z' },
+      accounts: [account({ type: 'loan', balance: 9_000 })],
+    });
+    const healthyCash = institution({ institution_name: 'Platypus Bank', accounts: [account({ type: 'depository' })] });
+    const manualCard = institution({ institution_name: 'Manual', manual: true, error: 'ignored', accounts: [account({ type: 'other' })] });
+
+    const ordered = sortInstitutions([manualCard, healthyCash, cautionOnly, criticalConnector, unrecovered, closedInv, brokenLoan]);
+    expect(ordered.map((i) => i.institution_name)).toEqual([
+      'Broken SimpleFIN',
+      'Closed Brokerage',
+      'First Gingham CU',
+      'Unreachable CU',
+      'Platypus Bank',
+      'Expiring Loan Co',
+      'Manual',
+    ]);
+  });
 });

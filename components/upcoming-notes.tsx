@@ -85,6 +85,7 @@ export const KIND_WORDS: Record<ForecastNoteKind | 'not_loaded' | 'loading' | 'p
   refused: 'accounts Plaid doesn’t cover',
   no_consent: 'transactions not allowed',
   card: 'a card’s payment due',
+  card_balance: 'a card’s balance',
   lapsed: 'pay that stopped',
   varies: 'pay that varies',
   typed: 'a typed balance not updated',

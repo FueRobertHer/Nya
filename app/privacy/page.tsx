@@ -81,8 +81,16 @@ function receiptsCommitment(files: AttachmentsMode): Commitment {
   }
   return {
     promise,
-    today:
-      'A receipt can show what you bought, at a pharmacy say, so Nya treats what you attach as more private than the transaction it is on: it is never shared, even where the transaction is, never sent to a program with an API token, never in an email, and never kept on your device by Nya. You can delete one at any time: once it is gone from the file store (at once, or by a later nightly run if the store can’t be reached), no backup can bring it back. This copy of Nya keeps one copy of each file, so download them to keep your own.',
+    today: (
+      <>
+        <p>
+          A receipt can show what you bought, at a pharmacy say, so Nya treats what you attach as more private than the transaction it is on: it is never shared, even where the transaction is, never sent to a program with an API token, never in an email, and never kept on your device by Nya.
+        </p>
+        <p>
+          You can delete one at any time: once it is gone from the file store (at once, or by a later nightly run if the store can’t be reached), no backup can bring it back. This copy of Nya keeps one copy of each file, so download them to keep your own.
+        </p>
+      </>
+    ),
     ...(files.uploads ? {} : { next: { label: 'Not turned on here' as const, text: 'Adding new receipts and documents is off on this copy of Nya; any already attached stay as described.' } }),
   };
 }
@@ -96,7 +104,16 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, files:
   },
   {
     promise: 'You can download everything stored about you, in open formats, whenever you like.',
-    today: `Download my data, in Settings under Your data and privacy, gives you everything stored about you, decrypted: one JSON file, CSV files of your transactions and of your balance history, or a bank account’s or card’s transactions as an OFX file for other money apps. You can protect any of them with a passphrase of your own, which Nya never keeps. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour. ${downloadEmail(mail)} Where whoever runs this copy of Nya has turned it on, Bring back a download, beside it, brings a JSON download into an empty account, in this copy of Nya or another: the file is read in your browser and never stored.${files.connected ? ' Your receipts and documents come as ZIP files of their own, under Receipts and documents beside it.' : ''}`,
+    today: (
+      <>
+        <p>
+          {`Download my data, in Settings under Your data and privacy, gives you everything stored about you, decrypted: one JSON file, CSV files of your transactions and of your balance history, or a bank account’s or card’s transactions as an OFX file for other money apps. You can protect any of them with a passphrase of your own, which Nya never keeps. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour. ${downloadEmail(mail)}`}
+        </p>
+        <p>
+          {`Where whoever runs this copy of Nya has turned it on, Bring back a download, beside it, brings a JSON download into an empty account, in this copy of Nya or another: the file is read in your browser and never stored.${files.connected ? ' Your receipts and documents come as ZIP files of their own, under Receipts and documents beside it.' : ''}`}
+        </p>
+      </>
+    ),
   },
   {
     promise: 'You can delete everything, and it reaches backups and connected services.',
@@ -112,8 +129,22 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, files:
   },
   {
     promise: 'You decide what anyone else sees, and you can see what they see about you.',
-    today:
-      'Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. Beyond accounts, you can choose to share your net worth, as an amount, and your spending by category, your holdings, your budgets or goals you pick, each as percentages or amounts, never the transactions behind them; a net worth lists no account whose balance you don’t share. Once you choose a home currency, what you share is shown in it, converted at the European Central Bank’s daily rates alone, never at your own rates, and they see that it is converted at those rates, never a rate itself; what only a rate of your own would convert is left out of what is converted, and named by its currency. If the European Central Bank doesn’t publish your home currency, what you share isn’t converted at all. Before you save, Sharing says what Nya knows they could work out from it all together (what your other accounts add up to beside your net worth, your income from your net worth and spending, what goes into a goal each month, and amounts from percentages beside an amount of the same money), and that this isn’t every way. For each person, Sharing shows a preview of exactly what they see of yours, and a record of each time it was shown to them. They see that same record, and you see theirs of each time what they share was shown to you; both records are in both of your downloads. A share can end on a date you set, which they see too. Remove or Block ends everything shared both ways at once and deletes both records, as does either of you deleting your account. The people you split costs with under Shared expenses are never shown to anyone you share with, nor named in an email: their names and usernames are encrypted in your account, and seen only by you, in your download, and by a program you give an API token to, through its shared expenses answer. Forget someone and their name and usernames are deleted, and the amounts stay. Nya never sends, receives or holds money, and keeps no payment app’s login, card or account number: asking someone to pay you opens Venmo with the request filled in, or gives you a message to send yourself.',
+    today: (
+      <>
+        <p>
+          Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. Beyond accounts, you can choose to share your net worth, as an amount, and your spending by category, your holdings, your budgets or goals you pick, each as percentages or amounts, never the transactions behind them; a net worth lists no account whose balance you don’t share.
+        </p>
+        <p>
+          Once you choose a home currency, what you share is shown in it, converted at the European Central Bank’s daily rates alone, never at your own rates, and they see that it is converted at those rates, never a rate itself; what only a rate of your own would convert is left out of what is converted, and named by its currency. If the European Central Bank doesn’t publish your home currency, what you share isn’t converted at all.
+        </p>
+        <p>
+          Before you save, Sharing says what Nya knows they could work out from it all together (what your other accounts add up to beside your net worth, your income from your net worth and spending, what goes into a goal each month, and amounts from percentages beside an amount of the same money), and that this isn’t every way. For each person, Sharing shows a preview of exactly what they see of yours, and a record of each time it was shown to them. They see that same record, and you see theirs of each time what they share was shown to you; both records are in both of your downloads. A share can end on a date you set, which they see too. Remove or Block ends everything shared both ways at once and deletes both records, as does either of you deleting your account.
+        </p>
+        <p>
+          The people you split costs with under Shared expenses are never shown to anyone you share with, nor named in an email: their names and usernames are encrypted in your account, and seen only by you, in your download, and by a program you give an API token to, through its shared expenses answer. Forget someone and their name and usernames are deleted, and the amounts stay. Nya never sends, receives or holds money, and keeps no payment app’s login, card or account number: asking someone to pay you opens Venmo with the request filled in, or gives you a message to send yourself.
+        </p>
+      </>
+    ),
   },
   {
     promise: 'You can see who can read what, including whoever runs Nya.',
@@ -159,7 +190,7 @@ function databaseBackups(days: number | null): string {
   return '';
 }
 
-const processors = (backups: BackupRetention, mail: boolean, dbDays: number | null, files: AttachmentsMode): [string, string][] => [
+const processors = (backups: BackupRetention, mail: boolean, dbDays: number | null, files: AttachmentsMode): [string, ReactNode][] => [
   [
     'Vercel',
     `${backups?.kept === false ? 'Hosts the app.' : 'Hosts the app and stores the nightly backups.'}${
@@ -190,9 +221,19 @@ const processors = (backups: BackupRetention, mail: boolean, dbDays: number | nu
     ? ([
         [
           'Resend',
-          `Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. And one each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made (saying what it can do), and the weekly summary, if you turn it on. Sees your email address and each email, which names the bank and what to do, or when and in which format your data was downloaded. The weekly summary tells it whether you spent more or less than in a usual week; the names of your budgets and categories that are over or close to their limit, and of your goals that are behind their target date or have reached their target; the bills and planned expenses due in the next seven days, by name, with their days and whether one is late; the banks that need you and what they need, and those whose transactions aren’t all in, with the day each last came in; the months that may be missing transactions, and why; how many of the week’s transactions from SimpleFIN or Lunch Flow have no category; and the currencies of transactions it didn’t count. Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, as is one that looks like a link or an address (with ://, www., an @, or a word, a dot and two or more letters, as in example.com), and so is a bank’s name, as Plaid, SimpleFIN or Lunch Flow gives it, with a digit or a currency or percent sign. Resend keeps them under its own privacy policy.`,
+          <>
+            <p>
+              Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. And one each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made (saying what it can do), and the weekly summary, if you turn it on. Sees your email address and each email, which names the bank and what to do, or when and in which format your data was downloaded.
+            </p>
+            <p>
+              The weekly summary tells it whether you spent more or less than in a usual week; the names of your budgets and categories that are over or close to their limit, and of your goals that are behind their target date or have reached their target; the bills and planned expenses due in the next seven days, by name, with their days and whether one is late; the banks that need you and what they need, and those whose transactions aren’t all in, with the day each last came in; the months that may be missing transactions, and why; how many of the week’s transactions from SimpleFIN or Lunch Flow have no category; and the currencies of transactions it didn’t count.
+            </p>
+            <p>
+              Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, as is one that looks like a link or an address (with ://, www., an @, or a word, a dot and two or more letters, as in example.com), and so is a bank’s name, as Plaid, SimpleFIN or Lunch Flow gives it, with a digit or a currency or percent sign. Resend keeps them under its own privacy policy.
+            </p>
+          </>,
         ],
-      ] as [string, string][])
+      ] as [string, ReactNode][])
     : []),
 ];
 
@@ -242,14 +283,14 @@ function backupsRow(backups: BackupRetention): string {
   return `${backups.keep_days} days. The newest ${backups.min_kept} are always kept, so if backups stop, the last ones remain.`;
 }
 
-const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: AttachmentsMode): [string, string][] => [
+const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: AttachmentsMode): [string, ReactNode][] => [
   ['Your data', 'Until you delete it, or delete your account.'],
   [
     'How each bank connection is doing',
     'When it last answered, Plaid’s warnings that it is going to end, and the record of a problem with it (when it began, what it was, and when you were emailed about it): until the connection is removed. The warnings and the problem records go sooner, once the connection works again. Encrypted, and in your download.',
   ],
   ...(mail
-    ? ([['Emails Nya sent you', 'In your inbox, and with the email service under its own policy. Deleting your account does not reach them.']] as [string, string][])
+    ? ([['Emails Nya sent you', 'In your inbox, and with the email service under its own policy. Deleting your account does not reach them.']] as [string, ReactNode][])
     : []),
   [
     'A bank you disconnect',
@@ -257,7 +298,17 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: A
   ],
   [
     'A download you brought back',
-    'What it held is your data, kept as the rest is. A bank in it that was connected through Plaid keeps its transactions, encrypted, until you Forget it: they count once you connect it again and link its accounts (then as its own), or once you say the bank is gone (then as an ended account’s, up to the day you give). What you answer about it (that it is gone, which connections made since it isn’t at, which account carries it on) is kept with it, encrypted and in your download, until you Forget it, undo the restore, empty the account or delete it. An account from SimpleFIN or Lunch Flow you carry on with the one you track in its place keeps what it was, so undoing that puts it back. The record of the restore (when the file was made, its size, and how much came back) stays until you undo the restore, empty the account or delete it; the file itself is never stored.',
+    <>
+      <p>
+        What it held is your data, kept as the rest is. A bank in it that was connected through Plaid keeps its transactions, encrypted, until you Forget it: they count once you connect it again and link its accounts (then as its own), or once you say the bank is gone (then as an ended account’s, up to the day you give).
+      </p>
+      <p>
+        What you answer about it (that it is gone, which connections made since it isn’t at, which account carries it on) is kept with it, encrypted and in your download, until you Forget it, undo the restore, empty the account or delete it. An account from SimpleFIN or Lunch Flow you carry on with the one you track in its place keeps what it was, so undoing that puts it back.
+      </p>
+      <p>
+        The record of the restore (when the file was made, its size, and how much came back) stays until you undo the restore, empty the account or delete it; the file itself is never stored.
+      </p>
+    </>,
   ],
   ['Receipts and documents you attach', attachmentsRow(backups, files)],
   [
@@ -270,11 +321,25 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: A
   ],
   [
     'A SimpleFIN connection',
-    'The access SimpleFIN gave Nya, encrypted, never in your download and never in backups: until you disconnect it, or delete your account. Restoring a backup ends it: you connect again with a new Setup Token, and the accounts carry on. Its accounts and their transactions are kept like any account’s. Disconnecting deletes the access; you choose to keep the accounts as manual accounts, or to remove them and their transactions (their past balances stay in your net-worth history). A note of each account you stop tracking (its name, its bank and when) stays, so a report on a period it was tracked in can say what may be missing, until you forget it on the Reports page, or delete your account. SimpleFIN keeps what it holds under its own terms: remove Nya in your SimpleFIN account too.',
+    <>
+      <p>
+        The access SimpleFIN gave Nya, encrypted, never in your download and never in backups: until you disconnect it, or delete your account. Restoring a backup ends it: you connect again with a new Setup Token, and the accounts carry on. Its accounts and their transactions are kept like any account’s.
+      </p>
+      <p>
+        Disconnecting deletes the access; you choose to keep the accounts as manual accounts, or to remove them and their transactions (their past balances stay in your net-worth history). A note of each account you stop tracking (its name, its bank and when) stays, so a report on a period it was tracked in can say what may be missing, until you forget it on the Reports page, or delete your account. SimpleFIN keeps what it holds under its own terms: remove Nya in your SimpleFIN account too.
+      </p>
+    </>,
   ],
   [
     'A Lunch Flow connection',
-    'The API key you gave Nya, encrypted, never in your download and never in backups: until you disconnect it, or delete your account. Restoring a backup ends it: you connect again with an API key, and the accounts carry on. Its accounts and their transactions are kept like any account’s. Disconnecting deletes the key; you choose to keep the accounts as manual accounts, or to remove them and their transactions (their past balances stay in your net-worth history). A note of each account you stop tracking stays as for SimpleFIN, until you forget it on the Reports page, or delete your account. Lunch Flow keeps what it holds under its own terms, and the key works there until you delete its API destination in Lunch Flow.',
+    <>
+      <p>
+        The API key you gave Nya, encrypted, never in your download and never in backups: until you disconnect it, or delete your account. Restoring a backup ends it: you connect again with an API key, and the accounts carry on. Its accounts and their transactions are kept like any account’s.
+      </p>
+      <p>
+        Disconnecting deletes the key; you choose to keep the accounts as manual accounts, or to remove them and their transactions (their past balances stay in your net-worth history). A note of each account you stop tracking stays as for SimpleFIN, until you forget it on the Reports page, or delete your account. Lunch Flow keeps what it holds under its own terms, and the key works there until you delete its API destination in Lunch Flow.
+      </p>
+    </>,
   ],
   ['Nightly backups', backupsRow(backups)],
   [
@@ -282,7 +347,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: A
     `Out of reach at once, and deleted from the database, apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within 72 hours. Its random id leaves the feature switches at once, and stays in their record of changes until those changes drop out of the last 500. ${deletedInBackups(backups)}${keys.key.length > 0 ? ` ${keys.key.slice(1).join(' ')}` : ''} Plaid keeps what it collected under its own policy.`,
   ],
   ...(keys.key.length > 0
-    ? ([['A record that a deleted account existed', 'Its random id and the day its key was destroyed: kept for good, so that a restored backup never brings the account back.']] as [string, string][])
+    ? ([['A record that a deleted account existed', 'Its random id and the day its key was destroyed: kept for good, so that a restored backup never brings the account back.']] as [string, ReactNode][])
     : []),
   ['Invite links', '72 hours, or until used.'],
   ['Records of when shared accounts were shown', showingsRow(backups)],
@@ -307,11 +372,25 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: A
   ],
   [
     'Changes made with API tokens',
-    `Where tokens may make changes: ${CHANGES_KEEP_DAYS} days, or until you delete your account: each change a token made, and each undo, when, which token, through the API or an AI assistant, and what it changed, before and after, encrypted, so a transaction a change deleted is kept with it for those ${CHANGES_KEEP_DAYS} days. Forgetting a change under API tokens removes what it changed, before and after, at once (and what its undo kept); its line, saying when, which token, what kind of change and the id of what it changed, stays for the ${CHANGES_KEEP_DAYS} days. A token that can make changes can read its own; tokens that only read can’t. In your download and in backups; never brought back with a download.`,
+    <>
+      <p>
+        {`Where tokens may make changes: ${CHANGES_KEEP_DAYS} days, or until you delete your account: each change a token made, and each undo, when, which token, through the API or an AI assistant, and what it changed, before and after, encrypted, so a transaction a change deleted is kept with it for those ${CHANGES_KEEP_DAYS} days.`}
+      </p>
+      <p>
+        {`Forgetting a change under API tokens removes what it changed, before and after, at once (and what its undo kept); its line, saying when, which token, what kind of change and the id of what it changed, stays for the ${CHANGES_KEEP_DAYS} days. A token that can make changes can read its own; tokens that only read can’t. In your download and in backups; never brought back with a download.`}
+      </p>
+    </>,
   ],
   [
     'The weekly summary',
-    `Whether it is on, its day and your time zone: until you change them, or delete your account. Encrypted, and in your download. Beside them, encrypted too and kept until you delete your account, but not in your download: the key its links to turn it off are signed with, made anew each time you turn it on; the last week a summary went for, and one that got no answer from the email service; and which of your goals, by their ids, it last said had reached their target. Each link works for ${LINK_DAYS} days.`,
+    <>
+      <p>
+        Whether it is on, its day and your time zone: until you change them, or delete your account. Encrypted, and in your download.
+      </p>
+      <p>
+        {`Beside them, encrypted too and kept until you delete your account, but not in your download: the key its links to turn it off are signed with, made anew each time you turn it on; the last week a summary went for, and one that got no answer from the email service; and which of your goals, by their ids, it last said had reached their target. Each link works for ${LINK_DAYS} days.`}
+      </p>
+    </>,
   ],
   [
     'The people you split costs with, and what is owed',
@@ -327,7 +406,14 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, files: A
   ],
   [
     'What you tell your plan about tax',
-    'Whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count; and if you have Nya work tax out from your accounts, how you file, your birth years, how long each dependent counts, which category or tag already pays for coverage and, for each plan, your state and its rate, your health coverage and what it costs, how your savings split and the inflation and yield it uses: until you change them, or delete your account. What you said about an account goes once you Forget it or remove it, or disconnect a bank connected through Plaid. An account you keep as a manual account when you disconnect SimpleFIN or Lunch Flow keeps it. Encrypted, and in your download. None of these are shown to anyone you share with, sent to a program with an API token, or put in an email. The buckets you choose for your accounts are a separate setting, and what you share of your holdings is split by them.',
+    <>
+      <p>
+        Whose each account is, a cost basis you typed, what each of you put into a Roth and which accounts for a child you count; and if you have Nya work tax out from your accounts, how you file, your birth years, how long each dependent counts, which category or tag already pays for coverage and, for each plan, your state and its rate, your health coverage and what it costs, how your savings split and the inflation and yield it uses: until you change them, or delete your account.
+      </p>
+      <p>
+        What you said about an account goes once you Forget it or remove it, or disconnect a bank connected through Plaid. An account you keep as a manual account when you disconnect SimpleFIN or Lunch Flow keeps it. Encrypted, and in your download. None of these are shown to anyone you share with, sent to a program with an API token, or put in an email. The buckets you choose for your accounts are a separate setting, and what you share of your holdings is split by them.
+      </p>
+    </>,
   ],
   [
     'Feature switches and their changes',
