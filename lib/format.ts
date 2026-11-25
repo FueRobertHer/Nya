@@ -387,6 +387,12 @@ export function currencyPlural(code: string): string {
  * ISO day.
  */
 export function formatDay(iso: string, opts: DayOptions = {}): string {
+  return dayWords(iso, opts, false);
+}
+
+/** formatDay's words, with the year named even within the current one when
+ *  `year` is set. */
+function dayWords(iso: string, opts: DayOptions, year: boolean): string {
   const now = new Date(opts.now ?? Date.now());
   const day = iso.slice(0, 10);
   const today = localDate(now);
@@ -396,8 +402,23 @@ export function formatDay(iso: string, opts: DayOptions = {}): string {
     ...(opts.weekday ? { weekday: opts.weekday } : {}),
     month: 'short',
     day: 'numeric',
-    ...(day.slice(0, 4) !== today.slice(0, 4) ? { year: 'numeric' } : {}),
+    ...(year || day.slice(0, 4) !== today.slice(0, 4) ? { year: 'numeric' } : {}),
   });
+}
+
+/**
+ * The days from `from` to `to` (YYYY-MM-DD each), said as formatDay says a
+ * day: "Aug 7 to Nov 3", "Aug 7, 2024 to Nov 3, 2024", and one day alone
+ * when they are the same. When the two fall in different years, each names
+ * its own, "Nov 16, 2025 to Nov 3, 2026": formatDay leaves the current year
+ * off, and "Nov 16, 2025 to Nov 3" would read as though both were in 2025.
+ * "today" and "yesterday" stay as they are, since they name their day whole.
+ */
+export function formatDaySpan(from: string, to: string, opts: DayOptions = {}): string {
+  const [a, b] = [from.slice(0, 10), to.slice(0, 10)];
+  if (a === b) return formatDay(a, opts);
+  const both = a.slice(0, 4) !== b.slice(0, 4);
+  return `${dayWords(a, opts, both)} to ${dayWords(b, { ...opts, sentence: true }, both)}`;
 }
 
 /** How formatDay says a day: `now` for tests; `sentence` for the middle of

@@ -400,14 +400,14 @@ const MOVES: { starts: string; was: string; now: string | null; why: string }[] 
 
 /** What was reworded on purpose since, each by its full words as recorded
  *  and its level: its new words, said at the same level, and what moved with
- *  it behind "Why?" (`moved`, said at level `why`). The recording stays as it
- *  was made. */
+ *  it (`moved`, said at level `movedTo`, behind "Why?" unless named). The
+ *  recording stays as it was made. */
 const CAPITAL = 'each part of an Upcoming row’s line starts with a capital, as a label of its own (the words pass after the screen review)';
 const DATES = 'a day says its year only outside this one, and today is "today", as the design system’s dates do (lib/format.ts formatDay)';
 // The days are said as of a today held still, in the scenes' own year.
 beforeAll(() => setSystemTime(new Date('2026-10-29T12:00:00')));
 afterAll(() => setSystemTime());
-const REWORDED: { was: string; level: string; now: string; moved?: string; why: string }[] = [
+const REWORDED: { was: string; level: string; now: string; moved?: string; movedTo?: string; why: string }[] = [
   { was: 'Once · next Oct 20, 2026', level: 'tag', now: 'Once · next Oct 20', why: DATES },
   { was: 'Once · next Oct 30, 2026', level: 'tag', now: 'Once · next Oct 30', why: DATES },
   { was: 'Once · was Oct 20, 2026', level: 'tag', now: 'Once · was Oct 20', why: DATES },
@@ -425,8 +425,10 @@ const REWORDED: { was: string; level: string; now: string; moved?: string; why: 
   {
     was: "bill · Monthly · on the Sapphire card, not in the day's figure: the card's payment is what leaves cash",
     level: 'tag',
-    now: "Bill · Monthly · On the Sapphire card, not in the day's figure: the card's payment is what leaves cash",
-    why: CAPITAL,
+    now: "Bill · Monthly · On the Sapphire card, not in the day's figure",
+    moved: "A card's charges aren't in a day's figure: the card's payment is what leaves cash.",
+    movedTo: 'helper',
+    why: `${CAPITAL}; and why a card's charge isn't in the figure is said once, as a helper line over the list, not on each card's row (the Preview review)`,
   },
   { was: 'bill · Monthly · due Oct 15, not in yet', level: 'tag', now: 'Bill · Monthly · Due Oct 15, not in yet', why: CAPITAL },
   {
@@ -459,7 +461,7 @@ describe('every note the segment said is still said, in its words and at its lev
           const re = REWORDED.find((r) => r.was === n.text && r.level === n.level);
           if (re) {
             const now = n.level === 'tag' ? all.includes(re.now) : said.some((s) => s.level === n.level && s.text.includes(re.now));
-            const moved = re.moved === undefined || said.some((s) => s.level === 'why' && s.text.includes(re.moved!));
+            const moved = re.moved === undefined || said.some((s) => s.level === (re.movedTo ?? 'why') && s.text.includes(re.moved!));
             return now && moved ? null : n;
           }
           // A row's line under its name (`tag`) is its subtitle now: its words.

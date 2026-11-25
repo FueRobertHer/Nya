@@ -162,6 +162,35 @@ describe('a sheet keeps Tab inside it', () => {
     v.unmount();
   });
 
+  test('closing gives focus back to its opener, unless a window in a frame that opened over it (Plaid Link) took it', async () => {
+    const host = dom.document.createElement('div');
+    dom.document.body.appendChild(host);
+    const opener = dom.document.createElement('button');
+    dom.document.body.appendChild(opener);
+    const frame = dom.document.createElement('iframe');
+    dom.document.body.appendChild(frame);
+    const root = createRoot(host as unknown as HTMLElement);
+    const draw = (open: boolean) =>
+      act(() =>
+        root.render(
+          <Sheet open={open} title="Add an account" onClose={() => {}}>
+            <p>Rows</p>
+          </Sheet>
+        )
+      );
+    for (const takenBy of [null, frame]) {
+      opener.focus();
+      draw(true);
+      await settle();
+      expect(dom.document.activeElement === opener).toBe(false);
+      takenBy?.focus();
+      draw(false);
+      await settle();
+      expect(dom.document.activeElement === (takenBy ?? opener)).toBe(true);
+    }
+    act(() => root.unmount());
+  });
+
   test('changing levels resets the sheet body scroll position and Escape prevents default', async () => {
     const host = dom.document.createElement('div');
     dom.document.body.appendChild(host);

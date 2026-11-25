@@ -83,7 +83,7 @@ const bothBeside: NoTransactionsView = {
   connections: 3,
 };
 const AS_OF = '2026-10-06T15:12:00Z';
-const WINDOW = 'your last 12 months of transactions (Oct 7, 2025 to Oct 6)';
+const WINDOW = 'your last 12 months of transactions (Oct 7, 2025 to Oct 6, 2026)';
 
 type Over = Omit<Partial<FigureArgs>, 'plan'> & { plan?: Partial<FirePlan> };
 

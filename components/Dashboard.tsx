@@ -10,7 +10,7 @@ import { watchSignOut } from './sign-out-watch';
 import { LOCAL_CACHE_KEY, cacheKeyFor, reloadKeyAfter } from './device-cache';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { type PlaidLinkOnExit, type PlaidLinkOnSuccess, type PlaidLinkOnSuccessMetadata, type PlaidLinkOnEventMetadata } from 'react-plaid-link';
-import PlaidLinkHandler from './PlaidLinkHandler';
+import PlaidLinkHandler, { useLinkStarting } from './PlaidLinkHandler';
 import { existingItemsAt } from '@/lib/existing-items';
 import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import DownloadMyData from './DownloadMyData';
@@ -365,6 +365,12 @@ export default function Dashboard({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [connecting, setConnecting] = useState(false);
+  // What the buttons that start a Plaid connection are given: busy from the
+  // press until Plaid's window has opened (onLinkOpen), not only until its
+  // token is in, since Link can take a while to load. Taking the token back
+  // (onLinkExit, which the duplicate redirect's exit also reaches, and
+  // onLinkUnavailable) frees them too.
+  const { starting: linkStarting, onOpen: onLinkOpen } = useLinkStarting(connecting, linkToken);
   const [refreshing, setRefreshing] = useState(false);
   const [txns, setTxns] = useState<Txn[] | null>(null);
   // What the loaded rows' totals convert with, once a home currency is chosen
@@ -1947,7 +1953,7 @@ export default function Dashboard({
                   allRows={inst.accounts}
                   place={null}
                   fx={base?.fx ?? null}
-                  connecting={connecting}
+                  connecting={linkStarting}
                   unallowed={unallowedIds.has(inst.item_id)}
                   lifecycle={lifecycle}
                   onReconnect={startReconnect}
@@ -2282,7 +2288,7 @@ export default function Dashboard({
   return (
     <>
       {plaidWanted && (
-        <PlaidLinkHandler token={linkToken} onSuccess={onSuccess} onEvent={onEvent} onExit={onLinkExit} onUnavailable={onLinkUnavailable} exitRef={exitLinkRef} openRef={linkOpenRef} />
+        <PlaidLinkHandler token={linkToken} onSuccess={onSuccess} onEvent={onEvent} onExit={onLinkExit} onOpen={onLinkOpen} onUnavailable={onLinkUnavailable} exitRef={exitLinkRef} openRef={linkOpenRef} />
       )}
       <main className="wrap app-page">
         {/* Everything above the links, taking the room the page has left, so
@@ -2333,7 +2339,7 @@ export default function Dashboard({
           ) : !connected ? (
             <>
               <div className="card">
-                <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} onConnectLunchFlow={connectLunchFlow} brokerage={brokerageLink} />
+                <ConnectButtons connecting={linkStarting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} onConnectLunchFlow={connectLunchFlow} brokerage={brokerageLink} />
                 <CoverageNote />
                 {/* Also offered here, not just on the Accounts tab: with nothing
                     connected the tab bar is hidden, so this is the only reachable
@@ -2569,7 +2575,7 @@ export default function Dashboard({
                         institutions={institutions}
                         base={base}
                         shownCurrency={shownCurrency}
-                        connecting={connecting}
+                        connecting={linkStarting}
                         expandedHoldings={expandedHoldings}
                         unallowedIds={unallowedIds}
                         lifecycle={lifecycle}
@@ -2994,7 +3000,7 @@ export default function Dashboard({
       <AddAccountSheet
         open={addAccountOpen}
         onClose={() => setAddAccountOpen(false)}
-        connecting={connecting}
+        connecting={linkStarting}
         brokerage={brokerageLink}
         onConnect={startConnect}
         onConnectSimpleFin={connectSimpleFin}
@@ -3029,7 +3035,7 @@ export default function Dashboard({
             name={shownRedirect.name}
             items={shownRedirect.items}
             kind={shownRedirect.kind}
-            connecting={connecting}
+            connecting={linkStarting}
             onAdd={(item_id) => {
               setRedirect(null);
               startManageAccounts(item_id);

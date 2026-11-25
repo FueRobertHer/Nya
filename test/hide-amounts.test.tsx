@@ -14,7 +14,7 @@ import {
   subscribeHideAmounts,
   writeHideAmounts,
 } from '@/components/hide-amounts';
-import { HideAmountsToggle, Masked } from '@/components/HideAmounts';
+import { HideAmountsButton, HideAmountsToggle, Masked } from '@/components/HideAmounts';
 import NetWorthChart from '@/components/NetWorthChart';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import BudgetsCard from '@/components/BudgetsCard';
@@ -335,6 +335,19 @@ describe('the switch', () => {
     expect(renderToStaticMarkup(<HideAmountsToggle />)).toContain('aria-pressed="false"');
     expect(amountsHiddenNow()).toBe(true);
     loadHideAmountsForTests(null);
+  });
+
+  test('its tooltip says what a press does now, while its name stays the same', () => {
+    const noop = () => {};
+    const shown = renderToStaticMarkup(<HideAmountsButton hidden={false} onPress={noop} />);
+    expect(shown).toContain('aria-label="Hide amounts"');
+    expect(shown).toContain('aria-pressed="false"');
+    expect(shown).toContain('title="Hide amounts"');
+    const hidden = renderToStaticMarkup(<HideAmountsButton hidden onPress={noop} />);
+    expect(hidden).toContain('aria-label="Hide amounts"');
+    expect(hidden).toContain('aria-pressed="true"');
+    expect(hidden).toContain('title="Show amounts"');
+    expect(hidden).not.toContain('title="Hide amounts"');
   });
 
   test('sits in the header, beside Refresh, and on the report page', () => {

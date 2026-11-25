@@ -572,7 +572,7 @@ describe('the download as QFX', () => {
     const v = await mount({ ...TARGET, account_id: 'q2' }, { review: some });
     await v.choose('OfxDownload.qfx', QFX_FILE);
     expect(v.text()).toMatch(
-      /OfxDownload\.csv, imported [^,]+, covers Jun 1, 2025 to Nov 4\. A CSV decides the days it covers, since it has what a QFX leaves out, so this file counts only for May 13, 2025 to May 31, 2025 and yesterday\./
+      /OfxDownload\.csv, imported [^,]+, covers Jun 1, 2025 to Nov 4, 2026\. A CSV decides the days it covers, since it has what a QFX leaves out, so this file counts only for May 13, 2025 to May 31, 2025 and yesterday\./
     );
     expect(v.text()).toContain('3 of its 60 transactions count, in place of the 2 there now.');
     expect(v.text()).toContain('1 of its 28 transactions counts, in place of the 1 there now.');
@@ -613,11 +613,11 @@ describe('the download as QFX', () => {
     };
     const activity = { imported_days: [{ import_id: 'csv-1', ...at.covers, file_name: 'OfxDownload.csv', imported_at: at.imported_at }], imports_unused: [] } as unknown as Parameters<typeof TransactionImports>[0]['activity'];
     const shown = words(renderToStaticMarkup(<TransactionImports name="Individual ••4421" accountId="ind" list={list} activity={activity} busy={false} onUndo={async () => true} />).replace(/<[^>]+>/g, ' '));
-    expect(shown).toContain('Not in use: a CSV download is used for these days · Jun 1, 2025 to Nov 4 · 10 transactions · imported');
-    expect(shown).toContain('In use · Jun 1, 2025 to Nov 4 · 10 transactions · imported');
+    expect(shown).toContain('Not in use: a CSV download is used for these days · Jun 1, 2025 to Nov 4, 2026 · 10 transactions · imported');
+    expect(shown).toContain('In use · Jun 1, 2025 to Nov 4, 2026 · 10 transactions · imported');
     // Undoing the CSV hands its days to the QFX, which was never checked against them: said.
     expect(undoText(list.imports[1], list, activity, 'Individual ••4421')).toMatch(
-      /^Undo the import from [^?]+\? Jun 1, 2025 to Nov 4 will come from the QFX import from [^.]+ again\. A QFX file leaves out conversions and shares moved in kind, and none of its money in counts as new savings\. Nothing else changes/
+      /^Undo the import from [^?]+\? Jun 1, 2025 to Nov 4, 2026 will come from the QFX import from [^.]+ again\. A QFX file leaves out conversions and shares moved in kind, and none of its money in counts as new savings\. Nothing else changes/
     );
     // Decided partly by a CSV and partly by a newer QFX: neither named alone.
     const mixed = {
@@ -646,7 +646,7 @@ describe('the download as QFX', () => {
       imports_unused: [],
     } as unknown as Parameters<typeof TransactionImports>[0]['activity'];
     const shownPartly = words(renderToStaticMarkup(<TransactionImports name="Individual ••4421" accountId="ind" list={partly} activity={newer} busy={false} onUndo={async () => true} />).replace(/<[^>]+>/g, ' '));
-    expect(shownPartly).toContain('In use for Jun 1, 2025 to Dec 31, 2025 · a newer download is used for its other days · Jun 1, 2025 to Nov 4');
+    expect(shownPartly).toContain('In use for Jun 1, 2025 to Dec 31, 2025 · a newer download is used for its other days · Jun 1, 2025 to Nov 4, 2026');
     // While the activity loads, nothing is said of whether it is in use.
     const loading = words(renderToStaticMarkup(<TransactionImports name="Individual ••4421" accountId="ind" list={list} activity={null} busy={false} onUndo={async () => true} />).replace(/<[^>]+>/g, ' '));
     expect(loading).not.toMatch(/In use|Not in use/);
@@ -694,6 +694,9 @@ describe('the sheet’s top', () => {
     expect(top([at('old', '2025-01-01', '2025-03-31'), at('new', '2026-01-01', '2026-08-31')])).toContain('Jan 1, 2025 to Mar 31, 2025 and Jan 1 to Aug 31, from Vanguard’s transactions downloads');
     // Two that meet are one run.
     expect(top([at('old', '2025-01-01', '2025-03-31'), at('new', '2025-04-01', '2025-08-31')])).toContain('Jan 1, 2025 to Aug 31, 2025, from Vanguard’s transactions downloads');
+    // A run across a new year names both years, this one's too: "Nov 3"
+    // alone would read as 2025's.
+    expect(top([at('new', '2025-11-16', '2026-11-03')])).toContain('Nov 16, 2025 to Nov 3, 2026, from Vanguard’s transactions download');
   });
 });
 
@@ -708,5 +711,17 @@ describe('the activity list', () => {
         { import_id: 'new', from: '2025-06-01', to: '2026-11-05', file_name: 'OfxDownload.csv', imported_at: '2026-11-06T12:00:00.000Z' },
       ])
     ).toBe('Feb 3, 2025 to May 31, 2025 come from Vanguard’s transactions download, imported Aug 3, 2025; Jun 1, 2025 to yesterday come from OfxDownload.csv, imported today. To undo one: ⋯, Import history from a file.');
+  });
+
+  test('a file whose days cross a new year names both years; one within this year names neither', () => {
+    expect(importedText([{ import_id: 'imp-2', from: '2025-11-16', to: '2026-11-03', file_name: 'OfxDownload.csv', imported_at: '2026-11-04T12:00:00.000Z' }])).toBe(
+      'Nov 16, 2025 to Nov 3, 2026 come from OfxDownload.csv, imported Nov 4. To undo it: ⋯, Import history from a file.'
+    );
+    expect(importedText([{ import_id: 'imp-3', from: '2026-02-01', to: '2026-11-03', file_name: 'OfxDownload.csv', imported_at: '2026-11-04T12:00:00.000Z' }])).toBe(
+      'Feb 1 to Nov 3 come from OfxDownload.csv, imported Nov 4. To undo it: ⋯, Import history from a file.'
+    );
+    expect(importedText([{ import_id: 'imp-4', from: '2026-11-03', to: '2026-11-03', file_name: 'OfxDownload.csv', imported_at: '2026-11-04T12:00:00.000Z' }])).toBe(
+      'Nov 3 comes from OfxDownload.csv, imported Nov 4. To undo it: ⋯, Import history from a file.'
+    );
   });
 });
