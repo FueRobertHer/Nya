@@ -3764,10 +3764,20 @@ button.danger-outline {
 }
 
 /* The accounts side by side, as wide as each other (components/DemoSignIn.tsx):
-   each is a form around its button, so the forms share the row. */
+   each is a form around its button, so the forms share the row. Under each
+   button, the scenario it was last reset to, centered under its name; the
+   buttons stay level when one line wraps and the other doesn't. */
+.demo-accounts {
+  align-items: flex-start;
+}
+
 .demo-accounts > form {
   flex: 1 1 0;
   min-width: 0;
+}
+
+.demo-accounts .helper {
+  text-align: center;
 }
 
 /* Says Clerk's form hasn't loaded (components/SignInFlow.tsx), under its

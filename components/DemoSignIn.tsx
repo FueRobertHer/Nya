@@ -1,9 +1,11 @@
 'use client';
 
 // The demo accounts' card on the sign-in page (lib/demo.ts). Each is a tonal
-// button with the account's name, and nothing on what it holds: anyone may
-// reset either to any scenario, so that could be wrong. Each is in a form
-// that posts to app/api/demo/sign-in. With Clerk loaded, a press instead
+// button with the account's name, and under it, when the page could read it
+// (lib/demo-seed/loaded.ts), the scenario it was last reset to: what was
+// loaded, which stays true after visitors change the data. The button is
+// described by that line, so its name stays the account's alone. Each is in
+// a form that posts to app/api/demo/sign-in. With Clerk loaded, a press instead
 // asks that route for the ticket and signs in with it in place
 // (components/demo-sign-in.ts), so no page loads again; the app loading shows
 // from the press (components/SignInFlow.tsx) until Clerk has moved to Home.
@@ -22,7 +24,16 @@ import { demoSignIn } from './demo-sign-in';
 import { DEMO_LATE } from './sign-in-view';
 import { Notice } from './TotalCaveats';
 
-export default function DemoSignIn({ demos, unavailable }: { demos: DemoUser[]; unavailable: boolean }) {
+export default function DemoSignIn({
+  demos,
+  loaded = {},
+  unavailable,
+}: {
+  demos: DemoUser[];
+  /** The title of the scenario each account was last reset to, by its id. */
+  loaded?: Partial<Record<string, string>>;
+  unavailable: boolean;
+}) {
   const clerk = useClerk();
   const hold = useDemoHold();
   const [error, setError] = useState<string | null>(unavailable ? DEMO_UNAVAILABLE : null);
@@ -62,17 +73,27 @@ export default function DemoSignIn({ demos, unavailable }: { demos: DemoUser[]; 
           accounts, so anything you add is visible to others. You can switch among sample scenarios anytime in Settings,
           Your data and privacy.
         </p>
-        {/* Side by side, each half the row: a name is all a button says. */}
+        {/* Side by side, each half the row: a button says its name, and the
+            line under it what was loaded. */}
         <div className="btn-row demo-accounts">
-          {demos.map((u) => (
-            <form key={u.id} method="post" action="/api/demo/sign-in" onSubmit={onSubmit}>
-              <input type="hidden" name="user" value={u.id} />
-              {/* Tonal, so Clerk's Continue stays the one filled button. */}
-              <button type="submit" className="btn secondary btn-block">
-                {u.label}
-              </button>
-            </form>
-          ))}
+          {demos.map((u) => {
+            const scenario = loaded[u.id];
+            const lineId = `demo-loaded-${u.id}`;
+            return (
+              <form key={u.id} method="post" action="/api/demo/sign-in" onSubmit={onSubmit} className="stack tight">
+                <input type="hidden" name="user" value={u.id} />
+                {/* Tonal, so Clerk's Continue stays the one filled button. */}
+                <button type="submit" className="btn secondary btn-block" aria-describedby={scenario ? lineId : undefined}>
+                  {u.label}
+                </button>
+                {scenario && (
+                  <p className="helper" id={lineId}>
+                    {scenario}
+                  </p>
+                )}
+              </form>
+            );
+          })}
         </div>
         {said && (
           <Notice level="critical" role="alert" ref={notice} tabIndex={-1}>

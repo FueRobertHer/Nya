@@ -16,7 +16,10 @@
 // (lib/auth-mode.ts), and behave like any account (linking sandbox banks,
 // connecting, sharing), except that they can't be deleted: the next visitor
 // would find the demo gone. Instead each can be reset to a scenario, from
-// Settings' Demo data card or a terminal (lib/demo-seed/reset.ts).
+// Settings' Demo data card or a terminal (lib/demo-seed/reset.ts), and the
+// sign-in page names, under each one's button, the scenario it was last
+// reset to (lib/demo-seed/loaded.ts): what was loaded, not what visitors
+// have changed since.
 
 export type DemoUser = { id: string; label: string };
 

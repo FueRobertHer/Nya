@@ -35,6 +35,7 @@ import type { Scenario } from './scenarios';
 import { minutesText } from './words';
 import { RESET_WINDOW_SECONDS, SEED_VERSION, resetCount, seedRecordStore, type SeedRecord } from './store';
 
+export { RESET_RUNS_AT_MOST_MS, resetPhase } from './store';
 export { RESET_WINDOW_SECONDS, SEED_VERSION, type SeedRecord };
 
 /** Refused for the limit: how long until a reset may run again. */
@@ -46,18 +47,6 @@ export class ResetLimited extends Error {
 }
 
 export type ResetState = { record: SeedRecord | null; secondsLeft: number };
-
-/** Longer than a reset can run (the route's maxDuration, with room): one
- *  unfinished for longer stopped part way. */
-export const RESET_RUNS_AT_MOST_MS = 6 * 60_000;
-
-/** Where the last reset stands: finished, still running, or stopped part way
- *  (unfinished, and older than any reset can run). */
-export function resetPhase(record: SeedRecord, now: number = Date.now()): 'finished' | 'running' | 'stopped' {
-  if (record.finished_at !== null) return 'finished';
-  const started = Date.parse(record.started_at);
-  return Number.isFinite(started) && now - started < RESET_RUNS_AT_MOST_MS ? 'running' : 'stopped';
-}
 
 /** The last reset, and how long until the next may run (0: now). */
 export async function resetState(ctx: Ctx): Promise<ResetState> {
