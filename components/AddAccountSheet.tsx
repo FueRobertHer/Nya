@@ -6,11 +6,11 @@
 // banks, and what each costs, is behind "Which should I use?".
 //
 // A Plaid row keeps the sheet open, saying "Starting…", until its link token
-// is back and Link opens over it; then the sheet closes. Every other row
-// closes this sheet first and opens its own, so no sheet opens on top of
-// another.
+// is back and Link opens over it (or the start failed, said on the tab);
+// then the sheet closes. Every other row closes this sheet first and opens
+// its own, so no sheet opens on top of another.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Why } from './Why';
 import { CoverageNote } from './TrustLinks';
@@ -38,11 +38,13 @@ export default function AddAccountSheet({
 }: {
   open: boolean;
   onClose: () => void;
-  /** Whether a Link flow is starting (any of them): the Plaid rows wait. */
+  /** Whether a Link flow is starting (any of them): the Plaid rows wait.
+   *  Held until Link has opened, exited or been given up on
+   *  (PlaidLinkHandler useLinkStarting). */
   connecting: boolean;
   /** Whether the brokerage and retirement option is offered here. */
   brokerage: boolean;
-  /** Starts Plaid Link; settles once Link has opened or failed to. */
+  /** Starts Plaid Link; settles once its token is back or the start failed. */
   onConnect: (kind: LinkKind) => Promise<unknown> | void;
   onConnectSimpleFin?: () => void;
   onConnectLunchFlow?: () => void;
@@ -50,6 +52,17 @@ export default function AddAccountSheet({
   onSwitching: () => void;
 }) {
   const [starting, setStarting] = useState<LinkKind | null>(null);
+  // Whether the row's start has settled: from then, the sheet closes as soon
+  // as `connecting` is let go, which is once Link has opened over it.
+  const [settled, setSettled] = useState(false);
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    if (starting === null || !settled || connecting) return;
+    setStarting(null);
+    setSettled(false);
+    close.current();
+  }, [starting, settled, connecting]);
   const then = (go: () => void) => () => {
     onClose();
     go();
@@ -63,11 +76,10 @@ export default function AddAccountSheet({
       disabled: connecting,
       onSelect: () => {
         setStarting(option.kind);
-        // Settled either way, Link is open or its failure is said on the tab.
-        const done = () => {
-          setStarting(null);
-          onClose();
-        };
+        setSettled(false);
+        // Settled either way: the token is back, or the failure is said on
+        // the tab. The sheet then waits for `connecting` (above).
+        const done = () => setSettled(true);
         let started: unknown;
         try {
           started = onConnect(option.kind);

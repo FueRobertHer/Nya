@@ -1090,17 +1090,23 @@ function startConsequence(
 ): string {
   const money = (n: number) => wholeMoney(n, props.currency);
   const spend = props.spending !== null ? `your spending of ${money(props.spending)} a year` : 'your spending';
+  // Stopped already (a stop age at your age or before, as Your path asks of
+  // someone retired): there is no working to stop, so it reads from now, as
+  // the drawdown's setup does (PlanTab), with the same figures.
+  const stop = stopOf(plan);
+  const retired = stop !== null && plan.age !== null && stop <= plan.age;
+  const withWhat = start === 'fi-number' ? 'your FI number' : start === 'custom' ? 'the balance you type' : 'what you have now';
+  const lead = (stopping: string) => (retired ? `From now, at ${plan.age}, with ${withWhat}` : `Stops working ${stopping}`);
   if (drawn !== null) {
     const how = start === 'fi-number' ? 'at your stop age with your FI number' : start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : start === 'at-stop' ? 'at your stop age with what you’d have then' : 'at your stop age with the balance you type';
-    return `Stops working ${how}, withdrawing ${pct(saidRate(drawn, rate))} of it a year: ${spend} and health coverage, with their tax${saidAbove(drawn, rate) ? `. Your FI number assumes ${pct(rate)}` : ''}.`;
+    return `${lead(how)}, withdrawing ${pct(saidRate(drawn, rate))} of it a year: ${spend} and health coverage, with their tax${saidAbove(drawn, rate) ? `. Your FI number assumes ${pct(rate)}` : ''}.`;
   }
   if (start === 'fi-number') {
-    const stop = stopOf(plan);
-    return `Stops working at your stop age${stop !== null ? ` (${stop})` : ''} with your FI number, withdrawing ${pct(rate)} of it: ${spend}${taxWorked ? ' and health coverage, with their tax' : ''}.`;
+    return `${lead(`at your stop age${stop !== null ? ` (${stop})` : ''} with your FI number`)}, withdrawing ${pct(rate)} of it: ${spend}${taxWorked ? ' and health coverage, with their tax' : ''}.`;
   }
   const actual = taxWorked ? null : startRate(start, props, typed, tax);
   const when = start === 'assets' ? `today${plan.age !== null ? `, at ${plan.age},` : ''} with what you have now` : start === 'at-stop' ? 'at your stop age with what you’d have then' : `at your stop age with the balance you type`;
-  return `Stops working ${when}, spending ${spend}${actual !== null ? `: a ${pct(saidRate(actual, rate))} withdrawal rate${saidAbove(actual, rate) ? `, above the ${pct(rate)} your FI number assumes` : ''}` : ''}. Answers whether what you spend now would have lasted.`;
+  return `${lead(when)}, spending ${spend}${actual !== null ? `: a ${pct(saidRate(actual, rate))} withdrawal rate${saidAbove(actual, rate) ? `, above the ${pct(rate)} your FI number assumes` : ''}` : ''}. Answers whether what you spend now would have lasted.`;
 }
 
 /** Whether the starting balance field still says what is saved. */

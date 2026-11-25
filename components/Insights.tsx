@@ -29,6 +29,7 @@ import { budgetMeters, placeBudgets, EMPTY_BUDGETS, type Budgets } from '@/lib/b
 import { withCarry, type Carries } from '@/lib/rollover';
 import { displayName, filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { bankRows } from '@/lib/split-rows';
+import { inSeries } from '@/lib/report/runway';
 import type { Severity } from '@/lib/accounts-status';
 import { distinctAccountNames } from '@/lib/account-names';
 
@@ -437,6 +438,10 @@ export default function Insights({
       });
     }
 
+    // The detected series the person said aren't recurring: no bill to
+    // expect, and their charges are purchases like any other.
+    const gone = new Set(dismissedSeries(series, dismissed).keys());
+
     // Recurring bills expected within a week, on the dates their cadence
     // names (lib/recurring.ts): soonest first, max 2, deduped by name (the
     // same bill on two linked accounts is one bill), none the person said
@@ -444,7 +449,6 @@ export default function Insights({
     if (txns) {
       const seen = new Set<string>();
       const day = (iso: string) => formatDay(iso, { sentence: true, now });
-      const gone = new Set(dismissedSeries(series, dismissed).keys());
       for (const { series: b, due, late } of upcomingBills(series, 7, localDate(now), gone)) {
         if (seen.has(b.name)) continue;
         seen.add(b.name);
@@ -497,15 +501,25 @@ export default function Insights({
       // A split transaction is one purchase, whole, as the bank charged it,
       // when any of its parts counts; a group, its net (#39, lib/split-rows.ts).
       // Ranked by what each came to in the home currency, and said in its own.
+      // A charge of a detected bill (rent, tuition, a premium) is no
+      // purchase: one in a series the person hasn't dismissed is left out,
+      // matched as its bank wrote it by the series' group and amount
+      // (lib/report/runway.ts inSeries), so a one-off at a merchant that also
+      // bills a subscription still counts. A charge still pending is matched
+      // as detection takes it, for its date (lib/recurring.ts).
+      const asBank = new Map(bankRows(txns, { groups: 'keep' }).map((t) => [t.transaction_id, t]));
+      const bills = series.filter((s) => s.kind === 'bill' && !gone.has(s.id));
+      const isBill = (t: Txn) => bills.some((s) => inSeries({ ...t, pending: false }, s));
       const purchases = bankRows(counted.rows, { groups: 'keep' }).filter(
         (t) =>
           t.date.slice(0, 7) === thisMonth &&
           t.amount > 0 &&
-          (t.split_parts ? t.split_parts.some((p) => countsInTotals(p, figures)) : countsInTotals(t, figures))
+          (t.split_parts ? t.split_parts.some((p) => countsInTotals(p, figures)) : countsInTotals(t, figures)) &&
+          !isBill(asBank.get(t.transaction_id) ?? t)
       );
       if (purchases.length > 0) {
         const biggest = purchases.reduce((a, b) => (b.amount > a.amount ? b : a));
-        const own = bankRows(txns, { groups: 'keep' }).find((t) => t.transaction_id === biggest.transaction_id) ?? biggest;
+        const own = asBank.get(biggest.transaction_id) ?? biggest;
         out.push({
           key: 'biggest',
           text: `Biggest purchase this month: ${shownName(own)}, ${formatMoney(own.amount, currencyOf(own) ?? figures)}`,

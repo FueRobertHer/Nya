@@ -6,9 +6,11 @@
 // planned item or a card or loan payment due on it, as Activity lists its
 // days (components/MonthBreakdown.tsx): a bar with the day and its expected
 // figure, then a plain row for each, in the calendar's own words and by its
-// rules (lib/calendar.ts upcomingDays, components/CalendarView.tsx EntryRow).
-// Its tab names it, so it has no heading of its own. Its rows open nothing:
-// Recurring and Planned, below it, are where they are changed.
+// rules (lib/calendar.ts upcomingDays, components/CalendarView.tsx EntryRow),
+// with why a card's charges aren't in a day's figure said once over them
+// (CardChargesNote). Its tab names it, so it has no heading of its own. Its
+// rows open nothing: Recurring and Planned, below it, are where they are
+// changed.
 //
 // What hasn't loaded leaves entries out, so an empty list says "nothing
 // expected" only when nothing is missing. With a forecast, Upcoming's notice
@@ -24,7 +26,7 @@ import { formatDay, signedMoney } from '@/lib/format';
 import type { FxTable } from '@/lib/fx/rates';
 import { Masked } from './HideAmounts';
 import { Notice } from './TotalCaveats';
-import { EntryRow } from './CalendarView';
+import { CardChargesNote, EntryRow } from './CalendarView';
 import { NoticeBadge, type UpcomingBadge } from './upcoming-notes';
 
 /** "Today", or "Sat, Oct 24": a day's bar (lib/format.ts formatDay), on the
@@ -86,9 +88,9 @@ export default function UpcomingList({
         <Notice level="caution">Your planned items aren&apos;t loaded, so they aren&apos;t in this, and bills you marked not recurring may be.</Notice>
       )}
 
-      {list.length === 0 ? (
-        <p className="empty-note">{missing ? 'Nothing to list yet.' : `Nothing expected in the next ${days} days.`}</p>
-      ) : (
+      {list.length === 0 && <p className="empty-note">{missing ? 'Nothing to list yet.' : `Nothing expected in the next ${days} days.`}</p>}
+      <CardChargesNote entries={list.flatMap((d) => d.entries)} />
+      {list.length > 0 && (
         <ul className="list-rows">
           {list.map((d) => (
             <Fragment key={d.date}>

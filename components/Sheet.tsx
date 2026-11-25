@@ -6,7 +6,8 @@
 // open the page behind it doesn't scroll, focus moves into it, Tab and
 // Shift+Tab stay inside it, and focus goes back to where it was when it
 // closes (if that is still on the page; if not, to what the control's owner
-// named instead, focusInsteadOf).
+// named instead, focusInsteadOf). A window in a frame that opened over it
+// and took focus (Plaid Link, over the Add account sheet) keeps it.
 
 import { Children, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -242,7 +243,8 @@ export function Sheet({
       // named instead (a menu that has since closed names nothing, and
       // focus stays where it falls).
       const back = !before || before.isConnected ? before : (insteadOf.get(before)?.() ?? null);
-      if (back?.isConnected) back.focus({ preventScroll: true });
+      const framed = document.activeElement?.tagName === 'IFRAME';
+      if (back?.isConnected && !framed) back.focus({ preventScroll: true });
     };
   }, [active]);
 

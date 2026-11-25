@@ -553,4 +553,22 @@ describe('Assumptions', () => {
     expect(form.textContent).not.toContain('each year’s tax');
     await on.unmount();
   }, 30_000);
+
+  test('retired (a stop age at your age), a start reads from now, not as a stop', async () => {
+    await seedPlan({ ...PLAN, age: 47, targetAge: 47, start: 'assets' });
+    const on = await render(WITH_BALANCES);
+    const form = await sheet(on, 'Assumptions');
+    expect(form.textContent).toContain('From now, at 47, with what you have now');
+    expect(form.textContent).not.toContain('Stops working');
+    await on.unmount();
+  }, 30_000);
+
+  test('still working (a stop age ahead), a start says when it stops', async () => {
+    await seedPlan({ ...PLAN, age: 40, targetAge: 55, start: 'assets' });
+    const on = await render(WITH_BALANCES);
+    const form = await sheet(on, 'Assumptions');
+    expect(form.textContent).toContain('Stops working today, at 40, with what you have now');
+    expect(form.textContent).not.toContain('From now');
+    await on.unmount();
+  }, 30_000);
 });

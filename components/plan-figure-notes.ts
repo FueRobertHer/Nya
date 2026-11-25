@@ -20,7 +20,7 @@
 
 import { KIND_WORDS } from './budget-notes';
 import { PAYROLL_NOTE, dayName, ownRatesText, pct, savingsRateText } from './plan-text';
-import { formatInstantDay, onDay } from '@/lib/format';
+import { formatDaySpan, formatInstantDay, onDay } from '@/lib/format';
 import { missingFigureItems, type NoTransactionsView } from '@/lib/no-transactions';
 import type { AssetCaveat, ChildSavings, InvestedAssets, TrailingFlows, UnreadTransactions, WorkplaceSavings } from '@/lib/fire/inputs';
 import {
@@ -152,7 +152,7 @@ function spanText(flows: TrailingFlows): string {
 /** "your last 12 months of transactions (Oct 9, 2025 to Oct 8, 2026)", or how
  *  much shorter it was, scaled up. */
 export function windowText(flows: TrailingFlows): string {
-  const range = `(${dayName(flows.from)} to ${dayName(flows.to)})`;
+  const range = `(${formatDaySpan(flows.from, flows.to, { sentence: true })})`;
   if (!flows.scaled) return `your last 12 months of transactions ${range}`;
   return `${spanText(flows)} of transactions ${range}, scaled up to a year`;
 }

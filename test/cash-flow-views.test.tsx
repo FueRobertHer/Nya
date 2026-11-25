@@ -196,6 +196,29 @@ describe('the chart', () => {
     expect(html).toContain('<button type="button" class="cash-flow-show">Housing<span class="visually-hidden">: list its transactions</span></button>');
   });
 
+  test('a payer named by the bank’s own text reads as the list shows it, on its node, in the fold that holds it, and in the table', () => {
+    const payers = [
+      row(day(1), 'GUSTO PAY ACME', -100_000, 'income', { name_from_bank: true }),
+      ...['ANNA', 'BRUNO', 'CARLA'].map((name) => row(day(2), `ZELLE FROM ${name}`, -500, 'income', { name_from_bank: true })),
+      // A name the person gave keeps its capitals.
+      row(day(2), 'IKEA', -900, 'general merchandise'),
+    ];
+    const html = sankey({ txns: [...payers, row(day(3), 'Landlord', 30_000, 'rent and utilities')] });
+    const t = text(html);
+    expect(html).toContain('<title>Gusto Pay Acme: $100,000.00, 1 transaction</title>');
+    expect(html).toMatch(/<tspan class="sankey-name"[^>]*>Gusto Pay Acme<\/tspan>/);
+    expect(html).toContain('<title>Other income: $2,400.00, 4 transactions (IKEA, Zelle from Anna, Zelle from Bruno, Zelle from Carla)</title>');
+    // In the table, each payer on its own, its button named as shown.
+    expect(t).toContain('Gusto Pay Acme : list its transactions $100,000.00 1');
+    expect(t).toContain('Zelle from Bruno : list its transactions $500.00 1');
+    expect(t).toContain('IKEA : list its transactions refund $900.00 1');
+    expect(html).toContain('<button type="button" class="cash-flow-show">Gusto Pay Acme<span class="visually-hidden">: list its transactions</span></button>');
+    expect(t).not.toContain('GUSTO PAY ACME');
+    expect(t).not.toContain('ZELLE FROM');
+    // Tapped, it is the same payer, by its name as compared.
+    expect(pickedRows(payers, { period: 'this-month', node: 'payer:gusto pay acme', label: 'Gusto Pay Acme' }, { ix, currency: 'USD', today }).map((r) => r.name)).toEqual(['GUSTO PAY ACME']);
+  });
+
   test('says what it leaves out, as the totals do, and what is in another currency', () => {
     const t = text(sankey());
     expect(t).toContain("Transfers, cash withdrawals and loan payments are left out, as in the month's totals (1 here). So is 1 transaction you excluded.");

@@ -41,6 +41,20 @@ export const seedRecordStore = defineValueStore<SeedRecord>('demo-seed', {
   exportable: false, // the demo's own bookkeeping
 });
 
+/** Longer than a reset can run (the route's maxDuration, with room): one
+ *  unfinished for longer stopped part way. */
+export const RESET_RUNS_AT_MOST_MS = 6 * 60_000;
+
+/** Where the last reset stands: finished, still running, or stopped part way
+ *  (unfinished, and older than any reset can run). Here rather than in
+ *  reset.ts, so the sign-in page can read it without loading the seed
+ *  (lib/demo-seed/loaded.ts). */
+export function resetPhase(record: SeedRecord, now: number = Date.now()): 'finished' | 'running' | 'stopped' {
+  if (record.finished_at !== null) return 'finished';
+  const started = Date.parse(record.started_at);
+  return Number.isFinite(started) && now - started < RESET_RUNS_AT_MOST_MS ? 'running' : 'stopped';
+}
+
 export const resetCount = defineCounterStore('demo-reset', {
   what: 'demo resets',
   windowSeconds: RESET_WINDOW_SECONDS,

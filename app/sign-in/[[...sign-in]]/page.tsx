@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { SignIn } from '@clerk/nextjs';
 import { clerkEnabled } from '@/lib/auth-mode';
 import { demoUsers } from '@/lib/demo';
+import { loadedScenarios } from '@/lib/demo-seed/loaded';
 import { Brand } from '@/components/Brand';
 import { ForgetDevice } from '@/components/ForgetDevice';
 import { CoverageNote, TrustLinks } from '@/components/TrustLinks';
@@ -15,9 +16,11 @@ import { TAGLINE } from '@/lib/tagline';
 // the shared password instead. First the name and one line on what Nya is
 // (lib/tagline.ts). A deletion of an account ends here, so its receipt is
 // shown next, above the rest (components/DeletionReceipt.tsx). Off
-// production, the one-click demo accounts, Alex and Sam, by name only
-// (lib/demo.ts): anyone may reset either to any scenario, so a line on what
-// one holds could be wrong (lib/demo-seed/scenarios.ts). They sit above Clerk's
+// production, the one-click demo accounts, Alex and Sam (lib/demo.ts), each
+// with the scenario it was last reset to under its name, read here
+// (lib/demo-seed/loaded.ts): anyone may reset either to any scenario, so the
+// line says what was loaded, which stays true after visitors change the
+// data, and nothing while a reset runs. They sit above Clerk's
 // form: the form changes height from step to step, so nothing under it holds
 // a button. Clerk's own Continue is the one filled button; the demo's are
 // tonal. Which banks connect is folded away under the form.
@@ -37,13 +40,17 @@ export default async function SignInPage({ searchParams }: { searchParams: Promi
   // loading shows from the start. Only the demo's: a Clerk invitation's
   // ticket may still ask for a password.
   const demoTicket = demos.length > 0 && params.demo === 'ticket' && typeof params.__clerk_ticket === 'string';
+  // What each demo account was last reset to, for the line under its button:
+  // never an error, and never long (lib/demo-seed/loaded.ts). Not for a
+  // demo's ticket, whose page shows the app loading from the start.
+  const loaded = demoTicket ? {} : await loadedScenarios(demos);
   return (
     <SignInFlow demoTicket={demoTicket}>
       <ForgetDevice />
       <Brand />
       <p className="auth-tagline">{TAGLINE}</p>
       <DeletionReceiptNotice />
-      {demos.length > 0 && <DemoSignIn demos={demos} unavailable={unavailable} />}
+      {demos.length > 0 && <DemoSignIn demos={demos} loaded={loaded} unavailable={unavailable} />}
       <SignIn fallback={<SignInPlaceholder />} />
       <Why label="Which banks work?">
         <CoverageNote />

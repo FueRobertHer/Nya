@@ -243,7 +243,7 @@ describe('the FI card on Home', () => {
     // figure has no other note), the rate the transactions measure.
     const savings = figureRow(planTabHtml(p), 'Annual savings');
     expect(text(savings)).toContain('Annual savings Typed by you $5,000');
-    const measured = `Measured from your last 12 months of transactions (Oct 7, 2025 to Oct 6) instead, your savings rate is ${rate} of income.`;
+    const measured = `Measured from your last 12 months of transactions (Oct 7, 2025 to Oct 6, 2026) instead, your savings rate is ${rate} of income.`;
     expect(levels(closed(savings), measured)).toEqual(['info']);
     const h = home(p);
     expect(h).toContain(rate);
