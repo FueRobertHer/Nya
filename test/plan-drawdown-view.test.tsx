@@ -148,7 +148,8 @@ describe('while what a plan’s years rest on is out', () => {
     await holding('/api/allocation-settings', async (letGo) => {
       const tab = await render({ ...WITH_BALANCES, ...(props as object) });
       await page.settle(800);
-      const flatSetup = /Stop working at \d+ with/;
+      // The flat setup, said either way: to stop working, or, stopped already, from now.
+      const flatSetup = /(Stop working at \d+|From now, at \d+,) with/;
       const whole = () => tab.container.findAll((e) => e.getAttribute('role') === 'radio' && e.textContent === 'Whole path');
       expect(tab.text()).not.toMatch(flatSetup);
       expect(whole().length).toBe(0);

@@ -5,8 +5,10 @@
 // through app/api/demo/seed. Anyone else never sees it: the card renders
 // nothing until the route says this is a demo account.
 //
-// The reset is confirmed in a sheet, as every destructive action is, saying
-// it replaces the account for everyone using it. A reset still running
+// Above the picker, what is loaded: the scenario of the last reset and its
+// day, or that a reset runs now (loadedText). The reset is confirmed in a
+// sheet, as every destructive action is, saying it replaces the account for
+// everyone using it. A reset still running
 // (someone else's, or this one before a reload) is said, and so is one that
 // stopped part way, so it is run again rather than taken for the demo; and
 // why the account can't be reset, when it can't.
@@ -15,6 +17,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
 import { LevelWord, Notice } from './TotalCaveats';
 import { minutesText } from '@/lib/demo-seed/words';
+import { formatInstantDay, onDay } from '@/lib/format';
 
 type ScenarioView = { id: string; title: string; description: string };
 export type DemoInfo =
@@ -53,6 +56,20 @@ export function shownScenario(info: Extract<DemoInfo, { demo: true }>, chosen: s
   return info.scenarios.find((s) => s.id === (chosen ?? info.last?.scenario ?? info.default)) ?? info.scenarios[0];
 }
 
+/** What the account holds, for the line above the picker: the scenario its
+ *  last reset loaded and the day of that reset ("Loaded: Single renter,
+ *  reset today"), or that a reset runs. Null before any reset, and for one
+ *  that stopped part way, which its caution says. `now` is for tests. */
+export function loadedText(info: Extract<DemoInfo, { demo: true }>, busy: boolean, now?: number): string | null {
+  const last = info.last;
+  if (busy || last?.phase === 'running') return 'Resetting now';
+  if (!last || last.phase !== 'finished') return null;
+  const title = info.scenarios.find((s) => s.id === last.scenario)?.title;
+  if (!title) return null;
+  const day = formatInstantDay(last.at, { sentence: true, now });
+  return day ? `Loaded: ${title}, reset ${onDay(day)}` : `Loaded: ${title}`;
+}
+
 /** The card, for whatever state it is in. Nothing for anyone but a demo
  *  account, or before the route has said. */
 export function DemoDataView({ info, chosen, busy, error, done, onChoose, onAsk }: ViewProps) {
@@ -60,6 +77,7 @@ export function DemoDataView({ info, chosen, busy, error, done, onChoose, onAsk 
   const scenario = shownScenario(info, chosen);
   const running = info.last?.phase === 'running' && !busy;
   const limited = info.next_in_seconds > 0;
+  const loaded = loadedText(info, busy);
   return (
     <div className="card stack">
       <div className="card-header">
@@ -87,6 +105,7 @@ export function DemoDataView({ info, chosen, busy, error, done, onChoose, onAsk 
         </Notice>
       )}
 
+      {loaded && <p className="helper">{loaded}</p>}
       <label className="field">
         Scenario
         <select value={scenario.id} onChange={(e) => onChoose(e.target.value)} disabled={busy}>

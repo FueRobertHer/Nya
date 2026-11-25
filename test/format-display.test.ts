@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { asciiMinus, compactMoney, formatDay, formatMoney, hiddenMoney, MASK, MINUS, signedCompactMoney, signedMoney, signedPercent, spoken, trueMinus } from '@/lib/format';
+import { asciiMinus, compactMoney, formatDay, formatDaySpan, formatMoney, hiddenMoney, MASK, MINUS, signedCompactMoney, signedMoney, signedPercent, spoken, trueMinus } from '@/lib/format';
 import { wholeMoney } from '@/components/plan-text';
 
 // Numbers, money and dates as the design system writes them on the screen
@@ -85,5 +85,31 @@ describe('a day', () => {
     expect(formatDay('2026-10-29', { now, sentence: true })).toBe('today');
     expect(formatDay('2026-10-28', { now, sentence: true })).toBe('yesterday');
     expect(formatDay('2025-12-31', { now: new Date(2026, 0, 1, 0, 30) })).toBe('Yesterday');
+  });
+});
+
+describe('a span of days', () => {
+  // As above: Thursday, October 29, 2026.
+  const now = new Date(2026, 9, 29, 12);
+  const said = (y: number, m: number, d: number, year: boolean) =>
+    new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', ...(year ? { year: 'numeric' } : {}) });
+
+  test('within one year, each day as formatDay says it', () => {
+    expect(formatDaySpan('2026-08-07', '2026-10-03', { now })).toBe(`${said(2026, 8, 7, false)} to ${said(2026, 10, 3, false)}`);
+    expect(formatDaySpan('2024-08-07', '2024-11-03', { now })).toBe(`${said(2024, 8, 7, true)} to ${said(2024, 11, 3, true)}`);
+    expect(formatDaySpan('2026-08-07', '2026-08-07', { now })).toBe(said(2026, 8, 7, false));
+  });
+
+  test('across a new year, both days name their year, this one too', () => {
+    expect(formatDaySpan('2025-11-16', '2026-10-03', { now })).toBe(`${said(2025, 11, 16, true)} to ${said(2026, 10, 3, true)}`);
+    expect(formatDaySpan('2025-12-31', '2026-01-02', { now, sentence: true })).toBe(`${said(2025, 12, 31, true)} to ${said(2026, 1, 2, true)}`);
+    expect(formatDaySpan('2024-11-16', '2025-01-02', { now })).toBe(`${said(2024, 11, 16, true)} to ${said(2025, 1, 2, true)}`);
+  });
+
+  test('today and yesterday stay words, and the end is mid sentence', () => {
+    expect(formatDaySpan('2025-11-16', '2026-10-29', { now })).toBe(`${said(2025, 11, 16, true)} to today`);
+    expect(formatDaySpan('2026-10-28', '2026-10-29', { now })).toBe('Yesterday to today');
+    expect(formatDaySpan('2026-10-28', '2026-10-29', { now, sentence: true })).toBe('yesterday to today');
+    expect(formatDaySpan('2026-10-29', '2026-10-29', { now, sentence: true })).toBe('today');
   });
 });

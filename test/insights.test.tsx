@@ -6,6 +6,8 @@ import Insights, { type InsightAccount } from '@/components/Insights';
 import type { Txn } from '@/components/MonthBreakdown';
 import { formatInstantDay } from '@/lib/format';
 import { localMonth } from '@/lib/local-date';
+import { detectRecurring } from '@/lib/recurring';
+import { addMonths } from '@/lib/rollover';
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
 
 // Home's insights (components/Insights.tsx): the alerts are the ones worth
@@ -143,5 +145,78 @@ describe("the spending figures in a month that may be missing a connection's tra
     );
     expect(text(html)).not.toContain('Old Savings');
     expect(html).toContain('<button type="button" class="list-row">');
+  });
+});
+
+describe('the biggest purchase this month', () => {
+  const thisMonth = localMonth();
+  let id = 0;
+  const txn = (date: string, name: string, amount: number, category: string, over: Partial<Txn> = {}): Txn => ({
+    transaction_id: `b${++id}`,
+    date,
+    name,
+    amount,
+    pending: false,
+    account_name: 'Checking',
+    institution_name: 'Chase',
+    category,
+    iso_currency_code: 'USD',
+    vendor_key: name.toLowerCase(),
+    logo_url: null,
+    category_icon_url: null,
+    subcategory: null,
+    category_confidence: null,
+    transaction_code: null,
+    payment_channel: null,
+    datetime: null,
+    website: null,
+    check_number: null,
+    account_owner: null,
+    city: null,
+    region: null,
+    counterparty: null,
+    payment_processor: null,
+    payment_reference: null,
+    ...over,
+  });
+  /** A charge on the 1st of this month and of the five before it. */
+  const monthly = (name: string, amount: number, category: string) =>
+    Array.from({ length: 6 }, (_, i) => txn(`${addMonths(thisMonth, i - 5)}-01`, name, amount, category));
+  const rent = monthly('Landlord', 2100, 'rent and utilities');
+  const icloud = monthly('Apple', 2.99, 'general merchandise');
+  const biggest = (txns: Txn[], dismissed: string[] = [], series = detectRecurring(txns)) =>
+    /Biggest purchase this month: [^]*?\$[\d,.]+/.exec(text(renderToStaticMarkup(<Insights txns={txns} accounts={[]} series={series} dismissed={dismissed} />)))?.[0] ?? null;
+
+  test('leaves out a detected bill: rent larger than a one-off purchase, the one-off wins', () => {
+    const txns = [...rent, txn(`${thisMonth}-01`, 'Furniture store', 640, 'home improvement')];
+    expect(detectRecurring(txns).map((s) => [s.name, s.kind, s.amount])).toEqual([['Landlord', 'bill', 2100]]);
+    expect(biggest(txns)).toBe('Biggest purchase this month: Furniture store, $640.00');
+    // Without the bills detected, rent is a purchase like any other.
+    expect(biggest(txns, [], [])).toBe('Biggest purchase this month: Landlord, $2,100.00');
+  });
+
+  test('a one-off at a merchant that also bills a subscription still counts: the series is matched by its amount', () => {
+    const txns = [...icloud, txn(`${thisMonth}-01`, 'Apple', 1299, 'general merchandise'), txn(`${thisMonth}-01`, 'Cafe', 6.5, 'coffee')];
+    expect(detectRecurring(txns).map((s) => [s.name, s.amount])).toEqual([['Apple', 2.99]]);
+    expect(biggest(txns)).toBe('Biggest purchase this month: Apple, $1,299.00');
+    // With rent beside it, larger but a bill, the one-off still wins.
+    expect(biggest([...txns, ...rent])).toBe('Biggest purchase this month: Apple, $1,299.00');
+  });
+
+  test('a series the person said isn’t recurring is no bill: its charge counts', () => {
+    const txns = [...rent, txn(`${thisMonth}-01`, 'Furniture store', 640, 'home improvement')];
+    const [landlord] = detectRecurring(txns);
+    expect(biggest(txns, [landlord.id])).toBe('Biggest purchase this month: Landlord, $2,100.00');
+  });
+
+  test('a bill’s charge still pending this month is left out too, as detection takes it for its date', () => {
+    const posted = rent.slice(0, 5);
+    const txns = [...posted, txn(`${thisMonth}-01`, 'Landlord', 2100, 'rent and utilities', { pending: true }), txn(`${thisMonth}-01`, 'Furniture store', 640, 'home improvement')];
+    expect(biggest(txns, [], detectRecurring(posted))).toBe('Biggest purchase this month: Furniture store, $640.00');
+  });
+
+  test('when every purchase this month is a bill, there is no biggest purchase', () => {
+    expect(biggest([...rent, ...icloud])).toBeNull();
+    expect(biggest([...rent, ...icloud], [], [])).toBe('Biggest purchase this month: Landlord, $2,100.00');
   });
 });

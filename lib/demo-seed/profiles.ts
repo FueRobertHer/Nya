@@ -55,6 +55,12 @@ export type SeedAccount = {
   holdings?: SeedHolding[];
   investment_transactions?: SeedInvTxn[];
   liability?: Record<string, unknown>;
+  /** A loan's rate and monthly payment as its statement gives them (for a
+   *  mortgage, principal and interest only, without escrow). Plaid's sandbox
+   *  reports no terms for these loans, and the payoff plan never assumes
+   *  any, so they are typed into it as a person would type them
+   *  (lib/demo-seed/fill.ts payoffInputsOf). */
+  terms?: { apr: number; payment: number };
 };
 
 export type SeedInstitution = {
@@ -422,7 +428,9 @@ function alex(today: string): DemoProfile {
         // replaces the balance and the rows with a schedule of its own.
         ...GINGHAM,
         products: ['transactions'],
-        accounts: [{ mask: '6620', type: 'loan', subtype: 'loan', name: 'Graduate Student Loan', balance: owedBalance(18_600, loan), transactions: loan.sorted() }],
+        // The rows put the whole payment on the principal, so the rate is the
+        // statement's alone.
+        accounts: [{ mask: '6620', type: 'loan', subtype: 'loan', name: 'Graduate Student Loan', balance: owedBalance(18_600, loan), transactions: loan.sorted(), terms: { apr: 4.5, payment: 420 } }],
       },
     ],
     manual: [
@@ -668,12 +676,15 @@ function sam(today: string): DemoProfile {
       {
         ...TATTERSALL,
         products: ['transactions'],
-        accounts: [{ mask: '8871', type: 'loan', subtype: 'mortgage', name: 'Home Mortgage', balance: owedBalance(381_500, mortgage), transactions: mortgage.sorted() }],
+        // Principal and interest at 3.125%, as the rows' principal (about $997
+        // next) gives it; the rest of the $2,865.40 payment is escrow.
+        accounts: [{ mask: '8871', type: 'loan', subtype: 'mortgage', name: 'Home Mortgage', balance: owedBalance(381_500, mortgage), transactions: mortgage.sorted(), terms: { apr: 3.125, payment: 1_958.8 } }],
       },
       {
         ...GINGHAM,
         products: ['transactions'],
-        accounts: [{ mask: '2290', type: 'loan', subtype: 'auto', name: 'Auto Loan', balance: owedBalance(19_800, auto), transactions: auto.sorted() }],
+        // 2.99%, as the rows' principal (about $427 of the $465 next) gives it.
+        accounts: [{ mask: '2290', type: 'loan', subtype: 'auto', name: 'Auto Loan', balance: owedBalance(19_800, auto), transactions: auto.sorted(), terms: { apr: 2.99, payment: 465 } }],
       },
     ],
     manual: [{ name: 'Home (estimated value)', type: 'other', subtype: 'real estate', balance: 612_000 }],

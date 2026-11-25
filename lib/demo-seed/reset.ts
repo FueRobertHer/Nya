@@ -21,16 +21,21 @@
 //
 // SHARING ENDS. The account's connections to other people go before the
 // reset, so nobody it shared with goes on seeing whatever the next scenario
-// is (lib/sharing.ts dropConnectionsOf, as deleting an account does).
+// is (lib/sharing.ts dropConnectionsOf, as deleting an account does). The
+// one between Alex and Sam, the demo's household, comes back once the
+// scenario is in (lib/demo-seed/household.ts), before the reset is recorded
+// as finished; when it can't, the report says why.
 
 import { dropConnectionsOf } from '../sharing';
 import type { Ctx } from '../containers';
 import { checkEmptiable, seedDemoAccount, type SeedOptions, type SeedReport } from './seed';
+import { restoreHousehold } from './household';
 import { SeedRefused } from './guard';
 import type { Scenario } from './scenarios';
 import { minutesText } from './words';
 import { RESET_WINDOW_SECONDS, SEED_VERSION, resetCount, seedRecordStore, type SeedRecord } from './store';
 
+export { RESET_RUNS_AT_MOST_MS, resetPhase } from './store';
 export { RESET_WINDOW_SECONDS, SEED_VERSION, type SeedRecord };
 
 /** Refused for the limit: how long until a reset may run again. */
@@ -42,18 +47,6 @@ export class ResetLimited extends Error {
 }
 
 export type ResetState = { record: SeedRecord | null; secondsLeft: number };
-
-/** Longer than a reset can run (the route's maxDuration, with room): one
- *  unfinished for longer stopped part way. */
-export const RESET_RUNS_AT_MOST_MS = 6 * 60_000;
-
-/** Where the last reset stands: finished, still running, or stopped part way
- *  (unfinished, and older than any reset can run). */
-export function resetPhase(record: SeedRecord, now: number = Date.now()): 'finished' | 'running' | 'stopped' {
-  if (record.finished_at !== null) return 'finished';
-  const started = Date.parse(record.started_at);
-  return Number.isFinite(started) && now - started < RESET_RUNS_AT_MOST_MS ? 'running' : 'stopped';
-}
 
 /** The last reset, and how long until the next may run (0: now). */
 export async function resetState(ctx: Ctx): Promise<ResetState> {
@@ -82,6 +75,13 @@ export async function resetDemoAccount(
   await seedRecordStore.set(ctx, { version: SEED_VERSION, scenario: scenario.id, started_at: new Date().toISOString(), finished_at: null });
   await dropConnectionsOf(userId);
   const report = await seedDemoAccount(ctx, userId, scenario.build(today), today, opts);
+  // Best effort: a share that can't be saved just now doesn't leave the
+  // scenario recorded as partly reset.
+  const household = await restoreHousehold(target).catch((err: unknown) => {
+    console.error('Demo household share not restored', err instanceof Error ? err.name : typeof err);
+    return 'the share with the other demo account, which couldn’t be saved just now';
+  });
+  if (household) report.skipped.push(household);
   await seedRecordStore.update(ctx, (cur) => (cur ? { ...cur, finished_at: new Date().toISOString() } : cur));
   return report;
 }

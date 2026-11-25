@@ -299,10 +299,12 @@ describe('the calendar', () => {
     expect(view({ txns: null })).toContain('Transactions are still loading.');
   });
 
-  test('a card\'s own charge is listed on its day but not added, and says why', () => {
+  test('a card\'s own charge is listed on its day but not added, and says why once, over the day\'s list', () => {
     const spotify = detectRecurring(monthly('2026-04', 6, 9).map((d) => row(d, 10.99, { name: 'Spotify', account_name: 'Sapphire', account_type: 'credit' })));
     const t = view({ series: spotify, txns: [] });
-    expect(t).toContain("Spotify Bill · Monthly · On the Sapphire card, not in the day's figure: the card's payment is what leaves cash");
+    expect(t).toContain("Spotify Bill · Monthly · On the Sapphire card, not in the day's figure −$10.99");
+    expect(t).toContain("A card's charges aren't in a day's figure: the card's payment is what leaves cash. Expected Spotify");
+    expect(t.split("the card's payment is what leaves cash")).toHaveLength(2);
     expect(t).not.toContain('Expected · −$10.99');
   });
 

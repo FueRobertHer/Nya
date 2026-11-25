@@ -78,14 +78,27 @@ export function metaLine(parts: readonly (string | null | false | undefined)[]):
     .join(' · ');
 }
 
-/** Why an expected amount isn't in its day's figure (lib/calendar.ts). */
+/** Whether an expected amount is charged to a card: kept out of its day's
+ *  figure because the card's payment is what leaves cash (lib/calendar.ts). */
+const onCard = (e: CalendarEntry) => e.off === 'not-cash' && e.accountType === 'credit';
+
+/** Why a card's charges aren't in a day's figure, said once over a list
+ *  with one on it (the calendar's day, Upcoming's list) rather than on each
+ *  row, whose own words say only that it is on the card. */
+export function CardChargesNote({ entries }: { entries: readonly CalendarEntry[] }) {
+  if (!entries.some(onCard)) return null;
+  return <p className="helper">A card&apos;s charges aren&apos;t in a day&apos;s figure: the card&apos;s payment is what leaves cash.</p>;
+}
+
+/** Why an expected amount isn't in its day's figure (lib/calendar.ts). A
+ *  card's charge says why once, over its list (CardChargesNote). */
 function offText(e: CalendarEntry): string | null {
   switch (e.off) {
     case 'currency':
       return `in ${e.currency}, not in the day's figure`;
     case 'not-cash':
-      return e.accountType === 'credit'
-        ? `on ${e.account ? theCard(e.account) : 'a card'}, not in the day's figure: the card's payment is what leaves cash`
+      return onCard(e)
+        ? `on ${e.account ? theCard(e.account) : 'a card'}, not in the day's figure`
         : `on ${e.account || 'an account'}, not a cash account, not in the day's figure`;
     case 'unknown-account':
       return "on an account of unknown type, not in the day's figure";
@@ -387,6 +400,7 @@ export default function CalendarView({
             <p className="empty-note">{day.date < today ? (unknownPast ? pastNote : 'Nothing posted.') : 'Nothing expected.'}</p>
           )}
           {day.entries.length > 0 && day.date <= today && unknownPast && <p className="empty-note">{pastNote}</p>}
+          <CardChargesNote entries={day.entries} />
           {day.entries.length > 0 && (
             <ul className="list-rows">
               {posted.length > 0 && (

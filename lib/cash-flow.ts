@@ -31,11 +31,12 @@
 //
 // MONEY IN, BY WHO PAID IT. Each counted inflow (a negative amount, Plaid's
 // sign) goes to its payer: the name on the row (the merchant's, or the
-// person's own name for it, as the list shows it), the same whatever its
-// capitals. Plaid's transaction_code has no payroll value (it is one of
-// adjustment, atm, bank charge, bill payment, cash, cashback, cheque, direct
-// debit, interest, purchase, standing order and transfer), so pay is known by
-// who paid it, and one employer is one source however its deposits are filed.
+// person's own name for it, as the list shows it, the bank's own text made
+// readable: payerLabel), the same whatever its capitals. Plaid's
+// transaction_code has no payroll value (it is one of adjustment, atm, bank
+// charge, bill payment, cash, cashback, cheque, direct debit, interest,
+// purchase, standing order and transfer), so pay is known by who paid it,
+// and one employer is one source however its deposits are filed.
 // The chart draws the largest payers and folds the rest into "Other income"
 // (flowGraph). Nothing names a source the rows don't: each is a name on them,
 // the fold, or the money that came from savings or debt (below).
@@ -99,6 +100,7 @@ import { addMonths, monthName, monthsFrom, monthsText } from './rollover';
 import { heldNote, joinNames, monthGaps, type Incomplete, type Stopped } from './month-coverage';
 import { coveredOutOf, refusedNames, unallowedNames, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from './no-transactions';
 import { importedRowsNote } from './history-import/view';
+import { shownName } from './merchant-name';
 import type { LabelSide, SankeyLinkInput } from './sankey';
 
 /** Plaid's details for non-card loan payments (same set as lib/fire/inputs.ts):
@@ -111,6 +113,9 @@ const LOAN_PAYMENT_DETAILS = new Set(['mortgage payment', 'car payment', 'studen
 export type FlowRow = TotalsRow & {
   transaction_id: string;
   name: string;
+  /** Its name is the bank's own text (lib/transactions.ts), which the chart
+   *  shows readably, as the list does (lib/merchant-name.ts shownName). */
+  name_from_bank?: true;
   /** Plaid's finer category detail, when present (for non-card loan payments). */
   subcategory?: string | null;
   /** The account's type (depository, credit, loan, investment), when present. */
@@ -142,8 +147,10 @@ export function isLoanPaymentOut(t: FlowRow, currency: string | null, pairedLoan
 
 /** One payer's counted money in. `key` is its name as compared. `rows` are
  *  the rows it sums (their ids, `ids`), by which a fold counts its
- *  transactions, each once (see SPLITS AND GROUPS above). */
-export type Payer = { key: string; name: string; amount: number; transactions: number; refund: boolean; ids: string[]; rows: FlowRow[] };
+ *  transactions, each once (see SPLITS AND GROUPS above). `name_from_bank`
+ *  when its name is the bank's own text, which the chart shows readably
+ *  (payerLabel); the API leaves it out and gives the name as written. */
+export type Payer = { key: string; name: string; name_from_bank?: true; amount: number; transactions: number; refund: boolean; ids: string[]; rows: FlowRow[] };
 export type FlowCategory = { id: string; name: string; amount: number; transactions: number; ids: string[]; rows: FlowRow[] };
 export type FlowGroup = { id: string; name: string; kind: CategoryKind; amount: number; transactions: number; ids: string[]; categories: FlowCategory[] };
 export type LoanPaymentFlow = { amount: number; transactions: number; ids: string[]; rows: FlowRow[] };
@@ -203,7 +210,7 @@ const byAmount = <T extends { amount: number; name: string }>(a: T, b: T) => b.a
  */
 export function cashFlow(rows: readonly FlowRow[], inRange: (date: string) => boolean, currency: string | null, ix: CategoryIndex): CashFlow {
   const totals = summarize(rows, inRange, currency);
-  type PayerSum = { name: string; amount: number; tally: Tally; refund: boolean; ids: string[]; rows: FlowRow[] };
+  type PayerSum = { name: string; name_from_bank?: true; amount: number; tally: Tally; refund: boolean; ids: string[]; rows: FlowRow[] };
   type CategorySum = { name: string; amount: number; tally: Tally; ids: string[]; rows: FlowRow[] };
   type GroupSum = { name: string; kind: CategoryKind; amount: number; tally: Tally; ids: string[]; categories: Map<string, CategorySum> };
   const payers = new Map<string, PayerSum>();
@@ -231,7 +238,7 @@ export function cashFlow(rows: readonly FlowRow[], inRange: (date: string) => bo
     const group = groupOf(ix, category);
     if (t.amount < 0) {
       const key = payerKey(t.name);
-      const p: PayerSum = payers.get(key) ?? { name: t.name.trim(), amount: 0, tally: transactionCounter(), refund: true, ids: [], rows: [] };
+      const p: PayerSum = payers.get(key) ?? { name: t.name.trim(), ...(t.name_from_bank ? { name_from_bank: true as const } : {}), amount: 0, tally: transactionCounter(), refund: true, ids: [], rows: [] };
       p.amount += -t.amount;
       p.tally.add(t);
       p.ids.push(t.transaction_id);
@@ -269,7 +276,7 @@ export function cashFlow(rows: readonly FlowRow[], inRange: (date: string) => bo
       rows: loanPayments.rows,
     },
     payers: [...payers]
-      .map(([key, p]) => ({ key, name: p.name, amount: tidy(p.amount), transactions: p.tally.n, refund: p.refund, ids: p.ids, rows: p.rows }))
+      .map(([key, p]) => ({ key, name: p.name, ...(p.name_from_bank ? { name_from_bank: true as const } : {}), amount: tidy(p.amount), transactions: p.tally.n, refund: p.refund, ids: p.ids, rows: p.rows }))
       .sort((a, b) => byAmount(a, b) || (a.key < b.key ? -1 : 1)),
     groups: [...groups]
       .map(([id, g]) => ({
@@ -327,8 +334,10 @@ export const MIN_SHARE = 0.03;
  *  be left to fold (fold never folds one alone). */
 export const MAX_PAYERS = 6;
 
-/** What a payer is called on the chart: its name, or that it has none. */
-export const payerLabel = (p: Pick<Payer, 'name'>): string => p.name || 'No name';
+/** What a payer is called on the chart and in its table: its name as the
+ *  list shows it (the bank's own text made readable, lib/merchant-name.ts),
+ *  or that it has none. */
+export const payerLabel = (p: Pick<Payer, 'name' | 'name_from_bank'>): string => shownName(p) || 'No name';
 
 /** Of `items` (most first), those drawn on their own and those folded
  *  together: what `keep` refuses folds, but never one alone, which would hide
